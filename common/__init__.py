@@ -1,0 +1,1 @@
+# A package for common code shared between miners and validators.
