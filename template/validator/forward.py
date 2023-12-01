@@ -19,7 +19,7 @@
 
 import bittensor as bt
 
-from template.protocol import Dummy
+from common.protocol import Dummy
 from template.validator.reward import get_rewards
 from template.utils.uids import get_random_uids
 
