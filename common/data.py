@@ -14,6 +14,9 @@ class Hour:
     def __init__(self, hours_since_epoch: int):
         self.hour = hours_since_epoch
 
+    def get_hours_since_epoch(self) -> int:
+        return self.hour
+
     @classmethod
     def from_datetime(cls, datetime: dt.datetime) -> Type["Hour"]:
         """Creates an Hour from the provided datetime.
@@ -48,6 +51,8 @@ class DataEntity(BaseModel):
     # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
+    # Path from which the entity was generated.
+    uri: str
     # The datetime of the data entity, usually its creation time.
     # Should be in UTC.
     datetime: dt.datetime
