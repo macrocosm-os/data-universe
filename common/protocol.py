@@ -57,7 +57,7 @@ class Dummy(bt.Synapse):
         """
         return self.dummy_output
 
-class GetDataChunkIndexFromMiner(bt.Synapse):
+class GetDataChunkIndex(bt.Synapse):
     """
     Protocol by which Validators can retrieve the DataChunk Index from a Miner.
 
@@ -79,7 +79,7 @@ class GetDataChunkIndexFromMiner(bt.Synapse):
         """
         return self.data_chunk_summaries
 
-class GetDataChunkFromMiner(bt.Synapse):
+class GetDataChunk(bt.Synapse):
     """
     Protocol by which Validators can retrieve the DataEntities of a Chunk from a Miner.
 
