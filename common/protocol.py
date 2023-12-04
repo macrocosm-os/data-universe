@@ -17,6 +17,7 @@
 
 import typing
 import bittensor as bt
+import pydantic
 from common.data import DataChunkSummary, DataEntity
 from typing import List
 
@@ -66,7 +67,12 @@ class GetDataChunkIndex(bt.Synapse):
     """
 
     # Required request output, filled by recieving axon.
-    data_chunk_summaries: List[DataChunkSummary]
+    data_chunk_summaries: List[DataChunkSummary] = pydantic.Field(
+        title="data_chunk_summaries",
+        description="All of the data that a Miner can serve grouped by DataChunkSummary.",
+        frozen=False,
+        repr=False,
+    )
 
     def deserialize(self) -> int:
         """
@@ -84,14 +90,24 @@ class GetDataChunk(bt.Synapse):
     Protocol by which Validators can retrieve the DataEntities of a Chunk from a Miner.
 
     Attributes:
-    - data_chunk: The DataChunk that the requester is asking for.
+    - data_chunk_summary: The Summary identifying the DataChunk that the requester is asking for.
     - data_entities: A list of DataEntity objects that make up the requested DataChunk.
     """
     # Required request input, filled by sending dendrite caller.
-    data_chunk: DataChunkSummary
+    data_chunk_summary: DataChunkSummary = pydantic.Field(
+        title="data_chunk_summary",
+        description="The DataChunkSummary that identifies the requested DataChunk.",
+        frozen=True,
+        repr=False,
+    )
 
     # Required request output, filled by recieving axon.
-    data_entities: List[DataEntity]
+    data_entities: List[DataEntity] = pydantic.Field(
+        title="data_entities",
+        description="All of the data that makes up the requested DataChunk.",
+        frozen=False,
+        repr=False,
+    )
 
     def deserialize(self) -> int:
         """
