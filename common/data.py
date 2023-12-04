@@ -3,7 +3,7 @@ import dataclasses
 from . import utils
 import datetime as dt
 from enum import Enum, auto
-from typing import Type, Optional
+from typing import List, Type, Optional
 from pydantic import BaseModel, ConfigDict, Field
 
 
@@ -75,3 +75,17 @@ class DataChunkSummary(BaseModel):
     source: DataSource
     label: Optional[DataLabel]
     size_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
+    # Scorable bytes are the bytes that can be credited to this miner for scoring.
+    # This is always less than or equal to the total size of the chunk.
+    # This scorable bytes are computed as:
+    # 1 byte for every byte in size_bytes that no other miner has in their index.
+    # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
+    scorable_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
+
+
+class MinerIndex(BaseModel):
+    """The Miner Index."""
+
+    chunks: List[DataChunkSummary]
+    # Time last updated in UTC.
+    last_updated: dt.datetime

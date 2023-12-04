@@ -63,9 +63,7 @@ def add_args(cls, parser):
     # Netuid Arg: The netuid of the subnet to connect to.
     parser.add_argument("--netuid", type=int, help="Subnet netuid", default=1)
 
-    neuron_type = (
-        "validator" if "miner" not in cls.__name__.lower() else "miner"
-    )
+    neuron_type = "validator" if "miner" not in cls.__name__.lower() else "miner"
 
     parser.add_argument(
         "--neuron.name",
@@ -122,13 +120,6 @@ def add_args(cls, parser):
             action="store_true",
             help="Disables setting weights.",
             default=False,
-        )
-
-        parser.add_argument(
-            "--neuron.moving_average_alpha",
-            type=float,
-            help="Moving average alpha parameter, how much to add of the new observation.",
-            default=0.05,
         )
 
         parser.add_argument(
