@@ -19,22 +19,34 @@
 
 
 import copy
+import datetime
+import random
 import sys
 import torch
 import asyncio
 import threading
 import time
+import os
 import bittensor as bt
+from common.data import DataChunkSummary, DataEntity, MinerIndex
 import common.utils as utils
+from scraping.scraper import ValidationResult
+from validator.miner_index import MinerIndexManager
 from validator.miner_iterator import MinerIterator
 
 from typing import List
 from traceback import print_exception
 
 from template.base.neuron import BaseNeuron
+from validator.miner_scorer import MinerScorer
 
 
 class Validator(BaseNeuron):
+    # The minimum number of blocks that must pass before we re-evaluate a miner.
+    MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=20)
+
+    SCORER_FILENAME = "scorer.pickle"
+
     def __init__(self, config=None):
         super().__init__(config=config)
 
@@ -49,7 +61,7 @@ class Validator(BaseNeuron):
 
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
-        self.scores = torch.zeros_like(self.metagraph.S, dtype=torch.float32)
+        self.scorer = MinerScorer(self.metagraph.S)
 
         # Serve axon to enable external connections.
         if not self.config.neuron.axon_off:
@@ -64,6 +76,7 @@ class Validator(BaseNeuron):
             [utils.is_miner(uid, self.metagraph) for uid in self.metagraph.uids]
         )
         self.miner_iterator = MinerIterator(self.miner_uids)
+        self.miner_index_manager = MinerIndexManager()
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -87,7 +100,39 @@ class Validator(BaseNeuron):
             bt.logging.error(f"Failed to setup Axon: {e}")
             sys.exit(1)
 
-    async def eval_miner(self, uid: int):
+    @classmethod
+    def choose_chunk_to_query(cls, index: MinerIndex) -> DataChunkSummary:
+        """Chooses a random chunk to query from a MinerIndex.
+
+        The random selection is done based on choosing a random byte in the total index to query, and then selecting that chunk
+        """
+        total_size = sum([chunk.size_bytes for chunk in index.chunks])
+        chosen_byte = random.uniform(0, total_size)
+        iterated_bytes = 0
+        for i, chunk in index.chunks:
+            if iterated_bytes + chunk.size_bytes >= chosen_byte:
+                return chunk
+            iterated_bytes += chunk.size_bytes
+        assert False, "Failed to choose a chunk to query... which should never happen"
+
+    @classmethod
+    def choose_entities_to_verify(cls, entities: List[DataEntity]) -> List[DataEntity]:
+        """Given a list of DataEntities from a DataChunk, chooses a random set of entities to verify."""
+
+        # For now, we just sample 1 entity, based on size.
+        # In future, consider sampling every N bytes.
+        chosen_entities = []
+        total_size = sum([entity.content_size_bytes for entity in entities])
+        chosen_byte = random.uniform(0, total_size)
+        iterated_bytes = 0
+        for i, entity in entities:
+            if iterated_bytes + entity.content_size_bytes >= chosen_byte:
+                chosen_entities.append(entity)
+                break
+            iterated_bytes += entity.content_size_bytes
+        return chosen_entities
+
+    async def eval_miner(self, uid: int) -> None:
         """
         Validator forward pass. Consists of:
         - Generating the query
@@ -96,23 +141,55 @@ class Validator(BaseNeuron):
         - Rewarding the miners
         - Updating the scores
         """
-        # Update the miner's index
-        # Choose a random block to query
-        # Randomly select N posts to verify
-        # Score the result
 
+        index = self.miner_index_manager.update_index(uid, self.dendrite)
+        if not index:
+            # The miner hasn't provided an index yet, so we can't validate them. Set their score to 0 and move on.
+            self.scorer.reset_score(uid)
+            return
+
+        chosen_chunk = Validator.choose_chunk_to_query(index)
+
+        # TODO: Query the miner for the chosen chunk
+        data_entities: List[DataEntity] = None
+
+        entities_to_verify: List[DataEntity] = Validator.choose_entities_to_verify(
+            data_entities
+        )
+
+        # TODO: Submit the verifications to the validation pool and await results.
+        validation_results: List[ValidationResult] = []
+
+        self.scorer.on_miner_evaluated(uid, index, validation_results)
+
+    # TODO: Pull this out into a separate MinerEvaluator to make this more testable.
     async def run_next_eval_batch(self) -> int:
-        """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch."""
-        # TODO: Peek the next miner and see if an update is required.
-        # If not return now and return a period of time equal to ~ 12 * blocks to wait
+        """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
+
+        Args:
+            block (int): The block at which we started this evaluation.
+        """
+        next_uid = self.miner_iterator.peek()
+        last_evaluated = self.miner_index_manager.get_datetime_index_last_updated(
+            next_uid
+        )
+        now = datetime.datetime.utcnow()
+        if last_evaluated and (now - last_evaluated) < Validator.MIN_EVALUATION_PERIOD:
+            # Return the number of seconds until we expect to be able to run the next evaluation batch.
+            return (
+                last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
+            ).total_seconds()
 
         uids_to_eval = [
             next(self.miner_iterator)
-            for _ in range(self.config.neuron.num_concurrent_forwards)
+            # Run in batches of 10.
+            # TODO: Maybe make this configurable and run evaluations based on expected throughput
+            for _ in range(10)
         ]
         coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
         await asyncio.gather(*coroutines)
 
+        # Run the next evaluation batch immediately.
         return 0
 
     def run(self):
@@ -231,15 +308,17 @@ class Validator(BaseNeuron):
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
 
-        # Check if self.scores contains any NaN values and log a warning if it does.
-        if torch.isnan(self.scores).any():
+        scores = self.scorer.get_scores()
+
+        # Check if scores contains any NaN values and log a warning if it does.
+        if torch.isnan(scores).any():
             bt.logging.warning(
                 f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
 
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
-        raw_weights = torch.nn.functional.normalize(self.scores, p=1, dim=0)
+        raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
         bt.logging.trace("raw_weights", raw_weights)
         bt.logging.trace("top10 values", raw_weights.sort()[0])
         bt.logging.trace("top10 uids", raw_weights.sort()[1])
@@ -290,43 +369,15 @@ class Validator(BaseNeuron):
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
-                self.scores[uid] = 0  # hotkey has been replaced
+                self.scorer.reset_score(uid)  # hotkey has been replaced
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
         if len(self.hotkeys) < len(self.metagraph.hotkeys):
-            # Update the size of the moving average scores.
-            new_moving_average = torch.zeros((self.metagraph.n)).to(self.device)
-            min_len = min(len(self.hotkeys), len(self.scores))
-            new_moving_average[:min_len] = self.scores[:min_len]
-            self.scores = new_moving_average
+            self.scorer.resize(self.metagraph.n)
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
-
-    def update_scores(self, rewards: torch.FloatTensor, uids: List[int]):
-        """Performs exponential moving average on the scores based on the rewards received from the miners."""
-
-        # Check if rewards contains NaN values.
-        if torch.isnan(rewards).any():
-            bt.logging.warning(f"NaN values detected in rewards: {rewards}")
-            # Replace any NaN values in rewards with 0.
-            rewards = torch.nan_to_num(rewards, 0)
-
-        # Compute forward pass rewards, assumes uids are mutually exclusive.
-        # shape: [ metagraph.n ]
-        scattered_rewards: torch.FloatTensor = self.scores.scatter(
-            0, torch.tensor(uids).to(self.device), rewards
-        ).to(self.device)
-        bt.logging.debug(f"Scattered rewards: {rewards}")
-
-        # Update scores with rewards produced by this step.
-        # shape: [ metagraph.n ]
-        alpha: float = self.config.neuron.moving_average_alpha
-        self.scores: torch.FloatTensor = alpha * scattered_rewards + (
-            1 - alpha
-        ) * self.scores.to(self.device)
-        bt.logging.debug(f"Updated moving avg scores: {self.scores}")
 
     def save_state(self):
         """Saves the state of the validator to a file."""
@@ -336,10 +387,13 @@ class Validator(BaseNeuron):
         torch.save(
             {
                 "step": self.step,
-                "scores": self.scores,
                 "hotkeys": self.hotkeys,
             },
             self.config.neuron.full_path + "/state.pt",
+        )
+        utils.serialize_to_file(
+            self.scorer,
+            os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME),
         )
 
     def load_state(self):
@@ -347,10 +401,12 @@ class Validator(BaseNeuron):
         bt.logging.info("Loading validator state.")
 
         # Load the state of the validator from file.
-        state = torch.load(self.config.neuron.full_path + "/state.pt")
+        state = torch.load(os.path.join(self.config.neuron.full_path, "/state.pt"))
         self.step = state["step"]
-        self.scores = state["scores"]
         self.hotkeys = state["hotkeys"]
+        self.scorer = utils.deserialize_from_file(
+            os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME)
+        )
 
 
 # The main function parses the configuration and runs the validator.
