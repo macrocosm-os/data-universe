@@ -96,7 +96,7 @@ class MinerScorer:
 
         # Special case: The miner failed all validation results - apply an additional penalty.
         if all_failed:
-            self.miner_credibility[uid] *= MinerScorer.CREDIBILITY_PENALTY_FACTOR
+            self.miner_credibility[uid] *= 1.0 - MinerScorer.CREDIBILITY_PENALTY_FACTOR
 
         # Use EMA to update the miner's credibility.
         credibility = sum(result.is_valid for result in validation_results) / float(
