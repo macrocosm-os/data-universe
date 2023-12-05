@@ -3,7 +3,8 @@ from typing import List
 import torch
 import bittensor as bt
 
-from common.data import MinerIndex
+from common.data import ScorableMinerIndex
+from rewards.reward_distribution import RewardDistribution
 from scraping.scraper import ValidationResult
 
 
@@ -18,13 +19,19 @@ class MinerScorer:
     # about its data index.
     # E.g. if a miner claimed it has 2x the data it actually has, it needs to average a credibility score
     # less than 0.5, or else it'd be scored the same as if it truthfully reported its data index.
-    CREDIBILITY_PENALTY_FACTOR = 0.05
+    CREDIBILITY_PENALTY_FACTOR = 0.1
 
-    def __init__(self, num_neurons: int):
+    def __init__(
+        self,
+        num_neurons: int,
+        reward_distribution: RewardDistribution,
+        alpha: float = 0.2,
+    ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
-        self.scores = torch.zeros_like(num_neurons, dtype=torch.float32)
-        self.miner_credibility = torch.ones_like(num_neurons, dtype=torch.float32)
-        self.alpha = 0.1
+        self.scores = torch.zeros(num_neurons, dtype=torch.float32)
+        self.miner_credibility = torch.zeros(num_neurons, dtype=torch.float32)
+        self.reward_distribution = reward_distribution
+        self.alpha = alpha
 
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
@@ -54,9 +61,15 @@ class MinerScorer:
             self.scores = torch.cat(
                 [self.scores, torch.zeros(to_add, dtype=torch.float32)]
             )
+            self.miner_credibility = torch.cat(
+                [self.miner_credibility, torch.zeros(to_add, dtype=torch.float32)]
+            )
 
     def on_miner_evaluated(
-        self, uid: int, index: MinerIndex, validation_results: List[ValidationResult]
+        self,
+        uid: int,
+        index: ScorableMinerIndex,
+        validation_results: List[ValidationResult],
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
 
@@ -66,22 +79,19 @@ class MinerScorer:
             validation_results (List[ValidationResult]): The results of data validation performed on the data provided by the miner.
         """
         with self.lock:
-            # TODO: Also pass the RewardDistribution information.
             # First, update the miner's credibilty
             self._update_credibility(uid, validation_results)
 
-            # Now score the miner.
+            # Now score the miner based on the amount of data it has, scaled based on
+            # the reward distribution.
             score = 0.0
             for chunk in index.chunks:
-                # TODO: Scale based on the RewardDistribution.
-                score += chunk.scorable_bytes
+                score += self.reward_distribution.get_score_for_chunk(chunk)
 
-            # Scale the
+            # Scale the miner's score by its credibility.
             score *= self.miner_credibility[uid]
 
             self._update_score(uid, score)
-
-        pass
 
     def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
         """Updates the miner's credibility based on the most recent set of validation_results.

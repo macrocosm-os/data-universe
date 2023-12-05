@@ -4,14 +4,16 @@
 import bittensor as bt
 import datetime
 from typing import Optional
-from common.data import MinerIndex
+from common.data import ScorableMinerIndex
 
 
 class MinerIndexManager:
     def __init__(self):
         pass
 
-    def update_index(self, uid: int, dendrite: bt.dendrite) -> Optional[MinerIndex]:
+    def update_index(
+        self, uid: int, dendrite: bt.dendrite
+    ) -> Optional[ScorableMinerIndex]:
         """Updates the index for the 'uid' miner, and returns the latest known index or None if the miner hasn't yet provided an index.
 
         Args:
