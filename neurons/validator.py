@@ -28,8 +28,9 @@ import threading
 import time
 import os
 import bittensor as bt
-from common.data import DataChunkSummary, DataEntity, MinerIndex
+from common.data import DataChunkSummary, DataEntity, ScorableMinerIndex
 import common.utils as utils
+from rewards.reward_distribution import RewardDistribution
 from scraping.scraper import ValidationResult
 from validator.miner_index import MinerIndexManager
 from validator.miner_iterator import MinerIterator
@@ -61,8 +62,9 @@ class Validator(BaseNeuron):
 
         # Set up initial scoring weights for validation
         bt.logging.info("Building validation weights.")
-        self.scorer = MinerScorer(self.metagraph.S)
+        self.scorer = MinerScorer(self.metagraph.n, RewardDistribution())
 
+        # TODO: Configure this to expose access to data to neurons on certain subnets.
         # Serve axon to enable external connections.
         if not self.config.neuron.axon_off:
             self.serve_axon()
@@ -101,15 +103,15 @@ class Validator(BaseNeuron):
             sys.exit(1)
 
     @classmethod
-    def choose_chunk_to_query(cls, index: MinerIndex) -> DataChunkSummary:
+    def choose_chunk_to_query(cls, index: ScorableMinerIndex) -> DataChunkSummary:
         """Chooses a random chunk to query from a MinerIndex.
 
         The random selection is done based on choosing a random byte in the total index to query, and then selecting that chunk
         """
-        total_size = sum([chunk.size_bytes for chunk in index.chunks])
+        total_size = sum(chunk.size_bytes for chunk in index.chunks)
         chosen_byte = random.uniform(0, total_size)
         iterated_bytes = 0
-        for i, chunk in index.chunks:
+        for chunk in index.chunks:
             if iterated_bytes + chunk.size_bytes >= chosen_byte:
                 return chunk
             iterated_bytes += chunk.size_bytes
@@ -122,10 +124,10 @@ class Validator(BaseNeuron):
         # For now, we just sample 1 entity, based on size.
         # In future, consider sampling every N bytes.
         chosen_entities = []
-        total_size = sum([entity.content_size_bytes for entity in entities])
+        total_size = sum(entity.content_size_bytes for entity in entities)
         chosen_byte = random.uniform(0, total_size)
         iterated_bytes = 0
-        for i, entity in entities:
+        for entity in entities:
             if iterated_bytes + entity.content_size_bytes >= chosen_byte:
                 chosen_entities.append(entity)
                 break
@@ -157,6 +159,10 @@ class Validator(BaseNeuron):
             data_entities
         )
 
+        # TODO: Perform basic validation on the entities
+        # Tag match the requested
+        # Total sum is >= the claim in the index.
+        # Then verify the data correctness.
         # TODO: Submit the verifications to the validation pool and await results.
         validation_results: List[ValidationResult] = []
 
@@ -357,6 +363,8 @@ class Validator(BaseNeuron):
         previous_metagraph = copy.deepcopy(self.metagraph)
 
         # Sync the metagraph.
+        # TODO: In the past, this call has hung on me. We may want to add a watchdog to kill the process
+        # if this doesn't complete.
         self.metagraph.sync(subtensor=self.subtensor)
 
         # Check if the metagraph axon info has changed.
