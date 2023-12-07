@@ -1,9 +1,9 @@
-from datetime import datetime
+import datetime as dt
 import unittest
 from common.data import (
     DataChunkSummary,
     DataEntity,
-    Hour,
+    TimeBucket,
     DataSource,
     ScorableDataChunkSummary,
     ScorableMinerIndex,
@@ -17,25 +17,31 @@ class TestValidator(unittest.TestCase):
         index = ScorableMinerIndex(
             chunks=[
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(datetime.utcnow()),
+                    time_bucket=TimeBucket.from_datetime(
+                        dt.datetime.now(tz=dt.timezone.utc)
+                    ),
                     source=DataSource.REDDIT,
                     size_bytes=100,
                     scorable_bytes=100,
                 ),
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(datetime.utcnow()),
+                    time_bucket=TimeBucket.from_datetime(
+                        dt.datetime.now(tz=dt.timezone.utc)
+                    ),
                     source=DataSource.REDDIT,
                     size_bytes=200,
                     scorable_bytes=200,
                 ),
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(datetime.utcnow()),
+                    time_bucket=TimeBucket.from_datetime(
+                        dt.datetime.now(tz=dt.timezone.utc)
+                    ),
                     source=DataSource.REDDIT,
                     size_bytes=300,
                     scorable_bytes=300,
                 ),
             ],
-            last_updated=datetime.utcnow(),
+            last_updated=dt.datetime.now(tz=dt.timezone.utc),
         )
 
         # Sample the chunks, counting how often each is chosen
@@ -56,21 +62,21 @@ class TestValidator(unittest.TestCase):
         entities = [
             DataEntity(
                 uri="uri1",
-                datetime=datetime.utcnow(),
+                datetime=dt.datetime.now(tz=dt.timezone.utc),
                 source=DataSource.REDDIT,
                 content=b"content1",
                 content_size_bytes=100,
             ),
             DataEntity(
                 uri="uri2",
-                datetime=datetime.utcnow(),
+                datetime=dt.datetime.now(tz=dt.timezone.utc),
                 source=DataSource.REDDIT,
                 content=b"content2",
                 content_size_bytes=200,
             ),
             DataEntity(
                 uri="uri3",
-                datetime=datetime.utcnow(),
+                datetime=dt.datetime.now(tz=dt.timezone.utc),
                 source=DataSource.REDDIT,
                 content=b"content3",
                 content_size_bytes=300,

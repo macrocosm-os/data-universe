@@ -1,10 +1,20 @@
-import dataclasses
-
 from . import utils
 import datetime as dt
 from enum import Enum, auto
 from typing import List, Type, Optional
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
+
+
+class DateRange(BaseModel):
+    """Represents a specific time range from start time inclusive to end time exclusive."""
+
+    # Makes the object "Immutable" once created.
+    model_config = ConfigDict(frozen=True)
+
+    start: dt.datetime = Field(
+        description="The start time inclusive of the time range."
+    )
+    end: dt.datetime = Field(description="The end time exclusive of the time range.")
 
 
 class TimeBucket(BaseModel):
@@ -13,7 +23,9 @@ class TimeBucket(BaseModel):
     # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
-    id: PositiveInt = Field(description="Monotonically increasing value idenitifying the given time bucket")
+    id: PositiveInt = Field(
+        description="Monotonically increasing value idenitifying the given time bucket"
+    )
 
     def id(self) -> int:
         return self.id
@@ -25,17 +37,19 @@ class TimeBucket(BaseModel):
         Args:
             datetime (datetime.datetime): A datetime object, assumed to be in UTC.
         """
-        return TimeBucket(id=utils.seconds_to_hours(datetime.timestamp()))
+        datetime.astimezone(dt.timezone.utc)
+        return TimeBucket(
+            id=utils.seconds_to_hours(
+                datetime.astimezone(tz=dt.timezone.utc).timestamp()
+            )
+        )
 
-
-class DateRange(BaseModel):
-    """Represents a specific time range from start time inclusive to end time exclusive."""
-
-    # Makes the object "Immutable" once created.
-    model_config = ConfigDict(frozen=True)
-
-    start: dt.datetime = Field(description="The start time inclusive of the time range.")
-    end: dt.datetime = Field(description="The end time exclusive of the time range.")
+    def get_date_range(self) -> DateRange:
+        """Returns the date range for this time bucket."""
+        return DateRange(
+            start=utils.datetime_from_hours_since_epoch(self.id),
+            end=utils.datetime_from_hours_since_epoch(self.id + 1),
+        )
 
 
 class DataSource(Enum):

@@ -1,5 +1,6 @@
 """General utility functions."""
 
+import datetime as dt
 import pickle
 from typing import Any
 import bittensor as bt
@@ -16,6 +17,11 @@ def mb_to_bytes(mb: int) -> int:
 def seconds_to_hours(seconds: int) -> int:
     """Returns the total number of hours, rounded down."""
     return seconds // 3600
+
+
+def datetime_from_hours_since_epoch(hours: int) -> dt.datetime:
+    """Returns a datetime object from the provided hours since epoch."""
+    return dt.datetime.fromtimestamp(hours * 3600, tz=dt.timezone.utc)
 
 
 def is_miner(uid: int, metagraph: bt.metagraph) -> bool:

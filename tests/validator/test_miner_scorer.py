@@ -8,7 +8,7 @@ from scraping.scraper import ValidationResult
 from common.data import (
     DataLabel,
     DataSource,
-    Hour,
+    TimeBucket,
     ScorableDataChunkSummary,
     ScorableMinerIndex,
 )
@@ -17,7 +17,7 @@ import datetime as dt
 import rewards.reward_distribution
 
 
-@patch.object(rewards.reward_distribution, "datetime", Mock(wraps=dt.datetime))
+@patch.object(rewards.reward_distribution.dt, "datetime", Mock(wraps=dt.datetime))
 class TestMinerScorer(unittest.TestCase):
     def setUp(self):
         self.num_neurons = 10
@@ -35,13 +35,13 @@ class TestMinerScorer(unittest.TestCase):
         self.scorer = MinerScorer(self.num_neurons, self.reward_distribution, alpha=0.2)
 
         # Mock the current time
-        self.now = dt.datetime(2023, 12, 12, 12, 30, 0)
+        self.now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
 
         # Construct a ScorableMinerIndex with 2 chunks that should score 150 in total (without considering EMA)
         self.scorable_index = ScorableMinerIndex(
             chunks=[
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(self.now),
+                    time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="testlabel"),
                     size_bytes=200,
@@ -49,7 +49,7 @@ class TestMinerScorer(unittest.TestCase):
                     scorable_bytes=100,
                 ),
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(self.now),
+                    time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="otherlabel"),
                     size_bytes=200,
@@ -61,12 +61,12 @@ class TestMinerScorer(unittest.TestCase):
         )
 
     def _add_score_to_uid(self, uid: int):
-        validation_results = [ValidationResult(True)]
+        validation_results = [ValidationResult(is_valid=True)]
         self.scorer.on_miner_evaluated(uid, self.scorable_index, validation_results)
 
     def test_reset_score(self):
         """Tests that reset_score sets the score to 0."""
-        rewards.reward_distribution.datetime.utcnow.return_value = self.now
+        rewards.reward_distribution.dt.datetime.now.return_value = self.now
 
         uid = 5
 
@@ -109,9 +109,18 @@ class TestMinerScorer(unittest.TestCase):
         # The dishonest always fails validation.
         dishonest_miner = 2
 
-        honest_validation = [ValidationResult(True), ValidationResult(True)]
-        shady_validation = [ValidationResult(True), ValidationResult(False)]
-        dishonest_validation = [ValidationResult(False), ValidationResult(False)]
+        honest_validation = [
+            ValidationResult(is_valid=True),
+            ValidationResult(is_valid=True),
+        ]
+        shady_validation = [
+            ValidationResult(is_valid=True),
+            ValidationResult(is_valid=False),
+        ]
+        dishonest_validation = [
+            ValidationResult(is_valid=False),
+            ValidationResult(is_valid=False),
+        ]
         for _ in range(20):
             self.scorer.on_miner_evaluated(
                 honest_miner, self.scorable_index, honest_validation
@@ -147,7 +156,7 @@ class TestMinerScorer(unittest.TestCase):
         honest_index = ScorableMinerIndex(
             chunks=[
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(self.now),
+                    time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="testlabel"),
                     size_bytes=200,
@@ -155,7 +164,7 @@ class TestMinerScorer(unittest.TestCase):
                     scorable_bytes=100,
                 ),
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(self.now),
+                    time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="otherlabel"),
                     size_bytes=200,
@@ -169,14 +178,14 @@ class TestMinerScorer(unittest.TestCase):
         shady_index = ScorableMinerIndex(
             chunks=[
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(self.now),
+                    time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="testlabel"),
                     size_bytes=400,
                     scorable_bytes=200,
                 ),
                 ScorableDataChunkSummary(
-                    hour=Hour.from_datetime(self.now),
+                    time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="otherlabel"),
                     size_bytes=400,
@@ -186,10 +195,10 @@ class TestMinerScorer(unittest.TestCase):
             last_updated=self.now,
         )
 
-        honest_validation = [ValidationResult(True)]
+        honest_validation = [ValidationResult(is_valid=True)]
         # Since half the shady_miner's data is fake, it should fail validation half the time.
         # To make the test deterministic, we'll make it fail every other time.
-        shady_validations = [[ValidationResult(i % 2 == 1)] for i in range(10)]
+        shady_validations = [[ValidationResult(is_valid=i % 2 == 1)] for i in range(10)]
         for i in range(10):
             self.scorer.on_miner_evaluated(
                 honest_miner, honest_index, honest_validation

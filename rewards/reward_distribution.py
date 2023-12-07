@@ -1,5 +1,5 @@
-from datetime import datetime
-from common.data import DataLabel, DataSource, Hour, ScorableDataChunkSummary
+import datetime as dt
+from common.data import DataLabel, DataSource, TimeBucket, ScorableDataChunkSummary
 from rewards.data import RewardDistributionModel
 
 import rewards.distributions.disitribution_v1 as v1
@@ -23,7 +23,7 @@ class RewardDistribution:
         data_type_scale_factor = self._scale_factor_for_source_and_label(
             chunk.source, chunk.label
         )
-        time_scalar = self._scale_factor_for_age(chunk.hour)
+        time_scalar = self._scale_factor_for_age(chunk.time_bucket)
         return data_type_scale_factor * time_scalar * chunk.scorable_bytes
 
     def _scale_factor_for_source_and_label(
@@ -36,15 +36,14 @@ class RewardDistribution:
         )
         return data_source_reward.weight * label_factor
 
-    def _scale_factor_for_age(self, hour: Hour) -> float:
+    def _scale_factor_for_age(self, time_bucket: TimeBucket) -> float:
         """Returns the score scalar for data ."""
         # Data age is scored using a linear depreciation function, where data from now is scored 1 and data
         # that is max_age_in_hours old is scored 0.5.
         # All data older than max_age_in_hours is scored 0.
         data_age_in_hours = (
-            Hour.from_datetime(datetime.utcnow()).get_hours_since_epoch()
-            - hour.get_hours_since_epoch()
-        )
+            dt.datetime.now(tz=dt.timezone.utc) - time_bucket.get_date_range().start
+        ).total_seconds() // 3600
 
         # Safe guard against future data.
         data_age_in_hours = max(0, data_age_in_hours)
