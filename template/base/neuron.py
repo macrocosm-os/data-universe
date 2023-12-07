@@ -91,20 +91,22 @@ class BaseNeuron(ABC):
         self.check_registered()
 
         # Each miner gets a unique identity (UID) in the network for differentiation.
-        self.uid = self.metagraph.hotkeys.index(
-            self.wallet.hotkey.ss58_address
-        )
+        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
         bt.logging.info(
             f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}"
         )
         self.step = 0
 
     @abstractmethod
-    async def forward(self, synapse: bt.Synapse) -> bt.Synapse:
+    def run(self):
         ...
 
     @abstractmethod
-    def run(self):
+    def resync_metagraph(self):
+        ...
+
+    @abstractmethod
+    def set_weights(self):
         ...
 
     def sync(self):
@@ -158,11 +160,4 @@ class BaseNeuron(ABC):
         ) > self.config.neuron.epoch_length
 
     def save_state(self):
-        bt.logging.warning(
-            "save_state() not implemented for this neuron. You can implement this function to save model checkpoints or other useful data."
-        )
-
-    def load_state(self):
-        bt.logging.warning(
-            "load_state() not implemented for this neuron. You can implement this function to load model checkpoints or other useful data."
-        )
+        pass
