@@ -7,25 +7,25 @@ from typing import List, Type, Optional
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
 
 
-class Hour(BaseModel):
-    """Represents an hour period from the :00 to :59.99..."""
+class TimeBucket(BaseModel):
+    """Represents a specific time bucket in the linear flow of time."""
 
     # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
-    hour: PositiveInt = Field(description="The number of hours since the epoch")
+    id: PositiveInt = Field(description="Monotonically increasing value idenitifying the given time bucket")
 
-    def get_hours_since_epoch(self) -> int:
-        return self.hour
+    def id(self) -> int:
+        return self.id
 
     @classmethod
-    def from_datetime(cls, datetime: dt.datetime) -> Type["Hour"]:
-        """Creates an Hour from the provided datetime.
+    def from_datetime(cls, datetime: dt.datetime) -> Type["TimeBucket"]:
+        """Creates a TimeBucket from the provided datetime.
 
         Args:
             datetime (datetime.datetime): A datetime object, assumed to be in UTC.
         """
-        return Hour(hour=utils.seconds_to_hours(datetime.timestamp()))
+        return TimeBucket(id=utils.seconds_to_hours(datetime.timestamp()))
 
 
 class DataSource(Enum):
@@ -76,13 +76,13 @@ class DataEntity(BaseModel):
 class DataChunkSummary(BaseModel):
     """Summarizes a chunk of data stored by a miner.
 
-    Each chunk is uniquely identified by the hour, source, and label and it must be complete. i.e. a miner should never report
-    multiple chunks for the same hour, source, and label.
+    Each chunk is uniquely identified by the time bucket, source, and label and it must be complete. i.e. a miner should never report
+    multiple chunks for the same time bucket, source, and label.
 
     A single chunk is limited to 128MBs to ensure requests sent over the network aren't too large.
     """
 
-    hour: Hour
+    time_bucket: TimeBucket
     source: DataSource
     label: Optional[DataLabel]
     size_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
