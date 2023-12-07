@@ -28,6 +28,16 @@ class TimeBucket(BaseModel):
         return TimeBucket(id=utils.seconds_to_hours(datetime.timestamp()))
 
 
+class DateRange(BaseModel):
+    """Represents a specific time range from start time inclusive to end time exclusive."""
+
+    # Makes the object "Immutable" once created.
+    model_config = ConfigDict(frozen=True)
+
+    start: dt.datetime = Field(description="The start time inclusive of the time range.")
+    end: dt.datetime = Field(description="The end time exclusive of the time range.")
+
+
 class DataSource(Enum):
     """The source of data. This will be expanded over time as we increase the types of data we collect."""
 
