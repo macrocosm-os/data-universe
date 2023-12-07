@@ -7,7 +7,7 @@ from typing import Dict, List
 from pydantic import BaseModel, PositiveInt
 
 from common.data import DataEntity, DataLabel, DataSource, DateRange
-from storage.miner import MinerStorage
+from storage.miner.miner_storage import MinerStorage
 
 
 class ValidationResult(BaseModel):
