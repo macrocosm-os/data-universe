@@ -108,8 +108,13 @@ class ScraperProvider:
 class ScraperCoordinator:
     """Coordinates all the scrapers necessary based on the specified target ScrapingDistribution."""
 
-    def __init__(self, scraper_provider: ScraperProvider, scraping_distribution: ScapingDistribution,
-                 miner_storage: MinerStorage, max_scrapes_per_minute: Dict[DataSource, PositiveInt]):
+    def __init__(
+        self,
+        scraper_provider: ScraperProvider,
+        scraping_distribution: ScapingDistribution,
+        miner_storage: MinerStorage,
+        max_scrapes_per_minute: Dict[DataSource, PositiveInt],
+    ):
         self.provider = scraper_provider
         self.distribution = scraping_distribution
         self.storage = miner_storage
@@ -123,7 +128,11 @@ class ScraperCoordinator:
     async def _start(self):
         tasks = []
         for i in range(self.max_workers):
-            task = asyncio.create_task(self.worker(f'worker-{i}',))
+            task = asyncio.create_task(
+                self.worker(
+                    f"worker-{i}",
+                )
+            )
             tasks.append(task)
 
         while True:
@@ -133,14 +142,13 @@ class ScraperCoordinator:
             # add to queue a function to scrape
             # wait a minute
 
-            # 1) timer based add to queue based on the 
+            # 1) timer based add to queue based on the
             # loop per async method
             # while true
-                # make ScrapeConfig randomly from scraping_distribution
-                # await scrape()
-                # store in storage
+            # make ScrapeConfig randomly from scraping_distribution
+            # await scrape()
+            # store in storage
             pass
-
 
     async def worker(self, name):
         while True:

@@ -5,12 +5,12 @@ from unittest.mock import Mock, patch
 from attr import dataclass
 from rewards.data import DataSourceReward, RewardDistributionModel
 from rewards.reward_distribution import RewardDistribution
-from common.data import DataLabel, DataSource, Hour, ScorableDataChunkSummary
+from common.data import DataLabel, DataSource, TimeBucket, ScorableDataChunkSummary
 import datetime as dt
 import rewards.reward_distribution
 
 
-@patch.object(rewards.reward_distribution, "datetime", Mock(wraps=dt.datetime))
+@patch.object(rewards.reward_distribution.dt, "datetime", Mock(wraps=dt.datetime))
 class TestRewardDistribution(unittest.TestCase):
     def setUp(self):
         model = RewardDistributionModel(
@@ -41,8 +41,8 @@ class TestRewardDistribution(unittest.TestCase):
 
     def test_get_score_for_chunk_with_matching_label(self):
         """Generates a chunk with various data sources and labels and ensures the score is correct."""
-        now = dt.datetime(2023, 12, 12, 12, 30, 0)
-        rewards.reward_distribution.datetime.utcnow.return_value = now
+        now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
+        rewards.reward_distribution.dt.datetime.now.return_value = now
 
         @dataclass(frozen=True)
         class TestCaseInput:
@@ -64,11 +64,11 @@ class TestRewardDistribution(unittest.TestCase):
             (TestCaseInput(DataSource.X, DataLabel(value="#other-label")), 20.0),
         ]
 
-        # Verify data from the current hour, with various labels are scored correctly.
-        hour = Hour.from_datetime(now)
+        # Verify data from the current time_bucket, with various labels are scored correctly.
+        time_bucket = TimeBucket.from_datetime(now)
         for tc in test_cases:
             chunk = ScorableDataChunkSummary(
-                hour=hour,
+                time_bucket=time_bucket,
                 source=tc[0].data_source,
                 label=tc[0].data_label,
                 size_bytes=200,
@@ -80,13 +80,13 @@ class TestRewardDistribution(unittest.TestCase):
 
     def test_get_score_for_chunk_score_decreases_over_time(self):
         """Generates a chunk containing data of various ages and verifies the score is as expected."""
-        now = dt.datetime(2023, 12, 12, 12, 30, 0)
-        rewards.reward_distribution.datetime.utcnow.return_value = now
+        now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
+        rewards.reward_distribution.dt.datetime.now.return_value = now
 
-        # Verify score at the present hour is scored at 100%.
-        hour = Hour.from_datetime(now)
+        # Verify score at the present time_bucket is scored at 100%.
+        time_bucket = TimeBucket.from_datetime(now)
         chunk = ScorableDataChunkSummary(
-            hour=hour,
+            time_bucket=time_bucket,
             source=DataSource.REDDIT,
             label=DataLabel(value="testlabel"),
             size_bytes=200,
@@ -99,7 +99,7 @@ class TestRewardDistribution(unittest.TestCase):
 
         # Verify the score at the max age is scored at 50%.
         chunk = ScorableDataChunkSummary(
-            hour=Hour.from_datetime(now - dt.timedelta(hours=7 * 24)),
+            time_bucket=TimeBucket.from_datetime(now - dt.timedelta(hours=7 * 24)),
             source=DataSource.REDDIT,
             label=DataLabel(value="testlabel"),
             size_bytes=200,
@@ -112,7 +112,7 @@ class TestRewardDistribution(unittest.TestCase):
 
         # Verify the score past the max age is 0.
         chunk = ScorableDataChunkSummary(
-            hour=Hour.from_datetime(now - dt.timedelta(hours=7 * 24 + 1)),
+            time_bucket=TimeBucket.from_datetime(now - dt.timedelta(hours=7 * 24 + 1)),
             source=DataSource.REDDIT,
             label=DataLabel(value="testlabel"),
             size_bytes=200,
@@ -127,7 +127,9 @@ class TestRewardDistribution(unittest.TestCase):
         previous_score = 75.0
         for hours_back in range(1, 7 * 24):
             chunk = ScorableDataChunkSummary(
-                hour=Hour.from_datetime(now - dt.timedelta(hours=hours_back)),
+                time_bucket=TimeBucket.from_datetime(
+                    now - dt.timedelta(hours=hours_back)
+                ),
                 source=DataSource.REDDIT,
                 label=DataLabel(value="testlabel"),
                 size_bytes=200,
