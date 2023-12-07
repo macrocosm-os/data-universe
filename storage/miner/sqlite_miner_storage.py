@@ -1,5 +1,5 @@
 from common import utils
-from common.data import DataEntity, DataChunkSummary, DataSource, Hour
+from common.data import DataEntity, DataChunkSummary, DataSource, TimeBucket
 from miner_storage import MinerStorage
 from typing import List
 import datetime as dt
@@ -12,7 +12,7 @@ class SqliteMinerStorage(MinerStorage):
     DATA_ENTITY_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS DataEntity (
                                 uri                 TEXT        PRIMARY KEY,
                                 datetime            DATETIME    NOT NULL,
-                                hoursSinceEpoch     INTEGER     NOT NULL,
+                                timeBucketId        INTEGER     NOT NULL,
                                 source              INTEGER     NOT NULL,
                                 label               CHAR(32)
                                 content             BLOB        NOT NULL,
@@ -20,7 +20,7 @@ class SqliteMinerStorage(MinerStorage):
                                 ) WITHOUT ROWID"""
 
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS
-                                ON DataEntity (hoursSinceEpoch, source, label)"""
+                                ON DataEntity (timeBucketId, source, label)"""
 
     def __init__(self, database="SqliteMinerStorage.sqlite", database_max_content_size_bytes=utils.mb_to_bytes(1000)):
         self.database = database
@@ -67,8 +67,8 @@ class SqliteMinerStorage(MinerStorage):
 
         for data_entity in data_entities:
             label = "NULL" if (data_entity.label is None) else data_entity.label
-            hours_since_epoch = Hour.from_datetime(data_entity.datetime).get_hours_since_epoch()
-            values.append([data_entity.uri, data_entity.datetime, hours_since_epoch, data_entity.source.value, label,
+            timeBucketId = TimeBucket.from_datetime(data_entity.datetime).id
+            values.append([data_entity.uri, data_entity.datetime, timeBucketId, data_entity.source.value, label,
                            data_entity.content, data_entity.content_size_bytes])
 
 
@@ -84,8 +84,8 @@ class SqliteMinerStorage(MinerStorage):
 
         cursor = self.connection.cursor()
         cursor.execute("""SELECT * FROM DataEntity 
-                       WHERE hoursSinceEpoch = ? AND source = ? AND label = ?""",
-                       data_chunk_summary.hour.get_hours_since_epoch, data_chunk_summary.source.value, label)
+                       WHERE timeBucketId = ? AND source = ? AND label = ?""",
+                       data_chunk_summary.time_bucket.id, data_chunk_summary.source.value, label)
 
         # Convert the rows into DataEntity objects and return them up to the configured max chuck size.
         data_entities = []
@@ -123,8 +123,8 @@ class SqliteMinerStorage(MinerStorage):
         cursor = self.connection.cursor()
 
         # Get sum of content_size_bytes for all rows grouped by chunk.
-        cursor.execute("""SELECT SUM(contentSizeBytes) AS chunkSize, hoursSinceEpoch, source, label FROM DataEntity
-                       GROUP BY hoursSinceEpoch, source, label""")
+        cursor.execute("""SELECT SUM(contentSizeBytes) AS chunkSize, timeBucketId, source, label FROM DataEntity
+                       GROUP BY timeBucketId, source, label""")
 
         data_chunk_summaries = []
 
@@ -141,7 +141,7 @@ class SqliteMinerStorage(MinerStorage):
                 size = max_chunk_size if row['chunkSize'] >= max_chunk_size else row['chunkSize']
 
                 # Construct the new DataChunkSummary with all non null columns.
-                data_chunk_summary = DataChunkSummary(hour=row['hoursSinceEpoch'],
+                data_chunk_summary = DataChunkSummary(time_bucket=TimeBucket(id=row['timeBucketId']),
                                                       source=DataSource[row('source')],
                                                       size_bytes=size)
 
