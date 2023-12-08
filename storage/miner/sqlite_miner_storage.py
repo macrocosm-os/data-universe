@@ -1,6 +1,6 @@
 from common import utils
-from common.data import DataEntity, DataChunkSummary, DataSource, TimeBucket
-from miner_storage import MinerStorage
+from common.data import DataEntity, DataChunkSummary, DataLabel, DataSource, TimeBucket
+from storage.miner.miner_storage import MinerStorage
 from typing import List
 import datetime as dt
 import sqlite3
@@ -9,17 +9,18 @@ class SqliteMinerStorage(MinerStorage):
     """Sqlite backed MinerStorage"""
 
     # TODO Consider CHECK expression to limit source to expected ENUM values.
+    # Sqlite type converters handle the mapping from Python datetime to Timestamp.
     DATA_ENTITY_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS DataEntity (
                                 uri                 TEXT        PRIMARY KEY,
-                                datetime            DATETIME    NOT NULL,
+                                datetime            TIMESTAMP   NOT NULL,
                                 timeBucketId        INTEGER     NOT NULL,
                                 source              INTEGER     NOT NULL,
-                                label               CHAR(32)
+                                label               CHAR(32)            ,
                                 content             BLOB        NOT NULL,
-                                contentSizeBytes    INTEGER     NOT NULL,
+                                contentSizeBytes    INTEGER     NOT NULL
                                 ) WITHOUT ROWID"""
 
-    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS
+    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS chunk_index
                                 ON DataEntity (timeBucketId, source, label)"""
 
     def __init__(self, database="SqliteMinerStorage.sqlite", database_max_content_size_bytes=utils.mb_to_bytes(1000)):
@@ -28,7 +29,8 @@ class SqliteMinerStorage(MinerStorage):
         self.database_max_content_size_bytes = database_max_content_size_bytes
 
         # Create the database if it doesn't exist, defaulting to the local directory.
-        self.connection = sqlite3.connect(self.database)
+        # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
+        self.connection = sqlite3.connect(self.database, detect_types=sqlite3.PARSE_DECLTYPES)
         # Allow this connection to parse results from returned rows by column name.
         self.connection.row_factory = sqlite3.Row
 
@@ -51,10 +53,18 @@ class SqliteMinerStorage(MinerStorage):
         for data_entity in data_entities:
             added_content_size += data_entity.content_size_bytes
 
+        # If the total size of the store is larger than our maximum configured stored content size then ecept.
+        if added_content_size > self.database_max_content_size_bytes:
+            raise ValueError("Content size to store: " + str(added_content_size) + " exceeds configured max: "
+                            + str(self.database_max_content_size_bytes))
+
         # If we would exceed our maximum configured stored content size then clear space.
         cursor = self.connection.cursor()
         cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
-        current_content_size = cursor.fetchone()[0]
+
+        # If there are no rows we convert the None result to 0
+        result = cursor.fetchone()
+        current_content_size = result[0] if result[0] else 0
 
         if current_content_size + added_content_size > self.database_max_content_size_bytes:
             content_bytes_to_clear = (self.database_max_content_size_bytes // 10
@@ -66,13 +76,14 @@ class SqliteMinerStorage(MinerStorage):
         values = []
 
         for data_entity in data_entities:
-            label = "NULL" if (data_entity.label is None) else data_entity.label
+            label = "NULL" if (data_entity.label is None) else data_entity.label.value
             timeBucketId = TimeBucket.from_datetime(data_entity.datetime).id
             values.append([data_entity.uri, data_entity.datetime, timeBucketId, data_entity.source.value, label,
                            data_entity.content, data_entity.content_size_bytes])
 
 
-        cursor.executemany("INSERT INTO DataEntity VALUES (?,?,?,?,?,?,?)", values)
+        # Insert ignoring duplicate keys.
+        cursor.executemany("INSERT OR IGNORE INTO DataEntity VALUES (?,?,?,?,?,?,?)", values)
         
         # Commit the insert.
         self.connection.commit()
@@ -80,12 +91,12 @@ class SqliteMinerStorage(MinerStorage):
     def list_data_entities_in_data_chunk(self, data_chunk_summary: DataChunkSummary) -> List[DataEntity]:
         """Lists from storage all DataEntities matching the provided DataChunkSummary."""
         # Get rows that match the DataChunkSummary.
-        label = "NULL" if (data_chunk_summary.label is None) else data_chunk_summary.label
+        label = "NULL" if (data_chunk_summary.label is None) else data_chunk_summary.label.value
 
         cursor = self.connection.cursor()
         cursor.execute("""SELECT * FROM DataEntity 
                        WHERE timeBucketId = ? AND source = ? AND label = ?""",
-                       data_chunk_summary.time_bucket.id, data_chunk_summary.source.value, label)
+                       [data_chunk_summary.time_bucket.id, data_chunk_summary.source.value, label])
 
         # Convert the rows into DataEntity objects and return them up to the configured max chuck size.
         data_entities = []
@@ -102,13 +113,13 @@ class SqliteMinerStorage(MinerStorage):
                 # Construct the new DataEntity with all non null columns.
                 data_entity = DataEntity(uri=row['uri'],
                                         datetime=row['datetime'],
-                                        source=DataSource[row['source']],
+                                        source=DataSource(row['source']),
                                         content=row['content'],
-                                        content_size_bytes=['contentSizeBytes'])
+                                        content_size_bytes=row['contentSizeBytes'])
 
                 # Add the optional Label field if not null.
-                if row['label'] is not None:
-                    data_entity.label = row['label']
+                if row['label'] != "NULL":
+                    data_chunk_summary.label = DataLabel(value=row['label'])
 
                 data_entities.append(data_entity)
                 running_size += row['contentSizeBytes']
@@ -134,7 +145,7 @@ class SqliteMinerStorage(MinerStorage):
         max_chunk_size = utils.mb_to_bytes(128)
 
         for row in cursor:
-            if (len(data_chunk_summaries >= maxDataChunkSummaryCount)):
+            if (len(data_chunk_summaries) >= maxDataChunkSummaryCount):
                 return data_chunk_summaries
             else:
                 # Ensure the miner does not attempt to report more than the max chunk size.
@@ -142,12 +153,12 @@ class SqliteMinerStorage(MinerStorage):
 
                 # Construct the new DataChunkSummary with all non null columns.
                 data_chunk_summary = DataChunkSummary(time_bucket=TimeBucket(id=row['timeBucketId']),
-                                                      source=DataSource[row('source')],
+                                                      source=DataSource(row['source']),
                                                       size_bytes=size)
 
                 # Add the optional Label field if not null.
-                if row['label'] is not None:
-                    data_chunk_summary.label = row['label']
+                if row['label'] != "NULL":
+                    data_chunk_summary.label = DataLabel(value=row['label'])
 
                 data_chunk_summaries.append(data_chunk_summary)
 
@@ -167,9 +178,7 @@ class SqliteMinerStorage(MinerStorage):
         # Iterate over rows until we have found bytes to clear or we reach the end and fail.
         for row in cursor:
             running_bytes += row['contentSizeBytes']
-            earliest_datetime_to_clear = dt.datetime(row['datetime'])
+            earliest_datetime_to_clear = row['datetime']
             # Once we have enough content to clear then we do so.
             if running_bytes >= contentBytesToClear:
-                cursor.execute("DELETE FROM DataEntity WHERE datetime <= ?", earliest_datetime_to_clear)
-        
-        raise Exception("Not enough stored content to meet specified amount to clear.")
+                cursor.execute("DELETE FROM DataEntity WHERE datetime <= ?", [earliest_datetime_to_clear])
