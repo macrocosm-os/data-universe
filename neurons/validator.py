@@ -28,7 +28,7 @@ import threading
 import time
 import os
 import bittensor as bt
-from common.data import DataChunkSummary, DataEntity, ScorableMinerIndex
+from common.data import DataChunkSummary, DataEntity, DateRange, ScorableMinerIndex
 from common.protocol import GetDataChunk
 import common.utils as utils
 from rewards.reward_distribution import RewardDistribution
@@ -138,18 +138,19 @@ class Validator(BaseNeuron):
     @classmethod
     def are_entities_valid(
         cls, entities: List[DataEntity], chunk: DataChunkSummary
-    ) -> Tuple(bool, str):
+    ) -> Tuple[bool, str]:
         """Performs basic validation on all entities in a chunk.
 
         Returns a tuple of (is_valid, reason) where is_valid is True if the entities are valid,
         and reason is a string describing why they are not valid.
         """
 
-        # 1. Check that the entities size is as expected.
+        # 1. Check the entity size, labels, source, and timestamp.
         actual_size = 0
         claimed_size = 0
+        expected_datetime_range: DateRange = chunk.time_bucket.get_date_range()
         for entity in entities:
-            actual_size += entity.content_size_bytes
+            actual_size += len(entity.content or b"")
             claimed_size += entity.content_size_bytes
             if entity.source != chunk.source:
                 return (
@@ -161,6 +162,11 @@ class Validator(BaseNeuron):
                     False,
                     f"Entity label {entity.label} does not match chunk label {chunk.label}",
                 )
+            if not expected_datetime_range.contains(entity.datetime):
+                return (
+                    False,
+                    f"Entity datetime {entity.datetime} is not in the expected range {expected_datetime_range}",
+                )
 
         if actual_size < claimed_size or actual_size < chunk.size_bytes:
             return (
@@ -168,7 +174,7 @@ class Validator(BaseNeuron):
                 f"Size not as expected. Actual={actual_size}. Claimed={claimed_size}. Expected={chunk.size_bytes}",
             )
 
-        return True
+        return (True, "")
 
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
