@@ -29,13 +29,11 @@ class XContent(BaseModel):
         description="A list of hashtags associated with the tweet, in order they appear in the tweet. Note: it's critical this ordering is respected as the first tag is used as the DataLabel for the index.",
     )
 
-    # TODO: Add tests for the below.
+    # TODO: Add unit tests for the below.
+    # We already have reasonable confidence these work from manual testing, but additional unit tests certainly wouldn't hurt.
     def to_data_entity(self) -> DataEntity:
         """Converts the XContent to a DataEntity."""
 
-        # We can't use pydantic 2.0+ which offers built_in json serialization, because of bittensor's dependency on fastapi, which requires:
-        # pydantic!=1.8,!=1.8.1,<2.0.0,>=1.7.4.
-        # So, we cry on the inside, and fallback to using the V1 API of dictionaries.
         content_bytes = self.model_dump_json().encode("utf-8")
         return DataEntity(
             uri=self.url,
