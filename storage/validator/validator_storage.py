@@ -14,3 +14,8 @@ class ValidatorStorage(ABC):
     def read_miner_index(self, miner_id: int, valid_miners: Set[str]) -> ScorableMinerIndex:
         """Gets a scored index for all of the data that a specific miner promises to provide."""
         raise NotImplemented
+
+    @abstractmethod
+    def delete_miner_index(self, miner_id: int):
+        """Removes the index for the specified miner."""
+        raise NotImplemented
