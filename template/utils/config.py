@@ -154,6 +154,20 @@ def add_args(cls, parser):
             default=False,
         )
 
+        parser.add_argument(
+            "--neuron.sqlite_database_name",
+            type=str,
+            help="Name of the database file to use with sqlite backed miner storage.",
+            default="SqliteMinerStorage.sqlite",
+        )
+
+        parser.add_argument(
+            "--neuron.max_content_size_bytes",
+            type=int,
+            help="The maximum amount of content in bytes to store. Expect additional overhead for non-content data."
+            default=utils.mb_to_bytes(10000),
+        )
+
 
 def config(cls):
     """

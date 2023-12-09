@@ -24,7 +24,7 @@ class SqliteMinerStorage(MinerStorage):
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS chunk_index
                                 ON DataEntity (timeBucketId, source, label)"""
 
-    def __init__(self, database="SqliteMinerStorage.sqlite", database_max_content_size_bytes=utils.mb_to_bytes(1000)):
+    def __init__(self, database="SqliteMinerStorage.sqlite", database_max_content_size_bytes=utils.mb_to_bytes(10000)):
         self.database = database
         # TODO Account for non-content columns when restricting total database size.
         self.database_max_content_size_bytes = database_max_content_size_bytes
