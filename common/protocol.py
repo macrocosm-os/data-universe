@@ -30,7 +30,7 @@ class GetDataChunkIndex(bt.Synapse):
     - data_chunk_summaries: A list of DataChunkSummary objects that the Miner can serve.
     """
 
-    # Required request output, filled by recieving axon.
+    # Required request output, filled by receiving axon.
     data_chunk_summaries: List[DataChunkSummary] = pydantic.Field(
         title="data_chunk_summaries",
         description="All of the data that a Miner can serve grouped by DataChunkSummary.",

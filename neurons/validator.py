@@ -28,14 +28,15 @@ import threading
 import time
 import os
 import bittensor as bt
-from common.data import DataChunkSummary, DataEntity, ScorableMinerIndex
+from common.data import DataChunkSummary, DataEntity, DateRange, ScorableMinerIndex
+from common.protocol import GetDataChunk
 import common.utils as utils
 from rewards.reward_distribution import RewardDistribution
 from scraping.scraper import ValidationResult
 from validator.miner_index import MinerIndexManager
 from validator.miner_iterator import MinerIterator
 
-from typing import List
+from typing import List, Tuple
 from traceback import print_exception
 
 from template.base.neuron import BaseNeuron
@@ -134,35 +135,108 @@ class Validator(BaseNeuron):
             iterated_bytes += entity.content_size_bytes
         return chosen_entities
 
-    async def eval_miner(self, uid: int) -> None:
-        """
-        Validator forward pass. Consists of:
-        - Generating the query
-        - Querying the miners
-        - Getting the responses
-        - Rewarding the miners
-        - Updating the scores
+    @classmethod
+    def are_entities_valid(
+        cls, entities: List[DataEntity], chunk: DataChunkSummary
+    ) -> Tuple[bool, str]:
+        """Performs basic validation on all entities in a chunk.
+
+        Returns a tuple of (is_valid, reason) where is_valid is True if the entities are valid,
+        and reason is a string describing why they are not valid.
         """
 
+        # 1. Check the entity size, labels, source, and timestamp.
+        actual_size = 0
+        claimed_size = 0
+        expected_datetime_range: DateRange = chunk.time_bucket.get_date_range()
+        for entity in entities:
+            actual_size += len(entity.content or b"")
+            claimed_size += entity.content_size_bytes
+            if entity.source != chunk.source:
+                return (
+                    False,
+                    f"Entity source {entity.source} does not match chunk source {chunk.source}",
+                )
+            if entity.label != chunk.label:
+                return (
+                    False,
+                    f"Entity label {entity.label} does not match chunk label {chunk.label}",
+                )
+            if not expected_datetime_range.contains(entity.datetime):
+                return (
+                    False,
+                    f"Entity datetime {entity.datetime} is not in the expected range {expected_datetime_range}",
+                )
+
+        if actual_size < claimed_size or actual_size < chunk.size_bytes:
+            return (
+                False,
+                f"Size not as expected. Actual={actual_size}. Claimed={claimed_size}. Expected={chunk.size_bytes}",
+            )
+
+        return (True, "")
+
+    async def eval_miner(self, uid: int) -> None:
+        """Evaluates a miner and updates their score.
+
+        Specifically:
+            1. Gets the latest index from the miner
+            2. Chooses a random chunk to query
+            3. Performs basic validation on the chunk (right labels, matching size, etc.)
+            4. Samples data from the chunk and verifies the data is correct
+            5. Passes the validation result to the scorer to update the miner's score.
+        """
+
+        axon_info = self.metagraph.axons[uid]
+        # Query the miner for the latest index.
         index = self.miner_index_manager.update_index(uid, self.dendrite)
         if not index:
             # The miner hasn't provided an index yet, so we can't validate them. Set their score to 0 and move on.
+            bt.logging.trace(
+                f"Failed to get an index for miner {uid}. Setting score to 0."
+            )
             self.scorer.reset_score(uid)
             return
 
-        chosen_chunk = Validator.choose_chunk_to_query(index)
+        # From that index, find a chunk to sample and get it from the miner.
+        chosen_chunk: DataChunkSummary = Validator.choose_chunk_to_query(index)
+        bt.logging.trace(f"Querying miner {uid} for chunk {chosen_chunk}")
+        response = await self.dendrite.forward(
+            axons=[axon_info],
+            synapse=GetDataChunk(data_chunk_summary=chosen_chunk),
+            timeout=60,
+        )
 
-        # TODO: Query the miner for the chosen chunk
-        data_entities: List[DataEntity] = None
+        # Treat a failed response the same way we treat a failed validation.
+        # If we didn't, the miner could just not respond when queries for chunks it doesn't have.
+        if (
+            response is None
+            or not isinstance(response, GetDataChunk)
+            or not response.success
+        ):
+            bt.logging.trace(f"Miner {uid} returned an invalid/failed response.")
+            self.scorer.on_miner_evaluated(
+                uid, index, [ValidationResult(is_valid=False)]
+            )
+            return
 
+        # Perform basic validation on the entities.
+        data_entities: List[DataEntity] = response.data_entities
+        (valid, reason) = Validator.are_entities_valid(data_entities, chosen_chunk)
+        if not valid:
+            bt.logging.trace(
+                f"Miner {uid} failed basic entity validation with reason {reason}."
+            )
+            self.scorer.on_miner_evaluated(
+                uid, index, [ValidationResult(is_valid=False)]
+            )
+            return
+
+        # Basic validation passed. Now sample some entities for data correctness.
         entities_to_verify: List[DataEntity] = Validator.choose_entities_to_verify(
             data_entities
         )
 
-        # TODO: Perform basic validation on the entities
-        # Tag match the requested
-        # Total sum is >= the claim in the index.
-        # Then verify the data correctness.
         # TODO: Submit the verifications to the validation pool and await results.
         validation_results: List[ValidationResult] = []
 
@@ -363,8 +437,7 @@ class Validator(BaseNeuron):
         previous_metagraph = copy.deepcopy(self.metagraph)
 
         # Sync the metagraph.
-        # TODO: In the past, this call has hung on me. We may want to add a watchdog to kill the process
-        # if this doesn't complete.
+        # TODO: In the past, this call has hung on me. We may want to do something special here to handle that.
         self.metagraph.sync(subtensor=self.subtensor)
 
         # Check if the metagraph axon info has changed.

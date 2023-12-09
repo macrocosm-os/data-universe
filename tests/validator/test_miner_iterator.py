@@ -7,6 +7,12 @@ class TestMinerIterator(unittest.TestCase):
         """Creates a MinerIterator with unsorted miner UIDs and verifies that the miner UIDs are sorted."""
         uids = [2, 5, 1, 0]
         iterator = MinerIterator(uids)
+
+        # The iterator starts at a random position. Move it until we're pointing to 0.
+        while iterator.peek() != 0:
+            next(iterator)
+
+        # Now verify the UIDs are iterated in sorted order.
         iterated_uids = [next(iterator) for _ in range(len(uids))]
         self.assertEqual(iterated_uids, sorted(uids))
 
@@ -16,17 +22,17 @@ class TestMinerIterator(unittest.TestCase):
         expected = [1, 2, 3] * 10
         iterator = MinerIterator(uids)
         iterated_uids = [next(iterator) for _ in range(30)]
-        self.assertEqual(iterated_uids, expected)
+        self.assertEqual(sorted(iterated_uids), sorted(expected))
 
     def test_peek(self):
         """Creates a MinerIterator and verifies that peek returns the next UID without advancing the iterator."""
         uids = [1, 2, 3]
         iterator = MinerIterator(uids)
 
-        self.assertEqual(iterator.peek(), 1)
-        self.assertEqual(iterator.peek(), 1)
-        self.assertEqual(next(iterator), 1)
-        self.assertEqual(iterator.peek(), 2)
+        peeked = iterator.peek()
+        self.assertEqual(peeked, iterator.peek())
+        self.assertEqual(peeked, next(iterator))
+        self.assertNotEqual(peeked, iterator.peek())
 
     def test_set_miner_uids(self):
         """Verifies the iterator position is maintained when the miner UIDs are updated."""
@@ -34,8 +40,9 @@ class TestMinerIterator(unittest.TestCase):
         iterator = MinerIterator(initial_miner_uids)
 
         # Advance the iterator so it should now point to 3
-        next(iterator)
-        next(iterator)
+        # The iterator starts at a random position. Advance it until it returns 2.
+        while next(iterator) != 2:
+            pass
 
         iterator.set_miner_uids([1, 4, 6])
 
@@ -51,7 +58,8 @@ class TestMinerIterator(unittest.TestCase):
         iterator = MinerIterator(initial_miner_uids)
 
         # Advance the iterator so it should now point to 5
-        [next(iterator) for _ in range(4)]
+        while iterator.peek() != 5:
+            next(iterator)
 
         iterator.set_miner_uids([1, 2, 3, 4])
 

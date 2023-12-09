@@ -93,6 +93,10 @@ class MinerScorer:
 
             self._update_score(uid, score)
 
+            bt.logging.trace(
+                f"Evaluated Miner {uid}. Score={self.scores[uid]}. Credibility={self.miner_credibility[uid]}"
+            )
+
     def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
         """Updates the miner's credibility based on the most recent set of validation_results.
 

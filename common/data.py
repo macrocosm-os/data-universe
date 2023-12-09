@@ -16,6 +16,10 @@ class DateRange(BaseModel):
     )
     end: dt.datetime = Field(description="The end time exclusive of the time range.")
 
+    def contains(self, datetime: dt.datetime) -> bool:
+        """Returns True if the provided datetime is within this DateRange."""
+        return self.start <= datetime < self.end
+
 
 class TimeBucket(BaseModel):
     """Represents a specific time bucket in the linear flow of time."""

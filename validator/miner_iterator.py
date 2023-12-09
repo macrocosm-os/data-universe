@@ -3,6 +3,8 @@ import copy
 import threading
 from typing import List
 
+import random
+
 
 class MinerIterator:
     """A thread safe infinite iterator to cyclically enumerate the current set of miner UIDs.
@@ -13,7 +15,9 @@ class MinerIterator:
 
     def __init__(self, miner_uids: List[int]):
         self.miner_uids = sorted(copy.deepcopy(miner_uids))
-        self.index = 0
+        # Start the index at a random position. This helps ensure that miners with high UIDs aren't penalized if
+        # the validator restarts frequently.
+        self.index = random.randint(0, len(self.miner_uids) - 1)
         self.lock = threading.Lock()
 
     def __iter__(self):

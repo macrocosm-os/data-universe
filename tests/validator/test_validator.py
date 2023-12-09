@@ -3,6 +3,7 @@ import unittest
 from common.data import (
     DataChunkSummary,
     DataEntity,
+    DataLabel,
     TimeBucket,
     DataSource,
     ScorableDataChunkSummary,
@@ -96,6 +97,197 @@ class TestValidator(unittest.TestCase):
         self.assertAlmostEqual(ratios[0], 1 / 6, delta=0.05)
         self.assertAlmostEqual(ratios[1], 1 / 3, delta=0.05)
         self.assertAlmostEqual(ratios[2], 0.5, delta=0.05)
+
+    def test_are_entities_valid_invalid_entities(self):
+        """Tests a bunch of bases where the entities are invalid."""
+        datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
+        default_label = DataLabel(value="label")
+        default_chunk_summary = DataChunkSummary(
+            time_bucket=TimeBucket.from_datetime(datetime),
+            source=DataSource.REDDIT,
+            label=default_label,
+            size_bytes=10,
+        )
+
+        test_cases = [
+            {
+                "name": "Actual size doesn't match content size",
+                "entities": [
+                    DataEntity(
+                        uri="http://1",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"123",
+                        content_size_bytes=3,
+                    ),
+                    DataEntity(
+                        uri="http://2",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"123",
+                        content_size_bytes=200,  # Content size doesn't match the content
+                    ),
+                ],
+                "chunk": default_chunk_summary,
+                "expected_error": "Size not as expected",
+            },
+            {
+                "name": "Actual size less than chunk summary",
+                "entities": [
+                    DataEntity(
+                        uri="http://1",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"123",
+                        content_size_bytes=3,
+                    ),
+                    DataEntity(
+                        uri="http://2",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"123",
+                        content_size_bytes=3,
+                    ),
+                ],
+                "chunk": default_chunk_summary,
+                "expected_error": "Size not as expected",
+            },
+            {
+                "name": "Label doesn't match chunk summary",
+                "entities": [
+                    DataEntity(
+                        uri="http://1",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        # No label
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                    DataEntity(
+                        uri="http://2",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                ],
+                "chunk": default_chunk_summary,
+                "expected_error": "Entity label",
+            },
+            {
+                "name": "DataSource doesn't match",
+                "entities": [
+                    DataEntity(
+                        uri="http://1",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                    DataEntity(
+                        uri="http://2",
+                        datetime=datetime,
+                        source=DataSource.X,
+                        label=default_label,
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                ],
+                "chunk": default_chunk_summary,
+                "expected_error": "Entity source",
+            },
+            {
+                "name": "Datetime before time_bucket",
+                "entities": [
+                    DataEntity(
+                        uri="http://1",
+                        datetime=datetime - dt.timedelta(hours=1),
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                    DataEntity(
+                        uri="http://2",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                ],
+                "chunk": default_chunk_summary,
+                "expected_error": "Entity datetime",
+            },
+            {
+                "name": "Datetime after time_bucket",
+                "entities": [
+                    DataEntity(
+                        uri="http://1",
+                        datetime=datetime + dt.timedelta(hours=1),
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                    DataEntity(
+                        uri="http://2",
+                        datetime=datetime,
+                        source=DataSource.REDDIT,
+                        label=default_label,
+                        content=b"12345",
+                        content_size_bytes=5,
+                    ),
+                ],
+                "chunk": default_chunk_summary,
+                "expected_error": "Entity datetime",
+            },
+        ]
+
+        for test_case in test_cases:
+            with self.subTest(test_case["name"], test_case=test_case):
+                valid, reason = Validator.are_entities_valid(
+                    test_case["entities"], test_case["chunk"]
+                )
+                self.assertFalse(valid)
+                self.assertRegex(reason, test_case["expected_error"])
+
+    def test_are_entities_valid_valid_entities(self):
+        """Tests are_entities_valid with valid entities."""
+        datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
+        label = DataLabel(value="label")
+        chunk_summary = DataChunkSummary(
+            time_bucket=TimeBucket.from_datetime(datetime),
+            source=DataSource.REDDIT,
+            label=label,
+            size_bytes=10,
+        )
+        entities = [
+            DataEntity(
+                uri="http://1",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+            DataEntity(
+                uri="http://2",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+        ]
+        valid, _ = Validator.are_entities_valid(entities, chunk_summary)
+        self.assertTrue(valid)
 
 
 if __name__ == "__main__":
