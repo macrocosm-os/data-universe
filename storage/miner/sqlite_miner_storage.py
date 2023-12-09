@@ -1,3 +1,4 @@
+import threading
 from common import utils
 from common.data import DataEntity, DataChunkSummary, DataLabel, DataSource, TimeBucket
 from storage.miner.miner_storage import MinerStorage
@@ -42,6 +43,9 @@ class SqliteMinerStorage(MinerStorage):
         # Create the Index (if it does not already exist).
         cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_INDEX)
 
+        # Lock to avoid concurrency issues on clearing space when full
+        self.clearing_space_lock = threading.Lock()
+
 
     def __del__(self):
         self.connection.close()
@@ -58,19 +62,21 @@ class SqliteMinerStorage(MinerStorage):
             raise ValueError("Content size to store: " + str(added_content_size) + " exceeds configured max: "
                             + str(self.database_max_content_size_bytes))
 
-        # If we would exceed our maximum configured stored content size then clear space.
-        cursor = self.connection.cursor()
-        cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
+        # Ensure only one thread is clearing space when necessary.
+        with self.clearing_space_lock:
+            # If we would exceed our maximum configured stored content size then clear space.
+            cursor = self.connection.cursor()
+            cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
 
-        # If there are no rows we convert the None result to 0
-        result = cursor.fetchone()
-        current_content_size = result[0] if result[0] else 0
+            # If there are no rows we convert the None result to 0
+            result = cursor.fetchone()
+            current_content_size = result[0] if result[0] else 0
 
-        if current_content_size + added_content_size > self.database_max_content_size_bytes:
-            content_bytes_to_clear = (self.database_max_content_size_bytes // 10
-                                      if self.database_max_content_size_bytes // 10 > added_content_size
-                                      else added_content_size)
-            self.clear_content_from_oldest(content_bytes_to_clear)
+            if current_content_size + added_content_size > self.database_max_content_size_bytes:
+                content_bytes_to_clear = (self.database_max_content_size_bytes // 10
+                                        if self.database_max_content_size_bytes // 10 > added_content_size
+                                        else added_content_size)
+                self.clear_content_from_oldest(content_bytes_to_clear)
 
         # Parse every DataEntity into an list of value lists for inserting.
         values = []
