@@ -387,6 +387,8 @@ class Validator(BaseNeuron):
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
+        # TODO Delete the removed hotkeys from the ValidatorStorage
+
     def save_state(self):
         """Saves the state of the validator to a file."""
         bt.logging.info("Saving validator state.")

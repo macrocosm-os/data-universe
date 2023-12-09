@@ -123,9 +123,15 @@ class ScorableDataChunkSummary(DataChunkSummary):
     scorable_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
 
 
+class MinerIndex(BaseModel):
+    """The Miner index."""
+    hotkey: str = Field(min_length=1, description="Unique identifier for a miner.")
+    chunks: List[DataChunkSummary] = Field(description="Chunks the miner is serving.")
+
 class ScorableMinerIndex(BaseModel):
     """The Miner index, with additional information required for scoring."""
-
-    chunks: List[ScorableDataChunkSummary]
-    # Time last updated in UTC.
-    last_updated: dt.datetime
+    hotkey: str = Field(min_length=1, description="Unique identifier for a miner.")
+    scorable_chunks: List[ScorableDataChunkSummary] = Field(
+        description="Chunks the miner is serving, scored on uniqueness."
+    )
+    last_updated: dt.datetime = Field(description="Time last updated in UTC.")
