@@ -125,12 +125,12 @@ class ScorableDataChunkSummary(DataChunkSummary):
 
 class MinerIndex(BaseModel):
     """The Miner index."""
-    hotkey: str = Field(min_length=1, description="Unique identifier for a miner.")
+    hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     chunks: List[DataChunkSummary] = Field(description="Chunks the miner is serving.")
 
 class ScorableMinerIndex(BaseModel):
     """The Miner index, with additional information required for scoring."""
-    hotkey: str = Field(min_length=1, description="Unique identifier for a miner.")
+    hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     scorable_chunks: List[ScorableDataChunkSummary] = Field(
         description="Chunks the miner is serving, scored on uniqueness."
     )
