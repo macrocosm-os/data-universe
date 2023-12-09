@@ -165,7 +165,7 @@ def add_args(cls, parser):
             "--neuron.max_content_size_bytes",
             type=int,
             help="The maximum amount of content in bytes to store. Expect additional overhead for non-content data."
-            default=utils.mb_to_bytes(1000),
+            default=utils.mb_to_bytes(10000),
         )
 
 
