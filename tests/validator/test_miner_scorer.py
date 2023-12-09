@@ -39,7 +39,8 @@ class TestMinerScorer(unittest.TestCase):
 
         # Construct a ScorableMinerIndex with 2 chunks that should score 150 in total (without considering EMA)
         self.scorable_index = ScorableMinerIndex(
-            chunks=[
+            hotkey="abc123",
+            scorable_chunks=[
                 ScorableDataChunkSummary(
                     time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
@@ -154,7 +155,8 @@ class TestMinerScorer(unittest.TestCase):
         shady_miner = 1
 
         honest_index = ScorableMinerIndex(
-            chunks=[
+            hotkey="honest",
+            scorable_chunks=[
                 ScorableDataChunkSummary(
                     time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,
@@ -176,7 +178,8 @@ class TestMinerScorer(unittest.TestCase):
         )
         # This index is a copy of the above but with 2x for claimed size.
         shady_index = ScorableMinerIndex(
-            chunks=[
+            hotkey="shady",
+            scorable_chunks=[
                 ScorableDataChunkSummary(
                     time_bucket=TimeBucket.from_datetime(self.now),
                     source=DataSource.REDDIT,

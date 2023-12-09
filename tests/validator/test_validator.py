@@ -15,7 +15,8 @@ class TestValidator(unittest.TestCase):
     def test_choose_chunk_to_query(self):
         """Calls choose_chunk_to_query 10000 times and ensures the distribution of chunks chosen is as expected."""
         index = ScorableMinerIndex(
-            chunks=[
+            hotkey="abc123",
+            scorable_chunks=[
                 ScorableDataChunkSummary(
                     time_bucket=TimeBucket.from_datetime(
                         dt.datetime.now(tz=dt.timezone.utc)
@@ -49,7 +50,7 @@ class TestValidator(unittest.TestCase):
         for _ in range(10000):
             chosen_chunk = Validator.choose_chunk_to_query(index)
             self.assertIsInstance(chosen_chunk, DataChunkSummary)
-            counts[index.chunks.index(chosen_chunk)] += 1
+            counts[index.scorable_chunks.index(chosen_chunk)] += 1
 
         total = sum(counts)
         ratios = [count / total for count in counts]

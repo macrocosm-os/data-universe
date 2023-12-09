@@ -85,7 +85,7 @@ class MinerScorer:
             # Now score the miner based on the amount of data it has, scaled based on
             # the reward distribution.
             score = 0.0
-            for chunk in index.chunks:
+            for chunk in index.scorable_chunks:
                 score += self.reward_distribution.get_score_for_chunk(chunk)
 
             # Scale the miner's score by its credibility.

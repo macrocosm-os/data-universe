@@ -2,9 +2,9 @@ import abc
 import bittensor as bt
 import asyncio
 import traceback
-from typing import Dict, List
+from typing import Dict, List, Optional
 
-from pydantic import BaseModel, PositiveInt
+from pydantic import BaseModel, Field, PositiveInt
 
 from common.data import DataEntity, DataLabel, DataSource, DateRange
 from storage.miner.miner_storage import MinerStorage
@@ -20,6 +20,11 @@ class ValidationResult(BaseModel):
     # include more information about the validation.
     is_valid: bool
 
+    reason: str = Field(
+        description="An optional reason for the validation result.",
+        default="",
+    )
+
 
 class ScrapeConfig(BaseModel):
     """Data class to contain the configuration to be used for scraping."""
@@ -33,8 +38,12 @@ class ScrapeConfig(BaseModel):
     # Date range within which the scraper should scrape.
     date_range: DateRange
 
-    # Labels for the scrape to scrape from.
-    labels: List[DataLabel]
+    # Optional Labels for the scrape to scrape from.
+    # .
+    labels: Optional[List[DataLabel]] = Field(
+        default=None,
+        description="Optional labels to filter the scrape by. If none are provided, the data source will issue a scrape for 'all' data, without any label filters applied",
+    )
 
 
 class LabelScrapingFrequency(BaseModel):
@@ -64,7 +73,7 @@ class SourceScrapingFrequency(BaseModel):
     label_frequencies: List[LabelScrapingFrequency]
 
 
-class ScapingDistribution(BaseModel):
+class ScrapingDistribution(BaseModel):
     """A relative distribution across sources and labels."""
 
     class Config:
@@ -80,21 +89,28 @@ class Scraper(abc.ABC):
     A scraper should be able to scrape batches of data and verify the correctness of a DataEntity by URI.
     """
 
+    class ValidationError(Exception):
+        """An exception raised when a validation fails."""
+
+        def __init__(self, message: str):
+            self.message = message
+            super().__init__(self.message)
+
     @abc.abstractmethod
-    async def validate(self, entity: DataEntity) -> ValidationResult:
-        """_summary_
+    async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
+        """Validate the correctness of a list of DataEntities by URI.
 
-        Args:
-            uri (str): _description_
+        The validation only needs to verify if the data content is correct. It doesn't need to verify that the size of the data matches because that validation is performed elsewhere.
 
-        Returns:
-            ValidationResult: _description_
+        Raises:
+            ValidationError: If the validation was unable to complete.
         """
-        ...
+        pass
 
     @abc.abstractmethod
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
-        raise NotImplemented
+        """Scrapes a batch of data based on the specified ScrapeConfig."""
+        pass
 
 
 class ScraperProvider:
@@ -111,7 +127,7 @@ class ScraperCoordinator:
     def __init__(
         self,
         scraper_provider: ScraperProvider,
-        scraping_distribution: ScapingDistribution,
+        scraping_distribution: ScrapingDistribution,
         miner_storage: MinerStorage,
         max_scrapes_per_minute: Dict[DataSource, PositiveInt],
     ):
@@ -120,7 +136,7 @@ class ScraperCoordinator:
         self.storage = miner_storage
         self.scrape_limits = max_scrapes_per_minute
         self.max_workers = 5
-        self.queue = asyncio.Queue
+        self.queue = asyncio.Queue()
 
     def start(self):
         asyncio.run(self._start())

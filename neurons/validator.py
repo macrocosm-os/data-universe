@@ -57,7 +57,7 @@ class Validator(BaseNeuron):
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
         # Dendrite lets us send messages to other nodes (axons) in the network.
-        self.dendrite = bt.dendrite(wallet=self.wallet)
+        self.dendrite = bt.Dendrite(wallet=self.wallet)
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation
@@ -108,10 +108,10 @@ class Validator(BaseNeuron):
 
         The random selection is done based on choosing a random byte in the total index to query, and then selecting that chunk
         """
-        total_size = sum(chunk.size_bytes for chunk in index.chunks)
+        total_size = sum(chunk.size_bytes for chunk in index.scorable_chunks)
         chosen_byte = random.uniform(0, total_size)
         iterated_bytes = 0
-        for chunk in index.chunks:
+        for chunk in index.scorable_chunks:
             if iterated_bytes + chunk.size_bytes >= chosen_byte:
                 return chunk
             iterated_bytes += chunk.size_bytes
