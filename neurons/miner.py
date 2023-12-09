@@ -23,6 +23,7 @@ import typing
 import bittensor as bt
 from common import utils
 from common.protocol import GetDataChunk, GetDataChunkIndex
+from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 
 from template.base.neuron import BaseNeuron
 
@@ -49,11 +50,15 @@ class Miner(BaseNeuron):
         )
         bt.logging.info(f"Axon created: {self.axon}")
 
-        # Instantiate runners
+        # Instantiate runners.
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
+
+        # Instantiate storage.
+        self.storage = SqliteMinerStorage(self.config.neuron.sqlite_database_name,
+                                          self.config.neuron.database_max_content_size_bytes)
 
     def run(self):
         """
@@ -198,7 +203,12 @@ class Miner(BaseNeuron):
         self.metagraph.sync(subtensor=self.subtensor)
 
     async def get_index(self, synapse: GetDataChunkIndex) -> GetDataChunkIndex:
-        # TODO: Implement this function.
+        """Runs after the GetDataChunkIndex synapse has been deserialized (i.e. after synapse.data is available)."""
+        bt.logging.info("Responding to a GetDataChunkIndex request.")
+
+        # List all the data chunk summaries that this miner currently has.
+        synapse.data_chunk_summaries = self.storage.list_data_chunk_summaries()
+
         return synapse
 
     async def get_index_blacklist(
@@ -210,7 +220,12 @@ class Miner(BaseNeuron):
         return self.default_priority(synapse)
 
     async def get_chunk(self, synapse: GetDataChunk) -> GetDataChunk:
-        # TODO: Implement.
+        """Runs after the GetDataChunk synapse has been deserialized (i.e. after synapse.data is available)."""
+        bt.logging.info("Responding to a GetDataChunk request for DataChunk: " + str(synapse.data_chunk_summary))
+
+        # List all the data entities that this miner has for the requested chunk.
+        synapse.data_entities = self.storage.list_data_entities_in_data_chunk(synapse.data_chunk_summary)
+
         return synapse
 
     async def get_chunk_blacklist(
