@@ -33,7 +33,8 @@ class ScrapeConfig(BaseModel):
         frozen = True
 
     # Number of entities (based on source) to get per scrape attempt.
-    entity_limit: int
+    # TODO: Update the scrapers to respect this as an Optional.
+    entity_limit: Optional[PositiveInt]
 
     # Date range within which the scraper should scrape.
     date_range: DateRange
@@ -86,6 +87,8 @@ class Scraper(abc.ABC):
     """An abstract base class for scrapers across all data sources.
 
     A scraper should be able to scrape batches of data and verify the correctness of a DataEntity by URI.
+    
+    Scrapers must be thread-safe.
     """
 
     @abc.abstractmethod
