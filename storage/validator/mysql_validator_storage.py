@@ -21,7 +21,7 @@ class MysqlValidatorStorage(ValidatorStorage):
 
     def __init__(self, host: str, user: str, password: str, database: str):
         # Get the connection to the user-created MySQL database.
-        self.connection = mysql.connector.connect=(host, user, password, database)
+        self.connection = mysql.connector.connect(host=host, user=user, password=password, database=database)
     
         cursor = self.connection.cursor()
 
@@ -61,49 +61,49 @@ class MysqlValidatorStorage(ValidatorStorage):
     def read_miner_index(self, miner_hotkey: str, valid_miners: Set[str]) -> ScorableMinerIndex:
         """Gets a scored index for all of the data that a specific miner promises to provide."""
         # Get a cursor to the database with dictionary enabled for accessing columns by name.
-        outer_cursor = self.connection.cursor(dictionary=True)
+        cursor = self.connection.cursor(dictionary=True)
 
         last_updated = None
 
-        # Get all the DataChunkSummaries for this miner.
-        outer_cursor.execute("SELECT * FROM MinerIndex WHERE hotkey = ?", [miner_hotkey])
-
-        scored_index = ScorableMinerIndex(hotkey=miner_hotkey, last_updated=last_updated)
-
         # Include the specified miner in the set of miners we check even if it is invalid.
         valid_miners.add(miner_hotkey)
-        
-        # For each row (representing a DataChunkSummary) turn it into a ScorableDataChunkSummary.
-        for row in outer_cursor:
+
+        # Get all the DataChunkSummaries for this miner joined to the total content size of like chunks.
+        cursor.execute("""SELECT m.*, agg.totalContentSize 
+                       FROM MinerIndex m 
+                       LEFT JOIN (
+                            SELECT hotkey, timeBucketId, source, label, SUM(contentSizeBytes) as totalContentSize
+                            FROM MinerIndex
+                            WHERE hotkey IN = ?
+                            GROUP BY hotkey, timeBucketId, source, label
+                       ) agg ON m.hotkey = agg.hotkey
+                            AND m.timeBucketId = agg.timeBucketId
+                            AND m.source = agg.source
+                            AND m.label = agg.label 
+                       WHERE hotkey = ?""", [tuple(valid_miners), miner_hotkey])
+
+        # Create the ScorableMinerIndex to hold each of the ScorableDataChunkSummaries we generate for this miner.
+        scored_index = ScorableMinerIndex(hotkey=miner_hotkey)
+
+        # For each row (representing a DataChunkSummary and Uniqueness) turn it into a ScorableDataChunkSummary.
+        for row in cursor:
             # Set last_updated to the first value since they are all the same for a given miner.
             if last_updated == None:
-                last_updated = outer_cursor['lastUpdated']
+                last_updated = cursor['lastUpdated']
 
             # Get the relevant primary key fields for comparing to other miners.
-            time_bucket_id = row['timeBucketId']
-            source = row['source']
             label=row['label']
             # Get the total bytes for this chunk for this miner before adjusting for uniqueness.
             content_size_bytes=row['contentSizeBytes']
-
-            # Find the sum of contentBytes for identical chunk across all other miners.
-            inner_cursor = self.connection.cursor()
-            inner_cursor.execute("""SELECT SUM(contentSizeBytes) FROM MinerIndex WHERE 
-                                 timeBucketId = ? AND
-                                 source = ? AND
-                                 label = ? AND
-                                 hotkey IN ?""",
-                                 [time_bucket_id, source, label, tuple(valid_miners)])
-            
-            result = inner_cursor.fetchone()
-            sum_content_size_bytes = result[0]
+            # Get the total bytes for this chunk across all valid miners (+ this miner).
+            total_content_size_bytes=row['totalContentSize']
 
             # Score the bytes as the fraction of the total content bytes for that chunk across all valid miners.
             scored_chunk = ScorableDataChunkSummary(
-                            time_bucket_id=time_bucket_id,
-                            source=DataSource(source),
+                            time_bucket_id=row['timeBucketId'],
+                            source=DataSource(row['source']),
                             size_bytes=content_size_bytes,
-                            scorable_bytes=content_size_bytes*content_size_bytes/sum_content_size_bytes)
+                            scorable_bytes=content_size_bytes*content_size_bytes/total_content_size_bytes)
             
             if label:
                 scored_chunk.label = label
@@ -111,6 +111,7 @@ class MysqlValidatorStorage(ValidatorStorage):
             # Add the chunk to the list of scored chunks on the overall index.
             scored_index.scorable_chunks.append(scored_chunk)
 
+        scored_index.last_updated = last_updated
         return scored_index
 
 
