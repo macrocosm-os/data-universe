@@ -188,6 +188,7 @@ class ScraperCoordinator:
                     # Use .partial here to make sure the functions arguments are copied/stored
                     # now rather than being lazily evaluated (if a lambda was used).
                     # https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/cell-var-from-loop.html#cell-var-from-loop-w0640
+                    bt.logging.trace(f"Adding scrape task for {source}: {config}")
                     self.queue.put(functools.partial(scraper.scrape, config))
 
                 self.tracker.on_scrape_scheduled(source, now)
