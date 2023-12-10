@@ -235,8 +235,8 @@ async def test_validate():
         ),
     ]
 
-    # results = await scraper.validate(entities=true_entities)
-    # print(f"Validation results: {results}")
+    results = await scraper.validate(entities=true_entities)
+    print(f"Validation results: {results}")
 
     # Now modify the entities to make them invalid and check validation fails.
     good_entity = true_entities[1]
@@ -262,5 +262,5 @@ async def test_validate():
 
 
 if __name__ == "__main__":
-    bt.logging()
+    asyncio.run(test_scrape())
     asyncio.run(test_validate())
