@@ -208,10 +208,13 @@ class RedditLiteScraper(Scraper):
         # Add run_inputs based on the type of content we're validating
         if content.data_type == RedditDataType.POST:
             run_input["searchComments"] = False
+            run_input["skipComments"] = True
             run_input["maxPostCount"] = 1
+            run_input["maxComments"] = 0
         elif content.data_type == RedditDataType.COMMENT:
             run_input["searchPosts"] = False
             run_input["maxComments"] = 1
+            run_input["maxPostCount"] = 0
         else:
             assert (
                 False
@@ -304,7 +307,7 @@ async def test_validate():
             datetime=dt.datetime(2023, 12, 5, 16, 29, 27, tzinfo=dt.timezone.utc),
             source=DataSource.REDDIT,
             label=DataLabel(value="r/bittensor_"),
-            content=b'{"id": "t1_kc3vd3n", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3vd3n/", "username": "one-bad-dude", "communityName": "r/bittensor_", "body": "Its not an EVM chain or ERC-20 token. Its a subnet/substrate of Polkadot ecosystem. So you need the polkadot.js wallet.", "upVotes": 3, "createdAt": "2023-12-05T16:29:27+00:00", "dataType": "comment", "title": null, "numberOfComments": null, "parent_id": null, "numberOfreplies": 1}',
+            content=b'{"id": "t1_kc3vd3n", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3vd3n/", "username": "one-bad-dude", "communityName": "r/bittensor_", "body": "Its not an EVM chain or ERC-20 token. Its a subnet/substrate of Polkadot ecosystem. So you need the polkadot.js wallet.", "upVotes": 3, "createdAt": "2023-12-05T16:29:27+00:00", "dataType": "comment", "title": null, "numberOfComments": null, "parentId": "t3_18bf67l", "numberOfreplies": 1}',
             content_size_bytes=476,
         ),
         DataEntity(
