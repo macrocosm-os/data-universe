@@ -232,13 +232,8 @@ async def test_validate():
         ),
     ]
 
-<<<<<<< HEAD
     results = await scraper.validate(entities=true_entities)
     print(f"Validation results: {results}")
-=======
-    # results = await scraper.validate(entities=true_entities)
-    # print(f"Validation results: {results}")
->>>>>>> 504ac29 (Implement the twitter scraper and fix some of the broken tests.)
 
     # Now modify the entities to make them invalid and check validation fails.
     good_entity = true_entities[1]
