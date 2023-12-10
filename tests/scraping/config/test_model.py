@@ -8,7 +8,7 @@ class TestScrapingConfig(unittest.TestCase):
         """Verifies a round-trip serialization/deserialization of the ScrapingConfig"""
         
         config = ScrapingConfig(
-            distribution=[
+            data_source_configs=[
                 {
                     "source": "X",
                     "cadence_secs": 60,
@@ -19,7 +19,7 @@ class TestScrapingConfig(unittest.TestCase):
                             "max_items": 100
                         },
                         {
-                            "label_choices": ["#crypto", "#weird"],
+                            "label_choices": ["#decentralizedfinance", "#btc"],
                         }
                     ]
                 },
@@ -39,6 +39,7 @@ class TestScrapingConfig(unittest.TestCase):
 
         # Serialize the object to JSON
         json_data = config.json()
+        print(json_data)
 
         # Deserialize the JSON back to an object
         deserialized_config = ScrapingConfig.parse_raw(json_data)
