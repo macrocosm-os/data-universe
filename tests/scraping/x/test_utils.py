@@ -16,6 +16,11 @@ class TestUtils(unittest.TestCase):
                 "https://twitter.com/bittensor_alert/status/1733247372950397060"
             )
         )
+        self.assertTrue(
+            is_valid_twitter_url(
+                "https://www.twitter.com/bittensor_alert/status/1733247372950397060"
+            )
+        )
 
 
 if __name__ == "__main__":

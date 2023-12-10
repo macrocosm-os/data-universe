@@ -1,6 +1,6 @@
 apify-client
-bittensor
+bittensor>=6.0
 jupyter
-pydantic
+pydantic>=2.0
 python-dotenv
 torch

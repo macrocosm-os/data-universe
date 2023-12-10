@@ -144,18 +144,6 @@ class TwitterFlashScraper(Scraper):
         return results
 
     @classmethod
-    def _are_entity_attributes_correct(
-        cls, entity: DataEntity, tweet: XContent
-    ) -> bool:
-        """Checks if the attributes of the DataEntity match the attributes of the tweet."""
-        return (
-            entity.uri == tweet.url
-            and entity.datetime == tweet.timestamp
-            and entity.source == DataSource.X
-            and entity.label == tweet.tweet_hashtags[0]
-        )
-
-    @classmethod
     def _validate_tweet(cls, tweet: XContent, entity: DataEntity) -> ValidationResult:
         """Validates the tweet is valid by the definition provided by entity."""
         tweet_to_verify = None
