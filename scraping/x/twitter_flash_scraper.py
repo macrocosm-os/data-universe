@@ -73,7 +73,14 @@ class TwitterFlashScraper(Scraper):
                 bt.logging.error(
                     f"Failed to validate entities: {traceback.format_exc()}"
                 )
-                raise Scraper.ValidationError(f"Failed to run Apify Actor: {e}")
+                # This is an unfortunate situation. We have no way to distinguish a genuine failure from
+                # one caused by malicious input. In my own testing I was able to make the Actor timeout by
+                # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
+                # pass malicious input for chunks they don't have.
+                return ValidationResult(
+                    is_valid=False,
+                    reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                )
 
             # Parse the response
             tweets = self._best_effort_parse_dataset(dataset)
@@ -114,6 +121,8 @@ class TwitterFlashScraper(Scraper):
             max_items=scrape_config.entity_limit,
         )
 
+        bt.logging.trace(f"Performing Twitter scrape for query: {query}")
+
         # Run the Actor and retrieve the scraped data.
         dataset: List[dict] = None
         try:
@@ -142,18 +151,6 @@ class TwitterFlashScraper(Scraper):
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}"
                 )
         return results
-
-    @classmethod
-    def _are_entity_attributes_correct(
-        cls, entity: DataEntity, tweet: XContent
-    ) -> bool:
-        """Checks if the attributes of the DataEntity match the attributes of the tweet."""
-        return (
-            entity.uri == tweet.url
-            and entity.datetime == tweet.timestamp
-            and entity.source == DataSource.X
-            and entity.label == tweet.tweet_hashtags[0]
-        )
 
     @classmethod
     def _validate_tweet(cls, tweet: XContent, entity: DataEntity) -> ValidationResult:
@@ -241,19 +238,19 @@ async def test_validate():
     # Now modify the entities to make them invalid and check validation fails.
     good_entity = true_entities[1]
     bad_entities = [
-        good_entity.model_copy(
+        good_entity.copy(
             update={"uri": "https://twitter.com/nirmaljajra2/status/abc123"}
         ),
-        good_entity.model_copy(
+        good_entity.copy(
             update={
                 "content": b'{"username":"@nirmaljajra2","text":"Random-text-insertion-DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","replies":2,"retweets":0,"quotes":0,"likes":4,"url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
             }
         ),
-        good_entity.model_copy(
+        good_entity.copy(
             update={"datetime": good_entity.datetime + dt.timedelta(seconds=1)}
         ),
         # Hashtag ordering needs to be deterministic. Verify changing the order of the hashtags makes the content non-equivalent.
-        good_entity.model_copy(update={"label": DataLabel(value="#PAAl")}),
+        good_entity.copy(update={"label": DataLabel(value="#PAAl")}),
     ]
 
     for entity in bad_entities:

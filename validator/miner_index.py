@@ -12,13 +12,13 @@ class MinerIndexManager:
         pass
 
     def update_index(
-        self, uid: int, dendrite: bt.Dendrite
+        self, uid: int, dendrite: bt.dendrite
     ) -> Optional[ScorableMinerIndex]:
         """Updates the index for the 'uid' miner, and returns the latest known index or None if the miner hasn't yet provided an index.
 
         Args:
             uid (int): The miner's unique identifier.
-            dendrite (bt.Dendrite): The dendrite (client) to use to query the miner
+            dendrite (bt.dendrite): The dendrite (client) to use to query the miner
         """
         pass
 

@@ -8,6 +8,6 @@ def is_valid_twitter_url(url: str) -> bool:
 
     try:
         result = urlparse(url)
-        return all([result.scheme, result.netloc]) and result.netloc == "twitter.com"
+        return all([result.scheme, result.netloc]) and "twitter.com" in result.netloc
     except ValueError:
         return False

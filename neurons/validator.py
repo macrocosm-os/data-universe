@@ -58,7 +58,7 @@ class Validator(BaseNeuron):
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
         # Dendrite lets us send messages to other nodes (axons) in the network.
-        self.dendrite = bt.Dendrite(wallet=self.wallet)
+        self.dendrite = bt.dendrite(wallet=self.wallet)
         bt.logging.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation

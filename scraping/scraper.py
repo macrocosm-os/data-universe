@@ -89,21 +89,11 @@ class Scraper(abc.ABC):
     A scraper should be able to scrape batches of data and verify the correctness of a DataEntity by URI.
     """
 
-    class ValidationError(Exception):
-        """An exception raised when a validation fails."""
-
-        def __init__(self, message: str):
-            self.message = message
-            super().__init__(self.message)
-
     @abc.abstractmethod
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a list of DataEntities by URI.
 
         The validation only needs to verify if the data content is correct. It doesn't need to verify that the size of the data matches because that validation is performed elsewhere.
-
-        Raises:
-            ValidationError: If the validation was unable to complete.
         """
         pass
 
