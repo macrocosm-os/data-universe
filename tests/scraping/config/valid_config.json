@@ -1,0 +1,34 @@
+{
+    "scraping_configs": [
+        {
+            "source": "X",
+            "cadence_secs": 300,
+            "labels_to_scrape": [
+                {
+                    "label_choices": [
+                        "#bittensor",
+                        "#tao"
+                    ],
+                    "max_age_in_minutes": 1440,
+                    "max_items": 100
+                },
+                {
+                    "max_items": 500
+                }
+            ]
+        },
+        {
+            "source": "reddit",
+            "cadence_secs": 900,
+            "labels_to_scrape": [
+                {
+                    "label_choices": [
+                        "r/bittensor_",
+                        "r/bitcoin"
+                    ],
+                    "max_items": 50
+                }
+            ]
+        }
+    ]
+}
