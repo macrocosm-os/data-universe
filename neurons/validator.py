@@ -40,7 +40,7 @@ from typing import List, Tuple
 from traceback import print_exception
 
 from neurons.base_neuron import BaseNeuron
-from validator.miner_scorer import MinerScorer
+from rewards.miner_scorer import MinerScorer
 
 
 class Validator(BaseNeuron):

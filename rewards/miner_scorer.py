@@ -14,22 +14,20 @@ class MinerScorer:
     Thread safe.
     """
 
-    # The extra penalty factor applied to a miner's credibility when it fails data validation.
-    # It's necessary to have this extra penalty to ensure a miner strictly performs worse if it lies
-    # about its data index.
-    # E.g. if a miner claimed it has 2x the data it actually has, it needs to average a credibility score
-    # less than 0.5, or else it'd be scored the same as if it truthfully reported its data index.
-    CREDIBILITY_PENALTY_FACTOR = 0.1
+    # Start new miner's at a 50% credibility.
+    STARTING_CREDIBILITY = 0.5
 
     def __init__(
         self,
         num_neurons: int,
         reward_distribution: RewardDistribution,
-        alpha: float = 0.2,
+        alpha: float = 0.05,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
-        self.miner_credibility = torch.zeros(num_neurons, dtype=torch.float32)
+        self.miner_credibility = torch.full(
+            (num_neurons, 1), MinerScorer.STARTING_CREDIBILITY, dtype=torch.float32
+        )
         self.reward_distribution = reward_distribution
         self.alpha = alpha
 
@@ -62,7 +60,14 @@ class MinerScorer:
                 [self.scores, torch.zeros(to_add, dtype=torch.float32)]
             )
             self.miner_credibility = torch.cat(
-                [self.miner_credibility, torch.zeros(to_add, dtype=torch.float32)]
+                [
+                    self.miner_credibility,
+                    torch.full(
+                        (to_add, 1),
+                        MinerScorer.STARTING_CREDIBILITY,
+                        dtype=torch.float32,
+                    ),
+                ]
             )
 
     def on_miner_evaluated(
@@ -88,8 +93,8 @@ class MinerScorer:
             for chunk in index.scorable_chunks:
                 score += self.reward_distribution.get_score_for_chunk(chunk)
 
-            # Scale the miner's score by its credibility.
-            score *= self.miner_credibility[uid]
+            # Scale the miner's score by its credibility, squared.
+            score *= self.miner_credibility[uid] ** 2
 
             self._update_score(uid, score)
 
@@ -105,12 +110,6 @@ class MinerScorer:
         assert (
             len(validation_results) > 0
         ), "Must be provided at least 1 validation result."
-
-        all_failed = all(not result.is_valid for result in validation_results)
-
-        # Special case: The miner failed all validation results - apply an additional penalty.
-        if all_failed:
-            self.miner_credibility[uid] *= 1.0 - MinerScorer.CREDIBILITY_PENALTY_FACTOR
 
         # Use EMA to update the miner's credibility.
         credibility = sum(result.is_valid for result in validation_results) / float(
