@@ -139,7 +139,6 @@ class ScorableDataChunkSummary(DataChunkSummary):
     # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
     scorable_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
 
-
 class MinerIndex(BaseModel):
     """The Miner index."""
 
