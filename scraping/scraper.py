@@ -39,7 +39,6 @@ class ScrapeConfig(BaseModel):
     date_range: DateRange
 
     # Optional Labels for the scrape to scrape from.
-    # .
     labels: Optional[List[DataLabel]] = Field(
         default=None,
         description="Optional labels to filter the scrape by. If none are provided, the data source will issue a scrape for 'all' data, without any label filters applied",
