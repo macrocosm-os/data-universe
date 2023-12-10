@@ -43,9 +43,7 @@ class TestConfigReader(unittest.TestCase):
         this_dir = os.path.abspath(os.path.dirname(__file__))
         filepath = os.path.join(this_dir, "valid_config.json")
         loaded_config = ConfigReader.load_config(filepath)
-        
-        print(f"loaded config: {loaded_config}")
-        
+                
         self.assertEqual(loaded_config, expected_config)
     
     def test_load_config_invalid(self):
@@ -53,8 +51,9 @@ class TestConfigReader(unittest.TestCase):
         this_dir = os.path.abspath(os.path.dirname(__file__))
         filepath = os.path.join(this_dir, "invalid_config.json")
         
-        with self.assertRaises(Exception):
+        with self.assertRaises(Exception) as e:
             ConfigReader.load_config(filepath)
+        self.assertIn("Source 'bogus' not in", str(e.exception))
 
 if __name__ == '__main__':
     unittest.main()
