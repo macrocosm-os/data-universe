@@ -12,13 +12,13 @@ class SqliteMinerStorage(MinerStorage):
     # TODO Consider CHECK expression to limit source to expected ENUM values.
     # Sqlite type converters handle the mapping from Python datetime to Timestamp.
     DATA_ENTITY_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS DataEntity (
-                                uri                 TEXT        PRIMARY KEY,
-                                datetime            TIMESTAMP   NOT NULL,
-                                timeBucketId        INTEGER     NOT NULL,
-                                source              INTEGER     NOT NULL,
-                                label               CHAR(32)            ,
-                                content             BLOB        NOT NULL,
-                                contentSizeBytes    INTEGER     NOT NULL
+                                uri                 TEXT            PRIMARY KEY,
+                                datetime            TIMESTAMP(6)    NOT NULL,
+                                timeBucketId        INTEGER         NOT NULL,
+                                source              INTEGER         NOT NULL,
+                                label               CHAR(32)                ,
+                                content             BLOB            NOT NULL,
+                                contentSizeBytes    INTEGER         NOT NULL
                                 ) WITHOUT ROWID"""
 
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS chunk_index

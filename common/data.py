@@ -139,6 +139,20 @@ class ScorableDataChunkSummary(DataChunkSummary):
     # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
     scorable_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
 
+    def is_equivalent_to(self, other: "ScorableDataChunkSummary") -> bool:
+        """Returns whether this content is equivalent to another content, for the purposes of data correctness."""
+
+        if not other:
+            return False
+        
+        # TODO Check label here.
+        return (
+            other.time_bucket.id == self.time_bucket.id
+            and other.source.value == self.source.value
+            and other.size_bytes == self.size_bytes
+            and other.scorable_bytes == self.scorable_bytes
+        )
+
 
 class MinerIndex(BaseModel):
     """The Miner index."""
