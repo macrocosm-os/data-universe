@@ -39,7 +39,7 @@ from validator.miner_iterator import MinerIterator
 from typing import List, Tuple
 from traceback import print_exception
 
-from template.base.neuron import BaseNeuron
+from neurons.base_neuron import BaseNeuron
 from validator.miner_scorer import MinerScorer
 
 

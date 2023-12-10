@@ -25,7 +25,7 @@ from common import utils
 from common.protocol import GetDataChunk, GetDataChunkIndex
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 
-from template.base.neuron import BaseNeuron
+from neurons.base_neuron import BaseNeuron
 
 
 class Miner(BaseNeuron):
@@ -57,8 +57,10 @@ class Miner(BaseNeuron):
         self.lock = asyncio.Lock()
 
         # Instantiate storage.
-        self.storage = SqliteMinerStorage(self.config.neuron.sqlite_database_name,
-                                          self.config.neuron.database_max_content_size_bytes)
+        self.storage = SqliteMinerStorage(
+            self.config.neuron.sqlite_database_name,
+            self.config.neuron.database_max_content_size_bytes,
+        )
 
     def run(self):
         """
@@ -221,10 +223,15 @@ class Miner(BaseNeuron):
 
     async def get_chunk(self, synapse: GetDataChunk) -> GetDataChunk:
         """Runs after the GetDataChunk synapse has been deserialized (i.e. after synapse.data is available)."""
-        bt.logging.info("Responding to a GetDataChunk request for DataChunk: " + str(synapse.data_chunk_summary))
+        bt.logging.info(
+            "Responding to a GetDataChunk request for DataChunk: "
+            + str(synapse.data_chunk_summary)
+        )
 
         # List all the data entities that this miner has for the requested chunk.
-        synapse.data_entities = self.storage.list_data_entities_in_data_chunk(synapse.data_chunk_summary)
+        synapse.data_entities = self.storage.list_data_entities_in_data_chunk(
+            synapse.data_chunk_summary
+        )
 
         return synapse
 
