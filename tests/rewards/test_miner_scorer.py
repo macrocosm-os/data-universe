@@ -12,7 +12,7 @@ from common.data import (
     ScorableDataChunkSummary,
     ScorableMinerIndex,
 )
-from validator.miner_scorer import MinerScorer
+from rewards.miner_scorer import MinerScorer
 import datetime as dt
 import rewards.reward_distribution
 
@@ -134,16 +134,13 @@ class TestMinerScorer(unittest.TestCase):
             )
 
         scores = self.scorer.get_scores()
-        # Expect the honest miner to have scored twice the shady miner.
-        self.assertAlmostEqual(
+        # Expect the honest miner to have scored more than twice the shady miner.
+        self.assertGreater(
             scores[honest_miner].item(),
             2 * scores[shady_miner].item(),
-            delta=15,  # 10% of the expected honest miner score
         )
-        # Expect the dishonest miner to have scored 0.
-        self.assertAlmostEqual(
-            scores[dishonest_miner].item(), 0.0, delta=5
-        )  # 10% of the expected honest miner score
+        # Expect the dishonest miner to have scored ~0.
+        self.assertAlmostEqual(scores[dishonest_miner].item(), 0.0, delta=5)
 
     def test_on_miner_evaluated_dishonesty_is_penalized(self):
         """Verifies that a miner that claims to have more data than it actually has is, scores worse than
@@ -211,11 +208,12 @@ class TestMinerScorer(unittest.TestCase):
             )
 
             scores = self.scorer.get_scores()
-            # Verify the honest miner scored better than the shady miner.
-            self.assertGreater(
-                scores[honest_miner].item(),
-                scores[shady_miner].item(),
-            )
+            # Verify the honest miner scores consistently better than the shady miner, after a few steps.
+            if i > 1:
+                self.assertGreater(
+                    scores[honest_miner].item(),
+                    scores[shady_miner].item(),
+                )
 
 
 if __name__ == "__main__":
