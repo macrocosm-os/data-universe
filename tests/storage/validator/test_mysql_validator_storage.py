@@ -232,8 +232,8 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertTrue(scored_index.scorable_chunks[0].is_equivalent_to(expected_chunk_1))
-        self.assertTrue(scored_index.scorable_chunks[1].is_equivalent_to(expected_chunk_2))
+        self.assertEqual(scored_index.scorable_chunks[0], expected_chunk_1)
+        self.assertEqual(scored_index.scorable_chunks[1], expected_chunk_2)
 
     def test_read_miner_index_with_duplicate_chunks(self):
         """Tests that we can read (and score) a miner index when other miners have duplicate chunks."""
@@ -272,7 +272,7 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertTrue(scored_index.scorable_chunks[0].is_equivalent_to(expected_chunk_1))
+        self.assertEqual(scored_index.scorable_chunks[0], expected_chunk_1)
 
     def test_read_miner_index_with_invalid_miners(self):
         """Tests that we can read (and score) a miner index when other invalid miners have duplicate chunks."""
@@ -311,7 +311,7 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertTrue(scored_index.scorable_chunks[0].is_equivalent_to(expected_chunk_1))
+        self.assertEqual(scored_index.scorable_chunks[0], expected_chunk_1)
 
     def test_read_invalid_miner_index(self):
         """Tests that we can read (and score) an invalid miner index when other miners have duplicate chunks."""
@@ -350,7 +350,7 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertTrue(scored_index.scorable_chunks[0].is_equivalent_to(expected_chunk_1))
+        self.assertEqual(scored_index.scorable_chunks[0], expected_chunk_1)
 
     def test_delete_miner_index(self):
         """Tests that we can delete a miner index."""

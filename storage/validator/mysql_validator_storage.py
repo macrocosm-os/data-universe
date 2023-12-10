@@ -1,6 +1,6 @@
 import threading
 from common import utils
-from common.data import DataSource, MinerIndex, ScorableDataChunkSummary, ScorableMinerIndex, TimeBucket
+from common.data import DataLabel, DataSource, MinerIndex, ScorableDataChunkSummary, ScorableMinerIndex, TimeBucket
 from storage.validator.validator_storage import ValidatorStorage
 from typing import Set
 import datetime as dt
@@ -50,12 +50,6 @@ class MysqlValidatorStorage(ValidatorStorage):
         # Lock to avoid concurrency issues on clearing and inserting an index.
         self.upsert_miner_index_lock = threading.Lock()
 
-        # Lock to avoid concurrency issues on upserting a Miner and getting the id.
-        self.upsert_miner_lock = threading.Lock()
-
-        # Lock to avoid concurrency issues on inserting a Label and getting the id.
-        self.insert_label_lock = threading.Lock()
-
     def __del__(self):
         self.connection.close()
 
@@ -64,25 +58,24 @@ class MysqlValidatorStorage(ValidatorStorage):
         
         minerId = 0
 
-        with self.upsert_miner_lock:
-            # Buffer to ensure rowcount is correct.
-            cursor = self.connection.cursor(buffered=True)
-            # Check to see if the Miner already exists.
-            cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
+        # Buffer to ensure rowcount is correct.
+        cursor = self.connection.cursor(buffered=True)
+        # Check to see if the Miner already exists.
+        cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
 
-            if cursor.rowcount:
-                # If it does we can use the already fetched id.
-                minerId = cursor.fetchone()[0]
-                # If it does we only update the lastUpdated. (ON DUPLICATE KEY UPDATE consumes an autoincrement value)
-                cursor.execute("UPDATE Miner SET lastUpdated = %s WHERE hotkey = %s", [now_str, hotkey])
-                self.connection.commit()
-            else:
-                # If it doesn't we insert it.
-                cursor.execute("INSERT INTO Miner (hotkey, lastUpdated) VALUES (%s, %s)", [hotkey, now_str])
-                self.connection.commit()
-                # Then we get the newly created minerId
-                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
-                minerId = cursor.fetchone()[0]
+        if cursor.rowcount:
+            # If it does we can use the already fetched id.
+            minerId = cursor.fetchone()[0]
+            # If it does we only update the lastUpdated. (ON DUPLICATE KEY UPDATE consumes an autoincrement value)
+            cursor.execute("UPDATE Miner SET lastUpdated = %s WHERE hotkey = %s", [now_str, hotkey])
+            self.connection.commit()
+        else:
+            # If it doesn't we inser it.
+            cursor.execute("INSERT IGNORE INTO Miner (hotkey, lastUpdated) VALUES (%s, %s)", [hotkey, now_str])
+            self.connection.commit()
+            # Then we get the newly created minerId
+            cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
+            minerId = cursor.fetchone()[0]
 
         return minerId
 
@@ -91,22 +84,21 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         labelId = 0
 
-        with self.insert_label_lock:
-            # Buffer to ensure rowcount is correct.
-            cursor = self.connection.cursor(buffered=True)
-            # Check to see if the Label already exists.
-            cursor.execute("SELECT labelId FROM Label WHERE labelValue = %s", [label])
+        # Buffer to ensure rowcount is correct.
+        cursor = self.connection.cursor(buffered=True)
+        # Check to see if the Label already exists.
+        cursor.execute("SELECT labelId FROM Label WHERE labelValue = %s", [label])
 
-            if cursor.rowcount:
-                # If it does we can use the already fetched id.
-                labelId = cursor.fetchone()[0]
-            else:
-                # If it doesn't we insert it.
-                cursor.execute("INSERT INTO Label (labelValue) VALUES (%s)", [label])
-                self.connection.commit()
-                # Then we get the newly created labelId
-                cursor.execute("SELECT labelId FROM Label WHERE labelValue = %s", [label])
-                labelId = cursor.fetchone()[0]
+        if cursor.rowcount:
+            # If it does we can use the already fetched id.
+            labelId = cursor.fetchone()[0]
+        else:
+            # If it doesn't we insert it.
+            cursor.execute("INSERT IGNORE INTO Label (labelValue) VALUES (%s)", [label])
+            self.connection.commit()
+            # Then we get the newly created labelId
+            cursor.execute("SELECT labelId FROM Label WHERE labelValue = %s", [label])
+            labelId = cursor.fetchone()[0]
 
         return labelId
 
@@ -143,7 +135,12 @@ class MysqlValidatorStorage(ValidatorStorage):
 
 
     def read_miner_index(self, miner_hotkey: str, valid_miners: Set[str]) -> ScorableMinerIndex:
-        """Gets a scored index for all of the data that a specific miner promises to provide."""
+        """Gets a scored index for all of the data that a specific miner promises to provide.
+        
+        Args:
+            miner_hotkey (str): The hotkey of the miner to read the index for.
+            valid_miners (Set[str]): The set of miners that should be used for uniqueness scoring.
+        """
 
         # Get a cursor to the database with dictionary enabled for accessing columns by name.
         cursor = self.connection.cursor(dictionary=True)
@@ -203,7 +200,7 @@ class MysqlValidatorStorage(ValidatorStorage):
                             scorable_bytes=content_size_bytes*content_size_bytes/total_content_size_bytes)
             
             if label != "NULL":
-                scored_chunk.label = label
+                scored_chunk.label = DataLabel(value=label)
             
             # Add the chunk to the list of scored chunks on the overall index.
             scored_chunks.append(scored_chunk)
@@ -212,16 +209,20 @@ class MysqlValidatorStorage(ValidatorStorage):
         return scored_index
 
 
-    def delete_miner_index(self, hotkey: str):
-        """Removes the index for the specified miner."""
+    def delete_miner_index(self, miner_hotkey: str):
+        """Removes the index for the specified miner.
+        
+            Args:
+            miner_hotkey (str): The hotkey of the miner to remove from the index.
+        """
 
         # Get the minerId from the hotkey.
         cursor = self.connection.cursor(buffered=True)
-        cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
+        cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [miner_hotkey])
 
         # Delete the rows for the specified miner.
         if cursor.rowcount:
-            minerId = cursor.fetchone()[0]
-            cursor.execute("DELETE FROM MinerIndex WHERE minerId = %s", [minerId])
+            miner_id = cursor.fetchone()[0]
+            cursor.execute("DELETE FROM MinerIndex WHERE minerId = %s", [miner_id])
             self.connection.commit()
 
