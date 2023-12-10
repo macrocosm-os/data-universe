@@ -41,6 +41,7 @@ class RedditContent(BaseModel):
     # Comment-only fields.
     parent_id: Optional[str] = Field(
         description="The ID of the parent comment. Only applicable to comments.",
+        alias="parentId",
         default=None,
     )
     number_of_replies: Optional[int] = Field(
@@ -50,7 +51,7 @@ class RedditContent(BaseModel):
     def to_data_entity(self) -> DataEntity:
         """Converts the RedditContent to a DataEntity."""
 
-        content_bytes = self.model_dump_json().encode("utf-8")
+        content_bytes = self.json(by_alias=True).encode("utf-8")
         return DataEntity(
             uri=self.url,
             datetime=self.created_at,
@@ -64,7 +65,7 @@ class RedditContent(BaseModel):
     def from_data_entity(cls, data_entity: DataEntity) -> "RedditContent":
         """Converts a DataEntity to a RedditContent."""
 
-        return RedditContent.model_validate_json(data_entity.content.decode("utf-8"))
+        return RedditContent.parse_raw(data_entity.content.decode("utf-8"))
 
     def is_equivalent_to(self, other: "RedditContent") -> bool:
         """Returns whether this content is equivalent to another content, for the purposes of data correctness.

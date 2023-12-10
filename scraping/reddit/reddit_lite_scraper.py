@@ -75,7 +75,14 @@ class RedditLiteScraper(Scraper):
                 dataset: List[dict] = await self.runner.run(run_config, run_input)
             except ActorRunError as e:
                 bt.logging.error(f"Failed to validate entity: {traceback.format_exc()}")
-                raise Scraper.ValidationError(f"Failed to run Apify Actor: {e}")
+                # This is an unfortunate situation. We have no way to distinguish a genuine failure from
+                # one caused by malicious input. In my own testing I was able to make the Actor timeout by
+                # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
+                # pass malicious input for chunks they don't have.
+                return ValidationResult(
+                    is_valid=False,
+                    reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                )
 
             # Parse the response
             items = self._best_effort_parse_dataset(dataset)
@@ -113,7 +120,16 @@ class RedditLiteScraper(Scraper):
             ]
         else:
             # No label provided. Search all
-            run_input["searches"] = ["https://www.reddit.com/"]
+            # I'm sure there's some magic combination of inputs to the Actor that'll
+            # make it do the sane thing and just search Reddit's home page, while respecting
+            # the 'time' field, but I couldn't get that to work.
+            # Instead, let's just search for a random and super common word.
+            # I'm sorry for making this English only.
+            # TODO: Figure out something a little more sophisticated.
+            word = random.choice(["the", "he", "she", "they", "it", "and"])
+            run_input["searches"] = [word]
+
+        bt.logging.trace(f"Performing scrape with run_input: {run_input}")
 
         # Construct the input to the runner.
         run_config = RunConfig(
@@ -166,8 +182,8 @@ class RedditLiteScraper(Scraper):
         return random.choice(["top", "hot", "relevance", "comments", "new"])
 
     def _normalize_label(self, label: DataLabel) -> str:
-        """Returns the datalabel without the 'r/' prefix."""
-        return DataLabel(value=label.value.removeprefix("r/"))
+        """Returns the datalabel value without the 'r/' prefix."""
+        return label.value.removeprefix("r/")
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[RedditContent]:
         """Performs a best effort parsing of Apify dataset into List[RedditContent]
@@ -255,8 +271,8 @@ async def test_scrape():
         ScrapeConfig(
             entity_limit=3,
             date_range=DateRange(
-                start=dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(hours=3),
-                end=dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(hours=2),
+                start=dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=2),
+                end=dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=2),
             ),
             labels=[DataLabel(value="r/bittensor_")],
         )
@@ -280,45 +296,47 @@ async def test_scrape():
 
 
 async def test_validate():
-    scraper = TwitterFlashScraper()
+    scraper = RedditLiteScraper()
 
     true_entities = [
         DataEntity(
-            uri="https://twitter.com/TcMMTsTc/status/1733441357090545731",
-            datetime=dt.datetime(2023, 12, 9, 10, 59, tzinfo=dt.timezone.utc),
-            source=DataSource.X,
-            content=b'{"username":"@TcMMTsTc","text":"\xe3\x81\xbc\xe3\x81\x8f\xe7\x9c\xa0\xe3\x81\x84\xe3\x81\xa7\xe3\x81\x99","replies":1,"retweets":0,"quotes":0,"likes":31,"url":"https://twitter.com/TcMMTsTc/status/1733441357090545731","timestamp":"2023-12-09T10:59:00Z","tweet_hashtags":[]}',
-            content_size_bytes=218,
+            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3vd3n/",
+            datetime=dt.datetime(2023, 12, 5, 16, 29, 27, tzinfo=dt.timezone.utc),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="r/bittensor_"),
+            content=b'{"id": "t1_kc3vd3n", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3vd3n/", "username": "one-bad-dude", "communityName": "r/bittensor_", "body": "Its not an EVM chain or ERC-20 token. Its a subnet/substrate of Polkadot ecosystem. So you need the polkadot.js wallet.", "upVotes": 3, "createdAt": "2023-12-05T16:29:27+00:00", "dataType": "comment", "title": null, "numberOfComments": null, "parent_id": null, "numberOfreplies": 1}',
+            content_size_bytes=476,
         ),
         DataEntity(
-            uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
-            datetime=dt.datetime(2023, 12, 9, 10, 52, tzinfo=dt.timezone.utc),
-            source=DataSource.X,
-            label=DataLabel(value="#bittensor"),
-            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","replies":2,"retweets":0,"quotes":0,"likes":4,"url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
-            content_size_bytes=484,
+            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/",
+            datetime=dt.datetime(2023, 12, 5, 15, 59, 13, tzinfo=dt.timezone.utc),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="r/bittensor_"),
+            content=b'{"id": "t3_18bf67l", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Hey all!!\\n\\nHow do we add TAO to MetaMask? Online gives me these network configurations and still doesn\\u2019t work? \\n\\nHow are you all storing TAO? I wanna purchase on MEXC, but holding off until I can store it!  \\ud83d\\ude11 \\n\\nThanks in advance!!!\\n\\n=====\\n\\nhere is a manual way.\\nNetwork Name\\nTao Network\\n\\nRPC URL\\nhttp://rpc.testnet.tao.network\\n\\nChain ID\\n558\\n\\nCurrency Symbol\\nTAO", "upVotes": 1, "createdAt": "2023-12-05T15:59:13+00:00", "dataType": "post", "title": "How do you add TAO to MetaMask?", "numberOfComments": 10, "parent_id": null, "numberOfreplies": null}',
+            content_size_bytes=775,
         ),
     ]
 
-    # results = await scraper.validate(entities=true_entities)
-    # print(f"Validation results: {results}")
+    results = await scraper.validate(entities=true_entities)
+    print(f"Expecting Pass. Validation results: {results}")
 
     # Now modify the entities to make them invalid and check validation fails.
     good_entity = true_entities[1]
     bad_entities = [
-        good_entity.model_copy(
-            update={"uri": "https://twitter.com/nirmaljajra2/status/abc123"}
-        ),
-        good_entity.model_copy(
+        good_entity.copy(
             update={
-                "content": b'{"username":"@nirmaljajra2","text":"Random-text-insertion-DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","replies":2,"retweets":0,"quotes":0,"likes":4,"url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
+                "uri": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask-abc123/"
             }
         ),
-        good_entity.model_copy(
+        good_entity.copy(
+            update={
+                "content": b'{"id": "t3_18bf67l", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Hey all!!\\n\\nHow do we add TAO to MetaMask? Online gives me these network configurations and still doesn\\u2019t work? \\n\\nHow are you all storing TAO? I wanna purchase on MEXC, but holding off until I can store it!  \\ud83d\\ude11 \\n\\nThanks in advance!!!\\n\\n=====\\n\\nhere is a manual way.\\nNetwork Name\\nTao Network\\n\\nRPC URL\\nhttp://rpc.testnet.tao.network\\n\\nChain ID\\n558\\n\\nCurrency Symbol\\nTAO", "upVotes": 1, "createdAt": "2023-12-05T15:59:13+00:00", "dataType": "post", "title": "How do you add TAO to MetaMask??!!?", "numberOfComments": 10, "parent_id": null, "numberOfreplies": null}',
+            }
+        ),
+        good_entity.copy(
             update={"datetime": good_entity.datetime + dt.timedelta(seconds=1)}
         ),
-        # Hashtag ordering needs to be deterministic. Verify changing the order of the hashtags makes the content non-equivalent.
-        good_entity.model_copy(update={"label": DataLabel(value="#PAAl")}),
+        good_entity.copy(update={"label": DataLabel(value="bittensor_")}),
     ]
 
     for entity in bad_entities:
@@ -327,5 +345,5 @@ async def test_validate():
 
 
 if __name__ == "__main__":
-    bt.logging()
     asyncio.run(test_scrape())
+    asyncio.run(test_validate())

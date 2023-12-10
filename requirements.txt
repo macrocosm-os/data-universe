@@ -1,6 +1,7 @@
 apify-client
 bittensor>=6.0
 jupyter
-pydantic>=2.0
+# Bittensor requires pydantic <2.0.0
+pydantic==1.10
 python-dotenv
 torch

@@ -34,7 +34,7 @@ class XContent(BaseModel):
     def to_data_entity(self) -> DataEntity:
         """Converts the XContent to a DataEntity."""
 
-        content_bytes = self.model_dump_json().encode("utf-8")
+        content_bytes = self.json().encode("utf-8")
         return DataEntity(
             uri=self.url,
             datetime=self.timestamp,
@@ -50,7 +50,7 @@ class XContent(BaseModel):
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
         """Converts a DataEntity to an XContent."""
 
-        return XContent.model_validate_json(data_entity.content.decode("utf-8"))
+        return XContent.parse_raw(data_entity.content.decode("utf-8"))
 
     def is_equivalent_to(self, other: "XContent") -> bool:
         """Returns whether this content is equivalent to another content, for the purposes of data correctness.

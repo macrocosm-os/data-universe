@@ -54,14 +54,12 @@ class TestModel(unittest.TestCase):
         )
 
         non_matching_content = [
-            content.model_copy(update={"username": "user2"}),
-            content.model_copy(update={"text": "Hello world!"}),
-            content.model_copy(update={"url": "https://twitter.com/456"}),
-            content.model_copy(
-                update={"timestamp": timestamp + dt.timedelta(seconds=1)}
-            ),
+            content.copy(update={"username": "user2"}),
+            content.copy(update={"text": "Hello world!"}),
+            content.copy(update={"url": "https://twitter.com/456"}),
+            content.copy(update={"timestamp": timestamp + dt.timedelta(seconds=1)}),
             # Hashtag ordering needs to be deterministic. Verify changing the order of the hashtags makes the content non-equivalent.
-            content.model_copy(update={"tweet_hashtags": ["#TAO", "#bittensor"]}),
+            content.copy(update={"tweet_hashtags": ["#TAO", "#bittensor"]}),
         ]
 
         for c in non_matching_content:
