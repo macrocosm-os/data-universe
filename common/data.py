@@ -96,9 +96,20 @@ class DataEntity(BaseModel):
     # Should be in UTC.
     datetime: dt.datetime
     source: DataSource
-    label: Optional[DataLabel]
+    label: Optional[DataLabel] = Field(
+        default=None,
+    )
     content: bytes
     content_size_bytes: int = Field(ge=0)
+
+    def matches_non_content_fields(self, other: "DataEntity") -> bool:
+        """Returns whether this entity matches the non-content fields of another entity."""
+        return (
+            self.uri == other.uri
+            and self.datetime == other.datetime
+            and self.source == other.source
+            and self.label == other.label
+        )
 
 
 class DataChunkSummary(BaseModel):
@@ -112,7 +123,9 @@ class DataChunkSummary(BaseModel):
 
     time_bucket: TimeBucket
     source: DataSource
-    label: Optional[DataLabel]
+    label: Optional[DataLabel] = Field(
+        default=None,
+    )
     size_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
 
 
@@ -129,11 +142,14 @@ class ScorableDataChunkSummary(DataChunkSummary):
 
 class MinerIndex(BaseModel):
     """The Miner index."""
+
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     chunks: List[DataChunkSummary] = Field(description="Chunks the miner is serving.")
 
+
 class ScorableMinerIndex(BaseModel):
     """The Miner index, with additional information required for scoring."""
+
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     scorable_chunks: List[ScorableDataChunkSummary] = Field(
         description="Chunks the miner is serving, scored on uniqueness."

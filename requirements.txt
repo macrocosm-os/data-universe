@@ -1,4 +1,6 @@
+apify-client
 bittensor
 jupyter
 pydantic
+python-dotenv
 torch
