@@ -16,6 +16,9 @@ class MinerScorer:
 
     # Start new miner's at a 50% credibility.
     STARTING_CREDIBILITY = 0.5
+    
+    # The minimum credibility score a miner must have to be considered trustworthy.
+    CREDIBLE_THRESHOLD = 0.8
 
     def __init__(
         self,
@@ -41,10 +44,23 @@ class MinerScorer:
         with self.lock:
             return self.scores.clone()
 
-    def reset_score(self, uid: int) -> None:
-        """Resets the score of the 'uid' miner to 0."""
+    def reset(self, uid: int) -> None:
+        """Resets the score and credibility of miner 'uid'."""
         with self.lock:
             self.scores[uid] = 0.0
+            self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
+            
+    def get_miner_credibility_for_test(self, uid: int) -> float:
+        """Returns the credibility of miner 'uid'.
+        
+        Should only be used in tests."""
+        with self.lock:
+            return self.miner_credibility[uid].item()
+            
+    def get_credible_miners(self) -> List[int]:
+        """Returns the list of miner UIDs that are considered trustworthy."""
+        with self.lock:
+            return [index for index, value in enumerate(self.miner_credibility) if value >= MinerScorer.CREDIBLE_THRESHOLD]
 
     def resize(self, num_neurons: int) -> None:
         """Resizes the score tensor to the new number of neurons.

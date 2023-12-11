@@ -103,7 +103,7 @@ class TestScraperCoordinator(unittest.TestCase):
         )
         label_counts = defaultdict(int)
         time_counts = defaultdict(int)
-        runs = 10000
+        runs = 20000
         for _ in range(runs):
             scrape_configs = _choose_scrape_configs(DataSource.REDDIT, config, now)
 
