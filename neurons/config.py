@@ -18,6 +18,7 @@
 
 import os
 import argparse
+from pathlib import Path
 import bittensor as bt
 from loguru import logger
 
@@ -143,6 +144,17 @@ def add_args(cls, parser):
             type=int,
             help="The maximum amount of content in bytes to store. Expect additional overhead for non-content data.",
             default=utils.mb_to_bytes(10000),
+        )
+
+        root_dir = Path(os.path.dirname(__file__)).parent
+        default_file = os.path.join(
+            os.path.join(root_dir, "scraping/config/scraping_config.json"),
+        )
+        parser.add_argument(
+            "--neuron.scraping_config_file",
+            type=str,
+            help="The location of the scraping config JSON file to use",
+            default=default_file,
         )
 
 

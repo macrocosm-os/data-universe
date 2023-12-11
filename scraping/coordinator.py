@@ -155,6 +155,9 @@ class ScraperCoordinator:
         Runs the Coordinator on a background thread. The coordinator will run until the process dies.
         """
         assert not self.is_running, "ScrapingCoordinator already running"
+        
+        bt.logging.info("Starting ScrapingCoordinator in a background thread")
+        
         threading.Thread(target=self.run, daemon=True).start()
         self.is_running = True
 

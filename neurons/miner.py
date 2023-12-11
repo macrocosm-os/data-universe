@@ -16,6 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+import sys
 import threading
 import time
 import traceback
@@ -23,6 +24,9 @@ import typing
 import bittensor as bt
 from common import utils
 from common.protocol import GetDataChunk, GetDataChunkIndex
+from scraping.config.config_reader import ConfigReader
+from scraping.coordinator import ScraperCoordinator
+from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 
 from neurons.base_neuron import BaseNeuron
@@ -62,27 +66,19 @@ class Miner(BaseNeuron):
             self.config.neuron.database_max_content_size_bytes,
         )
 
+        # Configure the ScraperCoordinator
+        scraping_config = ConfigReader.load_config(self.config.neuron.config_path)
+        bt.logging.info(f"Loaded scraping config: {scraping_config}")
+
+        self.scraping_coordinator = ScraperCoordinator(
+            scraper_provider=ScraperProvider(),
+            miner_storage=self.storage,
+            config=scraping_config,
+        )
+
     def run(self):
         """
-        Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
-
-        This function performs the following primary tasks:
-        1. Check for registration on the Bittensor network.
-        2. Starts the miner's axon, making it active on the network.
-        3. Periodically resynchronizes with the chain; updating the metagraph with the latest network state and setting weights.
-
-        The miner continues its operations until `should_exit` is set to True or an external interruption occurs.
-        During each epoch of its operation, the miner waits for new blocks on the Bittensor network, updates its
-        knowledge of the network (metagraph), and sets its weights. This process ensures the miner remains active
-        and up-to-date with the network's latest state.
-
-        Note:
-            - The function leverages the global configurations set during the initialization of the miner.
-            - The miner's axon serves as its interface to the Bittensor network, handling incoming and outgoing requests.
-
-        Raises:
-            KeyboardInterrupt: If the miner is stopped by a manual interruption.
-            Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
+        Initiates and manages the main loop for the miner.
         """
 
         # Check that miner is registered on the network.
@@ -100,6 +96,8 @@ class Miner(BaseNeuron):
 
         bt.logging.info(f"Miner starting at block: {self.block}")
 
+        self.scraping_coordinator.run_in_background_thread()
+
         # This loop maintains the miner's operations until intentionally stopped.
         try:
             while not self.should_exit:
@@ -108,7 +106,7 @@ class Miner(BaseNeuron):
                     < self.config.neuron.epoch_length
                 ):
                     # Wait before checking again.
-                    time.sleep(1)
+                    time.sleep(12)
 
                     # Check if we should exit.
                     if self.should_exit:
@@ -118,11 +116,17 @@ class Miner(BaseNeuron):
                 self.sync()
                 self.step += 1
 
+                # Log our current status.
+                self._log_status(self.step)
+
+            bt.logging.info("Miner stopped.")
+
         # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
             self.axon.stop()
+            self.scraping_coordinator.stop()
             bt.logging.success("Miner killed by keyboard interrupt.")
-            exit()
+            sys.exit()
 
         # In case of unforeseen errors, the miner will log the error and continue operations.
         except Exception as e:
@@ -204,12 +208,37 @@ class Miner(BaseNeuron):
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
 
+    def _log_status(self, step: int):
+        """Logs a summary of the miner status in the subnet."""
+        relative_incentive = self.metagraph.I[self.uid].item() / max(self.metagraph.I)
+        incentive_and_hk = zip(self.metagraph.I, self.metagraph.hotkeys)
+        incentive_and_hk = sorted(incentive_and_hk, key=lambda x: x[0], reverse=True)
+        position = -1
+        for i, (_, hk) in enumerate(incentive_and_hk):
+            if hk == self.wallet.hotkey.ss58_address:
+                position = i
+                break
+        log = (
+            f"Step:{step} | "
+            f"Block:{self.metagraph.block.item()} | "
+            f"Stake:{self.metagraph.S[self.uid]} | "
+            f"Incentive:{self.metagraph.I[self.uid]} | "
+            f"Relative Incentive:{relative_incentive} | "
+            f"Position:{position} | "
+            f"Emission:{self.metagraph.E[self.uid]}"
+        )
+        bt.logging.info(log)
+
     async def get_index(self, synapse: GetDataChunkIndex) -> GetDataChunkIndex:
         """Runs after the GetDataChunkIndex synapse has been deserialized (i.e. after synapse.data is available)."""
         bt.logging.info("Responding to a GetDataChunkIndex request.")
 
         # List all the data chunk summaries that this miner currently has.
         synapse.data_chunk_summaries = self.storage.list_data_chunk_summaries()
+
+        bt.logging.info(
+            f"Returning miner index with size: len({synapse.data_chunk_summaries})"
+        )
 
         return synapse
 
@@ -271,5 +300,5 @@ class Miner(BaseNeuron):
 if __name__ == "__main__":
     with Miner() as miner:
         while True:
-            bt.logging.info("Miner running...", time.time())
-            time.sleep(5)
+            bt.logging.trace("Miner running...", time.time())
+            time.sleep(60)
