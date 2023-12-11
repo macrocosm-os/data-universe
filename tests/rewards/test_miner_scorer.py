@@ -75,7 +75,7 @@ class TestMinerScorer(unittest.TestCase):
         scores = self.scorer.get_scores()
         self.assertGreater(scores[uid], 0.0)
 
-        self.scorer.reset_score(uid)
+        self.scorer.reset(uid)
         scores = self.scorer.get_scores()
         self.assertEqual(scores[uid], 0.0)
 

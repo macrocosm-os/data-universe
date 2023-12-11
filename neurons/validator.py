@@ -22,13 +22,14 @@ import copy
 import datetime
 import random
 import sys
+import traceback
 import torch
 import asyncio
 import threading
 import time
 import os
 import bittensor as bt
-from common.data import DataChunkSummary, DataEntity, DateRange, ScorableMinerIndex
+from common.data import DataChunkSummary, DataEntity, DateRange, MinerIndex, ScorableMinerIndex
 from common.protocol import GetDataChunk, GetDataChunkIndex
 import common.utils as utils
 from rewards.reward_distribution import RewardDistribution
@@ -78,9 +79,9 @@ class Validator(BaseNeuron):
             [utils.is_miner(uid, self.metagraph) for uid in self.metagraph.uids]
         )
         self.miner_iterator = MinerIterator(self.miner_uids)
+        # TODO: Read values from the config.
         #host: str, user: str, password: str, database: str
-        self.validator_storage = MysqlValidatorStorage(self.config)
-        self.miner_index_manager = MinerIndexManager()
+        self.storage = MysqlValidatorStorage(self.config)
         self.scraper_provider = ScraperProvider()
 
         # Instantiate runners
@@ -178,13 +179,13 @@ class Validator(BaseNeuron):
 
         return (True, "")
     
-    async def update_and_get_miner_index(
-        self, uid: int, miner_hotkey: str, miner_axon: bt.AxonInfo
+    async def _update_and_get_miner_index(
+        self, miner_hotkey: str, miner_axon: bt.AxonInfo
     ) -> Optional[ScorableMinerIndex]:
         """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index.
         """
         
-        bt.logging.trace(f"{uid}: Updating miner index.")
+        bt.logging.trace(f"{miner_hotkey}: Updating miner index.")
 
         response = await self.dendrite.forward(
             axons=[miner_axon],
@@ -197,37 +198,21 @@ class Validator(BaseNeuron):
             or not isinstance(response, GetDataChunkIndex)
             or not response.success
         ):
-            bt.logging.trace(f"{uid}: Miner returned an invalid/failed response for the index.")
-            valid_miners = 
-            return self.validator_storage.read_miner_index(miner_hotkey=miner_hotkey)
-            self.scorer.on_miner_evaluated(
-                uid, index, [ValidationResult(is_valid=False, reason="Response failed or is invalid")]
-            )
-            return
+            bt.logging.trace(f"{miner_hotkey}: Miner returned an invalid/failed response for the index.")
+            # Miner failed to update the index. Use the latest index, if present.
+            return self._get_miner_index(miner_hotkey)
         
-        pass
+        # Miner successfully updated the index. Store it and return it.
+        bt.logging.trace(f"{miner_hotkey}: Got new miner index. Size={len(response.data_chunk_summaries)}")
+        self.storage.upsert_miner_index(MinerIndex(hotkey=miner_hotkey, chunks=response.data_chunk_summaries))
+        return self._get_miner_index(miner_hotkey)
     
     def _get_miner_index(self, miner_hotkey: str) -> Optional[ScorableMinerIndex]:
         """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index.
         """
         bt.logging.trace(f"{miner_hotkey}: Getting miner index.")
         valid_miners = self.scorer.get_credible_miners()
-        
-
-        if (
-            response is None
-            or not isinstance(response, GetDataChunkIndex)
-            or not response.success
-        ):
-            bt.logging.trace(f"{uid}: Miner returned an invalid/failed response for the index.")
-            valid_miners = 
-            return self.validator_storage.read_miner_index(miner_hotkey=miner_hotkey)
-            self.scorer.on_miner_evaluated(
-                uid, index, [ValidationResult(is_valid=False, reason="Response failed or is invalid")]
-            )
-            return
-        
-        pass
+        return self.storage.read_miner_index(miner_hotkey=miner_hotkey, valid_miners=valid_miners)
 
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
@@ -245,20 +230,18 @@ class Validator(BaseNeuron):
         axon_info = self.metagraph.axons[uid]
         hotkey = self.metagraph.hotkeys[uid]
         # Query the miner for the latest index.
-        index = await self.miner_index_manager.update_index(hotkey, axon_info, self.dendrite)
+        index = await self._update_and_get_miner_index(hotkey, axon_info)
         if not index:
             # The miner hasn't provided an index yet, so we can't validate them. Set their score to 0 and move on.
             bt.logging.trace(
-                f"{uid}: Failed to get an index for miner. Setting score to 0."
+                f"{hotkey}: Failed to get an index for miner. Setting score to 0."
             )
-            self.scorer.reset_score(uid)
+            self.scorer.reset(uid)
             return
         
-        bt.logging.trace(f"Received the index from miner {uid}. num chunks={len(index.scorable_chunks)}")
-
         # From that index, find a chunk to sample and get it from the miner.
         chosen_chunk: DataChunkSummary = Validator.choose_chunk_to_query(index)
-        bt.logging.trace(f"{uid} Querying miner for chunk {chosen_chunk}")
+        bt.logging.trace(f"{hotkey} Querying miner for chunk {chosen_chunk}")
         response = await self.dendrite.forward(
             axons=[axon_info],
             synapse=GetDataChunk(data_chunk_summary=chosen_chunk),
@@ -272,20 +255,20 @@ class Validator(BaseNeuron):
             or not isinstance(response, GetDataChunk)
             or not response.success
         ):
-            bt.logging.trace(f"{uid}: Miner returned an invalid/failed response.")
+            bt.logging.trace(f"{hotkey}: Miner returned an invalid/failed response.")
             self.scorer.on_miner_evaluated(
                 uid, index, [ValidationResult(is_valid=False, reason="Response failed or is invalid")]
             )
             return
 
         # Perform basic validation on the entities.
-        bt.logging.trace(f"{uid}: Performing basic validation on entities ({len(response.data_entities)})")
+        bt.logging.trace(f"{hotkey}: Performing basic validation on entities ({len(response.data_entities)})")
 
         data_entities: List[DataEntity] = response.data_entities
         (valid, reason) = Validator.are_entities_valid(data_entities, chosen_chunk)
         if not valid:
             bt.logging.trace(
-                f"Miner {uid} failed basic entity validation with reason {reason}."
+                f"Miner {hotkey} failed basic entity validation with reason {reason}."
             )
             self.scorer.on_miner_evaluated(
                 uid, index, [ValidationResult(is_valid=False, reason=reason)]
@@ -297,7 +280,7 @@ class Validator(BaseNeuron):
             data_entities
         )
 
-        bt.logging.trace(f"{uid}: Basic validation passed. Validating {entities_to_validate}")
+        bt.logging.trace(f"{hotkey}: Basic validation passed. Validating {entities_to_validate}")
 
         scraper = self.scraper_provider.get(chosen_chunk.source)
         validation_results = scraper.validate_entities(entities_to_validate)
@@ -312,8 +295,9 @@ class Validator(BaseNeuron):
             block (int): The block at which we started this evaluation.
         """
         next_uid = self.miner_iterator.peek()
-        last_evaluated = self.miner_index_manager.get_datetime_index_last_updated(
-            next_uid
+        hotkey = self.metagraph.hotkeys[next_uid]
+        last_evaluated = self.storage.get_miner_last_updated(
+            hotkey
         )
         now = datetime.datetime.utcnow()
         if last_evaluated and (now - last_evaluated) < Validator.MIN_EVALUATION_PERIOD:
@@ -336,22 +320,12 @@ class Validator(BaseNeuron):
 
     def run(self):
         """
-        Initiates and manages the main loop for the miner on the Bittensor network. The main loop handles graceful shutdown on keyboard interrupts and logs unforeseen errors.
-
-        This function performs the following primary tasks:
-        1. Check for registration on the Bittensor network.
-        2. Continuously forwards queries to the miners on the network, rewarding their responses and updating the scores accordingly.
-        3. Periodically resynchronizes with the chain; updating the metagraph with the latest network state and setting weights.
-
-        The essence of the validator's operations is in the forward function, which is called every step. The forward function is responsible for querying the network and scoring the responses.
-
-        Note:
-            - The function leverages the global configurations set during the initialization of the miner.
-            - The miner's axon serves as its interface to the Bittensor network, handling incoming and outgoing requests.
-
-        Raises:
-            KeyboardInterrupt: If the miner is stopped by a manual interruption.
-            Exception: For unforeseen errors during the miner's operation, which are logged for diagnosis.
+        Initiates and manages the main loop for the validator, which
+        
+        1. Periodically updates the metagraph
+        2. Periodically writes the latest scores to the chain
+        3. Evaluates miners
+        4. Saves state
         """
 
         self.load_state()
@@ -512,7 +486,11 @@ class Validator(BaseNeuron):
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
-                self.scorer.reset_score(uid)  # hotkey has been replaced
+                self.scorer.reset(uid)  # hotkey has been replaced
+                try:
+                    self.storage.delete_miner_index(hotkey)
+                except Exception:
+                    bt.logging.error(f"{hotkey} Failed to delete miner index.", traceback.format_exc())
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
@@ -521,8 +499,6 @@ class Validator(BaseNeuron):
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
-
-        # TODO Delete the removed hotkeys from the ValidatorStorage
 
     def save_state(self):
         """Saves the state of the validator to a file."""

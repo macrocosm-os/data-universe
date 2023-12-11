@@ -44,13 +44,17 @@ class MinerScorer:
         with self.lock:
             return self.scores.clone()
 
-    def reset_score(self, uid: int) -> None:
-        """Resets the score of the 'uid' miner to 0."""
+    def reset(self, uid: int) -> None:
+        """Resets the score and credibility of miner 'uid'."""
         with self.lock:
             self.scores[uid] = 0.0
+            self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
             
+    # TODO: Add test
     def get_credible_miners(self) -> List[int]:
         """Returns the list of miner UIDs that are considered trustworthy."""
+        with self.lock:
+            return [index.item() for index, value in enumerate(self.miner_credibility) if value >= MinerScorer.CREDIBLE_THRESHOLD]
 
     def resize(self, num_neurons: int) -> None:
         """Resizes the score tensor to the new number of neurons.
