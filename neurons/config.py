@@ -17,12 +17,15 @@
 # DEALINGS IN THE SOFTWARE.
 
 import os
-import torch
 import argparse
 import bittensor as bt
 from loguru import logger
 
 from common import utils
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def check_config(cls, config: "bt.Config"):
@@ -56,7 +59,7 @@ def check_config(cls, config: "bt.Config"):
             level="EVENTS",
             format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
         )
-
+        
 
 def add_args(cls, parser):
     """
@@ -66,20 +69,6 @@ def add_args(cls, parser):
     parser.add_argument("--netuid", type=int, help="Subnet netuid", default=1)
 
     neuron_type = "validator" if "miner" not in cls.__name__.lower() else "miner"
-
-    parser.add_argument(
-        "--neuron.name",
-        type=str,
-        help="Trials for this neuron go in neuron.root / (wallet_cold - wallet_hot) / neuron.name. ",
-        default=neuron_type,
-    )
-
-    parser.add_argument(
-        "--neuron.device",
-        type=str,
-        help="Device to run on.",
-        default="cpu",
-    )
 
     parser.add_argument(
         "--neuron.epoch_length",
@@ -104,27 +93,6 @@ def add_args(cls, parser):
 
     if neuron_type == "validator":
         parser.add_argument(
-            "--neuron.num_concurrent_forwards",
-            type=int,
-            help="The number of concurrent forwards running at any time.",
-            default=1,
-        )
-
-        parser.add_argument(
-            "--neuron.sample_size",
-            type=int,
-            help="The number of miners to query in a single step.",
-            default=10,
-        )
-
-        parser.add_argument(
-            "--neuron.disable_set_weights",
-            action="store_true",
-            help="Disables setting weights.",
-            default=False,
-        )
-
-        parser.add_argument(
             "--neuron.axon_off",
             "--axon_off",
             action="store_true",
@@ -133,29 +101,36 @@ def add_args(cls, parser):
             help="Set this flag to not attempt to serve an Axon.",
             default=False,
         )
-
+        
         parser.add_argument(
-            "--neuron.vpermit_tao_limit",
-            type=int,
-            help="The maximum number of TAO allowed to query a validator with a vpermit.",
-            default=4096,
+            "--neuron.database_host",
+            type=str,
+            help="The host of the database.",
+            default="127.0.0.1",
+        )
+        
+        parser.add_argument(
+            "--neuron.database_name",
+            type=str,
+            help="The host of the database.",
+            default="ValidatorStorage.miner_index",
+        )
+        
+        parser.add_argument(
+            "--neuron.database_user",
+            type=str,
+            help="Name of the database user.",
+            default="data-universe-user",
+        )
+        
+        parser.add_argument(
+            "--neuron.database_password",
+            type=str,
+            help="The password for the database user.",
+            default=os.getenv("DATABASE_USER_PASSWORD")
         )
 
     else:
-        parser.add_argument(
-            "--blacklist.force_validator_permit",
-            action="store_true",
-            help="If set, we will force incoming requests to have a permit.",
-            default=False,
-        )
-
-        parser.add_argument(
-            "--blacklist.allow_non_registered",
-            action="store_true",
-            help="If set, miners will accept queries from non registered entities. (Dangerous!)",
-            default=False,
-        )
-
         parser.add_argument(
             "--neuron.sqlite_database_name",
             type=str,
