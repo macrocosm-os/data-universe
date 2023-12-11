@@ -243,11 +243,11 @@ class Validator(BaseNeuron):
             4. Samples data from the chunk and verifies the data is correct
             5. Passes the validation result to the scorer to update the miner's score.
         """
-
-        bt.logging.trace(f"{uid}: Evaluating miner")
-
         axon_info = self.metagraph.axons[uid]
         hotkey = self.metagraph.hotkeys[uid]
+        
+        bt.logging.trace(f"{uid}: Evaluating miner")
+
         # Query the miner for the latest index.
         index = await self._update_and_get_miner_index(hotkey, axon_info)
         if not index:

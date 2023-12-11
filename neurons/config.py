@@ -59,7 +59,7 @@ def check_config(cls, config: "bt.Config"):
             level="EVENTS",
             format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
         )
-        
+
 
 def add_args(cls, parser):
     """
@@ -101,33 +101,33 @@ def add_args(cls, parser):
             help="Set this flag to not attempt to serve an Axon.",
             default=False,
         )
-        
+
         parser.add_argument(
             "--neuron.database_host",
             type=str,
             help="The host of the database.",
             default="127.0.0.1",
         )
-        
+
         parser.add_argument(
             "--neuron.database_name",
             type=str,
             help="The host of the database.",
             default="ValidatorStorage.miner_index",
         )
-        
+
         parser.add_argument(
             "--neuron.database_user",
             type=str,
             help="Name of the database user.",
             default="data-universe-user",
         )
-        
+
         parser.add_argument(
             "--neuron.database_password",
             type=str,
             help="The password for the database user.",
-            default=os.getenv("DATABASE_USER_PASSWORD")
+            default=os.getenv("DATABASE_USER_PASSWORD"),
         )
 
     else:
