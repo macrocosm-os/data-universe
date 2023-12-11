@@ -32,6 +32,7 @@ from common.data import DataChunkSummary, DataEntity, DateRange, ScorableMinerIn
 from common.protocol import GetDataChunk
 import common.utils as utils
 from rewards.reward_distribution import RewardDistribution
+from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
 from validator.miner_index import MinerIndexManager
 from validator.miner_iterator import MinerIterator
@@ -44,7 +45,7 @@ from rewards.miner_scorer import MinerScorer
 
 
 class Validator(BaseNeuron):
-    # The minimum number of blocks that must pass before we re-evaluate a miner.
+    # The minimum amount of time that must pass before we re-evaluate a miner.
     MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=20)
 
     SCORER_FILENAME = "scorer.pickle"
@@ -52,17 +53,13 @@ class Validator(BaseNeuron):
     def __init__(self, config=None):
         super().__init__(config=config)
 
-        # TODO: This really shouldn't be doing work in the constructor. Move to a start() method.
-
         # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
         # Dendrite lets us send messages to other nodes (axons) in the network.
         self.dendrite = bt.dendrite(wallet=self.wallet)
-        bt.logging.info(f"Dendrite: {self.dendrite}")
 
         # Set up initial scoring weights for validation
-        bt.logging.info("Building validation weights.")
         self.scorer = MinerScorer(self.metagraph.n, RewardDistribution())
 
         # TODO: Configure this to expose access to data to neurons on certain subnets.
@@ -80,6 +77,7 @@ class Validator(BaseNeuron):
         )
         self.miner_iterator = MinerIterator(self.miner_uids)
         self.miner_index_manager = MinerIndexManager()
+        self.scraper_provider = ScraperProvider()
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -208,7 +206,7 @@ class Validator(BaseNeuron):
         )
 
         # Treat a failed response the same way we treat a failed validation.
-        # If we didn't, the miner could just not respond when queries for chunks it doesn't have.
+        # If we didn't, the miner could just not respond to queries for chunks it doesn't have.
         if (
             response is None
             or not isinstance(response, GetDataChunk)
@@ -216,7 +214,7 @@ class Validator(BaseNeuron):
         ):
             bt.logging.trace(f"Miner {uid} returned an invalid/failed response.")
             self.scorer.on_miner_evaluated(
-                uid, index, [ValidationResult(is_valid=False)]
+                uid, index, [ValidationResult(is_valid=False, reason="Response failed or is invalid")]
             )
             return
 
@@ -228,17 +226,17 @@ class Validator(BaseNeuron):
                 f"Miner {uid} failed basic entity validation with reason {reason}."
             )
             self.scorer.on_miner_evaluated(
-                uid, index, [ValidationResult(is_valid=False)]
+                uid, index, [ValidationResult(is_valid=False, reason=reason)]
             )
             return
 
         # Basic validation passed. Now sample some entities for data correctness.
-        entities_to_verify: List[DataEntity] = Validator.choose_entities_to_verify(
+        entities_to_validate: List[DataEntity] = Validator.choose_entities_to_verify(
             data_entities
         )
 
-        # TODO: Submit the verifications to the validation pool and await results.
-        validation_results: List[ValidationResult] = []
+        scraper = self.scraper_provider.get(chosen_chunk.source)
+        validation_results = scraper.validate_entities(entities_to_validate)
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
