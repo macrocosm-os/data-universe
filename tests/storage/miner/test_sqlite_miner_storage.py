@@ -20,10 +20,11 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
     def test_store_entities(self):
         """Tests that we can successfully store entities"""
+        now = dt.datetime.now()
         # Create an entity without a label.
         entity1 = DataEntity(
                     uri="test_entity_1",
-                    datetime=dt.datetime(2023, 12, 12, 1, 30, 0),
+                    datetime=now,
                     source=DataSource.REDDIT,
                     content=bytes(10),
                     content_size_bytes=10)
@@ -31,7 +32,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Create an entity with a label.
         entity2 = DataEntity(
                     uri="test_entity_2",
-                    datetime=dt.datetime(2023, 12, 12, 2, 30, 0),
+                    datetime=now,
                     source=DataSource.X,
                     content=bytes(20),
                     content_size_bytes=20)
@@ -47,10 +48,11 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
     def test_store_identical_entities(self):
         """Tests that we can handle attempts to store the same entity"""
+        now = dt.datetime.now()
         # Create an entity without a label.
         entity1 = DataEntity(
                     uri="test_entity_1",
-                    datetime=dt.datetime(2023, 12, 12, 1, 30, 0),
+                    datetime=now,
                     source=DataSource.REDDIT,
                     content=bytes(10),
                     content_size_bytes=10)
@@ -58,7 +60,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Create an entity with a label.
         entity2 = DataEntity(
                     uri="test_entity_2",
-                    datetime=dt.datetime(2023, 12, 12, 2, 30, 0),
+                    datetime=now,
                     source=DataSource.X,
                     label=DataLabel(value="label_2"),
                     content=bytes(20),
@@ -78,10 +80,11 @@ class TestSqliteMinerStorage(unittest.TestCase):
     # TODO Consider storing what we can and discarding the rest.
     def test_store_over_max_content_size_fail(self):
         """Tests that we except on attempts to store entities larger than maximum storage in one store call"""
+        now = dt.datetime.now()  
         # Create an entity that is too large to store.
         large_entity = DataEntity(
                     uri="large_entity",
-                    datetime=dt.datetime(2023, 12, 12, 1, 30, 0),
+                    datetime=now,
                     source=DataSource.REDDIT,
                     content=bytes(1000),
                     content_size_bytes=1000)
@@ -92,22 +95,23 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
     def test_store_over_max_content_size_succeeds(self):
         """Tests that we succeed on clearing space when going over maximum configured content storage."""
+        now = dt.datetime.now()
         # Create three entities such that only two fit the maximum allowed content size.
         entity1 = DataEntity(
                     uri="test_entity_1",
-                    datetime=dt.datetime(2023, 12, 12, 1, 30, 0),
+                    datetime=now,
                     source=DataSource.REDDIT,
                     content=bytes(200),
                     content_size_bytes=200)
         entity2 = DataEntity(
                     uri="test_entity_2",
-                    datetime=dt.datetime(2023, 12, 12, 2, 30, 0),
+                    datetime=now+dt.timedelta(hours=1),
                     source=DataSource.REDDIT,
                     content=bytes(10),
                     content_size_bytes=200)
         entity3 = DataEntity(
                     uri="test_entity_3",
-                    datetime=dt.datetime(2023, 12, 12, 3, 30, 0),
+                    datetime=now+dt.timedelta(hours=2),
                     source=DataSource.REDDIT,
                     content=bytes(200),
                     content_size_bytes=200)
@@ -129,8 +133,9 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
     def test_list_data_chunk_summaries(self):
         """Tests that we can list the data chunk summaries from storage."""
+        now = dt.datetime.now()
         # Create an entity for chunk 1.
-        chunk1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0)
+        chunk1_datetime = now
         chunk1_entity1 = DataEntity(
                             uri="test_entity_1",
                             datetime=chunk1_datetime,
@@ -140,7 +145,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
                             content_size_bytes=10)
 
         # Create two entities for chunk 2.
-        chunk2_datetime = dt.datetime(2023, 12, 12, 2, 30, 0)
+        chunk2_datetime = now + dt.timedelta(hours=1)
         chunk2_entity1 = DataEntity(
                             uri="test_entity_2",
                             datetime=chunk2_datetime,
@@ -180,8 +185,9 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
     def test_list_data_chunk_summaries_no_labels(self):
         """Tests that we can list the data chunk summaries with no labels from storage."""
+        now = dt.datetime.now()
         # Create an entity for chunk 1.
-        chunk1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0)
+        chunk1_datetime = now
         chunk1_entity1 = DataEntity(
                             uri="test_entity_1",
                             datetime=chunk1_datetime,
@@ -190,7 +196,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
                             content_size_bytes=10)
 
         # Create two entities for chunk 2.
-        chunk2_datetime = dt.datetime(2023, 12, 12, 2, 30, 0)
+        chunk2_datetime = now + dt.timedelta(hours=1)
         chunk2_entity1 = DataEntity(
                             uri="test_entity_2",
                             datetime=chunk2_datetime,
@@ -224,10 +230,56 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Confirm we get back the expected summaries.
         self.assertEqual(data_chunk_summaries, [expected_chunk_1, expected_chunk_2])
 
+    def test_list_data_chunk_summaries_too_old(self):
+        """Tests that we can list the data chunk summaries from storage, discarding out of date ones."""
+        now = dt.datetime.now()
+        # Create an entity for chunk 1.
+        chunk1_datetime = now
+        chunk1_entity1 = DataEntity(
+                            uri="test_entity_1",
+                            datetime=chunk1_datetime,
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="label_1"),
+                            content=bytes(10),
+                            content_size_bytes=10)
+
+        # Create two entities for chunk 2.
+        chunk2_datetime = now - dt.timedelta(days=8)
+        chunk2_entity1 = DataEntity(
+                            uri="test_entity_2",
+                            datetime=chunk2_datetime,
+                            source=DataSource.X,
+                            label=DataLabel(value="label_2"),
+                            content=bytes(20),
+                            content_size_bytes=20)
+
+        chunk2_entity2 = DataEntity(
+                            uri="test_entity_3",
+                            datetime=chunk2_datetime + dt.timedelta(seconds=1),
+                            source=DataSource.X,
+                            label=DataLabel(value="label_2"),
+                            content=bytes(30),
+                            content_size_bytes=30)
+
+        # Store the entities.
+        self.test_storage.store_data_entities([chunk1_entity1, chunk2_entity1, chunk2_entity2])
+
+        # Get the index.
+        data_chunk_summaries = self.test_storage.list_data_chunk_summaries()
+
+        expected_chunk_1 = DataChunkSummary(
+                            time_bucket=TimeBucket.from_datetime(chunk1_datetime),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="label_1"),
+                            size_bytes=10)
+
+        # Confirm we get back the expected summaries.
+        self.assertEqual(data_chunk_summaries, [expected_chunk_1])
+
     def test_list_entities_in_data_chunk(self):
         """Tests that we can get all the enities in a chunk"""
         # Create an entity for chunk 1.
-        chunk1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0)
+        chunk1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, 1000)
         chunk1_entity1 = DataEntity(
                             uri="test_entity_1",
                             datetime=chunk1_datetime,
@@ -236,7 +288,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
                             content_size_bytes=10)
 
         # Create two entities for chunk 2.
-        chunk2_datetime = dt.datetime(2023, 12, 12, 2, 30, 0)
+        chunk2_datetime = dt.datetime(2023, 12, 12, 2, 30, 0, 1000)
         chunk2_entity1 = DataEntity(
                             uri="test_entity_2",
                             datetime=chunk2_datetime,
@@ -253,7 +305,6 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
         # Store the entities.
         self.test_storage.store_data_entities([chunk1_entity1, chunk2_entity1, chunk2_entity2])
-
 
         # Create the DataChunkSummary to query by.
         #TODO Consider breaking out another class that doesn't require size, but pass 0 for now.

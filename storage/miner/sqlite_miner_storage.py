@@ -139,34 +139,37 @@ class SqliteMinerStorage(MinerStorage):
 
         cursor = self.connection.cursor()
 
+        # TODO use a configured max age.
+        oldest_time_bucket_id = TimeBucket.from_datetime(dt.datetime.now() - dt.timedelta(days=7)).id
+        # TODO use a configured max data chunk summary count.
+        max_data_chunk_summary_count = 3000000
+
         # Get sum of content_size_bytes for all rows grouped by chunk.
         cursor.execute("""SELECT SUM(contentSizeBytes) AS chunkSize, timeBucketId, source, label FROM DataEntity
-                       GROUP BY timeBucketId, source, label""")
+                       WHERE timeBucketId >= ?
+                       GROUP BY timeBucketId, source, label
+                       LIMIT ?
+                       """, [oldest_time_bucket_id, max_data_chunk_summary_count])
 
         data_chunk_summaries = []
 
-        # TODO use a configured max data chunk summary count.
-        maxDataChunkSummaryCount = 50000
         # TODO use a configured max chunk size size.
         max_chunk_size = utils.mb_to_bytes(128)
 
         for row in cursor:
-            if (len(data_chunk_summaries) >= maxDataChunkSummaryCount):
-                return data_chunk_summaries
-            else:
-                # Ensure the miner does not attempt to report more than the max chunk size.
-                size = max_chunk_size if row['chunkSize'] >= max_chunk_size else row['chunkSize']
+            # Ensure the miner does not attempt to report more than the max chunk size.
+            size = max_chunk_size if row['chunkSize'] >= max_chunk_size else row['chunkSize']
 
-                # Construct the new DataChunkSummary with all non null columns.
-                data_chunk_summary = DataChunkSummary(time_bucket=TimeBucket(id=row['timeBucketId']),
-                                                      source=DataSource(row['source']),
-                                                      size_bytes=size)
+            # Construct the new DataChunkSummary with all non null columns.
+            data_chunk_summary = DataChunkSummary(time_bucket=TimeBucket(id=row['timeBucketId']),
+                                                    source=DataSource(row['source']),
+                                                    size_bytes=size)
 
-                # Add the optional Label field if not null.
-                if row['label'] != "NULL":
-                    data_chunk_summary.label = DataLabel(value=row['label'])
+            # Add the optional Label field if not null.
+            if row['label'] != "NULL":
+                data_chunk_summary.label = DataLabel(value=row['label'])
 
-                data_chunk_summaries.append(data_chunk_summary)
+            data_chunk_summaries.append(data_chunk_summary)
 
         # If we reach the end of the cursor then return all of the data chunk summaries.
         return data_chunk_summaries

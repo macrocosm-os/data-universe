@@ -149,7 +149,7 @@ class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    chunks: List[DataChunkSummary] = Field(description="Chunks the miner is serving.")
+    chunks: List[DataChunkSummary] = Field(max_length=3000000, description="Chunks the miner is serving.")
 
 
 class ScorableMinerIndex(BaseModel):
