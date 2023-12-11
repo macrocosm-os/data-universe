@@ -5,22 +5,16 @@ import bittensor as bt
 import datetime
 from typing import Optional
 from common.data import ScorableMinerIndex
-
+from common.protocol import GetDataChunkIndex
+from storage.validator.validator_storage import ValidatorStorage
 
 class MinerIndexManager:
-    def __init__(self):
-        pass
+    """Manager for handling the data index for all miners on the subnet."""
+    
+    def __init__(self, storage: ValidatorStorage):
+        self.storage = storage
 
-    def update_index(
-        self, uid: int, dendrite: bt.dendrite
-    ) -> Optional[ScorableMinerIndex]:
-        """Updates the index for the 'uid' miner, and returns the latest known index or None if the miner hasn't yet provided an index.
 
-        Args:
-            uid (int): The miner's unique identifier.
-            dendrite (bt.dendrite): The dendrite (client) to use to query the miner
-        """
-        pass
 
     def get_datetime_index_last_updated(self, uid: int) -> Optional[datetime.datetime]:
         """Returns the datetime (UTC) when the 'uid' miner's index was last updated.

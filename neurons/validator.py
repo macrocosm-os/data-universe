@@ -29,15 +29,17 @@ import time
 import os
 import bittensor as bt
 from common.data import DataChunkSummary, DataEntity, DateRange, ScorableMinerIndex
-from common.protocol import GetDataChunk
+from common.protocol import GetDataChunk, GetDataChunkIndex
 import common.utils as utils
 from rewards.reward_distribution import RewardDistribution
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
-from validator.miner_index import MinerIndexManager
+from storage.validator.mysql_validator_storage import MysqlValidatorStorage
+from storage.validator.validator_storage import ValidatorStorage
+from validator.miner_index_manager import MinerIndexManager
 from validator.miner_iterator import MinerIterator
 
-from typing import List, Tuple
+from typing import List, Optional, Tuple
 from traceback import print_exception
 
 from neurons.base_neuron import BaseNeuron
@@ -76,6 +78,8 @@ class Validator(BaseNeuron):
             [utils.is_miner(uid, self.metagraph) for uid in self.metagraph.uids]
         )
         self.miner_iterator = MinerIterator(self.miner_uids)
+        #host: str, user: str, password: str, database: str
+        self.validator_storage = MysqlValidatorStorage(self.config)
         self.miner_index_manager = MinerIndexManager()
         self.scraper_provider = ScraperProvider()
 
@@ -173,6 +177,57 @@ class Validator(BaseNeuron):
             )
 
         return (True, "")
+    
+    async def update_and_get_miner_index(
+        self, uid: int, miner_hotkey: str, miner_axon: bt.AxonInfo
+    ) -> Optional[ScorableMinerIndex]:
+        """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index.
+        """
+        
+        bt.logging.trace(f"{uid}: Updating miner index.")
+
+        response = await self.dendrite.forward(
+            axons=[miner_axon],
+            synapse=GetDataChunkIndex(),
+            timeout=60,
+        )
+
+        if (
+            response is None
+            or not isinstance(response, GetDataChunkIndex)
+            or not response.success
+        ):
+            bt.logging.trace(f"{uid}: Miner returned an invalid/failed response for the index.")
+            valid_miners = 
+            return self.validator_storage.read_miner_index(miner_hotkey=miner_hotkey)
+            self.scorer.on_miner_evaluated(
+                uid, index, [ValidationResult(is_valid=False, reason="Response failed or is invalid")]
+            )
+            return
+        
+        pass
+    
+    def _get_miner_index(self, miner_hotkey: str) -> Optional[ScorableMinerIndex]:
+        """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index.
+        """
+        bt.logging.trace(f"{miner_hotkey}: Getting miner index.")
+        valid_miners = self.scorer.get_credible_miners()
+        
+
+        if (
+            response is None
+            or not isinstance(response, GetDataChunkIndex)
+            or not response.success
+        ):
+            bt.logging.trace(f"{uid}: Miner returned an invalid/failed response for the index.")
+            valid_miners = 
+            return self.validator_storage.read_miner_index(miner_hotkey=miner_hotkey)
+            self.scorer.on_miner_evaluated(
+                uid, index, [ValidationResult(is_valid=False, reason="Response failed or is invalid")]
+            )
+            return
+        
+        pass
 
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
@@ -185,20 +240,25 @@ class Validator(BaseNeuron):
             5. Passes the validation result to the scorer to update the miner's score.
         """
 
+        bt.logging.trace(f"{uid}: Evaluating miner")
+
         axon_info = self.metagraph.axons[uid]
+        hotkey = self.metagraph.hotkeys[uid]
         # Query the miner for the latest index.
-        index = self.miner_index_manager.update_index(uid, self.dendrite)
+        index = await self.miner_index_manager.update_index(hotkey, axon_info, self.dendrite)
         if not index:
             # The miner hasn't provided an index yet, so we can't validate them. Set their score to 0 and move on.
             bt.logging.trace(
-                f"Failed to get an index for miner {uid}. Setting score to 0."
+                f"{uid}: Failed to get an index for miner. Setting score to 0."
             )
             self.scorer.reset_score(uid)
             return
+        
+        bt.logging.trace(f"Received the index from miner {uid}. num chunks={len(index.scorable_chunks)}")
 
         # From that index, find a chunk to sample and get it from the miner.
         chosen_chunk: DataChunkSummary = Validator.choose_chunk_to_query(index)
-        bt.logging.trace(f"Querying miner {uid} for chunk {chosen_chunk}")
+        bt.logging.trace(f"{uid} Querying miner for chunk {chosen_chunk}")
         response = await self.dendrite.forward(
             axons=[axon_info],
             synapse=GetDataChunk(data_chunk_summary=chosen_chunk),
@@ -212,13 +272,15 @@ class Validator(BaseNeuron):
             or not isinstance(response, GetDataChunk)
             or not response.success
         ):
-            bt.logging.trace(f"Miner {uid} returned an invalid/failed response.")
+            bt.logging.trace(f"{uid}: Miner returned an invalid/failed response.")
             self.scorer.on_miner_evaluated(
                 uid, index, [ValidationResult(is_valid=False, reason="Response failed or is invalid")]
             )
             return
 
         # Perform basic validation on the entities.
+        bt.logging.trace(f"{uid}: Performing basic validation on entities ({len(response.data_entities)})")
+
         data_entities: List[DataEntity] = response.data_entities
         (valid, reason) = Validator.are_entities_valid(data_entities, chosen_chunk)
         if not valid:
@@ -234,6 +296,8 @@ class Validator(BaseNeuron):
         entities_to_validate: List[DataEntity] = Validator.choose_entities_to_verify(
             data_entities
         )
+
+        bt.logging.trace(f"{uid}: Basic validation passed. Validating {entities_to_validate}")
 
         scraper = self.scraper_provider.get(chosen_chunk.source)
         validation_results = scraper.validate_entities(entities_to_validate)
@@ -443,7 +507,7 @@ class Validator(BaseNeuron):
             return
 
         bt.logging.info(
-            "Metagraph updated, re-syncing hotkeys, dendrite pool and moving averages"
+            "Metagraph updated, re-syncing hotkeys, and moving averages"
         )
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
