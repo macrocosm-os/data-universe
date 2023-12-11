@@ -352,6 +352,14 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         self.assertEqual(scored_index.hotkey, "hotkey1")
         self.assertEqual(scored_index.scorable_chunks[0], expected_chunk_1)
 
+    def test_read_non_existing_miner_index(self):
+        """Tests that we correctly return none for a non existing miner index."""
+        # Read the index.
+        scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
+
+        # Confirm the scored_index is None.
+        self.assertEqual(scored_index, None)
+
     def test_delete_miner_index(self):
         """Tests that we can delete a miner index."""
         # Create two chunk summaries for the indexes.
@@ -384,6 +392,34 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)
         cursor.execute("SELECT * FROM MinerIndex")
         self.assertEqual(cursor.rowcount, 4)
+
+    def test_read_miner_last_updated(self):
+        """Tests getting the last time a miner was updated."""
+        # Insert a label.
+        label_id = self.test_storage._get_or_insert_label("test_label_value")
+        # Insert the same label.
+        new_label_id = self.test_storage._get_or_insert_label("test_label_value")
+        # Insert a second label.
+        label_id_2 = self.test_storage._get_or_insert_label("test_label_value_2")
+
+        # Confirm the first label has the same ID
+        self.assertEqual(label_id, new_label_id)
+
+        # Confirm the second label  has the next value.
+        self.assertEqual(label_id + 1, label_id_2)
+
+    def test_read_miner_last_updated_never_updated(self):
+        """Tests getting the last time a miner was updated when it has never been updated."""
+        # Insert a miner
+        now = dt.datetime.utcnow()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")
+        self.test_storage._upsert_miner("test_hotkey", now_str)
+
+        # Get the last updated
+        last_updated = self.test_storage.read_miner_last_updated("test_hotkey2")
+
+        # Confirm the last updated is None.
+        self.assertEqual(None, last_updated)
 
     if __name__ == "__main__":
         unittest.main()
