@@ -7,15 +7,15 @@ import bittensor as bt
 import datetime as dt
 from typing import Dict, List, Optional
 import numpy
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import Field, PositiveInt
 
-from common.data import DataLabel, DataSource, TimeBucket
+from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScrapeConfig
 from storage.miner.miner_storage import MinerStorage
 
 
-class LabelScrapeConfig(BaseModel):
+class LabelScrapeConfig(StrictBaseModel):
     """Describes what labels to scrape."""
 
     label_choices: Optional[List[DataLabel]] = Field(
@@ -41,7 +41,7 @@ class LabelScrapeConfig(BaseModel):
     )
 
 
-class DataSourceScrapingConfig(BaseModel):
+class DataSourceScrapingConfig(StrictBaseModel):
     """Describes what to scrape for a DataSource."""
 
     source: DataSource
@@ -58,7 +58,7 @@ class DataSourceScrapingConfig(BaseModel):
     )
 
 
-class CoordinatorConfig(BaseModel):
+class CoordinatorConfig(StrictBaseModel):
     """Informs the Coordinator how to schedule scrapes."""
 
     scraping_configs: Dict[DataSource, DataSourceScrapingConfig] = Field(
@@ -86,12 +86,15 @@ def _choose_scrape_configs(
             now - dt.timedelta(minutes=label_config.max_age_in_minutes)
         )
 
-        # Use a triangular distribution to choose a bucket in this range. We choose a triangular distribution because
-        # this roughly aligns with the linear depreciation scoring that the validators use for data freshness.
-        chosen_id = numpy.random.Generator.triangular(
-            left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
-        )
-        chosen_bucket = TimeBucket(id=chosen_id)
+        chosen_bucket = current_bucket
+        # If we have more than 1 bucket to choose from, choose a bucket in the range [oldest_bucket, current_bucket]
+        if oldest_bucket.id < current_bucket.id:
+            # Use a triangular distribution to choose a bucket in this range. We choose a triangular distribution because
+            # this roughly aligns with the linear depreciation scoring that the validators use for data freshness.
+            chosen_id = numpy.random.default_rng().triangular(
+                left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
+            )
+            chosen_bucket = TimeBucket(id=chosen_id)
 
         results.append(
             ScrapeConfig(
@@ -112,8 +115,8 @@ class ScraperCoordinator:
 
         def __init__(self, config: CoordinatorConfig):
             self.cadence_by_source = {
-                cfg.source: dt.timedelta(seconds=cfg.cadence_secs)
-                for cfg in config.scraping_configs
+                source: dt.timedelta(seconds=cfg.cadence_secs)
+                for source, cfg in config.scraping_configs.items()
             }
             self.last_scrape_time_per_source: Dict[DataSource, dt.datetime] = {}
 
@@ -122,7 +125,7 @@ class ScraperCoordinator:
             results = []
             for source, cadence in self.cadence_by_source.items():
                 last_scrape_time = self.last_scrape_time_per_source.get(source, None)
-                if last_scrape_time is None or now - last_scrape_time > cadence:
+                if last_scrape_time is None or now - last_scrape_time >= cadence:
                     results.append(source)
             return results
 
@@ -158,10 +161,12 @@ class ScraperCoordinator:
         asyncio.run(self._start())
 
     def stop(self):
-        self.is_running = False
         bt.logging.info("Stopping the ScrapingCoordinator")
+        self.is_running = False
 
     async def _start(self):
+        print("XXX: Start called")
+        
         workers = []
         for i in range(self.max_workers):
             worker = asyncio.create_task(
@@ -175,6 +180,7 @@ class ScraperCoordinator:
             now = dt.datetime.utcnow()
             sources_to_scrape_now = self.tracker.get_sources_ready_to_scrape(now)
             if not sources_to_scrape_now:
+                bt.logging.trace("Nothing ready to scrape yet. Trying again in 15s")
                 # Nothing is due a scrape. Wait a few seconds and try again
                 await asyncio.sleep(15)
                 continue
@@ -189,7 +195,7 @@ class ScraperCoordinator:
                     # now rather than being lazily evaluated (if a lambda was used).
                     # https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/cell-var-from-loop.html#cell-var-from-loop-w0640
                     bt.logging.trace(f"Adding scrape task for {source}: {config}")
-                    self.queue.put(functools.partial(scraper.scrape, config))
+                    self.queue.put_nowait(functools.partial(scraper.scrape, config))
 
                 self.tracker.on_scrape_scheduled(source, now)
 

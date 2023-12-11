@@ -104,6 +104,8 @@ class RedditLiteScraper(Scraper):
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
 
+        bt.logging.trace(f"Reddit scraper peforming scrape with config: {scrape_config}")
+
         assert (
             not scrape_config.labels or len(scrape_config.labels) <= 1
         ), "Can only scrape 1 subreddit at a time."

@@ -5,7 +5,13 @@ from typing import List, Type, Optional
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
 
 
-class DateRange(BaseModel):
+class StrictBaseModel(BaseModel):
+    """A BaseModel that enforces stricter validation constraints"""
+    
+    class Config:
+        extra = "forbid"
+
+class DateRange(StrictBaseModel):
     """Represents a specific time range from start time inclusive to end time exclusive."""
 
     # Makes the object "Immutable" once created.
@@ -21,7 +27,7 @@ class DateRange(BaseModel):
         return self.start <= datetime < self.end
 
 
-class TimeBucket(BaseModel):
+class TimeBucket(StrictBaseModel):
     """Represents a specific time bucket in the linear flow of time."""
 
     # Makes the object "Immutable" once created.
@@ -63,7 +69,7 @@ class DataSource(Enum):
     X = auto()
 
 
-class DataLabel(BaseModel):
+class DataLabel(StrictBaseModel):
     """An optional label to classify a data entity. Each data source will have its own definition and interpretation of labels.
 
     For example, in Reddit a label is the subreddit. For a stock price, it'll be the ticker symbol.
@@ -84,7 +90,7 @@ class DataLabel(BaseModel):
         return value.lower()
 
 
-class DataEntity(BaseModel):
+class DataEntity(StrictBaseModel):
     """A logical unit of data that has been scraped. E.g. a Reddit post"""
 
     # Makes the object "Immutable" once created.
@@ -112,7 +118,7 @@ class DataEntity(BaseModel):
         )
 
 
-class DataChunkSummary(BaseModel):
+class DataChunkSummary(StrictBaseModel):
     """Summarizes a chunk of data stored by a miner.
 
     Each chunk is uniquely identified by the time bucket, source, and label and it must be complete. i.e. a miner should never report
@@ -139,7 +145,7 @@ class ScorableDataChunkSummary(DataChunkSummary):
     # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
     scorable_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
 
-class MinerIndex(BaseModel):
+class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")

@@ -108,5 +108,6 @@ class ScrapingConfig(BaseModel):
         Raises:
             ValidationError: if the conversion fails
         """
-        return coordinator.CoordinatorConfig(scraping_configs={config.source: config.to_coordinator_data_source_scraping_config() for config in self.scraping_configs})
+        configs = [config.to_coordinator_data_source_scraping_config() for config in self.scraping_configs]
+        return coordinator.CoordinatorConfig(scraping_configs={cfg.source: cfg for cfg in configs})
     
