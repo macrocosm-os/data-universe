@@ -2,7 +2,7 @@ import threading
 from common import utils
 from common.data import DataLabel, DataSource, MinerIndex, ScorableDataChunkSummary, ScorableMinerIndex, TimeBucket
 from storage.validator.validator_storage import ValidatorStorage
-from typing import Set
+from typing import Optional, Set
 import datetime as dt
 import mysql.connector
 
@@ -70,7 +70,7 @@ class MysqlValidatorStorage(ValidatorStorage):
             cursor.execute("UPDATE Miner SET lastUpdated = %s WHERE hotkey = %s", [now_str, hotkey])
             self.connection.commit()
         else:
-            # If it doesn't we inser it.
+            # If it doesn't we insert it.
             cursor.execute("INSERT IGNORE INTO Miner (hotkey, lastUpdated) VALUES (%s, %s)", [hotkey, now_str])
             self.connection.commit()
             # Then we get the newly created minerId
@@ -134,7 +134,7 @@ class MysqlValidatorStorage(ValidatorStorage):
             self.connection.commit()
 
 
-    def read_miner_index(self, miner_hotkey: str, valid_miners: Set[str]) -> ScorableMinerIndex:
+    def read_miner_index(self, miner_hotkey: str, valid_miners: Set[str]) -> Optional[ScorableMinerIndex]:
         """Gets a scored index for all of the data that a specific miner promises to provide.
         
         Args:
@@ -205,6 +205,10 @@ class MysqlValidatorStorage(ValidatorStorage):
             # Add the chunk to the list of scored chunks on the overall index.
             scored_chunks.append(scored_chunk)
 
+        # If we do not get any rows back then do not return an empty ScorableMinerIndex.
+        if last_updated == None:
+            return None
+
         scored_index = ScorableMinerIndex(hotkey=miner_hotkey, scorable_chunks=scored_chunks, last_updated=last_updated)
         return scored_index
 
@@ -226,3 +230,20 @@ class MysqlValidatorStorage(ValidatorStorage):
             cursor.execute("DELETE FROM MinerIndex WHERE minerId = %s", [miner_id])
             self.connection.commit()
 
+    def read_miner_last_updated(self, miner_hotkey: str) -> Optional[dt.datetime]:
+        """Gets when a specific miner was last updated. Or none.
+        
+        Args:
+            miner_hotkey (str): The hotkey of the miner to check for last updated.
+        """
+    
+        # Buffer to ensure rowcount is correct.
+        cursor = self.connection.cursor(buffered=True)
+        # Check to see if the Miner already exists.
+        cursor.execute("SELECT lastUpdated FROM Miner WHERE hotkey = %s", [miner_hotkey])
+
+        if cursor.rowcount:
+            # If it does we can use the already fetched id.
+            return dt.datetime(cursor.fetchone()[0])
+        else:
+            return None
