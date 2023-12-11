@@ -113,12 +113,14 @@ class ScraperCoordinator:
     class Tracker:
         """Tracks scrape runs for the coordinator."""
 
-        def __init__(self, config: CoordinatorConfig):
+        def __init__(self, config: CoordinatorConfig, now: dt.datetime):
             self.cadence_by_source = {
                 source: dt.timedelta(seconds=cfg.cadence_secs)
                 for source, cfg in config.scraping_configs.items()
             }
-            self.last_scrape_time_per_source: Dict[DataSource, dt.datetime] = {}
+            
+            # Initialize the last scrape time as now, to protect against frequent scraping during Miner crash loops.
+            self.last_scrape_time_per_source: Dict[DataSource, dt.datetime] = {source: now for source in config.scraping_configs.keys()}
 
         def get_sources_ready_to_scrape(self, now: dt.datetime) -> List[DataSource]:
             """Returns a list of DataSources which are due to run."""
@@ -143,7 +145,7 @@ class ScraperCoordinator:
         self.storage = miner_storage
         self.config = config
 
-        self.tracker = ScraperCoordinator.Tracker(self.config)
+        self.tracker = ScraperCoordinator.Tracker(self.config, dt.datetime.utcnow())
         self.max_workers = 5
         self.is_running = False
         self.queue = asyncio.Queue()
@@ -164,9 +166,7 @@ class ScraperCoordinator:
         bt.logging.info("Stopping the ScrapingCoordinator")
         self.is_running = False
 
-    async def _start(self):
-        print("XXX: Start called")
-        
+    async def _start(self):        
         workers = []
         for i in range(self.max_workers):
             worker = asyncio.create_task(

@@ -38,32 +38,32 @@ class TestScraperCoordinator(unittest.TestCase):
             }
         )
 
-        # Create a Tracker with the config
-        tracker = ScraperCoordinator.Tracker(config)
-
         # Get the sources ready to scrape
         now = dt.datetime.now()
 
-        # Verify that both data sources are returned
+        # Create a Tracker with the config
+        tracker = ScraperCoordinator.Tracker(config, now)
+        
+        # Verify that the data sources aren't ready to scrape yet because the
+        # tracker should wait until the cadence has passed.
         self.assertEqual(
-            [DataSource.REDDIT, DataSource.X], tracker.get_sources_ready_to_scrape(now)
+            [], tracker.get_sources_ready_to_scrape(now)
         )
 
-        tracker.on_scrape_scheduled(DataSource.REDDIT, now)
-        tracker.on_scrape_scheduled(DataSource.X, now)
-
-        # Advance the clock by 45 seconds, and make sure no sources are returned.
-        now += dt.timedelta(seconds=45)
-        self.assertEqual([], tracker.get_sources_ready_to_scrape(now))
-
-        # Advance the clock by 15 seconds, and make sure only the first source is returned.
-        now += dt.timedelta(seconds=15)
+        # Advance the clock by 60 seconds, and make sure only the first source is returned.
+        now += dt.timedelta(seconds=60)
         self.assertEqual([DataSource.REDDIT], tracker.get_sources_ready_to_scrape(now))
 
         tracker.on_scrape_scheduled(DataSource.REDDIT, now)
+        
+        # Advance the clock by 15 seconds, and make sure nothing is returned.
+        now += dt.timedelta(seconds=15)
+        self.assertEqual(
+            [], tracker.get_sources_ready_to_scrape(now)
+        )
 
-        # Finally, advance the clock by 60 seconds, and make sure both sources are returned.
-        now += dt.timedelta(seconds=60)
+        # Advance the clock by 45 seconds, and make sure both sources are returned.
+        now += dt.timedelta(seconds=45)
         self.assertEqual(
             [DataSource.REDDIT, DataSource.X], tracker.get_sources_ready_to_scrape(now)
         )
@@ -190,7 +190,9 @@ class TestScraperCoordinator(unittest.TestCase):
             scraping_configs={
                 DataSource.REDDIT: DataSourceScrapingConfig(
                     source=DataSource.REDDIT,
-                    cadence_secs=60,
+                    # Use a small cadence because the Coordinator will wait this amount of time
+                    # before performing the first scrape.
+                    cadence_secs=1,
                     labels_to_scrape=[
                         LabelScrapeConfig(
                             label_choices=[DataLabel(value="label1")],
@@ -211,7 +213,7 @@ class TestScraperCoordinator(unittest.TestCase):
         coordinator.run_in_background_thread()
 
         # Wait until the Mock Scraper's scrape() method has been called.
-        test_utils.wait_for_condition(lambda: mock_scraper.scrape.called)
+        test_utils.wait_for_condition(lambda: mock_scraper.scrape.called, timeout=30)
 
         # Get the ScrapeConfig passed to the mock and verify it's as expected
         args, _ = mock_scraper.scrape.call_args
