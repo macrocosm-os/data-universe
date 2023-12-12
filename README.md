@@ -32,9 +32,9 @@ As of Dec 11th, 2023 data older than 30 days is not scored. This may increase in
 
 ### 2) Data Desirability
 
-Data Universe defines a DataDesirabilityMap that defines which types of data are desirable (and which types are undesirable). Data deemed desirable is scored more highly. Data deemed undesirable is scored negatively. 
+Data Universe defines a DataDesirabilityLookup that defines which types of data are desirable (and which types are undesirable). Data deemed desirable is scored more highly. Data deemed undesirable is scored negatively. 
 
-The DataDesirabilityMap will evolve over time, but each change will be announced ahead of time to give Miners adequate time to prepare for each update.
+The DataDesirabilityLookup will evolve over time, but each change will be announced ahead of time to give Miners adequate time to prepare for the update.
 
 ### 3) Duplication Factor
 
@@ -43,6 +43,12 @@ Data that's stored by many Miners is less valuable than data stored by only a fe
 ## Miner Credibility
 
 Validators remain suspicious of Miners and so they periodically check a sample of data from each Miner's MinerIndex, to verify the data correctness. The Validator uses these checks to track a Miner's credibility, which it then uses to scale a Miner's score. The scaling is done in such a way that it is **always** worse for a Miner to misrepresent what types and how much data it has.
+
+# Data Universe Dashboard
+
+As you can see from the above, Data Universe rewards diversity of data (storing 200 copies of the same data isn't exactly beneficial!) 
+
+To help understand the current data on the Subnet, the Data Universe team hosts a dashboard (https://shorturl.at/qBM02), showing the amount of each type of data (by DataEntityBucketId) on the Subnet. Miners are strongly encouraged to use this dashboard to customize their [Miner Configuration](./docs/miner.md#configuring-the-miner), to maximize their rewards.
 
 # Getting Started
 
@@ -58,7 +64,7 @@ See [Validator Setup](docs/validator.md#validator_setup) to learn how to setup a
 
 # Terminology
 
-**DataDesirabilityMap:** A defined list of rules that determine how desirable data is, based on its DataSource and DataLabel.
+**DataDesirabilityLookup:** A [defined list of rules](https://github.com/RusticLuftig/data-universe/blob/main/rewards/data_desirability_lookup.py) that determine how desirable data is, based on its DataSource and DataLabel.
 
 **DataEntity:** A single "item" of data collected by a Miner. Each DataEntity has a URI, that the Validators can use to retrieve the item from its DataSource.
 
@@ -78,4 +84,4 @@ See [Validator Setup](docs/validator.md#validator_setup) to learn how to setup a
 
 We welcome feedback! 
 
-If you have a suggestion, please reach out on the Discord channel, or file an Issue.
+If you have a suggestion, please reach out to @rusticluftig and @sid_data_universe on the Discord channel, or file an Issue.

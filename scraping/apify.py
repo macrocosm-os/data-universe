@@ -13,8 +13,8 @@ class RunConfig(BaseModel):
     """Configuration parameters for a single Apify Actor run."""
 
     api_key: str = Field(
-        description="The Apify API key.",
-        default=os.getenv("APIFY_API_KEY"),
+        description="The Apify API token.",
+        default=os.getenv("APIFY_API_TOKEN"),
         min_length=1,  # Can't be empty.
     )
 
