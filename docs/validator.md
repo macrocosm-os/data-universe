@@ -1,16 +1,16 @@
 # Validator
 
 The Validator is responsible for validating the Miners and scoring them according to the [incentive mechanism](../README.md#incentive-mechanism). It runs a loop to enumerate all Miners in the network, and for each, it performs the following sequence:
-1. It requests the latest MinerIndex from the miner, which it stores in a local database.
-2. It chooses a random (sampled by size) DataEntityBucket within the MinerIndex to sample.
+1. It requests the latest [MinerIndex](../README.md#terminology) from the miner, which it stores in a local database.
+2. It chooses a random (sampled by size) DataEntityBucket from the MinerIndex to sample.
 3. It gets that DataEntityBucket from the Miner.
 4. It chooses N DataEntities from the DataEntityBucket to validate. It then scrapes the content from the apprioriate DataSource to get those DataEntities.
 5. It then compares those retrieved DataEntities agaisnt the ones provided by the Miner and updates the Miner Credibility, based on the result.
 6. Finally, it updates the Miner's score.
 
-Once this sequence has been performed for all Miners, the Validator waits a period of time, ensuring it does not evaluate a Miner more often than once per N minutes. This helps ensure the cost of running a Validator is not too high, and also protects the network against high amounts of traffic.
+Once this sequence has been performed for all Miners, the Validator waits a period of time before starting the next loop to ensure it does not evaluate a Miner more often than once per N minutes. This helps ensure the cost of running a Validator is not too high, and also protects the network against high amounts of traffic.
 
-As of Dec 11th 2023, the expected cost number of DataItems queried via Apify is roughly: `225 Miners * 2 evals per hour * 1 sample per period * 24 hours = 10800`. Assuming this is ~50% Reddit ($3.50 per 1000) and ~50% per X ($1 per 1000), the total cost is roughly $24.30.
+As of Dec 11th 2023, the expected cost number of DataItems queried via Apify is roughly: `225 Miners * 2 evals per hour * 1 sample per period * 24 hours = 10800`. Assuming this is ~50% Reddit ($3.50 per 1000) and ~50% per X ($1 per 1000), the total cost is roughly $24.30 per day.
 
 # System Requirements
 
@@ -59,7 +59,7 @@ For this guide, we'll use [pm2](https://pm2.keymetrics.io/) to manage the Miner 
 
 From the data-universe folder:
 ```shell
-pm2 start my-env/bin/python -- ./neurons/validator.py --wallet.name your-wallet --wallet.hotkey your-hotkey
+pm2 start python -- ./neurons/validator.py --wallet.name your-wallet --wallet.hotkey your-hotkey
 ```
 
 # Configuring the Validator
@@ -70,7 +70,7 @@ The Miner offers some flags to customize properties, such as the database name a
 
 You can view the full set of flags by running
 ```shell
-my-env/bin/python ./neurons/miner.py -h
+python ./neurons/miner.py -h
 ```
 
 # Coming Soon
@@ -79,5 +79,5 @@ We are working hard to add more features to the Subnet. For the Validators, we h
 
 1. Implement an auto-update script.
 2. Have the Validator serve an Axon on the network, so neurons on other Subnets can retrieve data.
-3. Add more Scrapers for other DataSources.
-4. Add other (and cheaper) Scrapers for the Validators to use.
+3. Add scrapers for other DataSources.
+4. Add other (and cheaper) scrapers for the Validators to use.

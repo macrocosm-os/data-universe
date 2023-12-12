@@ -1,6 +1,6 @@
 # Miner
 
-Miners scrape data from various DataSource and get rewarded based on how much valuable data they have (see the [Incentive Mechanism](../README.md#incentive-mechanism) for full details.) The Incentive Mechanism does not require a Miner to scrape from all DataSources, allowing Miners to specialize and choose exactly what kinds of data they want to Scrape. However, Miners are scored, in part, on the total amount of data they have, so Miners should make sure they are scraping sufficient amounts and types of data.
+Miners scrape data from various DataSources and get rewarded based on how much valuable data they have (see the [Incentive Mechanism](../README.md#incentive-mechanism) for the full details). The incentive mechanism does not require a Miner to scrape from all DataSources, allowing Miners to specialize and choose exactly what kinds of data they want to scrape. However, Miners are scored, in part, based on the total amount of data they have, so Miners should make sure they are scraping sufficient amounts of data.
 
 The Miner stores all scraped data in a local database.
 
@@ -11,31 +11,31 @@ Miners do not require a GPU and should be able to run on a low-tier machine, as 
 # Getting Started
 
 ## Prerequisites
-1. As of Dec 11th 2023, all DataSources are scraped via Apify, so you'll need to [setup your Apify API token](apify.md). This won't be a requirement in the future.
+1. As of Dec 11th 2023, all DataSources are scraped via Apify, so you'll need to [setup your Apify API token](apify.md).
 
-1. Clone the repo
+2. Clone the repo
 
 ```shell
 git clone https://github.com/RusticLuftig/data-universe.git
 ```
 
-1. Setup your python [virtual environment](https://docs.python.org/3/library/venv.html) or [Conda environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands).
+3. Setup your python [virtual environment](https://docs.python.org/3/library/venv.html) or [Conda environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands).
 
-1. Install the requirements. From your virtual environment, run
+4. Install the requirements. From your virtual environment, run
 ```shell
 cd data-universe
 pip install -r requirements.txt
 ```
 
-1. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
+5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
 ## Running the Miner
 
 For this guide, we'll use [pm2](https://pm2.keymetrics.io/) to manage the Miner process, because it'll restart the Miner if it crashes. If you don't already have it, install pm2.
 
-From the data-universe folder:
+Then, from the data-universe folder, run:
 ```shell
-pm2 start my-env/bin/python -- ./neurons/miner.py --wallet.name your-wallet --wallet.hotkey your-hotkey
+pm2 start python -- ./neurons/miner.py --wallet.name your-wallet --wallet.hotkey your-hotkey
 ```
 
 # Configuring the Miner
@@ -46,23 +46,25 @@ The Miner offers some flags to customize properties, such as the database name a
 
 You can view the full set of flags by running
 ```shell
-my-env/bin/python ./neurons/miner.py -h
+python ./neurons/miner.py -h
 ```
 
 ## Configuring 
 
-The frequency and types of data your Miner will scrape is configured in the [scraping_config.json](https://github.com/RusticLuftig/data-universe/blob/main/scraping/config/scraping_config.json) file. You can start your Miner with a different config by passing the filepath to `--neuron.scraping_config_file`. This file defines which Scrapers your Miner will use. For each Scraper, you can define:
+The frequency and types of data your Miner will scrape is configured in the [scraping_config.json](https://github.com/RusticLuftig/data-universe/blob/main/scraping/config/scraping_config.json) file. This file defines which scrapers your Miner will use. To customize your Miner, you either edit `scraping_config.json` or create your own file and pass its filepath via the `--neuron.scraping_config_file` flag.
 
-1. `cadence_seconds`: to control how frequently the Scraper will run.
+For each scraper, you can define:
+
+1. `cadence_seconds`: to control how frequently the scraper will run.
 2. `labels_to_scrape`: to define how much of what type of data to scrape from this source. Each entry in this list consists of the following properties:
     1. `label_choices`: is a list of DataLabels to scrape. Each time the scraper runs, **one** of these labels is chosen at random to scrape.
-    2. `max_age_hint_minutes`: provides a hint to the Scraper of the maximum age of data you'd like to collect for the chosen label. Not all Scrapers provide date/time filters so this is a hint, not a rule.
+    2. `max_age_hint_minutes`: provides a hint to the scraper of the maximum age of data you'd like to collect for the chosen label. Not all scrapers provide date/time filters so this is a hint, not a rule.
     3. `max_data_entities`: defines the maximum number of items to scrape for this set of labels, each time the scraper runs. This gives you full control over the maximum cost of scraping data from paid sources (e.g. Apify)
 
 Let's walk through an example to explain how all these properties fit together.
 ```json
 {
-    "scraping_configs": [
+    "scraper_configs": [
         {
             "scraper_id": "X.Flash",
             "cadence_secs": 300,
@@ -87,9 +89,11 @@ Let's walk through an example to explain how all these properties fit together.
 }
 ```
 
-In this example, we configure the Miner to scrape using a single Scraper, the "X.Flash" scraper. The Scraper will run every 5 minutes (300 seconds). When it runs, it'll run 2 scrapes:
-1. The first will be a scrape for at most 100 items with #bittensor. The data scrape will choose a random [TimeBucket](../README.md#terminology) between (now - max_age_in_minutes, now). The probability distribution used to select a TimeBucket matches the Validator's Incentive for [Data Freshness](../README.md#1-data-freshness): that is, it's weighted towards newer data.
-1. The second will be a scrape for either #decentralizedfinance or #tao, chosen at random (uniformly). The scrape will scrape at most 50 items, and will use a random [TimeBucket] between now and the maximum data freshness threshold.
+In this example, we configure the Miner to scrape using a single scraper, the "X.Flash" scraper. The scraper will run every 5 minutes (300 seconds). When it runs, it'll run 2 scrapes:
+1. The first will be a scrape for at most 100 items with #bittensor. The data scrape will choose a random [TimeBucket](../README.md#terminology) in (now - max_age_in_minutes, now). The probability distribution used to select a TimeBucket matches the Validator's incentive for [Data Freshness](../README.md#1-data-freshness): that is, it's weighted towards newer data.
+2. The second will be a scrape for either #decentralizedfinance or #tao, chosen at random (uniformly). The scrape will scrape at most 50 items, and will use a random TimeBucket between now and the maximum data freshness threshold.
+
+You can start your Miner with a different scraping config by passing the filepath to `--neuron.scraping_config_file`
 
 # Choosing which data to scrape
 
@@ -97,4 +101,4 @@ As described in the [incentive mechanism](../README.md#incentive-mechanism), Min
 
 For uniqueness, you can [view the dashboard](../README.md#data-universe-dashboard) to see how much data, by DataSource and DataLabel is currently on the Subnet.
 
-For desirability, the [DataDesirabilityLookup](https://github.com/RusticLuftig/data-universe/blob/main/rewards/data_desirability_lookup.py) defines the exact rules Validators use to rate data's desirability. 
+For desirability, the [DataDesirabilityLookup](https://github.com/RusticLuftig/data-universe/blob/main/rewards/data_desirability_lookup.py) defines the exact rules Validators use to compute data desirability.

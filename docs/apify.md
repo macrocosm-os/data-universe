@@ -1,6 +1,6 @@
 # Apify
 
-[Apify](http://apify.com) is a platform and market place for web scraping tools.
+[Apify](http://apify.com) is a popular platform and market place for web scraping tools.
 
 Data Universe uses Apify to scrape certain DataSources. At this time, all Validators and Miners are required to use Apify. In future, Apify will become optional for Miners, depending on the DataSources they scrape from.
 
@@ -10,5 +10,5 @@ Data Universe uses Apify to scrape certain DataSources. At this time, all Valida
 2. Got to your Console -> Settings -> Integrations and copy your Personal API token
 3. Create a `.env` file and add the following to it:
 ```py
-APIFY_APIKEY="APIFY_API_TOKEN"
+APIFY_APIKEY="YOUR_APIFY_API_TOKEN"
 ```
