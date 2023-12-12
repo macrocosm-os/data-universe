@@ -26,12 +26,10 @@ class TestScraperCoordinator(unittest.TestCase):
         config = CoordinatorConfig(
             scraper_configs={
                 ScraperId.REDDIT_LITE: ScraperConfig(
-                    scraper_id=ScraperId.REDDIT_LITE,
                     cadence_seconds=60,
                     labels_to_scrape=[],
                 ),
                 ScraperId.X_FLASH: ScraperConfig(
-                    scraper_id=ScraperId.X_FLASH,
                     cadence_seconds=120,
                     labels_to_scrape=[],
                 ),
@@ -74,7 +72,6 @@ class TestScraperCoordinator(unittest.TestCase):
         config = CoordinatorConfig(
             scraper_configs={
                 ScraperId.REDDIT_LITE: ScraperConfig(
-                    scraper_id=ScraperId.REDDIT_LITE,
                     cadence_seconds=60,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -189,7 +186,6 @@ class TestScraperCoordinator(unittest.TestCase):
         config = CoordinatorConfig(
             scraper_configs={
                 ScraperId.REDDIT_LITE: ScraperConfig(
-                    scraper_id=ScraperId.REDDIT_LITE,
                     # Use a small cadence because the Coordinator will wait this amount of time
                     # before performing the first scrape.
                     cadence_seconds=1,

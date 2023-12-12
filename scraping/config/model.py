@@ -72,23 +72,22 @@ class ScraperConfig(BaseModel):
         """
     )
     
-    def to_coordinator_data_source_scraping_config(self) -> coordinator.ScraperConfig:
-        """Returns the internal DataSourceScrapingConfig representation
+    def to_coordinator_scraper_config(self) -> coordinator.ScraperConfig:
+        """Returns the internal ScraperConfig representation
 
         Raises:
             ValueError: if the conversion fails.
             ValidationError: if the conversion fails.
         """
         return coordinator.ScraperConfig(
-            scraper_id=self.scraper_id,
             cadence_seconds=self.cadence_seconds,
             labels_to_scrape=[label.to_coordinator_label_scrape_config() for label in self.labels_to_scrape]
         )
 
 class ScrapingConfig(BaseModel):
     
-    data_source_scraping_configs: List[ScraperConfig] = Field(
-        description="The list of data sources (and their scraping config) this miner should scrape from. Only data sources in this list will be scraped."
+    scraper_configs: List[ScraperConfig] = Field(
+        description="The list of scrapers (and their scraping config) this miner should scrape from. Only scrapers in this list will be used."
     )
     
     def to_coordinator_config(self) -> coordinator.CoordinatorConfig:
@@ -97,6 +96,6 @@ class ScrapingConfig(BaseModel):
         Raises:
             ValidationError: if the conversion fails
         """
-        configs = [config.to_coordinator_data_source_scraping_config() for config in self.data_source_scraping_configs]
-        return coordinator.CoordinatorConfig(scraper_configs={cfg.scraper_id: cfg for cfg in configs})
+        ids_and_configs = [[config.scraper_id, config.to_coordinator_scraper_config()] for config in self.scraper_configs]
+        return coordinator.CoordinatorConfig(scraper_configs={id: config for id, config in ids_and_configs})
     

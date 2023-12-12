@@ -17,7 +17,6 @@ class TestConfigReader(unittest.TestCase):
         expected_config = CoordinatorConfig(
             scraper_configs={
                 ScraperId.X_FLASH: ScraperConfig(
-                    scraper_id=ScraperId.X_FLASH,
                     cadence_seconds=300,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -35,7 +34,6 @@ class TestConfigReader(unittest.TestCase):
                     ],
                 ),
                 ScraperId.REDDIT_LITE: ScraperConfig(
-                    scraper_id=ScraperId.REDDIT_LITE,
                     cadence_seconds=900,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -66,6 +64,10 @@ class TestConfigReader(unittest.TestCase):
             ConfigReader.load_config(filepath)
         self.assertIn("scraper_id\n  value is not a valid enumeration member", str(e.exception))
 
+    def test_load_real_config_valid(self):
+        this_dir = os.path.abspath(os.path.dirname(__file__))
+        filepath = os.path.join(this_dir, "../../../scraping/config/scraping_config.json")
+        loaded_config = ConfigReader.load_config(filepath)
 
 if __name__ == "__main__":
     unittest.main()

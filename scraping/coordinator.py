@@ -44,8 +44,6 @@ class LabelScrapingConfig(StrictBaseModel):
 class ScraperConfig(StrictBaseModel):
     """Describes what to scrape for a Scraper."""
 
-    scraper_id: ScraperId
-
     cadence_seconds: PositiveInt = Field(
         description="Configures how often to scrape with this scraper, measured in seconds."
     )

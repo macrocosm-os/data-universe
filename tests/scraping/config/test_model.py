@@ -13,7 +13,7 @@ class TestScrapingConfig(unittest.TestCase):
         """Verifies a round-trip serialization/deserialization of the ScrapingConfig"""
 
         config = ScrapingConfig(
-            data_source_scraping_configs=[
+            scraper_configs=[
                 ScraperConfig(
                     scraper_id=ScraperId.X_FLASH,
                     cadence_seconds=300,

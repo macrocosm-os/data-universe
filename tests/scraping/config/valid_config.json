@@ -1,5 +1,5 @@
 {
-    "data_source_scraping_configs": [
+    "scraper_configs": [
         {
             "scraper_id": "X.flash",
             "cadence_seconds": 300,
