@@ -154,8 +154,9 @@ class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    data_entity_buckets: List[DataEntityBucket] = Field(description="Buckets the miner is serving.")
-    # TODO Custom validator for length of data_entity_buckets.
+    data_entity_buckets: List[DataEntityBucket] = Field(
+        description="Buckets the miner is serving.",
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX)
 
 
 class ScorableMinerIndex(BaseModel):
@@ -163,6 +164,7 @@ class ScorableMinerIndex(BaseModel):
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
-        description="DataEntityBuckets the miner is serving, scored on uniqueness."
+        description="DataEntityBuckets the miner is serving, scored on uniqueness.",
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")

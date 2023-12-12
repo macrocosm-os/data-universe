@@ -18,6 +18,7 @@
 import typing
 import bittensor as bt
 import pydantic
+from common import constants
 from common.data import DataEntityBucket, DataEntity, DataEntityBucketId
 from typing import List
 
@@ -36,6 +37,7 @@ class GetMinerIndex(bt.Synapse):
         description="All of the data entity buckets that a Miner can serve.",
         frozen=False,
         repr=False,
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
     )
 
     def deserialize(self) -> int:
