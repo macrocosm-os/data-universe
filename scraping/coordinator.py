@@ -11,7 +11,7 @@ from pydantic import Field, PositiveInt
 
 from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
 from scraping.provider import ScraperProvider
-from scraping.scraper import ScrapeConfig
+from scraping.scraper import ScrapeConfig, ScraperId
 from storage.miner.miner_storage import MinerStorage
 
 
@@ -41,17 +41,17 @@ class LabelScrapingConfig(StrictBaseModel):
     )
 
 
-class DataSourceScrapingConfig(StrictBaseModel):
-    """Describes what to scrape for a DataSource."""
+class ScraperConfig(StrictBaseModel):
+    """Describes what to scrape for a Scraper."""
 
-    source: DataSource
+    scraper_id: ScraperId
 
     cadence_seconds: PositiveInt = Field(
-        description="Configures how often to scrape from this data source, measured in seconds."
+        description="Configures how often to scrape with this scraper, measured in seconds."
     )
 
     labels_to_scrape: List[LabelScrapingConfig] = Field(
-        description="""Describes the type of data to scrape from this source.
+        description="""Describes the type of data to scrape with this scraper.
         
         The scraper will perform one scrape per entry in this list every 'cadence_seconds'.
         """
@@ -61,20 +61,20 @@ class DataSourceScrapingConfig(StrictBaseModel):
 class CoordinatorConfig(StrictBaseModel):
     """Informs the Coordinator how to schedule scrapes."""
 
-    data_source_scraping_configs: Dict[DataSource, DataSourceScrapingConfig] = Field(
-        description="The scraping config for each data source to be scraped."
+    scraper_configs: Dict[ScraperId, ScraperConfig] = Field(
+        description="The configs for each scraper."
     )
 
 
 def _choose_scrape_configs(
-    source: DataSource, config: CoordinatorConfig, now: dt.datetime
+    scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime
 ) -> List[ScrapeConfig]:
-    """For the given source, returns a list of scrapes (defined by ScrapeConfig) to be run."""
-    assert source in config.data_source_scraping_configs, f"Source {source} not in config"
+    """For the given scraper, returns a list of scrapes (defined by ScrapeConfig) to be run."""
+    assert scraper_id in config.scraper_configs, f"Scraper Id {scraper_id} not in config"
 
-    source_config = config.data_source_scraping_configs[source]
+    scraper_config = config.scraper_configs[scraper_id]
     results = []
-    for label_config in source_config.labels_to_scrape:
+    for label_config in scraper_config.labels_to_scrape:
         # First, choose a label
         labels_to_scrape = None
         if label_config.label_choices:
@@ -114,26 +114,26 @@ class ScraperCoordinator:
         """Tracks scrape runs for the coordinator."""
 
         def __init__(self, config: CoordinatorConfig, now: dt.datetime):
-            self.cadence_by_source = {
-                source: dt.timedelta(seconds=cfg.cadence_seconds)
-                for source, cfg in config.data_source_scraping_configs.items()
+            self.cadence_by_scraper_id = {
+                scraper_id: dt.timedelta(seconds=cfg.cadence_seconds)
+                for scraper_id, cfg in config.scraper_configs.items()
             }
             
             # Initialize the last scrape time as now, to protect against frequent scraping during Miner crash loops.
-            self.last_scrape_time_per_source: Dict[DataSource, dt.datetime] = {source: now for source in config.data_source_scraping_configs.keys()}
+            self.last_scrape_time_per_scraper_id: Dict[ScraperId, dt.datetime] = {scraper_id: now for scraper_id in config.scraper_configs.keys()}
 
-        def get_sources_ready_to_scrape(self, now: dt.datetime) -> List[DataSource]:
-            """Returns a list of DataSources which are due to run."""
+        def get_scraper_ids_ready_to_scrape(self, now: dt.datetime) -> List[ScraperId]:
+            """Returns a list of ScraperIds which are due to run."""
             results = []
-            for source, cadence in self.cadence_by_source.items():
-                last_scrape_time = self.last_scrape_time_per_source.get(source, None)
+            for scraper_id, cadence in self.cadence_by_scraper_id.items():
+                last_scrape_time = self.last_scrape_time_per_scraper_id.get(scraper_id, None)
                 if last_scrape_time is None or now - last_scrape_time >= cadence:
-                    results.append(source)
+                    results.append(scraper_id)
             return results
 
-        def on_scrape_scheduled(self, source: DataSource, now: dt.datetime):
+        def on_scrape_scheduled(self, scraper_id: ScraperId, now: dt.datetime):
             """Notifies the tracker that a scrape has been scheduled."""
-            self.last_scrape_time_per_source[source] = now
+            self.last_scrape_time_per_scraper_id[scraper_id] = now
 
     def __init__(
         self,
@@ -181,26 +181,26 @@ class ScraperCoordinator:
 
         while self.is_running:
             now = dt.datetime.utcnow()
-            sources_to_scrape_now = self.tracker.get_sources_ready_to_scrape(now)
-            if not sources_to_scrape_now:
+            scraper_ids_to_scrape_now = self.tracker.get_scraper_ids_ready_to_scrape(now)
+            if not scraper_ids_to_scrape_now:
                 bt.logging.trace("Nothing ready to scrape yet. Trying again in 15s")
                 # Nothing is due a scrape. Wait a few seconds and try again
                 await asyncio.sleep(15)
                 continue
 
-            for source in sources_to_scrape_now:
-                scraper = self.provider.get(source)
+            for scraper_id in scraper_ids_to_scrape_now:
+                scraper = self.provider.get(scraper_id)
 
-                scrape_configs = _choose_scrape_configs(source, self.config, now)
+                scrape_configs = _choose_scrape_configs(scraper_id, self.config, now)
 
                 for config in scrape_configs:
                     # Use .partial here to make sure the functions arguments are copied/stored
                     # now rather than being lazily evaluated (if a lambda was used).
                     # https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/cell-var-from-loop.html#cell-var-from-loop-w0640
-                    bt.logging.trace(f"Adding scrape task for {source}: {config}")
+                    bt.logging.trace(f"Adding scrape task for {scraper_id}: {config}")
                     self.queue.put_nowait(functools.partial(scraper.scrape, config))
 
-                self.tracker.on_scrape_scheduled(source, now)
+                self.tracker.on_scrape_scheduled(scraper_id, now)
 
         bt.logging.info("Coordinator shutting down. Waiting for workers to finish")
         await asyncio.gather(*workers)

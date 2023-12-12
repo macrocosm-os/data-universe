@@ -8,13 +8,13 @@ from common.data import DataEntity, DataLabel, TimeBucket
 from scraping.coordinator import (
     CoordinatorConfig,
     DataSource,
-    DataSourceScrapingConfig,
+    ScraperConfig,
     LabelScrapingConfig,
     ScraperCoordinator,
     _choose_scrape_configs,
 )
 from scraping.provider import ScraperProvider
-from scraping.scraper import ScrapeConfig, Scraper
+from scraping.scraper import ScrapeConfig, Scraper, ScraperId
 from storage.miner.miner_storage import MinerStorage
 import tests.utils as test_utils
 
@@ -24,14 +24,14 @@ class TestScraperCoordinator(unittest.TestCase):
         """Tests the Coordinator's Tracker returns the sources that are ready to scrape."""
         # Create a CoordinatorConfig with two DataSourceScrapingConfig objects
         config = CoordinatorConfig(
-            data_source_scraping_configs={
-                DataSource.REDDIT: DataSourceScrapingConfig(
-                    source=DataSource.REDDIT,
+            scraper_configs={
+                ScraperId.REDDIT_LITE: ScraperConfig(
+                    scraper_id=ScraperId.REDDIT_LITE,
                     cadence_seconds=60,
                     labels_to_scrape=[],
                 ),
-                DataSource.X: DataSourceScrapingConfig(
-                    source=DataSource.X,
+                ScraperId.X_FLASH: ScraperConfig(
+                    scraper_id=ScraperId.X_FLASH,
                     cadence_seconds=120,
                     labels_to_scrape=[],
                 ),
@@ -47,34 +47,34 @@ class TestScraperCoordinator(unittest.TestCase):
         # Verify that the data sources aren't ready to scrape yet because the
         # tracker should wait until the cadence has passed.
         self.assertEqual(
-            [], tracker.get_sources_ready_to_scrape(now)
+            [], tracker.get_scraper_ids_ready_to_scrape(now)
         )
 
         # Advance the clock by 60 seconds, and make sure only the first source is returned.
         now += dt.timedelta(seconds=60)
-        self.assertEqual([DataSource.REDDIT], tracker.get_sources_ready_to_scrape(now))
+        self.assertEqual([ScraperId.REDDIT_LITE], tracker.get_scraper_ids_ready_to_scrape(now))
 
-        tracker.on_scrape_scheduled(DataSource.REDDIT, now)
+        tracker.on_scrape_scheduled(ScraperId.REDDIT_LITE, now)
         
         # Advance the clock by 15 seconds, and make sure nothing is returned.
         now += dt.timedelta(seconds=15)
         self.assertEqual(
-            [], tracker.get_sources_ready_to_scrape(now)
+            [], tracker.get_scraper_ids_ready_to_scrape(now)
         )
 
         # Advance the clock by 45 seconds, and make sure both sources are returned.
         now += dt.timedelta(seconds=45)
         self.assertEqual(
-            [DataSource.REDDIT, DataSource.X], tracker.get_sources_ready_to_scrape(now)
+            [ScraperId.REDDIT_LITE, ScraperId.X_FLASH], tracker.get_scraper_ids_ready_to_scrape(now)
         )
 
     def test_choose_scrape_configs(self):
         """Verifies the Coordinator logic for choosing scrape configs."""
 
         config = CoordinatorConfig(
-            data_source_scraping_configs={
-                DataSource.REDDIT: DataSourceScrapingConfig(
-                    source=DataSource.REDDIT,
+            scraper_configs={
+                ScraperId.REDDIT_LITE: ScraperConfig(
+                    scraper_id=ScraperId.REDDIT_LITE,
                     cadence_seconds=60,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -105,7 +105,7 @@ class TestScraperCoordinator(unittest.TestCase):
         time_counts = defaultdict(int)
         runs = 20000
         for _ in range(runs):
-            scrape_configs = _choose_scrape_configs(DataSource.REDDIT, config, now)
+            scrape_configs = _choose_scrape_configs(ScraperId.REDDIT_LITE, config, now)
 
             self.assertEqual(2, len(scrape_configs))
 
@@ -184,12 +184,12 @@ class TestScraperCoordinator(unittest.TestCase):
         mock_storage = Mock(spec=MinerStorage)
 
         # Create a ScraperProvider that uses the Mock Scraper
-        provider = ScraperProvider(factories={DataSource.REDDIT: lambda: mock_scraper})
+        provider = ScraperProvider(factories={ScraperId.REDDIT_LITE: lambda: mock_scraper})
 
         config = CoordinatorConfig(
-            data_source_scraping_configs={
-                DataSource.REDDIT: DataSourceScrapingConfig(
-                    source=DataSource.REDDIT,
+            scraper_configs={
+                ScraperId.REDDIT_LITE: ScraperConfig(
+                    scraper_id=ScraperId.REDDIT_LITE,
                     # Use a small cadence because the Coordinator will wait this amount of time
                     # before performing the first scrape.
                     cadence_seconds=1,

@@ -1,7 +1,7 @@
 {
     "data_source_scraping_configs": [
         {
-            "source": "X",
+            "scraper_id": "X.flash",
             "cadence_seconds": 300,
             "labels_to_scrape": [
                 {
@@ -18,7 +18,7 @@
             ]
         },
         {
-            "source": "reddit",
+            "scraper_id": "Reddit.lite",
             "cadence_seconds": 900,
             "labels_to_scrape": [
                 {

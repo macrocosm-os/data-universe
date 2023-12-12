@@ -1,10 +1,11 @@
 import unittest
 
 from scraping.config.model import (
-    DataSourceScrapingConfig,
+    ScraperConfig,
     LabelScrapingConfig,
     ScrapingConfig,
 )
+from scraping.scraper import ScraperId
 
 
 class TestScrapingConfig(unittest.TestCase):
@@ -13,8 +14,8 @@ class TestScrapingConfig(unittest.TestCase):
 
         config = ScrapingConfig(
             data_source_scraping_configs=[
-                DataSourceScrapingConfig(
-                    source="X",
+                ScraperConfig(
+                    scraper_id=ScraperId.X_FLASH,
                     cadence_seconds=300,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -28,8 +29,8 @@ class TestScrapingConfig(unittest.TestCase):
                         ),
                     ],
                 ),
-                DataSourceScrapingConfig(
-                    source="reddit",
+                ScraperConfig(
+                    scraper_id=ScraperId.REDDIT_LITE,
                     cadence_seconds=900,
                     labels_to_scrape=[
                         LabelScrapingConfig(

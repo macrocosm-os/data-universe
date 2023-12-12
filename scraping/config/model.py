@@ -16,6 +16,7 @@ from typing import List, Optional, Sequence
 from pydantic import BaseModel, Field, PositiveInt, ValidationError
 from common.data import DataLabel, DataSource
 from scraping import coordinator
+from scraping.scraper import ScraperId
 
 class LabelScrapingConfig(BaseModel):
     """Describes what labels to scrape."""
@@ -54,12 +55,10 @@ class LabelScrapingConfig(BaseModel):
         return coordinator.LabelScrapingConfig(label_choices=labels, max_age_hint_minutes=self.max_age_hint_minutes, max_data_entities=self.max_data_entities)
 
 
-class DataSourceScrapingConfig(BaseModel):
-    """Configures the content to scrape from a DataSource."""
+class ScraperConfig(BaseModel):
+    """Configures a specific scraper."""
     
-    source: str = Field(
-        min_length=1,
-        description="The data source being configured. Acceptable values are 'X', 'REDDIT'.")
+    scraper_id: ScraperId = Field(description="The scraper being configured.")
     
     cadence_seconds: PositiveInt = Field(
         description=
@@ -73,32 +72,22 @@ class DataSourceScrapingConfig(BaseModel):
         """
     )
     
-    def to_coordinator_data_source_scraping_config(self) -> coordinator.DataSourceScrapingConfig:
+    def to_coordinator_data_source_scraping_config(self) -> coordinator.ScraperConfig:
         """Returns the internal DataSourceScrapingConfig representation
 
         Raises:
             ValueError: if the conversion fails.
             ValidationError: if the conversion fails.
         """
-        source = None
-        if not self.source:
-            raise ValueError("Source must be in ('X','REDDIT')")
-        if self.source.casefold() == "X".casefold():
-            source = DataSource.X
-        elif self.source.casefold() == "REDDIT".casefold():
-            source = DataSource.REDDIT
-        else:
-            raise ValueError(f"Source '{self.source}' not in ('X','REDDIT')")
-        
-        return coordinator.DataSourceScrapingConfig(
-            source=source,
+        return coordinator.ScraperConfig(
+            scraper_id=self.scraper_id,
             cadence_seconds=self.cadence_seconds,
             labels_to_scrape=[label.to_coordinator_label_scrape_config() for label in self.labels_to_scrape]
         )
 
 class ScrapingConfig(BaseModel):
     
-    data_source_scraping_configs: List[DataSourceScrapingConfig] = Field(
+    data_source_scraping_configs: List[ScraperConfig] = Field(
         description="The list of data sources (and their scraping config) this miner should scrape from. Only data sources in this list will be scraped."
     )
     
@@ -109,5 +98,5 @@ class ScrapingConfig(BaseModel):
             ValidationError: if the conversion fails
         """
         configs = [config.to_coordinator_data_source_scraping_config() for config in self.data_source_scraping_configs]
-        return coordinator.CoordinatorConfig(data_source_scraping_configs={cfg.source: cfg for cfg in configs})
+        return coordinator.CoordinatorConfig(scraper_configs={cfg.scraper_id: cfg for cfg in configs})
     

@@ -5,18 +5,19 @@ from common.data import DataLabel, DataSource
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import (
     CoordinatorConfig,
-    DataSourceScrapingConfig,
+    ScraperConfig,
     LabelScrapingConfig,
 )
+from scraping.scraper import ScraperId
 
 
 class TestConfigReader(unittest.TestCase):
     def test_load_config_valid(self):
         """Tests a valid config is loaded correctly."""
         expected_config = CoordinatorConfig(
-            data_source_scraping_configs={
-                DataSource.X: DataSourceScrapingConfig(
-                    source=DataSource.X,
+            scraper_configs={
+                ScraperId.X_FLASH: ScraperConfig(
+                    scraper_id=ScraperId.X_FLASH,
                     cadence_seconds=300,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -33,8 +34,8 @@ class TestConfigReader(unittest.TestCase):
                         ),
                     ],
                 ),
-                DataSource.REDDIT: DataSourceScrapingConfig(
-                    source=DataSource.REDDIT,
+                ScraperId.REDDIT_LITE: ScraperConfig(
+                    scraper_id=ScraperId.REDDIT_LITE,
                     cadence_seconds=900,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -63,7 +64,7 @@ class TestConfigReader(unittest.TestCase):
 
         with self.assertRaises(Exception) as e:
             ConfigReader.load_config(filepath)
-        self.assertIn("Source 'bogus' not in", str(e.exception))
+        self.assertIn("scraper_id\n  value is not a valid enumeration member", str(e.exception))
 
 
 if __name__ == "__main__":
