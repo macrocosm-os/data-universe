@@ -1,5 +1,6 @@
 import unittest
 import os
+from common import constants
 from common.data import DataEntityBucket, DataEntity, DataEntityBucketId, DataLabel, DataSource, TimeBucket
 import datetime as dt
 
@@ -248,7 +249,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
                             content_size_bytes=10)
 
         # Create two entities for bucket 2.
-        bucket2_datetime = now - dt.timedelta(days=8)
+        bucket2_datetime = now - dt.timedelta(days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS + 1)
         bucket2_entity1 = DataEntity(
                             uri="test_entity_2",
                             datetime=bucket2_datetime,

@@ -1,6 +1,7 @@
 import os
 import unittest
 from unittest.mock import patch
+from common import constants
 from common.data import DataLabel, DataSource
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import (
@@ -28,7 +29,7 @@ class TestConfigReader(unittest.TestCase):
                             max_data_entities=100,
                         ),
                         LabelScrapingConfig(
-                            max_age_hint_minutes=10080,
+                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                             max_data_entities=500,
                         ),
                     ],
@@ -41,7 +42,7 @@ class TestConfigReader(unittest.TestCase):
                                 DataLabel(value="r/bittensor_"),
                                 DataLabel(value="r/bitcoin"),
                             ],
-                            max_age_hint_minutes=10080,
+                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                             max_data_entities=50,
                         ),
                     ],
