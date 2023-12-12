@@ -1,29 +1,29 @@
 {
-    "scraping_configs": [
+    "scraper_configs": [
         {
-            "source": "bogus",
-            "cadence_secs": 300,
+            "scraper_id": "bogus",
+            "cadence_seconds": 300,
             "labels_to_scrape": [
                 {
                     "label_choices": [
                         "#bittensor",
                         "#tao"
                     ],
-                    "max_age_in_minutes": 1440,
-                    "max_items": 100
+                    "max_age_hint_minutes": 1440,
+                    "max_data_entities": 100
                 }
             ]
         },
         {
-            "source": "REDDIT",
-            "cadence_secs": 900,
+            "scraper_id": "Reddit.lite",
+            "cadence_seconds": 900,
             "labels_to_scrape": [
                 {
                     "label_choices": [
                         "r/bittensor_",
                         "r/bitcoin"
                     ],
-                    "max_items": 50
+                    "max_data_entities": 50
                 }
             ]
         }

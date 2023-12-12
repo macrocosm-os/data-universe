@@ -1,4 +1,5 @@
 import abc
+from enum import Enum
 import bittensor as bt
 import asyncio
 import traceback
@@ -8,6 +9,13 @@ from pydantic import BaseModel, Field, PositiveInt
 
 from common.data import DataEntity, DataLabel, DataSource, DateRange
 from storage.miner.miner_storage import MinerStorage
+
+
+class ScraperId(str, Enum):
+    """The id for each of the scrapers."""
+
+    REDDIT_LITE = "Reddit.lite"
+    X_FLASH = "X.flash"
 
 
 class ValidationResult(BaseModel):

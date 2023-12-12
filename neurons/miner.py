@@ -23,7 +23,7 @@ import traceback
 import typing
 import bittensor as bt
 from common import utils
-from common.protocol import GetDataChunk, GetDataChunkIndex
+from common.protocol import GetDataEntityBucket, GetMinerIndex
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
@@ -48,9 +48,9 @@ class Miner(BaseNeuron):
             blacklist_fn=self.get_index_blacklist,
             priority_fn=self.get_index_priority,
         ).attach(
-            forward_fn=self.get_chunk,
-            blacklist_fn=self.get_chunk_blacklist,
-            priority_fn=self.get_chunk_priority,
+            forward_fn=self.get_data_entity_bucket,
+            blacklist_fn=self.get_data_entity_bucket_blacklist,
+            priority_fn=self.get_data_entity_bucket_priority,
         )
         bt.logging.info(f"Axon created: {self.axon}")
 
@@ -62,8 +62,8 @@ class Miner(BaseNeuron):
 
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
-            self.config.neuron.sqlite_database_name,
-            self.config.neuron.database_max_content_size_bytes,
+            self.config.neuron.database_name,
+            self.config.neuron.max_database_size_bytes_hint,
         )
 
         # Configure the ScraperCoordinator
@@ -229,47 +229,47 @@ class Miner(BaseNeuron):
         )
         bt.logging.info(log)
 
-    async def get_index(self, synapse: GetDataChunkIndex) -> GetDataChunkIndex:
-        """Runs after the GetDataChunkIndex synapse has been deserialized (i.e. after synapse.data is available)."""
-        bt.logging.info("Responding to a GetDataChunkIndex request.")
+    async def get_index(self, synapse: GetMinerIndex) -> GetMinerIndex:
+        """Runs after the GetMinerIndex synapse has been deserialized (i.e. after synapse.data is available)."""
+        bt.logging.info("Responding to a GetMinerIndex request.")
 
-        # List all the data chunk summaries that this miner currently has.
-        synapse.data_chunk_summaries = self.storage.list_data_chunk_summaries()
+        # List all the data entity buckets that this miner currently has.
+        synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
 
         bt.logging.info(
-            f"Returning miner index with size: len({synapse.data_chunk_summaries})"
+            f"Returning miner index with size: len({synapse.data_entity_buckets})"
         )
 
         return synapse
 
     async def get_index_blacklist(
-        self, synapse: GetDataChunkIndex
+        self, synapse: GetMinerIndex
     ) -> typing.Tuple[bool, str]:
         return self.default_blacklist(synapse)
 
-    async def get_index_priority(self, synapse: GetDataChunkIndex) -> float:
+    async def get_index_priority(self, synapse: GetMinerIndex) -> float:
         return self.default_priority(synapse)
 
-    async def get_chunk(self, synapse: GetDataChunk) -> GetDataChunk:
-        """Runs after the GetDataChunk synapse has been deserialized (i.e. after synapse.data is available)."""
+    async def get_data_entity_bucket(self, synapse: GetDataEntityBucket) -> GetDataEntityBucket:
+        """Runs after the GetDataEntityBucket synapse has been deserialized (i.e. after synapse.data is available)."""
         bt.logging.info(
-            "Responding to a GetDataChunk request for DataChunk: "
-            + str(synapse.data_chunk_summary)
+            "Responding to a GetDataEntityBucket request for Bucket ID: "
+            + str(synapse.data_entity_bucket_id)
         )
 
-        # List all the data entities that this miner has for the requested chunk.
-        synapse.data_entities = self.storage.list_data_entities_in_data_chunk(
-            synapse.data_chunk_summary
+        # List all the data entities that this miner has for the requested DataEntityBucket.
+        synapse.data_entities = self.storage.list_data_entities_in_data_entity_bucket(
+            synapse.data_entity_bucket_id
         )
 
         return synapse
 
-    async def get_chunk_blacklist(
-        self, synapse: GetDataChunk
+    async def get_data_entity_bucket_blacklist(
+        self, synapse: GetDataEntityBucket
     ) -> typing.Tuple[bool, str]:
         return self.default_blacklist(synapse)
 
-    async def get_chunk_priority(self, synapse: GetDataChunk) -> float:
+    async def get_data_entity_bucket_priority(self, synapse: GetDataEntityBucket) -> float:
         return self.default_priority(synapse)
 
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:

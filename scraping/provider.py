@@ -1,12 +1,12 @@
 from typing import Callable, Dict
 from common.data import DataSource
 from scraping.reddit.reddit_lite_scraper import RedditLiteScraper
-from scraping.scraper import Scraper
+from scraping.scraper import Scraper, ScraperId
 from scraping.x.twitter_flash_scraper import TwitterFlashScraper
 
 DEFAULT_FACTORIES = {
-    DataSource.REDDIT: RedditLiteScraper,
-    DataSource.X: TwitterFlashScraper,
+    ScraperId.REDDIT_LITE: RedditLiteScraper,
+    ScraperId.X_FLASH: TwitterFlashScraper,
 }
 
 class ScraperProvider:
@@ -15,10 +15,10 @@ class ScraperProvider:
     def __init__(self, factories: Dict[DataSource, Callable[[], Scraper]] = DEFAULT_FACTORIES):
         self.factories = factories
 
-    def get(self, data_source: DataSource) -> Scraper:
-        """Returns a scraper for the given data source."""
+    def get(self, scraper_id: ScraperId) -> Scraper:
+        """Returns a scraper for the given scraper id."""
         
-        assert data_source in self.factories, f"Data source {data_source} not supported."
+        assert scraper_id in self.factories, f"Scraper id {scraper_id} not supported."
         
-        return self.factories[data_source]()
+        return self.factories[scraper_id]()
         

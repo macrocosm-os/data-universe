@@ -4,8 +4,8 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
 from common.data import DataLabel, DataSource
 
 
-class DataSourceReward(BaseModel):
-    """The reward for a data source."""
+class DataSourceDesirability(BaseModel):
+    """The Desirability for a data source."""
 
     # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
@@ -42,14 +42,14 @@ class DataSourceReward(BaseModel):
         return value
 
 
-class RewardDistributionModel(BaseModel):
-    """The data model for how rewards are distributed across data sources."""
+class DataDesirabilityLookup(BaseModel):
+    """Information about data desirability across data sources."""
 
     # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
-    distribution: Dict[DataSource, DataSourceReward] = Field(
-        description="The reward distribution for each data source. All data sources must be present and the sum of weights must equal 1.0."
+    distribution: Dict[DataSource, DataSourceDesirability] = Field(
+        description="The Desirability for each data source. All data sources must be present and the sum of weights must equal 1.0."
     )
 
     max_age_in_hours: PositiveInt = Field(
@@ -59,8 +59,8 @@ class RewardDistributionModel(BaseModel):
     @validator("distribution")
     @classmethod
     def validate_distribution(
-        cls, distribution: Dict[DataSource, DataSourceReward]
-    ) -> Dict[DataSource, DataSourceReward]:
+        cls, distribution: Dict[DataSource, DataSourceDesirability]
+    ) -> Dict[DataSource, DataSourceDesirability]:
         """Validates the distribution field."""
         if (
             sum(

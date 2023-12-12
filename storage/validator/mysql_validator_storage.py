@@ -1,6 +1,6 @@
 import threading
 from common import utils
-from common.data import DataLabel, DataSource, MinerIndex, ScorableDataChunkSummary, ScorableMinerIndex, TimeBucket
+from common.data import DataEntityBucket, DataEntityBucketId, DataLabel, DataSource, MinerIndex, ScorableDataEntityBucket, ScorableMinerIndex, TimeBucket
 from storage.validator.validator_storage import ValidatorStorage
 from typing import Optional, Set
 import datetime as dt
@@ -9,7 +9,7 @@ import mysql.connector
 class MysqlValidatorStorage(ValidatorStorage):
     """MySQL backed Validator Storage"""
 
-    # Primary table in which the DataChunkSummaries for all miners are stored.
+    # Primary table in which the DataEntityBuckets for all miners are stored.
     MINER_INDEX_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS MinerIndex (
                                 minerId             INT             NOT NULL,
                                 timeBucketId        INT             NOT NULL,
@@ -111,19 +111,19 @@ class MysqlValidatorStorage(ValidatorStorage):
         # Upsert this Validator's minerId for the specified hotkey.
         miner_id = self._upsert_miner(index.hotkey, now_str)
 
-        # Parse every DataChunkSummary from the index into a list of values to insert.
+        # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []
-        for data_chunk_summary in index.chunks:
-            label = "NULL" if (data_chunk_summary.label is None) else data_chunk_summary.label.value
+        for data_entity_bucket in index.data_entity_buckets:
+            label = "NULL" if (data_entity_bucket.id.label is None) else data_entity_bucket.id.label.value
 
             # Get or insert this Validator's labelId for the specified label.
             label_id = self._get_or_insert_label(label)
 
             values.append([miner_id,
-                           data_chunk_summary.time_bucket.id,
-                           data_chunk_summary.source.value,
+                           data_entity_bucket.id.time_bucket.id,
+                           data_entity_bucket.id.source.value,
                            label_id,
-                           data_chunk_summary.size_bytes])
+                           data_entity_bucket.size_bytes])
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
@@ -134,11 +134,11 @@ class MysqlValidatorStorage(ValidatorStorage):
             self.connection.commit()
 
 
-    def read_miner_index(self, miner_hotkey: str, valid_miners: Set[str]) -> Optional[ScorableMinerIndex]:
+    def read_miner_index(self, hotkey: str, valid_miners: Set[str]) -> Optional[ScorableMinerIndex]:
         """Gets a scored index for all of the data that a specific miner promises to provide.
         
         Args:
-            miner_hotkey (str): The hotkey of the miner to read the index for.
+            hotkey (str): The hotkey of the miner to read the index for.
             valid_miners (Set[str]): The set of miners that should be used for uniqueness scoring.
         """
 
@@ -148,12 +148,12 @@ class MysqlValidatorStorage(ValidatorStorage):
         last_updated = None
 
         # Include the specified miner in the set of miners we check even if it is invalid.
-        valid_miners.add(miner_hotkey)
+        valid_miners.add(hotkey)
 
         # Add enough %s for the IN query to match the valid_miners list.
         format_valid_miners = ','.join(['%s'] * len(valid_miners))
 
-        # Get all the DataChunkSummaries for this miner joined to the total content size of like chunks.
+        # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
         sql_string = """SELECT mi1.*, m1.hotkey, m1.lastUpdated, l.labelValue, agg.totalContentSize 
                        FROM MinerIndex mi1
                        JOIN Miner m1 ON mi1.minerId = m1.minerId
@@ -172,14 +172,14 @@ class MysqlValidatorStorage(ValidatorStorage):
         # Build the args, ensuring our final tuple has at least 2 elements.
         args = []
         args.extend(list(valid_miners))
-        args.append(miner_hotkey)
+        args.append(hotkey)
 
         cursor.execute(sql_string, tuple(args))
 
-        # Create to a list to hold each of the ScorableDataChunkSummaries we generate for this miner.
-        scored_chunks = []
+        # Create to a list to hold each of the ScorableDataEntityBuckets we generate for this miner.
+        scored_data_entity_buckets = []
 
-        # For each row (representing a DataChunkSummary and Uniqueness) turn it into a ScorableDataChunkSummary.
+        # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
         for row in cursor:
             # Set last_updated to the first value since they are all the same for a given miner.
             if last_updated == None:
@@ -187,42 +187,44 @@ class MysqlValidatorStorage(ValidatorStorage):
 
             # Get the relevant primary key fields for comparing to other miners.
             label=row['labelValue']
-            # Get the total bytes for this chunk for this miner before adjusting for uniqueness.
+            # Get the total bytes for this bucket for this miner before adjusting for uniqueness.
             content_size_bytes=row['contentSizeBytes']
-            # Get the total bytes for this chunk across all valid miners (+ this miner).
+            # Get the total bytes for this bucket across all valid miners (+ this miner).
             total_content_size_bytes=row['totalContentSize']
 
-            # Score the bytes as the fraction of the total content bytes for that chunk across all valid miners.
-            scored_chunk = ScorableDataChunkSummary(
-                            time_bucket=TimeBucket(id=row['timeBucketId']),
-                            source=DataSource(row['source']),
-                            size_bytes=content_size_bytes,
-                            scorable_bytes=content_size_bytes*content_size_bytes/total_content_size_bytes)
-            
+            # Score the bytes as the fraction of the total content bytes for that bucket across all valid miners.
+            data_entity_bucket_id = DataEntityBucketId(
+                time_bucket=TimeBucket(id=row['timeBucketId']),
+                source=DataSource(row['source']))
             if label != "NULL":
-                scored_chunk.label = DataLabel(value=label)
+                data_entity_bucket_id.label = DataLabel(value=label)
+
+            data_entity_bucket = DataEntityBucket(id=data_entity_bucket_id, size_bytes=content_size_bytes)
+            scored_data_entity_bucket = ScorableDataEntityBucket(
+                data_entity_bucket=data_entity_bucket,
+                scorable_bytes=content_size_bytes*content_size_bytes/total_content_size_bytes)
             
-            # Add the chunk to the list of scored chunks on the overall index.
-            scored_chunks.append(scored_chunk)
+            # Add the bucket to the list of scored buckets on the overall index.
+            scored_data_entity_buckets.append(scored_data_entity_bucket)
 
         # If we do not get any rows back then do not return an empty ScorableMinerIndex.
         if last_updated == None:
             return None
 
-        scored_index = ScorableMinerIndex(hotkey=miner_hotkey, scorable_chunks=scored_chunks, last_updated=last_updated)
+        scored_index = ScorableMinerIndex(hotkey=hotkey, scorable_data_entity_buckets=scored_data_entity_buckets, last_updated=last_updated)
         return scored_index
 
 
-    def delete_miner_index(self, miner_hotkey: str):
+    def delete_miner_index(self, hotkey: str):
         """Removes the index for the specified miner.
         
             Args:
-            miner_hotkey (str): The hotkey of the miner to remove from the index.
+            miner (str): The hotkey of the miner to remove from the index.
         """
 
         # Get the minerId from the hotkey.
         cursor = self.connection.cursor(buffered=True)
-        cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [miner_hotkey])
+        cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
 
         # Delete the rows for the specified miner.
         if cursor.rowcount:
@@ -230,17 +232,17 @@ class MysqlValidatorStorage(ValidatorStorage):
             cursor.execute("DELETE FROM MinerIndex WHERE minerId = %s", [miner_id])
             self.connection.commit()
 
-    def read_miner_last_updated(self, miner_hotkey: str) -> Optional[dt.datetime]:
+    def read_miner_last_updated(self, hotkey: str) -> Optional[dt.datetime]:
         """Gets when a specific miner was last updated. Or none.
         
         Args:
-            miner_hotkey (str): The hotkey of the miner to check for last updated.
+            hotkey (str): The hotkey of the miner to check for last updated.
         """
     
         # Buffer to ensure rowcount is correct.
         cursor = self.connection.cursor(buffered=True)
         # Check to see if the Miner already exists.
-        cursor.execute("SELECT lastUpdated FROM Miner WHERE hotkey = %s", [miner_hotkey])
+        cursor.execute("SELECT lastUpdated FROM Miner WHERE hotkey = %s", [hotkey])
 
         if cursor.rowcount:
             # If it does we can use the already fetched id.

@@ -1,10 +1,11 @@
 import unittest
 
 from scraping.config.model import (
-    DataSourceScrapingConfig,
-    LabelScrapeConfig,
+    ScraperConfig,
+    LabelScrapingConfig,
     ScrapingConfig,
 )
+from scraping.scraper import ScraperId
 
 
 class TestScrapingConfig(unittest.TestCase):
@@ -12,29 +13,29 @@ class TestScrapingConfig(unittest.TestCase):
         """Verifies a round-trip serialization/deserialization of the ScrapingConfig"""
 
         config = ScrapingConfig(
-            scraping_configs=[
-                DataSourceScrapingConfig(
-                    source="X",
-                    cadence_secs=300,
+            scraper_configs=[
+                ScraperConfig(
+                    scraper_id=ScraperId.X_FLASH,
+                    cadence_seconds=300,
                     labels_to_scrape=[
-                        LabelScrapeConfig(
+                        LabelScrapingConfig(
                             label_choices=["#bittensor", "#TAO"],
-                            max_age_in_minutes=1440,
-                            max_items=100,
+                            max_age_hint_minutes=1440,
+                            max_data_entities=100,
                         ),
-                        LabelScrapeConfig(
-                            max_age_in_minutes=10080,
-                            max_items=500,
+                        LabelScrapingConfig(
+                            max_age_hint_minutes=10080,
+                            max_data_entities=500,
                         ),
                     ],
                 ),
-                DataSourceScrapingConfig(
-                    source="reddit",
-                    cadence_secs=900,
+                ScraperConfig(
+                    scraper_id=ScraperId.REDDIT_LITE,
+                    cadence_seconds=900,
                     labels_to_scrape=[
-                        LabelScrapeConfig(
+                        LabelScrapingConfig(
                             label_choices=["r/bittensor_"],
-                            max_items=50,
+                            max_data_entities=50,
                         ),
                     ],
                 ),

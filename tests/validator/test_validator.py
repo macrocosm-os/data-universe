@@ -1,57 +1,64 @@
 import datetime as dt
 import unittest
 from common.data import (
-    DataChunkSummary,
+    DataEntityBucket,
     DataEntity,
+    DataEntityBucketId,
     DataLabel,
     TimeBucket,
     DataSource,
-    ScorableDataChunkSummary,
+    ScorableDataEntityBucket,
     ScorableMinerIndex,
 )
 from neurons.validator import Validator
 
 
 class TestValidator(unittest.TestCase):
-    def test_choose_chunk_to_query(self):
-        """Calls choose_chunk_to_query 10000 times and ensures the distribution of chunks chosen is as expected."""
+    def test_choose_data_entity_bucket_to_query(self):
+        """Calls choose_data_entity_bucket_to_query 10000 times and ensures the distribution of bucketss chosen is as expected."""
         index = ScorableMinerIndex(
             hotkey="abc123",
-            scorable_chunks=[
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(
-                        dt.datetime.now(tz=dt.timezone.utc)
-                    ),
-                    source=DataSource.REDDIT,
-                    size_bytes=100,
-                    scorable_bytes=100,
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(dt.datetime.now(tz=dt.timezone.utc)),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="0")),
+                        size_bytes=100
+                        ),
+                    scorable_bytes=100
                 ),
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(
-                        dt.datetime.now(tz=dt.timezone.utc)
-                    ),
-                    source=DataSource.REDDIT,
-                    size_bytes=200,
-                    scorable_bytes=200,
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(dt.datetime.now(tz=dt.timezone.utc)),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="1")),
+                        size_bytes=200
+                        ),
+                    scorable_bytes=200
                 ),
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(
-                        dt.datetime.now(tz=dt.timezone.utc)
-                    ),
-                    source=DataSource.REDDIT,
-                    size_bytes=300,
-                    scorable_bytes=300,
-                ),
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(dt.datetime.now(tz=dt.timezone.utc)),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="2")),
+                        size_bytes=300
+                        ),
+                    scorable_bytes=300
+                )
             ],
             last_updated=dt.datetime.now(tz=dt.timezone.utc),
         )
 
-        # Sample the chunks, counting how often each is chosen
+        # Sample the buckets, counting how often each is chosen
         counts = [0, 0, 0]
         for _ in range(10000):
-            chosen_chunk = Validator.choose_chunk_to_query(index)
-            self.assertIsInstance(chosen_chunk, DataChunkSummary)
-            counts[index.scorable_chunks.index(chosen_chunk)] += 1
+            chosen_bucket_id = Validator.choose_data_entity_bucket_to_query(index)
+            self.assertIsInstance(chosen_bucket_id, DataEntityBucketId)
+            counts[int(chosen_bucket_id.label.value)] += 1
 
         total = sum(counts)
         ratios = [count / total for count in counts]
@@ -85,7 +92,7 @@ class TestValidator(unittest.TestCase):
             ),
         ]
 
-        # Sample the chunks, counting how often each is chosen
+        # Sample the buckets, counting how often each is chosen
         counts = [0, 0, 0]
         for _ in range(10000):
             chosen_entities = Validator.choose_entities_to_verify(entities)
@@ -103,10 +110,12 @@ class TestValidator(unittest.TestCase):
         """Tests a bunch of bases where the entities are invalid."""
         datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
         default_label = DataLabel(value="label")
-        default_chunk_summary = DataChunkSummary(
-            time_bucket=TimeBucket.from_datetime(datetime),
-            source=DataSource.REDDIT,
-            label=default_label,
+        default_data_entity_bucket = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(datetime),
+                source=DataSource.REDDIT,
+                label=default_label
+            ),
             size_bytes=10,
         )
 
@@ -131,11 +140,11 @@ class TestValidator(unittest.TestCase):
                         content_size_bytes=200,  # Content size doesn't match the content
                     ),
                 ],
-                "chunk": default_chunk_summary,
+                "data_entity_bucket": default_data_entity_bucket,
                 "expected_error": "Size not as expected",
             },
             {
-                "name": "Actual size less than chunk summary",
+                "name": "Actual size less than bucket summary",
                 "entities": [
                     DataEntity(
                         uri="http://1",
@@ -154,11 +163,11 @@ class TestValidator(unittest.TestCase):
                         content_size_bytes=3,
                     ),
                 ],
-                "chunk": default_chunk_summary,
+                "data_entity_bucket": default_data_entity_bucket,
                 "expected_error": "Size not as expected",
             },
             {
-                "name": "Label doesn't match chunk summary",
+                "name": "Label doesn't match bucket summary",
                 "entities": [
                     DataEntity(
                         uri="http://1",
@@ -177,7 +186,7 @@ class TestValidator(unittest.TestCase):
                         content_size_bytes=5,
                     ),
                 ],
-                "chunk": default_chunk_summary,
+                "data_entity_bucket": default_data_entity_bucket,
                 "expected_error": "Entity label",
             },
             {
@@ -200,7 +209,7 @@ class TestValidator(unittest.TestCase):
                         content_size_bytes=5,
                     ),
                 ],
-                "chunk": default_chunk_summary,
+                "data_entity_bucket": default_data_entity_bucket,
                 "expected_error": "Entity source",
             },
             {
@@ -223,7 +232,7 @@ class TestValidator(unittest.TestCase):
                         content_size_bytes=5,
                     ),
                 ],
-                "chunk": default_chunk_summary,
+                "data_entity_bucket": default_data_entity_bucket,
                 "expected_error": "Entity datetime",
             },
             {
@@ -246,7 +255,7 @@ class TestValidator(unittest.TestCase):
                         content_size_bytes=5,
                     ),
                 ],
-                "chunk": default_chunk_summary,
+                "data_entity_bucket": default_data_entity_bucket,
                 "expected_error": "Entity datetime",
             },
         ]
@@ -254,7 +263,7 @@ class TestValidator(unittest.TestCase):
         for test_case in test_cases:
             with self.subTest(test_case["name"], test_case=test_case):
                 valid, reason = Validator.are_entities_valid(
-                    test_case["entities"], test_case["chunk"]
+                    test_case["entities"], test_case["data_entity_bucket"]
                 )
                 self.assertFalse(valid)
                 self.assertRegex(reason, test_case["expected_error"])
@@ -263,10 +272,11 @@ class TestValidator(unittest.TestCase):
         """Tests are_entities_valid with valid entities."""
         datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
         label = DataLabel(value="label")
-        chunk_summary = DataChunkSummary(
-            time_bucket=TimeBucket.from_datetime(datetime),
-            source=DataSource.REDDIT,
-            label=label,
+        data_entity_bucket = DataEntityBucket(
+            id = DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(datetime),
+                source=DataSource.REDDIT,
+                label=label),
             size_bytes=10,
         )
         entities = [
@@ -287,7 +297,7 @@ class TestValidator(unittest.TestCase):
                 content_size_bytes=5,
             ),
         ]
-        valid, _ = Validator.are_entities_valid(entities, chunk_summary)
+        valid, _ = Validator.are_entities_valid(entities, data_entity_bucket)
         self.assertTrue(valid)
 
 

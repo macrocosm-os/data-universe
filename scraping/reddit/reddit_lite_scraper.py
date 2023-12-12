@@ -66,7 +66,7 @@ class RedditLiteScraper(Scraper):
             run_config = RunConfig(
                 actor_id=RedditLiteScraper.ACTOR_ID,
                 debug_info=f"Validate {entity.uri}",
-                max_items=1,
+                max_data_entities=1,
             )
 
             # Retrieve the Reddit Post/Comment from Apify.
@@ -137,7 +137,7 @@ class RedditLiteScraper(Scraper):
         run_config = RunConfig(
             actor_id=RedditLiteScraper.ACTOR_ID,
             debug_info=f"Scrape {run_input['searches']}",
-            max_items=scrape_config.entity_limit,
+            max_data_entities=scrape_config.entity_limit,
             timeout_secs=RedditLiteScraper.SCRAPE_TIMEOUT_SECS,
         )
 

@@ -1,5 +1,5 @@
 from abc import ABC, abstractmethod
-from common.data import DataEntity, DataChunkSummary
+from common.data import DataEntity, DataEntityBucket, DataEntityBucketId
 from typing import List
 
 class MinerStorage(ABC):
@@ -11,11 +11,11 @@ class MinerStorage(ABC):
         raise NotImplemented
     
     @abstractmethod
-    def list_data_entities_in_data_chunk(self, data_chunk_summary: DataChunkSummary) -> List[DataEntity]:
-        """Lists from storage all DataEntities matching the provided DataChunkSummary."""
+    def list_data_entities_in_data_entity_bucket(self, data_entity_bucket_id: DataEntityBucketId) -> List[DataEntity]:
+        """Lists from storage all DataEntities matching the provided DataEntityBucket."""
         raise NotImplemented
 
     @abstractmethod
-    def list_data_chunk_summaries(self) -> List[DataChunkSummary]:
-        """Lists all DataChunkSummaries for all the DataEntities that this MinerStorage is currently serving."""
+    def list_data_entity_buckets(self) -> List[DataEntityBucket]:
+        """Lists all DataEntityBuckets for all the DataEntities that this MinerStorage is currently serving."""
         raise NotImplemented
