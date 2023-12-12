@@ -2,7 +2,7 @@
 
 Data is a critical pillar of AI and Data Universe is that pillar for Bittensor.
 
-Data Universe is a Bittensor subnet for collecting and storing large amounts of data from across a wide-range of sources, for use by other Subnets. It was built from the ground-up with a focus on decentralization and scalability. There is no centralized entity that controls the data; the data is stored across all Miner's on the network and is queryable via the Validators. At launch, Data Universe is able to support up to 50 Petabytes of data across 200 miners, while only requiring ~ 10GB of storage on the Validator.
+Data Universe is a Bittensor subnet for collecting and storing large amounts of data from across a wide-range of sources, for use by other Subnets. It was built from the ground-up with a focus on decentralization and scalability. There is no centralized entity that controls the data; the data is stored across all Miner's on the network and is queryable via the Validators. At launch, Data Universe is able to support up to 50 Petabytes of data across 200 miners, while only requiring ~10GB of storage on the Validator.
 
 # Overview
 
@@ -10,7 +10,7 @@ The Data Universe documentation assumes you are familiar with basic Bittensor co
 
 In the Data Universe, Miners scrape data from a defined set of sources, called DataSources. Each piece of data (e.g. a webpage, BTC prices), called a DataEntity, is stored in the miner's database. Each DataEntity belongs to exactly one DataEntityBucket, which is uniquely identified by its DataEntityBucketId, a tuple of: where the data came from (DataSource), when it was created (TimeBucket), and a classification of the data (DataLabel, e.g. a stock ticker symbol). The full set of DataEntityBuckets on a Miner is referred to as its MinerIndex.
 
-Validators periodically query each Miner to fetch their latest MinerIndex's and store them in a local database. This gives the Validator a complete understanding of all data that's stored on the network, as well as which Miners to query for specific types of data. Validators also periodically verify the correctness of the data stored on Miners and reward Miners based on the amount of valuable data the Miner has.
+Validators periodically query each Miner to fetch their latest MinerIndexes and store them in a local database. This gives the Validator a complete understanding of all data that's stored on the network, as well as which Miners to query for specific types of data. Validators also periodically verify the correctness of the data stored on Miners and reward Miners based on the amount of [valuable data](#data-value) the Miner has.
 
 See the [Miner](docs/miner.md) and [Validator](docs/validator.md) docs for more information about how they work, as well as setup instructions.
 
@@ -28,11 +28,11 @@ Not all data is equally valuable! There are several factors used to determine da
 
 Fresh data is more valuable than old data, and data older than a certain threshold is not scored.
 
-As of Dec 11th, 2023 data older than 7 days is not scored. We expect to extend this value in the near future.
+As of Dec 11th, 2023 data older than 30 days is not scored. This may increase in future.
 
 ### 2) Data Desirability
 
-Data Universe defines a DataDesirabilityMap that defines which types of data are desirable (and which types are undesirable). Data deemed desirable is scored more highly, and undesirable data will be scored negatively. 
+Data Universe defines a DataDesirabilityMap that defines which types of data are desirable (and which types are undesirable). Data deemed desirable is scored more highly. Data deemed undesirable is scored negatively. 
 
 The DataDesirabilityMap will evolve over time, but each change will be announced ahead of time to give Miners adequate time to prepare for each update.
 
