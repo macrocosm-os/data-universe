@@ -18,51 +18,51 @@
 import typing
 import bittensor as bt
 import pydantic
-from common.data import DataChunkSummary, DataEntity
+from common.data import DataEntityBucket, DataEntity, DataEntityBucketId
 from typing import List
 
 
-class GetDataChunkIndex(bt.Synapse):
+class GetMinerIndex(bt.Synapse):
     """
-    Protocol by which Validators can retrieve the DataChunk Index from a Miner.
+    Protocol by which Validators can retrieve the Index from a Miner.
 
     Attributes:
-    - data_chunk_summaries: A list of DataChunkSummary objects that the Miner can serve.
+    - data_entity_buckets: A list of DataEntityBucket objects that the Miner can serve.
     """
 
     # Required request output, filled by receiving axon.
-    data_chunk_summaries: List[DataChunkSummary] = pydantic.Field(
-        title="data_chunk_summaries",
-        description="All of the data that a Miner can serve grouped by DataChunkSummary.",
+    data_entity_buckets: List[DataEntityBucket] = pydantic.Field(
+        title="data_entity_buckets",
+        description="All of the data entity buckets that a Miner can serve.",
         frozen=False,
         repr=False,
     )
 
     def deserialize(self) -> int:
         """
-        Deserialize the data_chunk_summaries output. This method retrieves the response from
-        the miner in the form of data_chunk_summaries, deserializes it and returns it
+        Deserialize the data_entity_buckets output. This method retrieves the response from
+        the miner in the form of data_entity_buckets, deserializes it and returns it
         as the output of the dendrite.query() call.
 
         Returns:
-        - List[DataChunkSummary]: The deserialized response, which in this case is the value of data_chunk_summaries.
+        - List[DataEntityBucket]: The deserialized response, which in this case is the value of data_entity_buckets.
         """
-        return self.data_chunk_summaries
+        return self.data_entity_buckets
 
 
-class GetDataChunk(bt.Synapse):
+class GetDataEntityBucket(bt.Synapse):
     """
-    Protocol by which Validators can retrieve the DataEntities of a Chunk from a Miner.
+    Protocol by which Validators can retrieve the DataEntities of a Bucket from a Miner.
 
     Attributes:
-    - data_chunk_summary: The Summary identifying the DataChunk that the requester is asking for.
-    - data_entities: A list of DataEntity objects that make up the requested DataChunk.
+    - bucket_id: The id of the bucket that the requester is asking for.
+    - data_entities: A list of DataEntity objects that make up the requested DataEntityBucket.
     """
 
     # Required request input, filled by sending dendrite caller.
-    data_chunk_summary: DataChunkSummary = pydantic.Field(
-        title="data_chunk_summary",
-        description="The DataChunkSummary that identifies the requested DataChunk.",
+    data_entity_bucket_id: DataEntityBucketId = pydantic.Field(
+        title="data_entity_bucket_id",
+        description="The identifier for the requested DataEntityBucket.",
         frozen=True,
         repr=False,
     )
@@ -70,7 +70,7 @@ class GetDataChunk(bt.Synapse):
     # Required request output, filled by recieving axon.
     data_entities: List[DataEntity] = pydantic.Field(
         title="data_entities",
-        description="All of the data that makes up the requested DataChunk.",
+        description="All of the data that makes up the requested DataEntityBucket.",
         frozen=False,
         repr=False,
     )
@@ -82,7 +82,7 @@ class GetDataChunk(bt.Synapse):
         as the output of the dendrite.query() call.
 
         Returns:
-        - List[DataChunkSummary]: The deserialized response, which in this case is the value of data_entities.
+        - List[DataEntity]: The deserialized response, which in this case is the value of data_entities.
         """
         return self.data_entities
 

@@ -106,8 +106,8 @@ class MinerScorer:
             # Now score the miner based on the amount of data it has, scaled based on
             # the reward distribution.
             score = 0.0
-            for chunk in index.scorable_chunks:
-                score += self.reward_distribution.get_score_for_chunk(chunk)
+            for bucket in index.scorable_data_entity_buckets:
+                score += self.reward_distribution.get_score_for_data_entity_bucket(bucket)
 
             # Scale the miner's score by its credibility, squared.
             score *= self.miner_credibility[uid] ** 2

@@ -6,10 +6,12 @@ import torch
 from rewards.data import DataSourceReward, RewardDistributionModel
 from scraping.scraper import ValidationResult
 from common.data import (
+    DataEntityBucket,
+    DataEntityBucketId,
     DataLabel,
     DataSource,
     TimeBucket,
-    ScorableDataChunkSummary,
+    ScorableDataEntityBucket,
     ScorableMinerIndex,
 )
 from rewards.miner_scorer import MinerScorer
@@ -40,20 +42,28 @@ class TestMinerScorer(unittest.TestCase):
         # Construct a ScorableMinerIndex with 2 chunks that should score 150 in total (without considering EMA)
         self.scorable_index = ScorableMinerIndex(
             hotkey="abc123",
-            scorable_chunks=[
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(self.now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="testlabel"),
-                    size_bytes=200,
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(self.now),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="testlabel")
+                        ),
+                        size_bytes=200
+                    ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
                 ),
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(self.now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="otherlabel"),
-                    size_bytes=200,
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(self.now),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="otherlabel")
+                        ),
+                        size_bytes=200
+                    ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
                 ),
@@ -189,20 +199,28 @@ class TestMinerScorer(unittest.TestCase):
 
         honest_index = ScorableMinerIndex(
             hotkey="honest",
-            scorable_chunks=[
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(self.now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="testlabel"),
-                    size_bytes=200,
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(self.now),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="testlabel")
+                        ),
+                        size_bytes=200
+                    ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
                 ),
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(self.now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="otherlabel"),
-                    size_bytes=200,
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(self.now),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="otherlabel")
+                        ),
+                        size_bytes=200
+                    ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
                 ),
@@ -212,20 +230,30 @@ class TestMinerScorer(unittest.TestCase):
         # This index is a copy of the above but with 2x for claimed size.
         shady_index = ScorableMinerIndex(
             hotkey="shady",
-            scorable_chunks=[
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(self.now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="testlabel"),
-                    size_bytes=400,
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(self.now),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="testlabel")
+                        ),
+                        size_bytes=400
+                    ),
+                    # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=200,
                 ),
-                ScorableDataChunkSummary(
-                    time_bucket=TimeBucket.from_datetime(self.now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="otherlabel"),
-                    size_bytes=400,
-                    scorable_bytes=100,
+                ScorableDataEntityBucket(
+                    data_entity_bucket=DataEntityBucket(
+                        id=DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(self.now),
+                            source=DataSource.REDDIT,
+                            label=DataLabel(value="otherlabel")
+                        ),
+                        size_bytes=400
+                    ),
+                    # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
+                    scorable_bytes=10,
                 ),
             ],
             last_updated=self.now,

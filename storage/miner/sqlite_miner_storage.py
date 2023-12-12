@@ -1,6 +1,6 @@
 import threading
 from common import utils
-from common.data import DataEntity, DataChunkSummary, DataLabel, DataSource, TimeBucket
+from common.data import DataEntity, DataEntityBucket, DataEntityBucketId, DataLabel, DataSource, TimeBucket
 from storage.miner.miner_storage import MinerStorage
 from typing import List
 import datetime as dt
@@ -21,13 +21,13 @@ class SqliteMinerStorage(MinerStorage):
                                 contentSizeBytes    INTEGER         NOT NULL
                                 ) WITHOUT ROWID"""
 
-    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS chunk_index
+    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
                                 ON DataEntity (timeBucketId, source, label)"""
 
-    def __init__(self, database="SqliteMinerStorage.sqlite", database_max_content_size_bytes=utils.mb_to_bytes(10000)):
+    def __init__(self, database="SqliteMinerStorage.sqlite", max_database_size_bytes_hint=utils.mb_to_bytes(10000)):
         self.database = database
         # TODO Account for non-content columns when restricting total database size.
-        self.database_max_content_size_bytes = database_max_content_size_bytes
+        self.database_max_content_size_bytes = max_database_size_bytes_hint
 
         # Create the database if it doesn't exist, defaulting to the local directory.
         # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
@@ -94,26 +94,26 @@ class SqliteMinerStorage(MinerStorage):
         # Commit the insert.
         self.connection.commit()
     
-    def list_data_entities_in_data_chunk(self, data_chunk_summary: DataChunkSummary) -> List[DataEntity]:
-        """Lists from storage all DataEntities matching the provided DataChunkSummary."""
-        # Get rows that match the DataChunkSummary.
-        label = "NULL" if (data_chunk_summary.label is None) else data_chunk_summary.label.value
+    def list_data_entities_in_data_entity_bucket(self, data_entity_bucket_id: DataEntityBucketId) -> List[DataEntity]:
+        """Lists from storage all DataEntities matching the provided DataEntityBucketId."""
+        # Get rows that match the DataEntityBucketId.
+        label = "NULL" if (data_entity_bucket_id.label is None) else data_entity_bucket_id.label.value
 
         cursor = self.connection.cursor()
         cursor.execute("""SELECT * FROM DataEntity 
                        WHERE timeBucketId = ? AND source = ? AND label = ?""",
-                       [data_chunk_summary.time_bucket.id, data_chunk_summary.source.value, label])
+                       [data_entity_bucket_id.time_bucket.id, data_entity_bucket_id.source.value, label])
 
         # Convert the rows into DataEntity objects and return them up to the configured max chuck size.
         data_entities = []
 
-        # TODO use a configured max chunk size size.
-        max_chunk_size = utils.mb_to_bytes(128)
+        # TODO use a configured max DataEntityBucket size.
+        max_data_entity_bucket_size = utils.mb_to_bytes(128)
         running_size = 0
 
         for row in cursor:
-            if running_size + row['contentSizeBytes'] >= max_chunk_size:
-                # If we would go over the max chunk size instead return early.
+            if running_size + row['contentSizeBytes'] >= max_data_entity_bucket_size:
+                # If we would go over the max DataEntityBucket size instead return early.
                 return data_entities
             else:
                 # Construct the new DataEntity with all non null columns.
@@ -125,54 +125,56 @@ class SqliteMinerStorage(MinerStorage):
 
                 # Add the optional Label field if not null.
                 if row['label'] != "NULL":
-                    data_chunk_summary.label = DataLabel(value=row['label'])
+                    data_entity_bucket_id.label = DataLabel(value=row['label'])
 
                 data_entities.append(data_entity)
                 running_size += row['contentSizeBytes']
 
-        # If we reach the end of the cursor then return all of the data entities for this chunk.
+        # If we reach the end of the cursor then return all of the data entities for this DataEntityBucket.
         return data_entities
 
 
-    def list_data_chunk_summaries(self) -> List[DataChunkSummary]:
-        """Lists all DataChunkSummaries for all the DataEntities that this MinerStorage is currently serving."""
+    def list_data_entity_buckets(self) -> List[DataEntityBucket]:
+        """Lists all DataEntityBuckets for all the DataEntities that this MinerStorage is currently serving."""
 
         cursor = self.connection.cursor()
 
         # TODO use a configured max age.
         oldest_time_bucket_id = TimeBucket.from_datetime(dt.datetime.now() - dt.timedelta(days=7)).id
-        # TODO use a configured max data chunk summary count.
-        max_data_chunk_summary_count = 3000000
+        # TODO use a configured max DataEntityBucket count.
+        max_data_entity_bucket_count = 3000000
 
-        # Get sum of content_size_bytes for all rows grouped by chunk.
-        cursor.execute("""SELECT SUM(contentSizeBytes) AS chunkSize, timeBucketId, source, label FROM DataEntity
+        # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
+        cursor.execute("""SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
                        WHERE timeBucketId >= ?
                        GROUP BY timeBucketId, source, label
                        LIMIT ?
-                       """, [oldest_time_bucket_id, max_data_chunk_summary_count])
+                       """, [oldest_time_bucket_id, max_data_entity_bucket_count])
 
-        data_chunk_summaries = []
+        data_entity_buckets = []
 
-        # TODO use a configured max chunk size size.
-        max_chunk_size = utils.mb_to_bytes(128)
+        # TODO use a configured max DataEntityBucket size.
+        max_data_entity_bucket_size = utils.mb_to_bytes(128)
 
         for row in cursor:
-            # Ensure the miner does not attempt to report more than the max chunk size.
-            size = max_chunk_size if row['chunkSize'] >= max_chunk_size else row['chunkSize']
+            # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
+            size = max_data_entity_bucket_size if row['bucketSize'] >= max_data_entity_bucket_size else row['bucketSize']
 
-            # Construct the new DataChunkSummary with all non null columns.
-            data_chunk_summary = DataChunkSummary(time_bucket=TimeBucket(id=row['timeBucketId']),
-                                                    source=DataSource(row['source']),
-                                                    size_bytes=size)
+            # Construct the new DataEntityBucket with all non null columns.
+            data_entity_bucket_id = DataEntityBucketId(
+                time_bucket=TimeBucket(id=row['timeBucketId']),
+                source=DataSource(row['source']))
 
             # Add the optional Label field if not null.
             if row['label'] != "NULL":
-                data_chunk_summary.label = DataLabel(value=row['label'])
+                data_entity_bucket_id.label = DataLabel(value=row['label'])
 
-            data_chunk_summaries.append(data_chunk_summary)
+            data_entity_bucket = DataEntityBucket(id=data_entity_bucket_id,size_bytes=size)
 
-        # If we reach the end of the cursor then return all of the data chunk summaries.
-        return data_chunk_summaries
+            data_entity_buckets.append(data_entity_bucket)
+
+        # If we reach the end of the cursor then return all of the data entity buckets.
+        return data_entity_buckets
 
     def clear_content_from_oldest(self, contentBytesToClear: int):
         """Deletes entries starting from the oldest until we have cleared the specified amount of content."""

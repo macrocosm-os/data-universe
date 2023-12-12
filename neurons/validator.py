@@ -29,13 +29,14 @@ import os
 import bittensor as bt
 from common import data
 from common.data import (
-    DataChunkSummary,
+    DataEntityBucket,
     DataEntity,
+    DataEntityBucketId,
     DateRange,
     MinerIndex,
     ScorableMinerIndex,
 )
-from common.protocol import GetDataChunk, GetDataChunkIndex
+from common.protocol import GetDataEntityBucket, GetMinerIndex
 import common.utils as utils
 from rewards.reward_distribution import RewardDistribution
 from scraping.provider import ScraperProvider
@@ -120,23 +121,24 @@ class Validator(BaseNeuron):
             sys.exit(1)
 
     @classmethod
-    def choose_chunk_to_query(cls, index: ScorableMinerIndex) -> DataChunkSummary:
-        """Chooses a random chunk to query from a MinerIndex.
+    def choose_data_entity_bucket_to_query(cls, index: ScorableMinerIndex) -> DataEntityBucketId:
+        """Chooses a random DataEntityBucket to query from a MinerIndex.
 
-        The random selection is done based on choosing a random byte in the total index to query, and then selecting that chunk
+        The random selection is done based on choosing a random byte in the total index to query, and then selecting
+        that DataEntityBucket
         """
-        total_size = sum(chunk.size_bytes for chunk in index.scorable_chunks)
+        total_size = sum(scorable_bucket.data_entity_bucket.size_bytes for scorable_bucket in index.scorable_data_entity_buckets)
         chosen_byte = random.uniform(0, total_size)
         iterated_bytes = 0
-        for chunk in index.scorable_chunks:
-            if iterated_bytes + chunk.size_bytes >= chosen_byte:
-                return chunk
-            iterated_bytes += chunk.size_bytes
-        assert False, "Failed to choose a chunk to query... which should never happen"
+        for scorable_bucket in index.scorable_data_entity_buckets:
+            if iterated_bytes + scorable_bucket.data_entity_bucket.size_bytes >= chosen_byte:
+                return scorable_bucket.data_entity_bucket.id
+            iterated_bytes += scorable_bucket.data_entity_bucket.size_bytes
+        assert False, "Failed to choose a DataEntityBucket to query... which should never happen"
 
     @classmethod
     def choose_entities_to_verify(cls, entities: List[DataEntity]) -> List[DataEntity]:
-        """Given a list of DataEntities from a DataChunk, chooses a random set of entities to verify."""
+        """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""
 
         # For now, we just sample 1 entity, based on size.
         # In future, consider sampling every N bytes.
@@ -153,9 +155,9 @@ class Validator(BaseNeuron):
 
     @classmethod
     def are_entities_valid(
-        cls, entities: List[DataEntity], chunk: DataChunkSummary
+        cls, entities: List[DataEntity], data_entity_bucket: DataEntityBucket
     ) -> Tuple[bool, str]:
-        """Performs basic validation on all entities in a chunk.
+        """Performs basic validation on all entities in a DataEntityBucket.
 
         Returns a tuple of (is_valid, reason) where is_valid is True if the entities are valid,
         and reason is a string describing why they are not valid.
@@ -164,19 +166,19 @@ class Validator(BaseNeuron):
         # 1. Check the entity size, labels, source, and timestamp.
         actual_size = 0
         claimed_size = 0
-        expected_datetime_range: DateRange = chunk.time_bucket.get_date_range()
+        expected_datetime_range: DateRange = data_entity_bucket.id.time_bucket.get_date_range()
         for entity in entities:
             actual_size += len(entity.content or b"")
             claimed_size += entity.content_size_bytes
-            if entity.source != chunk.source:
+            if entity.source != data_entity_bucket.id.source:
                 return (
                     False,
-                    f"Entity source {entity.source} does not match chunk source {chunk.source}",
+                    f"Entity source {entity.source} does not match data_entity_bucket source {data_entity_bucket.id.source}",
                 )
-            if entity.label != chunk.label:
+            if entity.label != data_entity_bucket.id.label:
                 return (
                     False,
-                    f"Entity label {entity.label} does not match chunk label {chunk.label}",
+                    f"Entity label {entity.label} does not match data_entity_bucket label {data_entity_bucket.id.label}",
                 )
             if not expected_datetime_range.contains(entity.datetime):
                 return (
@@ -184,53 +186,53 @@ class Validator(BaseNeuron):
                     f"Entity datetime {entity.datetime} is not in the expected range {expected_datetime_range}",
                 )
 
-        if actual_size < claimed_size or actual_size < chunk.size_bytes:
+        if actual_size < claimed_size or actual_size < data_entity_bucket.size_bytes:
             return (
                 False,
-                f"Size not as expected. Actual={actual_size}. Claimed={claimed_size}. Expected={chunk.size_bytes}",
+                f"Size not as expected. Actual={actual_size}. Claimed={claimed_size}. Expected={data_entity_bucket.size_bytes}",
             )
 
         return (True, "")
 
     async def _update_and_get_miner_index(
-        self, miner_hotkey: str, miner_axon: bt.AxonInfo
+        self, hotkey: str, miner_axon: bt.AxonInfo
     ) -> Optional[ScorableMinerIndex]:
         """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
 
-        bt.logging.trace(f"{miner_hotkey}: Updating miner index.")
+        bt.logging.trace(f"{hotkey}: Updating miner index.")
 
         response = await self.dendrite.forward(
             axons=[miner_axon],
-            synapse=GetDataChunkIndex(),
+            synapse=GetMinerIndex(),
             timeout=60,
         )
 
         if (
             response is None
-            or not isinstance(response, GetDataChunkIndex)
+            or not isinstance(response, GetMinerIndex)
             or not response.success
         ):
             bt.logging.trace(
-                f"{miner_hotkey}: Miner returned an invalid/failed response for the index."
+                f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
             # Miner failed to update the index. Use the latest index, if present.
-            return self._get_miner_index(miner_hotkey)
+            return self._get_miner_index(hotkey)
 
         # Miner successfully updated the index. Store it and return it.
         bt.logging.trace(
-            f"{miner_hotkey}: Got new miner index. Size={len(response.data_chunk_summaries)}"
+            f"{hotkey}: Got new miner index. Size={len(response.data_entity_buckets)}"
         )
         self.storage.upsert_miner_index(
-            MinerIndex(hotkey=miner_hotkey, chunks=response.data_chunk_summaries)
+            MinerIndex(hotkey=hotkey, data_entity_buckets=response.data_entity_buckets)
         )
-        return self._get_miner_index(miner_hotkey)
+        return self._get_miner_index(hotkey)
 
-    def _get_miner_index(self, miner_hotkey: str) -> Optional[ScorableMinerIndex]:
+    def _get_miner_index(self, hotkey: str) -> Optional[ScorableMinerIndex]:
         """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
-        bt.logging.trace(f"{miner_hotkey}: Getting miner index.")
+        bt.logging.trace(f"{hotkey}: Getting miner index.")
         valid_miners = self.scorer.get_credible_miners()
         return self.storage.read_miner_index(
-            miner_hotkey=miner_hotkey, valid_miners=valid_miners
+            hotkey=hotkey, valid_miners=valid_miners
         )
 
     async def eval_miner(self, uid: int) -> None:
@@ -238,9 +240,9 @@ class Validator(BaseNeuron):
 
         Specifically:
             1. Gets the latest index from the miner
-            2. Chooses a random chunk to query
-            3. Performs basic validation on the chunk (right labels, matching size, etc.)
-            4. Samples data from the chunk and verifies the data is correct
+            2. Chooses a random data entity bucket to query
+            3. Performs basic validation on the data entity bucket (right labels, matching size, etc.)
+            4. Samples data from the data entity bucket and verifies the data is correct
             5. Passes the validation result to the scorer to update the miner's score.
         """
         axon_info = self.metagraph.axons[uid]
@@ -258,20 +260,20 @@ class Validator(BaseNeuron):
             self.scorer.reset(uid)
             return
 
-        # From that index, find a chunk to sample and get it from the miner.
-        chosen_chunk: DataChunkSummary = Validator.choose_chunk_to_query(index)
-        bt.logging.trace(f"{hotkey} Querying miner for chunk {chosen_chunk}")
+        # From that index, find a data entity bucket to sample and get it from the miner.
+        chosen_data_entity_bucket: DataEntityBucket = Validator.choose_data_entity_bucket_to_query(index)
+        bt.logging.trace(f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}")
         response = await self.dendrite.forward(
             axons=[axon_info],
-            synapse=GetDataChunk(data_chunk_summary=chosen_chunk),
+            synapse=GetDataEntityBucket(data_entity_bucket_id=chosen_data_entity_bucket),
             timeout=60,
         )
 
         # Treat a failed response the same way we treat a failed validation.
-        # If we didn't, the miner could just not respond to queries for chunks it doesn't have.
+        # If we didn't, the miner could just not respond to queries for data entity buckets it doesn't have.
         if (
             response is None
-            or not isinstance(response, GetDataChunk)
+            or not isinstance(response, GetDataEntityBucket)
             or not response.success
         ):
             bt.logging.trace(f"{hotkey}: Miner returned an invalid/failed response.")
@@ -292,7 +294,7 @@ class Validator(BaseNeuron):
         )
 
         data_entities: List[DataEntity] = response.data_entities
-        (valid, reason) = Validator.are_entities_valid(data_entities, chosen_chunk)
+        (valid, reason) = Validator.are_entities_valid(data_entities, chosen_data_entity_bucket)
         if not valid:
             bt.logging.trace(
                 f"Miner {hotkey} failed basic entity validation with reason {reason}."
@@ -311,7 +313,7 @@ class Validator(BaseNeuron):
             f"{hotkey}: Basic validation passed. Validating {entities_to_validate}"
         )
 
-        scraper = self.scraper_provider.get(chosen_chunk.source)
+        scraper = self.scraper_provider.get(chosen_data_entity_bucket.source)
         validation_results = scraper.validate(entities_to_validate)
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)

@@ -1,5 +1,5 @@
 import datetime as dt
-from common.data import DataLabel, DataSource, TimeBucket, ScorableDataChunkSummary
+from common.data import DataLabel, DataSource, TimeBucket, ScorableDataEntityBucket
 from rewards.data import RewardDistributionModel
 
 import rewards.distributions.disitribution_v1 as v1
@@ -11,20 +11,21 @@ class RewardDistribution:
     def __init__(self, model: RewardDistributionModel = v1.DISTRIBUTION):
         self.model = model
 
-    def get_score_for_chunk(self, chunk: ScorableDataChunkSummary) -> float:
-        """Returns the score for the given chunk.
+    def get_score_for_data_entity_bucket(self, scorable_data_entity_bucket: ScorableDataEntityBucket) -> float:
+        """Returns the score for the given data entity bucket.
 
-        A chunk is scored as follows:
+        A data entity bucket is scored as follows:
             1. It is weighted based on the weight of its data source.
             2. It's scaled based on the Label. This may be negative if the data is undesirable.
             3. It's scaled based on the age of the data, where newer data is considered more valuable.
         """
 
         data_type_scale_factor = self._scale_factor_for_source_and_label(
-            chunk.source, chunk.label
+            scorable_data_entity_bucket.data_entity_bucket.id.source,
+            scorable_data_entity_bucket.data_entity_bucket.id.label
         )
-        time_scalar = self._scale_factor_for_age(chunk.time_bucket)
-        return data_type_scale_factor * time_scalar * chunk.scorable_bytes
+        time_scalar = self._scale_factor_for_age(scorable_data_entity_bucket.data_entity_bucket.id.time_bucket)
+        return data_type_scale_factor * time_scalar * scorable_data_entity_bucket.scorable_bytes
 
     def _scale_factor_for_source_and_label(
         self, data_source: DataSource, label: DataLabel

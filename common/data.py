@@ -117,27 +117,31 @@ class DataEntity(StrictBaseModel):
             and self.label == other.label
         )
 
-
-class DataChunkSummary(StrictBaseModel):
-    """Summarizes a chunk of data stored by a miner.
-
-    Each chunk is uniquely identified by the time bucket, source, and label and it must be complete. i.e. a miner should never report
-    multiple chunks for the same time bucket, source, and label.
-
-    A single chunk is limited to 128MBs to ensure requests sent over the network aren't too large.
-    """
-
+class DataEntityBucketId(StrictBaseModel):
+    """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
     time_bucket: TimeBucket
     source: DataSource
     label: Optional[DataLabel] = Field(
         default=None,
     )
+
+
+class DataEntityBucket(StrictBaseModel):
+    """Summarizes a group of data entities stored by a miner.
+
+    Each bucket is uniquely identified by the time bucket, source, and label and it must be complete. i.e. a mine
+    should never report multiple chunks for the same time bucket, source, and label.
+
+    A single bucket is limited to 128MBs to ensure requests sent over the network aren't too large.
+    """
+    id: DataEntityBucketId = Field(description="Identifies the qualities by which this bucket is grouped.")
     size_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
 
 
-class ScorableDataChunkSummary(DataChunkSummary):
-    """A DataChunkSummary that contains additional information required for scoring."""
+class ScorableDataEntityBucket(StrictBaseModel):
+    """Composes both a DataEntityBucket and additional information required for scoring."""
 
+    data_entity_bucket: DataEntityBucket = Field(description="The DataEntityBucket that has additional information attached.")
     # Scorable bytes are the bytes that can be credited to this miner for scoring.
     # This is always less than or equal to the total size of the chunk.
     # This scorable bytes are computed as:
@@ -149,14 +153,15 @@ class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    chunks: List[DataChunkSummary] = Field(max_length=3000000, description="Chunks the miner is serving.")
+    data_entity_buckets: List[DataEntityBucket] = Field(description="Buckets the miner is serving.")
+    # TODO Custom validator for length of data_entity_buckets.
 
 
 class ScorableMinerIndex(BaseModel):
     """The Miner index, with additional information required for scoring."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    scorable_chunks: List[ScorableDataChunkSummary] = Field(
-        description="Chunks the miner is serving, scored on uniqueness."
+    scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
+        description="DataEntityBuckets the miner is serving, scored on uniqueness."
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")

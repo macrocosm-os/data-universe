@@ -1,6 +1,6 @@
 import unittest
 import os
-from common.data import DataChunkSummary, DataEntity, DataLabel, DataSource, TimeBucket
+from common.data import DataEntityBucket, DataEntity, DataEntityBucketId, DataLabel, DataSource, TimeBucket
 import datetime as dt
 
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
@@ -131,194 +131,197 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.assertEqual(uris, ["test_entity_2", "test_entity_3"])
 
 
-    def test_list_data_chunk_summaries(self):
-        """Tests that we can list the data chunk summaries from storage."""
+    def test_list_data_entity_buckets(self):
+        """Tests that we can list the data entity buckets from storage."""
         now = dt.datetime.now()
-        # Create an entity for chunk 1.
-        chunk1_datetime = now
-        chunk1_entity1 = DataEntity(
+        # Create an entity for bucket 1.
+        bucket1_datetime = now
+        bucket1_entity1 = DataEntity(
                             uri="test_entity_1",
-                            datetime=chunk1_datetime,
+                            datetime=bucket1_datetime,
                             source=DataSource.REDDIT,
                             label=DataLabel(value="label_1"),
                             content=bytes(10),
                             content_size_bytes=10)
 
-        # Create two entities for chunk 2.
-        chunk2_datetime = now + dt.timedelta(hours=1)
-        chunk2_entity1 = DataEntity(
+        # Create two entities for bucket 2.
+        bucket2_datetime = now + dt.timedelta(hours=1)
+        bucket2_entity1 = DataEntity(
                             uri="test_entity_2",
-                            datetime=chunk2_datetime,
+                            datetime=bucket2_datetime,
                             source=DataSource.X,
                             label=DataLabel(value="label_2"),
                             content=bytes(20),
                             content_size_bytes=20)
 
-        chunk2_entity2 = DataEntity(
+        bucket2_entity2 = DataEntity(
                             uri="test_entity_3",
-                            datetime=chunk2_datetime + dt.timedelta(seconds=1),
+                            datetime=bucket2_datetime + dt.timedelta(seconds=1),
                             source=DataSource.X,
                             label=DataLabel(value="label_2"),
                             content=bytes(30),
                             content_size_bytes=30)
 
         # Store the entities.
-        self.test_storage.store_data_entities([chunk1_entity1, chunk2_entity1, chunk2_entity2])
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
-        data_chunk_summaries = self.test_storage.list_data_chunk_summaries()
+        data_entity_buckets = self.test_storage.list_data_entity_buckets()
 
-        expected_chunk_1 = DataChunkSummary(
-                            time_bucket=TimeBucket.from_datetime(chunk1_datetime),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="label_1"),
+        expected_bucket_1 = DataEntityBucket(
+                            id=DataEntityBucketId(
+                                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+                                source=DataSource.REDDIT,
+                                label=DataLabel(value="label_1")),
                             size_bytes=10)
 
-        expected_chunk_2 = DataChunkSummary(
-                            time_bucket=TimeBucket.from_datetime(chunk2_datetime),
-                            source=DataSource.X,
-                            label=DataLabel(value="label_2"),
+        expected_bucket_2 = DataEntityBucket(
+                            id=DataEntityBucketId(
+                                time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+                                source=DataSource.X,
+                                label=DataLabel(value="label_2")),
                             size_bytes=50)
 
         # Confirm we get back the expected summaries.
-        self.assertEqual(data_chunk_summaries, [expected_chunk_1, expected_chunk_2])
+        self.assertEqual(data_entity_buckets, [expected_bucket_1, expected_bucket_2])
 
-    def test_list_data_chunk_summaries_no_labels(self):
-        """Tests that we can list the data chunk summaries with no labels from storage."""
+    def test_list_data_entity_buckets_no_labels(self):
+        """Tests that we can list the data entity buckets with no labels from storage."""
         now = dt.datetime.now()
-        # Create an entity for chunk 1.
-        chunk1_datetime = now
-        chunk1_entity1 = DataEntity(
+        # Create an entity for bucket 1.
+        bucket1_datetime = now
+        bucket1_entity1 = DataEntity(
                             uri="test_entity_1",
-                            datetime=chunk1_datetime,
+                            datetime=bucket1_datetime,
                             source=DataSource.REDDIT,
                             content=bytes(10),
                             content_size_bytes=10)
 
-        # Create two entities for chunk 2.
-        chunk2_datetime = now + dt.timedelta(hours=1)
-        chunk2_entity1 = DataEntity(
+        # Create two entities for bucket 2.
+        bucket2_datetime = now + dt.timedelta(hours=1)
+        bucket2_entity1 = DataEntity(
                             uri="test_entity_2",
-                            datetime=chunk2_datetime,
+                            datetime=bucket2_datetime,
                             source=DataSource.X,
                             content=bytes(20),
                             content_size_bytes=20)
 
-        chunk2_entity2 = DataEntity(
+        bucket2_entity2 = DataEntity(
                             uri="test_entity_3",
-                            datetime=chunk2_datetime + dt.timedelta(seconds=1),
+                            datetime=bucket2_datetime + dt.timedelta(seconds=1),
                             source=DataSource.X,
                             content=bytes(30),
                             content_size_bytes=30)
 
         # Store the entities.
-        self.test_storage.store_data_entities([chunk1_entity1, chunk2_entity1, chunk2_entity2])
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
-        data_chunk_summaries = self.test_storage.list_data_chunk_summaries()
+        data_entity_buckets = self.test_storage.list_data_entity_buckets()
 
-        expected_chunk_1 = DataChunkSummary(
-                            time_bucket=TimeBucket.from_datetime(chunk1_datetime),
-                            source=DataSource.REDDIT,
+        expected_bucket_1 = DataEntityBucket(
+                            id=DataEntityBucketId(
+                                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+                                source=DataSource.REDDIT),
                             size_bytes=10)
 
-        expected_chunk_2 = DataChunkSummary(
-                            time_bucket=TimeBucket.from_datetime(chunk2_datetime),
-                            source=DataSource.X,
+        expected_bucket_2 = DataEntityBucket(
+                            id=DataEntityBucketId(
+                                time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+                                source=DataSource.X),
                             size_bytes=50)
 
         # Confirm we get back the expected summaries.
-        self.assertEqual(data_chunk_summaries, [expected_chunk_1, expected_chunk_2])
+        self.assertEqual(data_entity_buckets, [expected_bucket_1, expected_bucket_2])
 
-    def test_list_data_chunk_summaries_too_old(self):
-        """Tests that we can list the data chunk summaries from storage, discarding out of date ones."""
+    def test_list_data_entity_buckets_too_old(self):
+        """Tests that we can list the data entity buckets from storage, discarding out of date ones."""
         now = dt.datetime.now()
-        # Create an entity for chunk 1.
-        chunk1_datetime = now
-        chunk1_entity1 = DataEntity(
+        # Create an entity for bucket 1.
+        bucket1_datetime = now
+        bucket1_entity1 = DataEntity(
                             uri="test_entity_1",
-                            datetime=chunk1_datetime,
+                            datetime=bucket1_datetime,
                             source=DataSource.REDDIT,
                             label=DataLabel(value="label_1"),
                             content=bytes(10),
                             content_size_bytes=10)
 
-        # Create two entities for chunk 2.
-        chunk2_datetime = now - dt.timedelta(days=8)
-        chunk2_entity1 = DataEntity(
+        # Create two entities for bucket 2.
+        bucket2_datetime = now - dt.timedelta(days=8)
+        bucket2_entity1 = DataEntity(
                             uri="test_entity_2",
-                            datetime=chunk2_datetime,
+                            datetime=bucket2_datetime,
                             source=DataSource.X,
                             label=DataLabel(value="label_2"),
                             content=bytes(20),
                             content_size_bytes=20)
 
-        chunk2_entity2 = DataEntity(
+        bucket2_entity2 = DataEntity(
                             uri="test_entity_3",
-                            datetime=chunk2_datetime + dt.timedelta(seconds=1),
+                            datetime=bucket2_datetime + dt.timedelta(seconds=1),
                             source=DataSource.X,
                             label=DataLabel(value="label_2"),
                             content=bytes(30),
                             content_size_bytes=30)
 
         # Store the entities.
-        self.test_storage.store_data_entities([chunk1_entity1, chunk2_entity1, chunk2_entity2])
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
-        data_chunk_summaries = self.test_storage.list_data_chunk_summaries()
+        data_entity_buckets = self.test_storage.list_data_entity_buckets()
 
-        expected_chunk_1 = DataChunkSummary(
-                            time_bucket=TimeBucket.from_datetime(chunk1_datetime),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="label_1"),
+        expected_bucket_1 = DataEntityBucket(
+                            id=DataEntityBucketId(
+                                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+                                source=DataSource.REDDIT,
+                                label=DataLabel(value="label_1")),
                             size_bytes=10)
 
         # Confirm we get back the expected summaries.
-        self.assertEqual(data_chunk_summaries, [expected_chunk_1])
+        self.assertEqual(data_entity_buckets, [expected_bucket_1])
 
-    def test_list_entities_in_data_chunk(self):
-        """Tests that we can get all the enities in a chunk"""
-        # Create an entity for chunk 1.
-        chunk1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, 1000)
-        chunk1_entity1 = DataEntity(
+    def test_list_entities_in_data_entity_bucket(self):
+        """Tests that we can get all the enities in a data entity bucket"""
+        # Create an entity for bucket 1.
+        bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, 1000)
+        bucket1_entity1 = DataEntity(
                             uri="test_entity_1",
-                            datetime=chunk1_datetime,
+                            datetime=bucket1_datetime,
                             source=DataSource.REDDIT,
                             content=bytes(10),
                             content_size_bytes=10)
 
-        # Create two entities for chunk 2.
-        chunk2_datetime = dt.datetime(2023, 12, 12, 2, 30, 0, 1000)
-        chunk2_entity1 = DataEntity(
+        # Create two entities for bucket 2.
+        bucket2_datetime = dt.datetime(2023, 12, 12, 2, 30, 0, 1000)
+        bucket2_entity1 = DataEntity(
                             uri="test_entity_2",
-                            datetime=chunk2_datetime,
+                            datetime=bucket2_datetime,
                             source=DataSource.X,
                             content=bytes(20),
                             content_size_bytes=20)
 
-        chunk2_entity2 = DataEntity(
+        bucket2_entity2 = DataEntity(
                             uri="test_entity_3",
-                            datetime=chunk2_datetime + dt.timedelta(seconds=1),
+                            datetime=bucket2_datetime + dt.timedelta(seconds=1),
                             source=DataSource.X,
                             content=bytes(30),
                             content_size_bytes=30)
 
         # Store the entities.
-        self.test_storage.store_data_entities([chunk1_entity1, chunk2_entity1, chunk2_entity2])
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
-        # Create the DataChunkSummary to query by.
-        #TODO Consider breaking out another class that doesn't require size, but pass 0 for now.
-        chunk2_summary = DataChunkSummary(
-                            time_bucket=TimeBucket.from_datetime(chunk2_datetime),
-                            source=DataSource.X,
-                            size_bytes=0)
+        # Create the DataEntityBucketId to query by.
+        bucket2_id = DataEntityBucketId(
+                            time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+                            source=DataSource.X)
 
-        # Get the entities by the chunk
-        data_entities = self.test_storage.list_data_entities_in_data_chunk(chunk2_summary)
+        # Get the entities by the bucket
+        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(bucket2_id)
 
         # Confirm we get back the expected data entities.
-        self.assertEqual(data_entities, [chunk2_entity1, chunk2_entity2])
+        self.assertEqual(data_entities, [bucket2_entity1, bucket2_entity2])
 
 
-    if __name__ == "__main__":
-        unittest.main()
+if __name__ == "__main__":
+    unittest.main()
