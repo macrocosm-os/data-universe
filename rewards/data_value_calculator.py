@@ -2,7 +2,7 @@ import datetime as dt
 from common.data import DataLabel, DataSource, TimeBucket, ScorableDataEntityBucket
 from rewards.data import DataDesirabilityLookup
 
-import rewards.disitribution_v1 as v1
+import rewards.DataDesirabilityLookup as v1
 
 
 class DataValueCalculator:
