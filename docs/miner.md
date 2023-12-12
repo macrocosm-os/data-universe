@@ -2,6 +2,8 @@
 
 Miners scrape data from various DataSource and get rewarded based on how much valuable data they have (see the [Incentive Mechanism](../README.md#incentive-mechanism) for full details.) The Incentive Mechanism does not require a Miner to scrape from all DataSources, allowing Miners to specialize and choose exactly what kinds of data they want to Scrape. However, Miners are scored, in part, on the total amount of data they have, so Miners should make sure they are scraping sufficient amounts and types of data.
 
+The Miner stores all scraped data in a local database.
+
 # System Requirements
 
 Miners do not require a GPU and should be able to run on a low-tier machine, as long as it has sufficient network bandwidth and disk space.
@@ -89,4 +91,10 @@ In this example, we configure the Miner to scrape using a single Scraper, the "X
 1. The first will be a scrape for at most 100 items with #bittensor. The data scrape will choose a random [TimeBucket](../README.md#terminology) between (now - max_age_in_minutes, now). The probability distribution used to select a TimeBucket matches the Validator's Incentive for [Data Freshness](../README.md#1-data-freshness): that is, it's weighted towards newer data.
 1. The second will be a scrape for either #decentralizedfinance or #tao, chosen at random (uniformly). The scrape will scrape at most 50 items, and will use a random [TimeBucket] between now and the maximum data freshness threshold.
 
-We encourage Miners to diversify and scrape data that is unique on the Subnet. You can [view the dashboard](../README.md#data-universe-dashboard) to see how much data, by DataSource and DataLabel is currently on the Subnet.
+# Choosing which data to scrape
+
+As described in the [incentive mechanism](../README.md#incentive-mechanism), Miners are, in part, scored based on their data's desirability and uniqueness. We encourage Miners to tune their Miners to maximize their scores by scraping unique, desirable data.
+
+For uniqueness, you can [view the dashboard](../README.md#data-universe-dashboard) to see how much data, by DataSource and DataLabel is currently on the Subnet.
+
+For desirability, the [DataDesirabilityLookup](https://github.com/RusticLuftig/data-universe/blob/main/rewards/data_desirability_lookup.py) defines the exact rules Validators use to rate data's desirability. 

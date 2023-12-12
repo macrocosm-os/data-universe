@@ -32,9 +32,9 @@ As of Dec 11th, 2023 data older than 30 days is not scored. This may increase in
 
 ### 2) Data Desirability
 
-Data Universe defines a DataDesirabilityMap that defines which types of data are desirable (and which types are undesirable). Data deemed desirable is scored more highly. Data deemed undesirable is scored negatively. 
+Data Universe defines a DataDesirabilityLookup that defines which types of data are desirable (and which types are undesirable). Data deemed desirable is scored more highly. Data deemed undesirable is scored negatively. 
 
-The DataDesirabilityMap will evolve over time, but each change will be announced ahead of time to give Miners adequate time to prepare for each update.
+The DataDesirabilityLookup will evolve over time, but each change will be announced ahead of time to give Miners adequate time to prepare for each update.
 
 ### 3) Duplication Factor
 
@@ -62,7 +62,7 @@ See [Validator Setup](docs/validator.md#validator_setup) to learn how to setup a
 
 # Terminology
 
-**DataDesirabilityMap:** A defined list of rules that determine how desirable data is, based on its DataSource and DataLabel.
+**DataDesirabilityLookup:** A defined [list of rules](https://github.com/RusticLuftig/data-universe/blob/main/rewards/data_desirability_lookup.py) that determine how desirable data is, based on its DataSource and DataLabel.
 
 **DataEntity:** A single "item" of data collected by a Miner. Each DataEntity has a URI, that the Validators can use to retrieve the item from its DataSource.
 
