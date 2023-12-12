@@ -28,7 +28,7 @@ class RunConfig(BaseModel):
         default=60,
     )
 
-    max_items: PositiveInt = Field(
+    max_data_entities: PositiveInt = Field(
         description="The maximum number of items to be returned by the actor. The client will not be charged for more items than this value.",
         default=100,
     )
@@ -70,7 +70,7 @@ class ActorRunner:
         bt.logging.trace(f"Running actor ({config.actor_id}) [{config.debug_info}]")
         run = await client.actor(config.actor_id).call(
             run_input=run_input,
-            max_items=config.max_items,
+            max_data_entities=config.max_data_entities,
             timeout_secs=config.timeout_secs,
             # If not set, the client will wait indefinitely for the run to finish. Ensure we don't wait forever.
             wait_secs=config.timeout_secs + 5,

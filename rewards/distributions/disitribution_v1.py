@@ -1,5 +1,5 @@
 from common.data import DataLabel, DataSource
-from rewards.data import DataSourceReward, RewardDistributionModel
+from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 
 
 # Pydantic can't serialize a model to json when it has dictionaries with
@@ -9,9 +9,9 @@ from rewards.data import DataSourceReward, RewardDistributionModel
 # The benefit of the extra validation and standardization provided by DataLabel outweighs
 # the cost of not being able to serialize the model to json.
 
-DISTRIBUTION = RewardDistributionModel(
+LOOKUP = DataDesirabilityLookup(
     distribution={
-        DataSource.REDDIT: DataSourceReward(
+        DataSource.REDDIT: DataSourceDesirability(
             weight=0.5,
             default_scale_factor=0.5,
             # The following labels were pulled from the top 1XX subreddits relating to cryptocurrency.
@@ -124,7 +124,7 @@ DISTRIBUTION = RewardDistributionModel(
                 DataLabel(value="Zilliqa"): 1.0,
             },
         ),
-        DataSource.X: DataSourceReward(
+        DataSource.X: DataSourceDesirability(
             weight=0.5,
             default_scale_factor=0.5,
             label_scale_factors={

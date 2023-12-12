@@ -9,7 +9,7 @@ from scraping.coordinator import (
     CoordinatorConfig,
     DataSource,
     DataSourceScrapingConfig,
-    LabelScrapeConfig,
+    LabelScrapingConfig,
     ScraperCoordinator,
     _choose_scrape_configs,
 )
@@ -24,15 +24,15 @@ class TestScraperCoordinator(unittest.TestCase):
         """Tests the Coordinator's Tracker returns the sources that are ready to scrape."""
         # Create a CoordinatorConfig with two DataSourceScrapingConfig objects
         config = CoordinatorConfig(
-            scraping_configs={
+            data_source_scraping_configs={
                 DataSource.REDDIT: DataSourceScrapingConfig(
                     source=DataSource.REDDIT,
-                    cadence_secs=60,
+                    cadence_seconds=60,
                     labels_to_scrape=[],
                 ),
                 DataSource.X: DataSourceScrapingConfig(
                     source=DataSource.X,
-                    cadence_secs=120,
+                    cadence_seconds=120,
                     labels_to_scrape=[],
                 ),
             }
@@ -72,29 +72,29 @@ class TestScraperCoordinator(unittest.TestCase):
         """Verifies the Coordinator logic for choosing scrape configs."""
 
         config = CoordinatorConfig(
-            scraping_configs={
+            data_source_scraping_configs={
                 DataSource.REDDIT: DataSourceScrapingConfig(
                     source=DataSource.REDDIT,
-                    cadence_secs=60,
+                    cadence_seconds=60,
                     labels_to_scrape=[
-                        LabelScrapeConfig(
+                        LabelScrapingConfig(
                             label_choices=[
                                 DataLabel(value="label1"),
                                 DataLabel(value="label2"),
                             ],
-                            max_items=10,
-                            max_age_in_minutes=60 * 24 * 7,
+                            max_data_entities=10,
+                            max_age_hint_minutes=60 * 24 * 7,
                         ),
-                        LabelScrapeConfig(
-                            max_items=20,
-                            max_age_in_minutes=30,
+                        LabelScrapingConfig(
+                            max_data_entities=20,
+                            max_age_hint_minutes=30,
                         ),
                     ],
                 ),
             }
         )
 
-        # Choose the time, such that the labelless LabelScrapeConfig above should always land
+        # Choose the time, such that the labelless LabelScrapingConfig above should always land
         # in the TimeBucket associated with "now".
         now = dt.datetime(2023, 12, 12, 12, 45, 0)
         latest_time_bucket = TimeBucket.from_datetime(now)
@@ -187,17 +187,17 @@ class TestScraperCoordinator(unittest.TestCase):
         provider = ScraperProvider(factories={DataSource.REDDIT: lambda: mock_scraper})
 
         config = CoordinatorConfig(
-            scraping_configs={
+            data_source_scraping_configs={
                 DataSource.REDDIT: DataSourceScrapingConfig(
                     source=DataSource.REDDIT,
                     # Use a small cadence because the Coordinator will wait this amount of time
                     # before performing the first scrape.
-                    cadence_secs=1,
+                    cadence_seconds=1,
                     labels_to_scrape=[
-                        LabelScrapeConfig(
+                        LabelScrapingConfig(
                             label_choices=[DataLabel(value="label1")],
-                            max_items=10,
-                            max_age_in_minutes=60 * 24 * 7,
+                            max_data_entities=10,
+                            max_age_hint_minutes=60 * 24 * 7,
                         ),
                     ],
                 ),

@@ -4,7 +4,7 @@ import torch
 import bittensor as bt
 
 from common.data import ScorableMinerIndex
-from rewards.reward_distribution import RewardDistribution
+from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult
 
 
@@ -23,7 +23,7 @@ class MinerScorer:
     def __init__(
         self,
         num_neurons: int,
-        reward_distribution: RewardDistribution,
+        value_calculator: DataValueCalculator,
         alpha: float = 0.05,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
@@ -31,7 +31,7 @@ class MinerScorer:
         self.miner_credibility = torch.full(
             (num_neurons, 1), MinerScorer.STARTING_CREDIBILITY, dtype=torch.float32
         )
-        self.reward_distribution = reward_distribution
+        self.value_calculator = value_calculator
         self.alpha = alpha
 
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
@@ -107,7 +107,7 @@ class MinerScorer:
             # the reward distribution.
             score = 0.0
             for bucket in index.scorable_data_entity_buckets:
-                score += self.reward_distribution.get_score_for_data_entity_bucket(bucket)
+                score += self.value_calculator.get_score_for_data_entity_bucket(bucket)
 
             # Scale the miner's score by its credibility, squared.
             score *= self.miner_credibility[uid] ** 2

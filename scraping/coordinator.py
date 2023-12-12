@@ -15,7 +15,7 @@ from scraping.scraper import ScrapeConfig
 from storage.miner.miner_storage import MinerStorage
 
 
-class LabelScrapeConfig(StrictBaseModel):
+class LabelScrapingConfig(StrictBaseModel):
     """Describes what labels to scrape."""
 
     label_choices: Optional[List[DataLabel]] = Field(
@@ -26,16 +26,16 @@ class LabelScrapeConfig(StrictBaseModel):
         """
     )
 
-    max_age_in_minutes: int = Field(
+    max_age_hint_minutes: int = Field(
         description="""The maximum age of data that this scrape should fetch. A random TimeBucket (currently hour block),
-        will be chosen within the time frame (now - max_age_in_minutes, now), using a probality distribution aligned
+        will be chosen within the time frame (now - max_age_hint_minutes, now), using a probality distribution aligned
         with how validators score data freshness.
         
         Note: not all data sources provide date filters, so this property should be thought of as a hint to the scraper, not a rule.
         """,
     )
 
-    max_items: Optional[PositiveInt] = Field(
+    max_data_entities: Optional[PositiveInt] = Field(
         default=None,
         description="The maximum number of items to fetch in a single scrape for this label. If None, the scraper will fetch as many items possible.",
     )
@@ -46,14 +46,14 @@ class DataSourceScrapingConfig(StrictBaseModel):
 
     source: DataSource
 
-    cadence_secs: PositiveInt = Field(
+    cadence_seconds: PositiveInt = Field(
         description="Configures how often to scrape from this data source, measured in seconds."
     )
 
-    labels_to_scrape: List[LabelScrapeConfig] = Field(
+    labels_to_scrape: List[LabelScrapingConfig] = Field(
         description="""Describes the type of data to scrape from this source.
         
-        The scraper will perform one scrape per entry in this list every 'cadence_secs'.
+        The scraper will perform one scrape per entry in this list every 'cadence_seconds'.
         """
     )
 
@@ -61,7 +61,7 @@ class DataSourceScrapingConfig(StrictBaseModel):
 class CoordinatorConfig(StrictBaseModel):
     """Informs the Coordinator how to schedule scrapes."""
 
-    scraping_configs: Dict[DataSource, DataSourceScrapingConfig] = Field(
+    data_source_scraping_configs: Dict[DataSource, DataSourceScrapingConfig] = Field(
         description="The scraping config for each data source to be scraped."
     )
 
@@ -70,9 +70,9 @@ def _choose_scrape_configs(
     source: DataSource, config: CoordinatorConfig, now: dt.datetime
 ) -> List[ScrapeConfig]:
     """For the given source, returns a list of scrapes (defined by ScrapeConfig) to be run."""
-    assert source in config.scraping_configs, f"Source {source} not in config"
+    assert source in config.data_source_scraping_configs, f"Source {source} not in config"
 
-    source_config = config.scraping_configs[source]
+    source_config = config.data_source_scraping_configs[source]
     results = []
     for label_config in source_config.labels_to_scrape:
         # First, choose a label
@@ -83,7 +83,7 @@ def _choose_scrape_configs(
         # Now, choose a time bucket to scrape.
         current_bucket = TimeBucket.from_datetime(now)
         oldest_bucket = TimeBucket.from_datetime(
-            now - dt.timedelta(minutes=label_config.max_age_in_minutes)
+            now - dt.timedelta(minutes=label_config.max_age_hint_minutes)
         )
 
         chosen_bucket = current_bucket
@@ -98,7 +98,7 @@ def _choose_scrape_configs(
 
         results.append(
             ScrapeConfig(
-                entity_limit=label_config.max_items,
+                entity_limit=label_config.max_data_entities,
                 date_range=chosen_bucket.get_date_range(),
                 labels=labels_to_scrape,
             )
@@ -115,12 +115,12 @@ class ScraperCoordinator:
 
         def __init__(self, config: CoordinatorConfig, now: dt.datetime):
             self.cadence_by_source = {
-                source: dt.timedelta(seconds=cfg.cadence_secs)
-                for source, cfg in config.scraping_configs.items()
+                source: dt.timedelta(seconds=cfg.cadence_seconds)
+                for source, cfg in config.data_source_scraping_configs.items()
             }
             
             # Initialize the last scrape time as now, to protect against frequent scraping during Miner crash loops.
-            self.last_scrape_time_per_source: Dict[DataSource, dt.datetime] = {source: now for source in config.scraping_configs.keys()}
+            self.last_scrape_time_per_source: Dict[DataSource, dt.datetime] = {source: now for source in config.data_source_scraping_configs.keys()}
 
         def get_sources_ready_to_scrape(self, now: dt.datetime) -> List[DataSource]:
             """Returns a list of DataSources which are due to run."""

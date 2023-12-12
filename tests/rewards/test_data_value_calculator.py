@@ -3,19 +3,19 @@ from unittest import mock
 from unittest.mock import Mock, patch
 
 from attr import dataclass
-from rewards.data import DataSourceReward, RewardDistributionModel
-from rewards.reward_distribution import RewardDistribution
+from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data_value_calculator import DataValueCalculator
 from common.data import DataEntityBucket, DataEntityBucketId, DataLabel, DataSource, TimeBucket, ScorableDataEntityBucket
 import datetime as dt
-import rewards.reward_distribution
+import rewards.data_value_calculator
 
 
-@patch.object(rewards.reward_distribution.dt, "datetime", Mock(wraps=dt.datetime))
-class TestRewardDistribution(unittest.TestCase):
+@patch.object(rewards.data_value_calculator.dt, "datetime", Mock(wraps=dt.datetime))
+class TestDataValueCalculator(unittest.TestCase):
     def setUp(self):
-        model = RewardDistributionModel(
+        model = DataDesirabilityLookup(
             distribution={
-                DataSource.REDDIT: DataSourceReward(
+                DataSource.REDDIT: DataSourceDesirability(
                     weight=0.75,
                     default_scale_factor=0.5,
                     label_scale_factors={
@@ -25,7 +25,7 @@ class TestRewardDistribution(unittest.TestCase):
                         DataLabel(value="penalizedLABEL"): -1.0,
                     },
                 ),
-                DataSource.X: DataSourceReward(
+                DataSource.X: DataSourceDesirability(
                     weight=0.25,
                     default_scale_factor=0.8,
                     label_scale_factors={
@@ -37,12 +37,12 @@ class TestRewardDistribution(unittest.TestCase):
             },
             max_age_in_hours=7 * 24,
         )
-        self.reward_distribution = RewardDistribution(model=model)
+        self.value_calculator = DataValueCalculator(model=model)
 
     def test_get_score_for_data_entity_bucket_with_matching_label(self):
         """Generates a bucket with various data sources and labels and ensures the score is correct."""
         now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
-        rewards.reward_distribution.dt.datetime.now.return_value = now
+        rewards.data_value_calculator.dt.datetime.now.return_value = now
 
         @dataclass(frozen=True)
         class TestCaseInput:
@@ -79,13 +79,13 @@ class TestRewardDistribution(unittest.TestCase):
                 # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                 scorable_bytes=100,
             )
-            score = self.reward_distribution.get_score_for_data_entity_bucket(bucket)
+            score = self.value_calculator.get_score_for_data_entity_bucket(bucket)
             self.assertAlmostEqual(score, tc[1], places=5)
 
     def test_get_score_for_data_entity_bucket_score_decreases_over_time(self):
         """Generates a bucket containing data of various ages and verifies the score is as expected."""
         now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
-        rewards.reward_distribution.dt.datetime.now.return_value = now
+        rewards.data_value_calculator.dt.datetime.now.return_value = now
 
         # Verify score at the present time_bucket is scored at 100%.
         time_bucket = TimeBucket.from_datetime(now)
@@ -102,7 +102,7 @@ class TestRewardDistribution(unittest.TestCase):
                 scorable_bytes=100,
             )
         self.assertAlmostEqual(
-            self.reward_distribution.get_score_for_data_entity_bucket(bucket), 75.0, places=5
+            self.value_calculator.get_score_for_data_entity_bucket(bucket), 75.0, places=5
         )
 
         # Verify the score at the max age is scored at 50%.
@@ -119,7 +119,7 @@ class TestRewardDistribution(unittest.TestCase):
                 scorable_bytes=100,
             )
         self.assertAlmostEqual(
-            self.reward_distribution.get_score_for_data_entity_bucket(bucket), 37.5, places=5
+            self.value_calculator.get_score_for_data_entity_bucket(bucket), 37.5, places=5
         )
 
         # Verify the score past the max age is 0.
@@ -136,7 +136,7 @@ class TestRewardDistribution(unittest.TestCase):
                 scorable_bytes=100,
             )
         self.assertAlmostEqual(
-            self.reward_distribution.get_score_for_data_entity_bucket(bucket), 0, places=5
+            self.value_calculator.get_score_for_data_entity_bucket(bucket), 0, places=5
         )
 
         # Now verify the score decreases between now and max_age.
@@ -154,7 +154,7 @@ class TestRewardDistribution(unittest.TestCase):
                 # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                 scorable_bytes=100,
             )
-            score = self.reward_distribution.get_score_for_data_entity_bucket(bucket)
+            score = self.value_calculator.get_score_for_data_entity_bucket(bucket)
             self.assertLess(score, previous_score)
             previous_score = score
 

@@ -1,14 +1,14 @@
 import datetime as dt
 from common.data import DataLabel, DataSource, TimeBucket, ScorableDataEntityBucket
-from rewards.data import RewardDistributionModel
+from rewards.data import DataDesirabilityLookup
 
 import rewards.distributions.disitribution_v1 as v1
 
 
-class RewardDistribution:
-    """Describes how rewards are distributed across DataSources and DataLabels."""
+class DataValueCalculator:
+    """Calculates how rewards are distributed across DataSources and DataLabels."""
 
-    def __init__(self, model: RewardDistributionModel = v1.DISTRIBUTION):
+    def __init__(self, model: DataDesirabilityLookup = v1.LOOKUP):
         self.model = model
 
     def get_score_for_data_entity_bucket(self, scorable_data_entity_bucket: ScorableDataEntityBucket) -> float:

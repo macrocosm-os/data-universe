@@ -38,7 +38,7 @@ from common.data import (
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 import common.utils as utils
-from rewards.reward_distribution import RewardDistribution
+from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
 from storage.validator.mysql_validator_storage import MysqlValidatorStorage
@@ -68,7 +68,7 @@ class Validator(BaseNeuron):
         self.dendrite = bt.dendrite(wallet=self.wallet)
 
         # Set up initial scoring weights for validation
-        self.scorer = MinerScorer(self.metagraph.n, RewardDistribution())
+        self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
 
         # TODO: Configure this to expose access to data to neurons on certain subnets.
         # Serve axon to enable external connections.

@@ -6,7 +6,7 @@ from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import (
     CoordinatorConfig,
     DataSourceScrapingConfig,
-    LabelScrapeConfig,
+    LabelScrapingConfig,
 )
 
 
@@ -14,36 +14,36 @@ class TestConfigReader(unittest.TestCase):
     def test_load_config_valid(self):
         """Tests a valid config is loaded correctly."""
         expected_config = CoordinatorConfig(
-            scraping_configs={
+            data_source_scraping_configs={
                 DataSource.X: DataSourceScrapingConfig(
                     source=DataSource.X,
-                    cadence_secs=300,
+                    cadence_seconds=300,
                     labels_to_scrape=[
-                        LabelScrapeConfig(
+                        LabelScrapingConfig(
                             label_choices=[
                                 DataLabel(value="#bittensor"),
                                 DataLabel(value="#TAO"),
                             ],
-                            max_age_in_minutes=1440,
-                            max_items=100,
+                            max_age_hint_minutes=1440,
+                            max_data_entities=100,
                         ),
-                        LabelScrapeConfig(
-                            max_age_in_minutes=10080,
-                            max_items=500,
+                        LabelScrapingConfig(
+                            max_age_hint_minutes=10080,
+                            max_data_entities=500,
                         ),
                     ],
                 ),
                 DataSource.REDDIT: DataSourceScrapingConfig(
                     source=DataSource.REDDIT,
-                    cadence_secs=900,
+                    cadence_seconds=900,
                     labels_to_scrape=[
-                        LabelScrapeConfig(
+                        LabelScrapingConfig(
                             label_choices=[
                                 DataLabel(value="r/bittensor_"),
                                 DataLabel(value="r/bitcoin"),
                             ],
-                            max_age_in_minutes=10080,
-                            max_items=50,
+                            max_age_hint_minutes=10080,
+                            max_data_entities=50,
                         ),
                     ],
                 )
