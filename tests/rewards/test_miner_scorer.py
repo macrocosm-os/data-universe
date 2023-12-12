@@ -5,6 +5,7 @@ from typing import List
 import torch
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from scraping.scraper import ValidationResult
+from common import constants
 from common.data import (
     DataEntityBucket,
     DataEntityBucketId,
@@ -31,7 +32,7 @@ class TestMinerScorer(unittest.TestCase):
                         default_scale_factor=1,
                     ),
                 },
-                max_age_in_hours=7 * 24,
+                max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
             )
         )
         self.scorer = MinerScorer(self.num_neurons, self.value_calculator, alpha=0.2)

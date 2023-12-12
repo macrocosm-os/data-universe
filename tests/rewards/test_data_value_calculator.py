@@ -3,6 +3,7 @@ from unittest import mock
 from unittest.mock import Mock, patch
 
 from attr import dataclass
+from common import constants
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from rewards.data_value_calculator import DataValueCalculator
 from common.data import DataEntityBucket, DataEntityBucketId, DataLabel, DataSource, TimeBucket, ScorableDataEntityBucket
@@ -35,7 +36,7 @@ class TestDataValueCalculator(unittest.TestCase):
                     },
                 ),
             },
-            max_age_in_hours=7 * 24,
+            max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
         )
         self.value_calculator = DataValueCalculator(model=model)
 
@@ -109,7 +110,8 @@ class TestDataValueCalculator(unittest.TestCase):
         bucket = ScorableDataEntityBucket(
                 data_entity_bucket=DataEntityBucket(
                     id=DataEntityBucketId(
-                        time_bucket=TimeBucket.from_datetime(now - dt.timedelta(hours=7 * 24)),
+                        time_bucket=TimeBucket.from_datetime(now - dt.timedelta(
+                            hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24)),
                         source=DataSource.REDDIT,
                         label=DataLabel(value="testlabel"),
                     ),
@@ -126,7 +128,8 @@ class TestDataValueCalculator(unittest.TestCase):
         bucket = ScorableDataEntityBucket(
                 data_entity_bucket=DataEntityBucket(
                     id=DataEntityBucketId(
-                        time_bucket=TimeBucket.from_datetime(now - dt.timedelta(hours=7 * 24 + 1)),
+                        time_bucket=TimeBucket.from_datetime(now - dt.timedelta(
+                            hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24 + 1)),
                         source=DataSource.REDDIT,
                         label=DataLabel(value="testlabel"),
                     ),
@@ -141,7 +144,7 @@ class TestDataValueCalculator(unittest.TestCase):
 
         # Now verify the score decreases between now and max_age.
         previous_score = 75.0
-        for hours_back in range(1, 7 * 24):
+        for hours_back in range(1, constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24):
             bucket = ScorableDataEntityBucket(
                 data_entity_bucket=DataEntityBucket(
                     id=DataEntityBucketId(

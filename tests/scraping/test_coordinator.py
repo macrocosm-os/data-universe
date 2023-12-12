@@ -3,6 +3,7 @@ import datetime as dt
 from typing import Any, Callable, Iterable
 import unittest
 from unittest.mock import Mock
+from common import constants
 
 from common.data import DataEntity, DataLabel, TimeBucket
 from scraping.coordinator import (
@@ -80,7 +81,7 @@ class TestScraperCoordinator(unittest.TestCase):
                                 DataLabel(value="label2"),
                             ],
                             max_data_entities=10,
-                            max_age_hint_minutes=60 * 24 * 7,
+                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                         ),
                         LabelScrapingConfig(
                             max_data_entities=20,
@@ -96,7 +97,7 @@ class TestScraperCoordinator(unittest.TestCase):
         now = dt.datetime(2023, 12, 12, 12, 45, 0)
         latest_time_bucket = TimeBucket.from_datetime(now)
         oldest_expected_time_bucket = TimeBucket.from_datetime(
-            now - dt.timedelta(days=7)
+            now - dt.timedelta(days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
         )
         label_counts = defaultdict(int)
         time_counts = defaultdict(int)
@@ -193,7 +194,7 @@ class TestScraperCoordinator(unittest.TestCase):
                         LabelScrapingConfig(
                             label_choices=[DataLabel(value="label1")],
                             max_data_entities=10,
-                            max_age_hint_minutes=60 * 24 * 7,
+                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                         ),
                     ],
                 ),

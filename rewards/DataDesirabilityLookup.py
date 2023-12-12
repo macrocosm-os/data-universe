@@ -1,3 +1,4 @@
+from common import constants
 from common.data import DataLabel, DataSource
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 
@@ -55,5 +56,5 @@ LOOKUP = DataDesirabilityLookup(
             },
         ),
     },
-    max_age_in_hours=7 * 24,
+    max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
 )
