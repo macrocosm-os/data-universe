@@ -114,7 +114,7 @@ def add_args(cls, parser):
             "--neuron.database_name",
             type=str,
             help="The name of the database.",
-            default="ValidatorStorage.miner_index",
+            default="ValidatorStorage",
         )
 
         parser.add_argument(

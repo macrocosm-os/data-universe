@@ -37,15 +37,19 @@ pip install -r requirements.txt
 
 1. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
-1. Install mySQL
+1. Install mySQL and configure your database and user.
 ```shell
 sudo apt install mysql-server
 sudo systemctl start mysql.service
 sudo mysql
+
+mysql> CREATE DATABASE ValidatorStorage;
+mysql> CREATE USER 'data-universe-user'@'localhost' IDENTIFIED BY 'MyStrongPassword';
+mysql> GRANT SELECT ON ValidatorStorage.* TO 'data-universe-user'@'localhost';
 ```
 
-1. Create a password for your database user.
-The Validator will automatically create the mysql database and user for you. However, you'll need to choose a password and add it to the `.env` file:
+1. Setup the Validator to have access to your created user.
+The Validator will automatically create the mysql tables within the database for you. However, you'll need to choose a password and add it to the `.env` file:
 
 ```py
 DATABASE_USER_PASSWORD="MyStrongPassword"
