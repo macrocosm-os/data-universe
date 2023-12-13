@@ -168,7 +168,7 @@ class TwitterFlashScraper(Scraper):
                 is_valid=False, reason="Failed to decode data entity"
             )
 
-        if not tweet_to_verify.is_equivalent_to(tweet):
+        if tweet_to_verify != tweet:
             bt.logging.trace(f"Tweets do not match: {tweet_to_verify} != {tweet}")
             return ValidationResult(is_valid=False, reason="Tweet does not match")
 
@@ -221,7 +221,7 @@ async def test_validate():
             uri="https://twitter.com/TcMMTsTc/status/1733441357090545731",
             datetime=dt.datetime(2023, 12, 9, 10, 59, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            content=b'{"username":"@TcMMTsTc","text":"\xe3\x81\xbc\xe3\x81\x8f\xe7\x9c\xa0\xe3\x81\x84\xe3\x81\xa7\xe3\x81\x99","replies":1,"retweets":0,"quotes":0,"likes":31,"url":"https://twitter.com/TcMMTsTc/status/1733441357090545731","timestamp":"2023-12-09T10:59:00Z","tweet_hashtags":[]}',
+            content=b'{"username":"@TcMMTsTc","text":"\xe3\x81\xbc\xe3\x81\x8f\xe7\x9c\xa0\xe3\x81\x84\xe3\x81\xa7\xe3\x81\x99","url":"https://twitter.com/TcMMTsTc/status/1733441357090545731","timestamp":"2023-12-09T10:59:00Z","tweet_hashtags":[]}',
             content_size_bytes=218,
         ),
         DataEntity(
@@ -229,7 +229,7 @@ async def test_validate():
             datetime=dt.datetime(2023, 12, 9, 10, 52, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bittensor"),
-            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","replies":2,"retweets":0,"quotes":0,"likes":4,"url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
+            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
             content_size_bytes=484,
         ),
     ]
@@ -245,7 +245,7 @@ async def test_validate():
         ),
         good_entity.copy(
             update={
-                "content": b'{"username":"@nirmaljajra2","text":"Random-text-insertion-DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","replies":2,"retweets":0,"quotes":0,"likes":4,"url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
+                "content": b'{"username":"@nirmaljajra2","text":"Random-text-insertion-DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
             }
         ),
         good_entity.copy(

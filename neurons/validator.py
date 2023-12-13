@@ -18,6 +18,7 @@
 
 import copy
 import datetime
+import hashlib
 import random
 import sys
 import traceback
@@ -194,6 +195,30 @@ class Validator(BaseNeuron):
 
         return (True, "")
 
+    @classmethod
+    def are_entities_unique(cls, entities: List[DataEntity]) -> bool:
+        """Checks that all entities in a DataEntityBucket are unique.
+
+        This is currently done by comparing hashes of only the content as the entire scrape response is serialized into
+        the content of each DataEntity.
+
+        Returns a tuple of (is_unique, reason) where is_unique is True if the entities are unique,
+        and reason is a string describing why they are not unique.
+        """
+
+        # Create a set to store the hash of each entity content.
+        entity_content_hash_set = set()
+
+        for entity in entities:
+            entity_content_hash = hashlib.sha1(entity.content).hexdigest()
+            # Check that this hash has not been seen before.
+            if entity_content_hash in entity_content_hash_set:
+                return False
+            else:
+                entity_content_hash_set.add(entity_content_hash)
+
+        return True
+
     async def _update_and_get_miner_index(
         self, hotkey: str, miner_axon: bt.AxonInfo
     ) -> Optional[ScorableMinerIndex]:
@@ -303,8 +328,20 @@ class Validator(BaseNeuron):
                 uid, index, [ValidationResult(is_valid=False, reason=reason)]
             )
             return
+        
+        # Perform uniqueness validation on the entity contents.
+        # If we didn't, the miner could just return the same data over and over again.
+        unique = Validator.are_entities_unique(data_entities)
+        if not unique:
+            bt.logging.trace(
+                f"Miner {hotkey} failed enitity uniqueness checks."
+            )
+            self.scorer.on_miner_evaluated(
+                uid, index, [ValidationResult(is_valid=False, reason="Duplicate entities found.")]
+            )
+            return
 
-        # Basic validation passed. Now sample some entities for data correctness.
+        # Basic validation and uniqueness passed. Now sample some entities for data correctness.
         entities_to_validate: List[DataEntity] = Validator.choose_entities_to_verify(
             data_entities
         )

@@ -300,6 +300,57 @@ class TestValidator(unittest.TestCase):
         valid, _ = Validator.are_entities_valid(entities, data_entity_bucket)
         self.assertTrue(valid)
 
+    def test_are_entities_unique_unique_entities(self):
+        """Tests are_entities_unique with unique entities."""
+        datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
+        label = DataLabel(value="label")
+
+        entities = [
+            DataEntity(
+                uri="http://1",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+            DataEntity(
+                uri="http://2",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"67890",
+                content_size_bytes=5,
+            ),
+        ]
+        unique = Validator.are_entities_unique(entities)
+        self.assertTrue(unique)
+
+    def test_are_entities_unique_duplicate_entities(self):
+        """Tests are_entities_unique with duplicate entities."""
+        datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
+        label = DataLabel(value="label")
+
+        entities = [
+            DataEntity(
+                uri="http://1",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+            DataEntity(
+                uri="http://1",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+        ]
+        unique = Validator.are_entities_unique(entities)
+        self.assertFalse(unique)
 
 if __name__ == "__main__":
     unittest.main()
