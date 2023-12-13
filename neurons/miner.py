@@ -67,7 +67,7 @@ class Miner(BaseNeuron):
         )
 
         # Configure the ScraperCoordinator
-        scraping_config = ConfigReader.load_config(self.config.neuron.config_path)
+        scraping_config = ConfigReader.load_config(self.config.neuron.scraping_config_file)
         bt.logging.info(f"Loaded scraping config: {scraping_config}")
 
         self.scraping_coordinator = ScraperCoordinator(
