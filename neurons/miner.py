@@ -99,10 +99,11 @@ class Miner(BaseNeuron):
         self.scraping_coordinator.run_in_background_thread()
 
         # This loop maintains the miner's operations until intentionally stopped.
+        last_sync_block = self.block
         try:
             while not self.should_exit:
                 while (
-                    self.block - self.metagraph.last_update[self.uid]
+                    self.block - last_sync_block
                     < self.config.neuron.epoch_length
                 ):
                     # Wait before checking again.
@@ -114,12 +115,8 @@ class Miner(BaseNeuron):
 
                 # Sync metagraph and potentially set weights.
                 self.sync()
+                last_sync_block = self.block
                 self.step += 1
-
-                # Log our current status.
-                self._log_status(self.step)
-
-            bt.logging.info("Miner stopped.")
 
         # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
