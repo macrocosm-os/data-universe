@@ -14,6 +14,7 @@ the scraping_config JSON file.
 from typing import List, Optional, Sequence
 
 from pydantic import BaseModel, Field, PositiveInt, ValidationError
+from common import constants
 from common.data import DataLabel, DataSource
 from scraping import coordinator
 from scraping.scraper import ScraperId
@@ -37,7 +38,7 @@ class LabelScrapingConfig(BaseModel):
         
         Note: not all data sources provide date filters, so this property should be thought of as a hint to the scraper, not a rule.
         """,
-        default = 60 * 24 * 7,  # 7 days.
+        default = 60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
     )
     
     max_data_entities: Optional[PositiveInt] = Field(

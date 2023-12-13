@@ -1,5 +1,5 @@
 import threading
-from common import utils
+from common import constants, utils
 from common.data import DataEntity, DataEntityBucket, DataEntityBucketId, DataLabel, DataSource, TimeBucket
 from storage.miner.miner_storage import MinerStorage
 from typing import List
@@ -107,12 +107,10 @@ class SqliteMinerStorage(MinerStorage):
         # Convert the rows into DataEntity objects and return them up to the configured max chuck size.
         data_entities = []
 
-        # TODO use a configured max DataEntityBucket size.
-        max_data_entity_bucket_size = utils.mb_to_bytes(128)
         running_size = 0
 
         for row in cursor:
-            if running_size + row['contentSizeBytes'] >= max_data_entity_bucket_size:
+            if running_size + row['contentSizeBytes'] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
                 # If we would go over the max DataEntityBucket size instead return early.
                 return data_entities
             else:
@@ -139,26 +137,23 @@ class SqliteMinerStorage(MinerStorage):
 
         cursor = self.connection.cursor()
 
-        # TODO use a configured max age.
-        oldest_time_bucket_id = TimeBucket.from_datetime(dt.datetime.now() - dt.timedelta(days=7)).id
-        # TODO use a configured max DataEntityBucket count.
-        max_data_entity_bucket_count = 3000000
+        oldest_time_bucket_id = TimeBucket.from_datetime(
+            dt.datetime.now() - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)).id
 
         # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
         cursor.execute("""SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
                        WHERE timeBucketId >= ?
                        GROUP BY timeBucketId, source, label
                        LIMIT ?
-                       """, [oldest_time_bucket_id, max_data_entity_bucket_count])
+                       """, [oldest_time_bucket_id, constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX])
 
         data_entity_buckets = []
 
-        # TODO use a configured max DataEntityBucket size.
-        max_data_entity_bucket_size = utils.mb_to_bytes(128)
-
         for row in cursor:
             # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
-            size = max_data_entity_bucket_size if row['bucketSize'] >= max_data_entity_bucket_size else row['bucketSize']
+            size = (constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    if row['bucketSize'] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    else row['bucketSize'])
 
             # Construct the new DataEntityBucket with all non null columns.
             data_entity_bucket_id = DataEntityBucketId(

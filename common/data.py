@@ -1,3 +1,4 @@
+from common import constants
 from . import utils
 import datetime as dt
 from enum import Enum, auto
@@ -135,7 +136,7 @@ class DataEntityBucket(StrictBaseModel):
     A single bucket is limited to 128MBs to ensure requests sent over the network aren't too large.
     """
     id: DataEntityBucketId = Field(description="Identifies the qualities by which this bucket is grouped.")
-    size_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
+    size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
 
 class ScorableDataEntityBucket(StrictBaseModel):
@@ -147,14 +148,15 @@ class ScorableDataEntityBucket(StrictBaseModel):
     # This scorable bytes are computed as:
     # 1 byte for every byte in size_bytes that no other miner has in their index.
     # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
-    scorable_bytes: int = Field(ge=0, le=utils.mb_to_bytes(mb=128))
+    scorable_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
 class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    data_entity_buckets: List[DataEntityBucket] = Field(description="Buckets the miner is serving.")
-    # TODO Custom validator for length of data_entity_buckets.
+    data_entity_buckets: List[DataEntityBucket] = Field(
+        description="Buckets the miner is serving.",
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX)
 
 
 class ScorableMinerIndex(BaseModel):
@@ -162,6 +164,7 @@ class ScorableMinerIndex(BaseModel):
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
-        description="DataEntityBuckets the miner is serving, scored on uniqueness."
+        description="DataEntityBuckets the miner is serving, scored on uniqueness.",
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")
