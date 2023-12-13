@@ -156,8 +156,8 @@ class ScraperCoordinator:
         
         bt.logging.info("Starting ScrapingCoordinator in a background thread")
         
-        threading.Thread(target=self.run, daemon=True).start()
         self.is_running = True
+        self.thread = threading.Thread(target=self.run, daemon=True).start()
 
     def run(self):
         """Blocking call to run the Coordinator, indefinitely."""
