@@ -10,5 +10,5 @@ Data Universe uses Apify to scrape certain DataSources. At this time, all Valida
 2. Got to your Console -> Settings -> Integrations and copy your Personal API token
 3. Create a `.env` file and add the following to it:
 ```py
-APIFY_APIKEY="YOUR_APIFY_API_TOKEN"
+APIFY_API_TOKEN="YOUR_APIFY_API_TOKEN"
 ```
