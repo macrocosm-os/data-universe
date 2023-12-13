@@ -18,10 +18,6 @@ class XContent(BaseModel):
 
     username: str
     text: str
-    replies: int = Field(ge=0)
-    retweets: int = Field(ge=0)
-    quotes: int = Field(ge=0)
-    likes: int = Field(ge=0)
     url: str
     timestamp: dt.datetime
     tweet_hashtags: List[str] = Field(
@@ -51,20 +47,3 @@ class XContent(BaseModel):
         """Converts a DataEntity to an XContent."""
 
         return XContent.parse_raw(data_entity.content.decode("utf-8"))
-
-    def is_equivalent_to(self, other: "XContent") -> bool:
-        """Returns whether this content is equivalent to another content, for the purposes of data correctness.
-
-        This check excludes dynamic fields that may have changed between data scraping and validation.
-        """
-
-        if not other:
-            return False
-
-        return (
-            other.username == self.username
-            and other.text == self.text
-            and other.url == self.url
-            and other.timestamp == self.timestamp
-            and other.tweet_hashtags == self.tweet_hashtags
-        )

@@ -303,8 +303,21 @@ class Validator(BaseNeuron):
                 uid, index, [ValidationResult(is_valid=False, reason=reason)]
             )
             return
+        
+        # Perform uniqueness validation on the entities.
+        (valid, reason) = Validator.are_entities_unique(data_entities)
+        if not valid:
+            bt.logging.trace(
+                f"Miner {hotkey} failed basic entity validation with reason {reason}."
+            )
+            self.scorer.on_miner_evaluated(
+                uid, index, [ValidationResult(is_valid=False, reason=reason)]
+            )
+            return
+            
+        # TODO DYNAMIC add a validator.are_entities_distinct/unique and a test for it. Just check hash of contents.
 
-        # Basic validation passed. Now sample some entities for data correctness.
+        # Basic validation and uniqueness passed. Now sample some entities for data correctness.
         entities_to_validate: List[DataEntity] = Validator.choose_entities_to_verify(
             data_entities
         )
