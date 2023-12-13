@@ -1,10 +1,19 @@
 import threading
 from common import constants, utils
-from common.data import DataEntity, DataEntityBucket, DataEntityBucketId, DataLabel, DataSource, TimeBucket
+from common.data import (
+    DataEntity,
+    DataEntityBucket,
+    DataEntityBucketId,
+    DataLabel,
+    DataSource,
+    TimeBucket,
+)
 from storage.miner.miner_storage import MinerStorage
 from typing import List
 import datetime as dt
 import sqlite3
+import contextlib
+
 
 class SqliteMinerStorage(MinerStorage):
     """Sqlite backed MinerStorage"""
@@ -24,31 +33,37 @@ class SqliteMinerStorage(MinerStorage):
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
                                 ON DataEntity (timeBucketId, source, label)"""
 
-    def __init__(self, database="SqliteMinerStorage.sqlite", max_database_size_bytes_hint=utils.mb_to_bytes(10000)):
+    def __init__(
+        self,
+        database="SqliteMinerStorage.sqlite",
+        max_database_size_bytes_hint=utils.mb_to_bytes(10000),
+    ):
         self.database = database
         # TODO Account for non-content columns when restricting total database size.
         self.database_max_content_size_bytes = max_database_size_bytes_hint
 
-        # Create the database if it doesn't exist, defaulting to the local directory.
-        # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
-        self.connection = sqlite3.connect(self.database, detect_types=sqlite3.PARSE_DECLTYPES)
-        # Allow this connection to parse results from returned rows by column name.
-        self.connection.row_factory = sqlite3.Row
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
 
-        cursor = self.connection.cursor()
+            # Create the DataEntity table (if it does not already exist).
+            cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_CREATE)
 
-        # Create the DataEntity table (if it does not already exist).
-        cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_CREATE)
-
-        # Create the Index (if it does not already exist).
-        cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_INDEX)
+            # Create the Index (if it does not already exist).
+            cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_INDEX)
 
         # Lock to avoid concurrency issues on clearing space when full
         self.clearing_space_lock = threading.Lock()
 
+    def _create_connection(self):
+        # Create the database if it doesn't exist, defaulting to the local directory.
+        # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
+        connection = sqlite3.connect(
+            self.database, detect_types=sqlite3.PARSE_DECLTYPES
+        )
+        # Allow this connection to parse results from returned rows by column name.
+        connection.row_factory = sqlite3.Row
 
-    def __del__(self):
-        self.connection.close()
+        return connection
 
     def store_data_entities(self, data_entities: List[DataEntity]):
         """Stores any number of DataEntities, making space if necessary."""
@@ -59,132 +74,189 @@ class SqliteMinerStorage(MinerStorage):
 
         # If the total size of the store is larger than our maximum configured stored content size then ecept.
         if added_content_size > self.database_max_content_size_bytes:
-            raise ValueError("Content size to store: " + str(added_content_size) + " exceeds configured max: "
-                            + str(self.database_max_content_size_bytes))
+            raise ValueError(
+                "Content size to store: "
+                + str(added_content_size)
+                + " exceeds configured max: "
+                + str(self.database_max_content_size_bytes)
+            )
 
-        # Ensure only one thread is clearing space when necessary.
-        with self.clearing_space_lock:
-            # If we would exceed our maximum configured stored content size then clear space.
-            cursor = self.connection.cursor()
-            cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
+        with contextlib.closing(self._create_connection()) as connection:
+            # Ensure only one thread is clearing space when necessary.
+            with self.clearing_space_lock:
+                    # If we would exceed our maximum configured stored content size then clear space.
+                    cursor = connection.cursor()
+                    cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
 
-            # If there are no rows we convert the None result to 0
-            result = cursor.fetchone()
-            current_content_size = result[0] if result[0] else 0
+                    # If there are no rows we convert the None result to 0
+                    result = cursor.fetchone()
+                    current_content_size = result[0] if result[0] else 0
 
-            if current_content_size + added_content_size > self.database_max_content_size_bytes:
-                content_bytes_to_clear = (self.database_max_content_size_bytes // 10
-                                        if self.database_max_content_size_bytes // 10 > added_content_size
-                                        else added_content_size)
-                self.clear_content_from_oldest(content_bytes_to_clear)
+                    if (
+                        current_content_size + added_content_size
+                        > self.database_max_content_size_bytes
+                    ):
+                        content_bytes_to_clear = (
+                            self.database_max_content_size_bytes // 10
+                            if self.database_max_content_size_bytes // 10 > added_content_size
+                            else added_content_size
+                        )
+                        self.clear_content_from_oldest(content_bytes_to_clear)
 
-        # Parse every DataEntity into an list of value lists for inserting.
-        values = []
+            # Parse every DataEntity into an list of value lists for inserting.
+            values = []
 
-        for data_entity in data_entities:
-            label = "NULL" if (data_entity.label is None) else data_entity.label.value
-            timeBucketId = TimeBucket.from_datetime(data_entity.datetime).id
-            values.append([data_entity.uri, data_entity.datetime, timeBucketId, data_entity.source.value, label,
-                           data_entity.content, data_entity.content_size_bytes])
+            for data_entity in data_entities:
+                label = "NULL" if (data_entity.label is None) else data_entity.label.value
+                timeBucketId = TimeBucket.from_datetime(data_entity.datetime).id
+                values.append(
+                    [
+                        data_entity.uri,
+                        data_entity.datetime,
+                        timeBucketId,
+                        data_entity.source.value,
+                        label,
+                        data_entity.content,
+                        data_entity.content_size_bytes,
+                    ]
+                )
 
+            # Insert ignoring duplicate keys.
+            cursor.executemany(
+                "INSERT OR IGNORE INTO DataEntity VALUES (?,?,?,?,?,?,?)", values
+            )
 
-        # Insert ignoring duplicate keys.
-        cursor.executemany("INSERT OR IGNORE INTO DataEntity VALUES (?,?,?,?,?,?,?)", values)
-        
-        # Commit the insert.
-        self.connection.commit()
-    
-    def list_data_entities_in_data_entity_bucket(self, data_entity_bucket_id: DataEntityBucketId) -> List[DataEntity]:
+            # Commit the insert.
+            connection.commit()
+
+    def list_data_entities_in_data_entity_bucket(
+        self, data_entity_bucket_id: DataEntityBucketId
+    ) -> List[DataEntity]:
         """Lists from storage all DataEntities matching the provided DataEntityBucketId."""
         # Get rows that match the DataEntityBucketId.
-        label = "NULL" if (data_entity_bucket_id.label is None) else data_entity_bucket_id.label.value
+        label = (
+            "NULL"
+            if (data_entity_bucket_id.label is None)
+            else data_entity_bucket_id.label.value
+        )
 
-        cursor = self.connection.cursor()
-        cursor.execute("""SELECT * FROM DataEntity 
-                       WHERE timeBucketId = ? AND source = ? AND label = ?""",
-                       [data_entity_bucket_id.time_bucket.id, data_entity_bucket_id.source.value, label])
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                """SELECT * FROM DataEntity 
+                        WHERE timeBucketId = ? AND source = ? AND label = ?""",
+                [
+                    data_entity_bucket_id.time_bucket.id,
+                    data_entity_bucket_id.source.value,
+                    label,
+                ],
+            )
 
-        # Convert the rows into DataEntity objects and return them up to the configured max chuck size.
-        data_entities = []
+            # Convert the rows into DataEntity objects and return them up to the configured max chuck size.
+            data_entities = []
 
-        running_size = 0
+            running_size = 0
 
-        for row in cursor:
-            if running_size + row['contentSizeBytes'] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
-                # If we would go over the max DataEntityBucket size instead return early.
-                return data_entities
-            else:
-                # Construct the new DataEntity with all non null columns.
-                data_entity = DataEntity(uri=row['uri'],
-                                        datetime=row['datetime'],
-                                        source=DataSource(row['source']),
-                                        content=row['content'],
-                                        content_size_bytes=row['contentSizeBytes'])
+            for row in cursor:
+                if (
+                    running_size + row["contentSizeBytes"]
+                    >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                ):
+                    # If we would go over the max DataEntityBucket size instead return early.
+                    return data_entities
+                else:
+                    # Construct the new DataEntity with all non null columns.
+                    data_entity = DataEntity(
+                        uri=row["uri"],
+                        datetime=row["datetime"],
+                        source=DataSource(row["source"]),
+                        content=row["content"],
+                        content_size_bytes=row["contentSizeBytes"],
+                    )
 
-                # Add the optional Label field if not null.
-                if row['label'] != "NULL":
-                    data_entity_bucket_id.label = DataLabel(value=row['label'])
+                    # Add the optional Label field if not null.
+                    if row["label"] != "NULL":
+                        data_entity_bucket_id.label = DataLabel(value=row["label"])
 
-                data_entities.append(data_entity)
-                running_size += row['contentSizeBytes']
+                    data_entities.append(data_entity)
+                    running_size += row["contentSizeBytes"]
 
-        # If we reach the end of the cursor then return all of the data entities for this DataEntityBucket.
-        return data_entities
-
+            # If we reach the end of the cursor then return all of the data entities for this DataEntityBucket.
+            return data_entities
 
     def list_data_entity_buckets(self) -> List[DataEntityBucket]:
         """Lists all DataEntityBuckets for all the DataEntities that this MinerStorage is currently serving."""
 
-        cursor = self.connection.cursor()
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
 
-        oldest_time_bucket_id = TimeBucket.from_datetime(
-            dt.datetime.now() - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)).id
+            oldest_time_bucket_id = TimeBucket.from_datetime(
+                dt.datetime.now()
+                - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
+            ).id
 
-        # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
-        cursor.execute("""SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
-                       WHERE timeBucketId >= ?
-                       GROUP BY timeBucketId, source, label
-                       LIMIT ?
-                       """, [oldest_time_bucket_id, constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX])
+            # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
+            cursor.execute(
+                """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
+                        WHERE timeBucketId >= ?
+                        GROUP BY timeBucketId, source, label
+                        LIMIT ?
+                        """,
+                [
+                    oldest_time_bucket_id,
+                    constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+                ],
+            )
 
-        data_entity_buckets = []
+            data_entity_buckets = []
 
-        for row in cursor:
-            # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
-            size = (constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                    if row['bucketSize'] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                    else row['bucketSize'])
+            for row in cursor:
+                # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
+                size = (
+                    constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    if row["bucketSize"] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    else row["bucketSize"]
+                )
 
-            # Construct the new DataEntityBucket with all non null columns.
-            data_entity_bucket_id = DataEntityBucketId(
-                time_bucket=TimeBucket(id=row['timeBucketId']),
-                source=DataSource(row['source']))
+                # Construct the new DataEntityBucket with all non null columns.
+                data_entity_bucket_id = DataEntityBucketId(
+                    time_bucket=TimeBucket(id=row["timeBucketId"]),
+                    source=DataSource(row["source"]),
+                )
 
-            # Add the optional Label field if not null.
-            if row['label'] != "NULL":
-                data_entity_bucket_id.label = DataLabel(value=row['label'])
+                # Add the optional Label field if not null.
+                if row["label"] != "NULL":
+                    data_entity_bucket_id.label = DataLabel(value=row["label"])
 
-            data_entity_bucket = DataEntityBucket(id=data_entity_bucket_id,size_bytes=size)
+                data_entity_bucket = DataEntityBucket(
+                    id=data_entity_bucket_id, size_bytes=size
+                )
 
-            data_entity_buckets.append(data_entity_bucket)
+                data_entity_buckets.append(data_entity_bucket)
 
-        # If we reach the end of the cursor then return all of the data entity buckets.
-        return data_entity_buckets
+            # If we reach the end of the cursor then return all of the data entity buckets.
+            return data_entity_buckets
 
     def clear_content_from_oldest(self, contentBytesToClear: int):
         """Deletes entries starting from the oldest until we have cleared the specified amount of content."""
-        cursor = self.connection.cursor()
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
 
-        # TODO Investigate way to select last X bytes worth of entries in a single query.
-        # Get the contentSizeBytes of each row by timestamp desc.
-        cursor.execute("SELECT contentSizeBytes, datetime FROM DataEntity ORDER BY datetime ASC")
+            # TODO Investigate way to select last X bytes worth of entries in a single query.
+            # Get the contentSizeBytes of each row by timestamp desc.
+            cursor.execute(
+                "SELECT contentSizeBytes, datetime FROM DataEntity ORDER BY datetime ASC"
+            )
 
-        running_bytes = 0
-        earliest_datetime_to_clear = dt.datetime.min
-        # Iterate over rows until we have found bytes to clear or we reach the end and fail.
-        for row in cursor:
-            running_bytes += row['contentSizeBytes']
-            earliest_datetime_to_clear = row['datetime']
-            # Once we have enough content to clear then we do so.
-            if running_bytes >= contentBytesToClear:
-                cursor.execute("DELETE FROM DataEntity WHERE datetime <= ?", [earliest_datetime_to_clear])
+            running_bytes = 0
+            earliest_datetime_to_clear = dt.datetime.min
+            # Iterate over rows until we have found bytes to clear or we reach the end and fail.
+            for row in cursor:
+                running_bytes += row["contentSizeBytes"]
+                earliest_datetime_to_clear = row["datetime"]
+                # Once we have enough content to clear then we do so.
+                if running_bytes >= contentBytesToClear:
+                    cursor.execute(
+                        "DELETE FROM DataEntity WHERE datetime <= ?",
+                        [earliest_datetime_to_clear],
+                    )
