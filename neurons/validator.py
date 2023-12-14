@@ -40,6 +40,7 @@ from common.data import (
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 import common.utils as utils
+from neurons.config import NeuronType
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -108,6 +109,9 @@ class Validator(BaseNeuron):
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
+        
+    def neuron_type(self) -> NeuronType:
+        return NeuronType.VALIDATOR
 
     def serve_axon(self):
         """Serve axon to enable external connections."""

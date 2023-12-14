@@ -24,6 +24,7 @@ import typing
 import bittensor as bt
 from common import utils
 from common.protocol import GetDataEntityBucket, GetMinerIndex
+from neurons.config import NeuronType
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
@@ -75,6 +76,9 @@ class Miner(BaseNeuron):
             miner_storage=self.storage,
             config=scraping_config,
         )
+        
+    def neuron_type(self) -> NeuronType:
+        return NeuronType.MINER
 
     def run(self):
         """

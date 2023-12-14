@@ -15,6 +15,8 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import abc
+import argparse
 import copy
 import sys
 
@@ -23,7 +25,7 @@ import bittensor as bt
 from abc import ABC, abstractmethod
 
 # Sync calls set weights and also resyncs the metagraph.
-from neurons.config import check_config, add_args, config
+from neurons.config import NeuronType, check_config, add_args
 from common.utils import ttl_get_block
 from neurons import __spec_version__ as spec_version
 
@@ -35,32 +37,11 @@ class BaseNeuron(ABC):
     In addition to creating a wallet, subtensor, and metagraph, this class also handles the synchronization of the network state via a basic checkpointing mechanism based on epoch length.
     """
 
-    @classmethod
-    def check_config(cls, config: "bt.Config"):
-        check_config(cls, config)
-
-    @classmethod
-    def add_args(cls, parser):
-        add_args(cls, parser)
-
-    @classmethod
-    def config(cls):
-        return config(cls)
-
-    subtensor: "bt.subtensor"
-    wallet: "bt.wallet"
-    metagraph: "bt.metagraph"
-    spec_version: int = spec_version
-
-    @property
-    def block(self):
-        return ttl_get_block(self)
-
     def __init__(self, config=None):
-        base_config = copy.deepcopy(config or BaseNeuron.config())
-        self.config = self.config()
-        self.config.merge(base_config)
-        self.check_config(self.config)
+        self.spec_version = spec_version
+        
+        self.config = copy.deepcopy(config or self.create_config())
+        check_config(self.config)
 
         # Set up logging with the provided configuration and directory.
         bt.logging(config=self.config, logging_dir=self.config.full_path)
@@ -105,6 +86,27 @@ class BaseNeuron(ABC):
     @abstractmethod
     def set_weights(self):
         ...
+
+    @abstractmethod
+    def neuron_type(self) -> NeuronType:
+        ...
+        
+    def create_config(self):
+        """
+        Returns the configuration for this neuron.
+        """
+        parser = argparse.ArgumentParser()
+        bt.wallet.add_args(parser)
+        bt.subtensor.add_args(parser)
+        bt.logging.add_args(parser)
+        bt.axon.add_args(parser)
+        add_args(self.neuron_type(), parser)
+
+        return bt.config(parser)
+
+    @property
+    def block(self):
+        return ttl_get_block(self)
 
     def sync(self):
         """
