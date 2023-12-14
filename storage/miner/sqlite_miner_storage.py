@@ -260,3 +260,4 @@ class SqliteMinerStorage(MinerStorage):
                         "DELETE FROM DataEntity WHERE datetime <= ?",
                         [earliest_datetime_to_clear],
                     )
+                    connection.commit()

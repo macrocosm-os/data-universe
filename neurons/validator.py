@@ -510,7 +510,7 @@ class Validator(BaseNeuron):
             self.is_running = False
             bt.logging.debug("Stopped")
 
-    def get_miner_uids(self, metagraph: bt.Metagraph) -> List[int]:
+    def get_miner_uids(self, metagraph: bt.metagraph) -> List[int]:
         """Gets the uids of all miners in the metagraph."""
         return sorted(
             [
