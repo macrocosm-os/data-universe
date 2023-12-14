@@ -81,7 +81,7 @@ class TestScraperCoordinator(unittest.TestCase):
                                 DataLabel(value="label2"),
                             ],
                             max_data_entities=10,
-                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
+                            max_age_hint_minutes=60 * 24 * 5,
                         ),
                         LabelScrapingConfig(
                             max_data_entities=20,
