@@ -2,13 +2,12 @@ import datetime as dt
 from common.data import DataLabel, DataSource, TimeBucket, ScorableDataEntityBucket
 from rewards.data import DataDesirabilityLookup
 
-import rewards.DataDesirabilityLookup as v1
-
+from rewards import data_desirability_lookup
 
 class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""
 
-    def __init__(self, model: DataDesirabilityLookup = v1.LOOKUP):
+    def __init__(self, model: DataDesirabilityLookup = data_desirability_lookup.LOOKUP):
         self.model = model
 
     def get_score_for_data_entity_bucket(self, scorable_data_entity_bucket: ScorableDataEntityBucket) -> float:
