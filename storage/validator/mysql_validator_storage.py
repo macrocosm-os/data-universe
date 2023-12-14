@@ -145,7 +145,7 @@ class MysqlValidatorStorage(ValidatorStorage):
                 [
                     miner_id,
                     data_entity_bucket.id.time_bucket.id,
-                    data_entity_bucket.id.source.value,
+                    data_entity_bucket.id.source,
                     label_id,
                     data_entity_bucket.size_bytes,
                 ]
