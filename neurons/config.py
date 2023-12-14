@@ -32,7 +32,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def check_config(config: bt.Config):
+def check_config(config: bt.config):
     r"""Checks/validates the config namespace object."""
     bt.logging.check_config(config)
 
@@ -52,21 +52,27 @@ def check_config(config: bt.Config):
 
     if not config.neuron.dont_save_events:
         # Add custom event logger for the events.
-        logger.level("EVENTS", no=38, icon="📝")
-        logger.add(
-            os.path.join(config.neuron.full_path, "events.log"),
-            rotation=config.neuron.events_retention_size,
-            serialize=True,
-            enqueue=True,
-            backtrace=False,
-            diagnose=False,
-            level="EVENTS",
-            format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
-        )
+        try:
+            # Check if the level is already configured. If it isn't, a ValueError is raised.
+            logger.level("EVENTS")
+        except ValueError:
+            logger.level("EVENTS", no=38, icon="📝")
+            logger.add(
+                os.path.join(config.neuron.full_path, "events.log"),
+                rotation=config.neuron.events_retention_size,
+                serialize=True,
+                enqueue=True,
+                backtrace=False,
+                diagnose=False,
+                level="EVENTS",
+                format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
+            )
+
 
 class NeuronType(enum.Enum):
     MINER = auto()
     VALIDATOR = auto()
+
 
 def add_args(neuron_type: NeuronType, parser):
     """
@@ -161,6 +167,5 @@ def add_args(neuron_type: NeuronType, parser):
             default=default_file,
         )
 
-    else: 
+    else:
         raise ValueError(f"Invalid neuron type: {neuron_type}")
-

@@ -39,7 +39,7 @@ class BaseNeuron(ABC):
 
     def __init__(self, config=None):
         self.spec_version = spec_version
-        
+
         self.config = copy.deepcopy(config or self.create_config())
         check_config(self.config)
 
@@ -65,14 +65,19 @@ class BaseNeuron(ABC):
         self.metagraph = self.subtensor.metagraph(self.config.netuid)
         bt.logging.info(f"Metagraph: {self.metagraph}")
 
-        # Check if the miner is registered on the Bittensor network before proceeding further.
-        self.check_registered()
-
         # Each miner gets a unique identity (UID) in the network for differentiation.
-        self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
-        bt.logging.info(
-            f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}"
-        )
+        # TODO: Stop doing meaningful work in the constructor to make neurons more testable.
+        if self.wallet.hotkey.ss58_address in self.metagraph.hotkeys:
+            self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+            bt.logging.info(
+                f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}"
+            )
+        else:
+            self.uid = 0
+            bt.logging.warning(
+                f"Hotkey {self.wallet.hotkey.ss58_address} not found in metagraph. Assuming this is a test."
+            )
+
         self.step = 0
 
     @abstractmethod
@@ -90,7 +95,10 @@ class BaseNeuron(ABC):
     @abstractmethod
     def neuron_type(self) -> NeuronType:
         ...
-        
+
+    def get_config_for_test(self) -> bt.config:
+        return self.config
+
     def create_config(self):
         """
         Returns the configuration for this neuron.
