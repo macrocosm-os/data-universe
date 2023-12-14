@@ -122,10 +122,13 @@ class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
 
     time_bucket: TimeBucket
-    source: DataSource
+    source: DataSource = Field()
     label: Optional[DataLabel] = Field(
         default=None,
     )
+
+    class Config:
+        use_enum_values = True
 
 
 class DataEntityBucket(StrictBaseModel):
