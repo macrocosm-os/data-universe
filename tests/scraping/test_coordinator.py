@@ -123,10 +123,10 @@ class TestScraperCoordinator(unittest.TestCase):
             # Verify the time range is within the expected bounds.
             self.assertGreaterEqual(
                 labeled_config.date_range.start,
-                oldest_expected_time_bucket.get_date_range().start,
+                TimeBucket.to_date_range(oldest_expected_time_bucket).start,
             )
             self.assertLessEqual(
-                labeled_config.date_range.end, latest_time_bucket.get_date_range().end
+                labeled_config.date_range.end, TimeBucket.to_date_range(latest_time_bucket).end
             )
 
             label_counts[label] += 1
@@ -138,7 +138,7 @@ class TestScraperCoordinator(unittest.TestCase):
             )
             self.assertEqual(20, labelless_config.entity_limit)
             self.assertEqual(
-                latest_time_bucket.get_date_range(), labelless_config.date_range
+                TimeBucket.to_date_range(latest_time_bucket), labelless_config.date_range
             )
 
         # Check each label was chosen roughly half the time

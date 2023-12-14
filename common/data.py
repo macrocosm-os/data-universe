@@ -38,9 +38,6 @@ class TimeBucket(StrictBaseModel):
         description="Monotonically increasing value idenitifying the given time bucket"
     )
 
-    def id(self) -> int:
-        return self.id
-
     @classmethod
     def from_datetime(cls, datetime: dt.datetime) -> Type["TimeBucket"]:
         """Creates a TimeBucket from the provided datetime.
@@ -55,11 +52,12 @@ class TimeBucket(StrictBaseModel):
             )
         )
 
-    def get_date_range(self) -> DateRange:
+    @classmethod
+    def to_date_range(cls, bucket: "TimeBucket") -> DateRange:
         """Returns the date range for this time bucket."""
         return DateRange(
-            start=utils.datetime_from_hours_since_epoch(self.id),
-            end=utils.datetime_from_hours_since_epoch(self.id + 1),
+            start=utils.datetime_from_hours_since_epoch(bucket.id),
+            end=utils.datetime_from_hours_since_epoch(bucket.id + 1),
         )
 
 
