@@ -22,6 +22,7 @@ import hashlib
 import random
 import sys
 import traceback
+import typing
 import torch
 import asyncio
 import threading
@@ -48,7 +49,7 @@ from storage.validator.mysql_validator_storage import MysqlValidatorStorage
 from storage.validator.validator_storage import ValidatorStorage
 from vali_utils.miner_iterator import MinerIterator
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Type
 from traceback import print_exception
 
 from neurons.base_neuron import BaseNeuron
@@ -237,25 +238,14 @@ class Validator(BaseNeuron):
 
         bt.logging.trace(f"{hotkey}: Updating miner index.")
 
-        response = await self.dendrite.forward(
+        responses: List[GetMinerIndex] = await self.dendrite.forward(
             axons=[miner_axon],
             synapse=GetMinerIndex(),
             timeout=60,
         )
 
-        bt.logging.trace(f"{hotkey}: Miner returned response: {response}")
-        bt.logging.trace(f"{hotkey}: Miner returned empty response? {response is None}")
-
-        bt.logging.trace(
-            f"{hotkey}: Miner returned right class? {isinstance(response, GetMinerIndex)}"
-        )
-        bt.logging.trace(f"{hotkey}: response is success? {response.success}")
-
-        if (
-            response is None
-            or not isinstance(response, GetMinerIndex)
-            or not response.success
-        ):
+        miner_index = self.check_and_get_response(responses, GetMinerIndex)
+        if not miner_index:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
@@ -264,10 +254,12 @@ class Validator(BaseNeuron):
 
         # Miner successfully updated the index. Store it and return it.
         bt.logging.trace(
-            f"{hotkey}: Got new miner index. Size={len(response.data_entity_buckets)}"
+            f"{hotkey}: Got new miner index. Size={len(miner_index.data_entity_buckets)}"
         )
         self.storage.upsert_miner_index(
-            MinerIndex(hotkey=hotkey, data_entity_buckets=response.data_entity_buckets)
+            MinerIndex(
+                hotkey=hotkey, data_entity_buckets=miner_index.data_entity_buckets
+            )
         )
         return self._get_miner_index(hotkey)
 
@@ -278,6 +270,23 @@ class Validator(BaseNeuron):
         return self.storage.read_miner_index(
             hotkey=hotkey, valid_miners=set(valid_miners)
         )
+
+    def check_and_get_response(
+        self, responses: List[bt.Synapse], expected_class: Type
+    ) -> Optional[bt.Synapse]:
+        """Helper function to extract the single response from a list of responses, if the response is valid.
+
+        return: (response, is_valid): The response if it's valid, else None.
+        """
+        if (
+            responses
+            and isinstance(responses, list)
+            and len(responses) == 1
+            and isinstance(responses[0], expected_class)
+            and responses[0].success
+        ):
+            return responses[0]
+        return None
 
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
@@ -311,7 +320,7 @@ class Validator(BaseNeuron):
         bt.logging.trace(
             f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}"
         )
-        response = await self.dendrite.forward(
+        responses = await self.dendrite.forward(
             axons=[axon_info],
             synapse=GetDataEntityBucket(
                 data_entity_bucket_id=chosen_data_entity_bucket
@@ -319,13 +328,10 @@ class Validator(BaseNeuron):
             timeout=60,
         )
 
+        data_entity_bucket = self.check_and_get_response(responses, GetDataEntityBucket)
         # Treat a failed response the same way we treat a failed validation.
         # If we didn't, the miner could just not respond to queries for data entity buckets it doesn't have.
-        if (
-            response is None
-            or not isinstance(response, GetDataEntityBucket)
-            or not response.success
-        ):
+        if data_entity_bucket is None:
             bt.logging.trace(f"{hotkey}: Miner returned an invalid/failed response.")
             self.scorer.on_miner_evaluated(
                 uid,
@@ -340,10 +346,10 @@ class Validator(BaseNeuron):
 
         # Perform basic validation on the entities.
         bt.logging.trace(
-            f"{hotkey}: Performing basic validation on entities ({len(response.data_entities)})"
+            f"{hotkey}: Performing basic validation on entities ({len(data_entity_bucket.data_entities)})"
         )
 
-        data_entities: List[DataEntity] = response.data_entities
+        data_entities: List[DataEntity] = data_entity_bucket.data_entities
         (valid, reason) = Validator.are_entities_valid(
             data_entities, chosen_data_entity_bucket
         )
