@@ -104,7 +104,9 @@ class RedditLiteScraper(Scraper):
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
 
-        bt.logging.trace(f"Reddit scraper peforming scrape with config: {scrape_config}")
+        bt.logging.trace(
+            f"Reddit scraper peforming scrape with config: {scrape_config}"
+        )
 
         assert (
             not scrape_config.labels or len(scrape_config.labels) <= 1
@@ -154,7 +156,7 @@ class RedditLiteScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         contents = self._best_effort_parse_dataset(dataset)
-        return [content.to_data_entity() for content in contents]
+        return [RedditContent.to_data_entity(content) for content in contents]
 
     def _get_time_input(self, datetime: dt.datetime) -> str:
         """Returns the value of the 'time' key for a run input based on the targetted scrape time"""
@@ -248,8 +250,10 @@ class RedditLiteScraper(Scraper):
         # Wahey! The content is valid.
         # One final check. Does the Reddit content match the data entity information?
         try:
-            actual_entity = actual_content.to_data_entity()
-            if not actual_entity.matches_non_content_fields(entity_to_validate):
+            actual_entity = RedditContent.to_data_entity(actual_content)
+            if not DataEntity.are_non_content_fields_equal(
+                actual_entity, entity_to_validate
+            ):
                 return ValidationResult(
                     is_valid=False,
                     reason="The DataEntity fields are incorrect based on the Reddit content",

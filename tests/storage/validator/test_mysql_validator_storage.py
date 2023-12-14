@@ -1,14 +1,26 @@
 import unittest
 import os
-from common.data import DataEntityBucket, DataEntity, DataEntityBucketId, DataLabel, DataSource, MinerIndex, ScorableDataEntityBucket, TimeBucket
+from common.data import (
+    DataEntityBucket,
+    DataEntity,
+    DataEntityBucketId,
+    DataLabel,
+    DataSource,
+    MinerIndex,
+    ScorableDataEntityBucket,
+    TimeBucket,
+)
 import datetime as dt
 
 from storage.validator.mysql_validator_storage import MysqlValidatorStorage
 
+
 class TestMysqlValidatorStorage(unittest.TestCase):
     def setUp(self):
         # Make a test database for the test to operate against.
-        self.test_storage = MysqlValidatorStorage("localhost", "test-user", "test-pw", "test_db")
+        self.test_storage = MysqlValidatorStorage(
+            "localhost", "test-user", "test-pw", "test_db"
+        )
 
     def tearDown(self):
         # Clean up the test database.
@@ -131,21 +143,24 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Create two DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
         bucket_1 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=10)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
         bucket_2 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.X),
-                            size_bytes=50)
-        
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
+            ),
+            size_bytes=50,
+        )
+
         # Create the index containing the buckets.
         index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
-        
+
         # Store the index.
         self.test_storage.upsert_miner_index(index)
 
@@ -159,31 +174,36 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Create three DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
         bucket_1 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=10)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
         bucket_2 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.X),
-                            size_bytes=50)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
+            ),
+            size_bytes=50,
+        )
 
         bucket_3 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.X,
-                                label=DataLabel(value="label_2")),
-                            size_bytes=100)
-        
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.X,
+                label=DataLabel(value="label_2"),
+            ),
+            size_bytes=100,
+        )
+
         # Create an index containing the first two buckets.
         index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
 
         # Create an index containing the last two buckets.
         index_2 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_2, bucket_3])
-        
+
         # Store the first index.
         self.test_storage.upsert_miner_index(index_1)
 
@@ -194,47 +214,53 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         cursor = self.test_storage.connection.cursor(dictionary=True)
         cursor.execute("SELECT source FROM MinerIndex")
         for row in cursor:
-            self.assertEqual(DataSource.X, DataSource(row['source']))
+            self.assertEqual(DataSource.X, DataSource(row["source"]))
 
     def test_read_miner_index(self):
         """Tests that we can read (and score) a miner index."""
         # Create two DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
         bucket_1 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=10)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
         bucket_2 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.X),
-                            size_bytes=50)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
+            ),
+            size_bytes=50,
+        )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-                            data_entity_bucket=DataEntityBucket(
-                                id=DataEntityBucketId(
-                                    time_bucket=TimeBucket.from_datetime(now),
-                                    source=DataSource.REDDIT,
-                                    label=DataLabel(value="label_1")),
-                                size_bytes=10),
-                            scorable_bytes=10
+            data_entity_bucket=DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket.from_datetime(now),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="label_1"),
+                ),
+                size_bytes=10,
+            ),
+            scorable_bytes=10,
         )
 
         expected_bucket_2 = ScorableDataEntityBucket(
-                            data_entity_bucket=DataEntityBucket(
-                                id=DataEntityBucketId(
-                                    time_bucket=TimeBucket.from_datetime(now),
-                                    source=DataSource.X),
-                                size_bytes=50),
-                            scorable_bytes=50
+            data_entity_bucket=DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
+                ),
+                size_bytes=50,
+            ),
+            scorable_bytes=50,
         )
 
         # Create the index containing the buckets.
         index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
-        
+
         # Store the index.
         self.test_storage.upsert_miner_index(index)
 
@@ -243,84 +269,104 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertEqual(scored_index.scorable_data_entity_buckets[0], expected_bucket_1)
-        self.assertEqual(scored_index.scorable_data_entity_buckets[1], expected_bucket_2)
+        self.assertEqual(
+            scored_index.scorable_data_entity_buckets[0], expected_bucket_1
+        )
+        self.assertEqual(
+            scored_index.scorable_data_entity_buckets[1], expected_bucket_2
+        )
 
     def test_read_miner_index_with_duplicate_data_entity_buckets(self):
         """Tests that we can read (and score) a miner index when other miners have duplicate buckets."""
         # Create two DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
         bucket_1_miner_1 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=10)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
         bucket_1_miner_2 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=40)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=40,
+        )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-                            data_entity_bucket=DataEntityBucket(
-                                id=DataEntityBucketId(
-                                    time_bucket=TimeBucket.from_datetime(now),
-                                    source=DataSource.REDDIT,
-                                    label=DataLabel(value="label_1")),
-                                size_bytes=10),
-                            scorable_bytes=2
+            data_entity_bucket=DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket.from_datetime(now),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="label_1"),
+                ),
+                size_bytes=10,
+            ),
+            scorable_bytes=2,
         )
 
         # Create the indexes containing the bucket.
         index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1_miner_1])
         index_2 = MinerIndex(hotkey="hotkey2", data_entity_buckets=[bucket_1_miner_2])
-        
+
         # Store the indexes.
         self.test_storage.upsert_miner_index(index_1)
         self.test_storage.upsert_miner_index(index_2)
 
         # Read the index.
-        scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1", "hotkey2"]))
+        scored_index = self.test_storage.read_miner_index(
+            "hotkey1", set(["hotkey1", "hotkey2"])
+        )
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertEqual(scored_index.scorable_data_entity_buckets[0], expected_bucket_1)
+        self.assertEqual(
+            scored_index.scorable_data_entity_buckets[0], expected_bucket_1
+        )
 
     def test_read_miner_index_with_invalid_miners(self):
         """Tests that we can read (and score) a miner index when other invalid miners have duplicate buckets."""
         # Create two DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
         bucket_1_miner_1 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=10)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
         bucket_1_miner_2 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=40)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=40,
+        )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-                            data_entity_bucket=DataEntityBucket(
-                                id=DataEntityBucketId(
-                                    time_bucket=TimeBucket.from_datetime(now),
-                                    source=DataSource.REDDIT,
-                                    label=DataLabel(value="label_1")),
-                                size_bytes=10),
-                            scorable_bytes=10
+            data_entity_bucket=DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket.from_datetime(now),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="label_1"),
+                ),
+                size_bytes=10,
+            ),
+            scorable_bytes=10,
         )
 
         # Create the indexes containing the buckets.
         index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1_miner_1])
         index_2 = MinerIndex(hotkey="hotkey2", data_entity_buckets=[bucket_1_miner_2])
-        
+
         # Store the indexes.
         self.test_storage.upsert_miner_index(index_1)
         self.test_storage.upsert_miner_index(index_2)
@@ -330,40 +376,48 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertEqual(scored_index.scorable_data_entity_buckets[0], expected_bucket_1)
+        self.assertEqual(
+            scored_index.scorable_data_entity_buckets[0], expected_bucket_1
+        )
 
     def test_read_invalid_miner_index(self):
         """Tests that we can read (and score) an invalid miner index when other miners have duplicate buckets."""
         # Create two DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
         bucket_1_miner_1 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=10)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
         bucket_1_miner_2 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=40)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=40,
+        )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-                              data_entity_bucket=DataEntityBucket(
-                                id=DataEntityBucketId(
-                                    time_bucket=TimeBucket.from_datetime(now),
-                                    source=DataSource.REDDIT,
-                                    label=DataLabel(value="label_1")),
-                                size_bytes=10),
-                            scorable_bytes=2
+            data_entity_bucket=DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket.from_datetime(now),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="label_1"),
+                ),
+                size_bytes=10,
+            ),
+            scorable_bytes=2,
         )
 
         # Create the indexes containing the bucket.
         index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1_miner_1])
         index_2 = MinerIndex(hotkey="hotkey2", data_entity_buckets=[bucket_1_miner_2])
-        
+
         # Store the indexes.
         self.test_storage.upsert_miner_index(index_1)
         self.test_storage.upsert_miner_index(index_2)
@@ -373,7 +427,9 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the scored index matches expectations.
         self.assertEqual(scored_index.hotkey, "hotkey1")
-        self.assertEqual(scored_index.scorable_data_entity_buckets[0], expected_bucket_1)
+        self.assertEqual(
+            scored_index.scorable_data_entity_buckets[0], expected_bucket_1
+        )
 
     def test_read_non_existing_miner_index(self):
         """Tests that we correctly return none for a non existing miner index."""
@@ -388,18 +444,21 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Create two DataEntityBuckets for the indexes.
         now = dt.datetime.utcnow()
         bucket_1 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.REDDIT,
-                                label=DataLabel(value="label_1")),
-                            size_bytes=10)
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
         bucket_2 = DataEntityBucket(
-                            id=DataEntityBucketId(
-                                time_bucket=TimeBucket.from_datetime(now),
-                                source=DataSource.X),
-                            size_bytes=50)
-        
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
+            ),
+            size_bytes=50,
+        )
+
         # Create three indexes containing the buckets.
         index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
         index_2 = MinerIndex(hotkey="hotkey2", data_entity_buckets=[bucket_1, bucket_2])
@@ -420,18 +479,16 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
     def test_read_miner_last_updated(self):
         """Tests getting the last time a miner was updated."""
-        # Insert a label.
-        label_id = self.test_storage._get_or_insert_label("test_label_value")
-        # Insert the same label.
-        new_label_id = self.test_storage._get_or_insert_label("test_label_value")
-        # Insert a second label.
-        label_id_2 = self.test_storage._get_or_insert_label("test_label_value_2")
+        # Insert a miner
+        now = dt.datetime.utcnow()
+        now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")
+        self.test_storage._upsert_miner("test_hotkey", now_str)
 
-        # Confirm the first label has the same ID
-        self.assertEqual(label_id, new_label_id)
+        # Get the last updated
+        last_updated = self.test_storage.read_miner_last_updated("test_hotkey")
 
-        # Confirm the second label  has the next value.
-        self.assertEqual(label_id + 1, label_id_2)
+        # Confirm the last updated is None.
+        self.assertEqual(now, last_updated)
 
     def test_read_miner_last_updated_never_updated(self):
         """Tests getting the last time a miner was updated when it has never been updated."""
@@ -445,6 +502,7 @@ class TestMysqlValidatorStorage(unittest.TestCase):
 
         # Confirm the last updated is None.
         self.assertEqual(None, last_updated)
+
 
 if __name__ == "__main__":
     unittest.main()

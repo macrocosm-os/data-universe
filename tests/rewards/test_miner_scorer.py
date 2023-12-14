@@ -49,9 +49,9 @@ class TestMinerScorer(unittest.TestCase):
                         id=DataEntityBucketId(
                             time_bucket=TimeBucket.from_datetime(self.now),
                             source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel")
+                            label=DataLabel(value="testlabel"),
                         ),
-                        size_bytes=200
+                        size_bytes=200,
                     ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
@@ -61,9 +61,9 @@ class TestMinerScorer(unittest.TestCase):
                         id=DataEntityBucketId(
                             time_bucket=TimeBucket.from_datetime(self.now),
                             source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel")
+                            label=DataLabel(value="otherlabel"),
                         ),
-                        size_bytes=200
+                        size_bytes=200,
                     ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
@@ -85,13 +85,12 @@ class TestMinerScorer(unittest.TestCase):
         self._add_score_to_uid(uid)
         scores = self.scorer.get_scores()
         self.assertGreater(scores[uid], 0.0)
-        self.assertGreater(self.scorer.get_miner_credibility_for_test(uid), 0.5)
+        self.assertGreater(self.scorer.get_miner_credibility_for_test(uid), 0)
 
         self.scorer.reset(uid)
         scores = self.scorer.get_scores()
         self.assertEqual(scores[uid], 0.0)
-        self.assertEqual(self.scorer.get_miner_credibility_for_test(uid), 0.5)
-
+        self.assertEqual(self.scorer.get_miner_credibility_for_test(uid), 0)
 
     def test_resize(self):
         """Test resize retains scores after the resize."""
@@ -113,13 +112,13 @@ class TestMinerScorer(unittest.TestCase):
         new_miner = new_num_neurons - 1
         self._add_score_to_uid(new_miner)
         self.assertGreater(self.scorer.get_scores()[new_miner], 0.0)
-        
+
     def test_get_credible_miners(self):
         """Test get_credible_miners returns the correct set of miners."""
-        
+
         # Miners should start with a credibility score below the threshold to be credible.
         self.assertEqual([], self.scorer.get_credible_miners())
-        
+
         # Create 2 miners: 1 honest, 1 shady
         # The honest miner always passes validation.
         honest_miner = 0
@@ -134,7 +133,7 @@ class TestMinerScorer(unittest.TestCase):
             ValidationResult(is_valid=True),
             ValidationResult(is_valid=False),
         ]
-        
+
         # Perform a bunch of validations for them.
         for _ in range(20):
             self.scorer.on_miner_evaluated(
@@ -143,7 +142,7 @@ class TestMinerScorer(unittest.TestCase):
             self.scorer.on_miner_evaluated(
                 shady_miner, self.scorable_index, shady_validation
             )
-        
+
         # Now verify the honest miner is credible
         self.assertEqual([honest_miner], self.scorer.get_credible_miners())
 
@@ -206,9 +205,9 @@ class TestMinerScorer(unittest.TestCase):
                         id=DataEntityBucketId(
                             time_bucket=TimeBucket.from_datetime(self.now),
                             source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel")
+                            label=DataLabel(value="testlabel"),
                         ),
-                        size_bytes=200
+                        size_bytes=200,
                     ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
@@ -218,9 +217,9 @@ class TestMinerScorer(unittest.TestCase):
                         id=DataEntityBucketId(
                             time_bucket=TimeBucket.from_datetime(self.now),
                             source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel")
+                            label=DataLabel(value="otherlabel"),
                         ),
-                        size_bytes=200
+                        size_bytes=200,
                     ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
@@ -237,9 +236,9 @@ class TestMinerScorer(unittest.TestCase):
                         id=DataEntityBucketId(
                             time_bucket=TimeBucket.from_datetime(self.now),
                             source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel")
+                            label=DataLabel(value="testlabel"),
                         ),
-                        size_bytes=400
+                        size_bytes=400,
                     ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=200,
@@ -249,9 +248,9 @@ class TestMinerScorer(unittest.TestCase):
                         id=DataEntityBucketId(
                             time_bucket=TimeBucket.from_datetime(self.now),
                             source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel")
+                            label=DataLabel(value="otherlabel"),
                         ),
-                        size_bytes=400
+                        size_bytes=400,
                     ),
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=10,

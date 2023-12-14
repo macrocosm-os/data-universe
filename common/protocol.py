@@ -19,7 +19,7 @@ import bittensor as bt
 import pydantic
 from common import constants
 from common.data import DataEntityBucket, DataEntity, DataEntityBucketId
-from typing import List
+from typing import List, Optional
 
 
 class GetMinerIndex(bt.Synapse):
@@ -51,11 +51,12 @@ class GetDataEntityBucket(bt.Synapse):
     """
 
     # Required request input, filled by sending dendrite caller.
-    data_entity_bucket_id: DataEntityBucketId = pydantic.Field(
+    data_entity_bucket_id: Optional[DataEntityBucketId] = pydantic.Field(
         title="data_entity_bucket_id",
         description="The identifier for the requested DataEntityBucket.",
         frozen=True,
         repr=False,
+        default=None,
     )
 
     # Required request output, filled by recieving axon.

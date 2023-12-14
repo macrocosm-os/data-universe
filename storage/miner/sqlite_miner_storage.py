@@ -13,6 +13,7 @@ from typing import List
 import datetime as dt
 import sqlite3
 import contextlib
+import bittensor as bt
 
 
 class SqliteMinerStorage(MinerStorage):
@@ -33,12 +34,52 @@ class SqliteMinerStorage(MinerStorage):
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
                                 ON DataEntity (timeBucketId, source, label)"""
 
+    # Use a timezone aware adapter for timestamp columns.
+    def tz_aware_timestamp_adapter(val):
+        datepart, timepart = val.split(b" ")
+        year, month, day = map(int, datepart.split(b"-"))
+
+        if b"+" in timepart:
+            timepart, tz_offset = timepart.rsplit(b"+", 1)
+            if tz_offset == b"00:00":
+                tzinfo = dt.timezone.utc
+            else:
+                hours, minutes = map(int, tz_offset.split(b":", 1))
+                tzinfo = dt.timezone(dt.timedelta(hours=hours, minutes=minutes))
+        elif b"-" in timepart:
+            timepart, tz_offset = timepart.rsplit(b"-", 1)
+            if tz_offset == b"00:00":
+                tzinfo = dt.timezone.utc
+            else:
+                hours, minutes = map(int, tz_offset.split(b":", 1))
+                tzinfo = dt.timezone(dt.timedelta(hours=-hours, minutes=-minutes))
+        else:
+            tzinfo = None
+
+        timepart_full = timepart.split(b".")
+        hours, minutes, seconds = map(int, timepart_full[0].split(b":"))
+
+        if len(timepart_full) == 2:
+            microseconds = int("{:0<6.6}".format(timepart_full[1].decode()))
+        else:
+            microseconds = 0
+
+        val = dt.datetime(
+            year, month, day, hours, minutes, seconds, microseconds, tzinfo
+        )
+
+        return val
+
     def __init__(
         self,
         database="SqliteMinerStorage.sqlite",
         max_database_size_bytes_hint=utils.mb_to_bytes(10000),
     ):
+        sqlite3.register_converter(
+            "timestamp", SqliteMinerStorage.tz_aware_timestamp_adapter
+        )
         self.database = database
+
         # TODO Account for non-content columns when restricting total database size.
         self.database_max_content_size_bytes = max_database_size_bytes_hint
 
@@ -84,37 +125,40 @@ class SqliteMinerStorage(MinerStorage):
         with contextlib.closing(self._create_connection()) as connection:
             # Ensure only one thread is clearing space when necessary.
             with self.clearing_space_lock:
-                    # If we would exceed our maximum configured stored content size then clear space.
-                    cursor = connection.cursor()
-                    cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
+                # If we would exceed our maximum configured stored content size then clear space.
+                cursor = connection.cursor()
+                cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
 
-                    # If there are no rows we convert the None result to 0
-                    result = cursor.fetchone()
-                    current_content_size = result[0] if result[0] else 0
+                # If there are no rows we convert the None result to 0
+                result = cursor.fetchone()
+                current_content_size = result[0] if result[0] else 0
 
-                    if (
-                        current_content_size + added_content_size
-                        > self.database_max_content_size_bytes
-                    ):
-                        content_bytes_to_clear = (
-                            self.database_max_content_size_bytes // 10
-                            if self.database_max_content_size_bytes // 10 > added_content_size
-                            else added_content_size
-                        )
-                        self.clear_content_from_oldest(content_bytes_to_clear)
+                if (
+                    current_content_size + added_content_size
+                    > self.database_max_content_size_bytes
+                ):
+                    content_bytes_to_clear = (
+                        self.database_max_content_size_bytes // 10
+                        if self.database_max_content_size_bytes // 10
+                        > added_content_size
+                        else added_content_size
+                    )
+                    self.clear_content_from_oldest(content_bytes_to_clear)
 
             # Parse every DataEntity into an list of value lists for inserting.
             values = []
 
             for data_entity in data_entities:
-                label = "NULL" if (data_entity.label is None) else data_entity.label.value
+                label = (
+                    "NULL" if (data_entity.label is None) else data_entity.label.value
+                )
                 timeBucketId = TimeBucket.from_datetime(data_entity.datetime).id
                 values.append(
                     [
                         data_entity.uri,
                         data_entity.datetime,
                         timeBucketId,
-                        data_entity.source.value,
+                        data_entity.source,
                         label,
                         data_entity.content,
                         data_entity.content_size_bytes,
@@ -147,7 +191,7 @@ class SqliteMinerStorage(MinerStorage):
                         WHERE timeBucketId = ? AND source = ? AND label = ?""",
                 [
                     data_entity_bucket_id.time_bucket.id,
-                    data_entity_bucket_id.source.value,
+                    data_entity_bucket_id.source,
                     label,
                 ],
             )
@@ -158,6 +202,7 @@ class SqliteMinerStorage(MinerStorage):
             running_size = 0
 
             for row in cursor:
+                bt.logging.trace(f"One row the miner is seeing is: {row}")
                 if (
                     running_size + row["contentSizeBytes"]
                     >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
@@ -176,7 +221,7 @@ class SqliteMinerStorage(MinerStorage):
 
                     # Add the optional Label field if not null.
                     if row["label"] != "NULL":
-                        data_entity_bucket_id.label = DataLabel(value=row["label"])
+                        data_entity.label = DataLabel(value=row["label"])
 
                     data_entities.append(data_entity)
                     running_size += row["contentSizeBytes"]
@@ -214,7 +259,8 @@ class SqliteMinerStorage(MinerStorage):
                 # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
                 size = (
                     constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                    if row["bucketSize"] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    if row["bucketSize"]
+                    >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
                     else row["bucketSize"]
                 )
 

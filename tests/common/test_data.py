@@ -1,5 +1,6 @@
 import datetime as dt
-from common.data import TimeBucket
+
+from common.data import DataSource, TimeBucket
 import unittest
 
 
@@ -17,6 +18,12 @@ class TestData(unittest.TestCase):
             self.assertTrue(date_range.contains(datetime + dt.timedelta(minutes=i)))
 
         self.assertFalse(date_range.contains(datetime + dt.timedelta(minutes=60)))
+
+    def test_data_source_init(self):
+        """Tests that the data source enum can be initialized"""
+        source = 1
+        self.assertEqual(DataSource.REDDIT, DataSource(source))
+
 
 if __name__ == "__main__":
     unittest.main()
