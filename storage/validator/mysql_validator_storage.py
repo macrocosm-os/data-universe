@@ -227,6 +227,8 @@ class MysqlValidatorStorage(ValidatorStorage):
             total_content_size_bytes = row["totalContentSize"]
 
             bt.logging.trace(f"Source is: {row['source']}")
+            s = DataSource(row["source"])
+            bt.logging.trace(f"DataSource is: {s}")
             # Score the bytes as the fraction of the total content bytes for that bucket across all valid miners.
             data_entity_bucket_id = DataEntityBucketId(
                 time_bucket=TimeBucket(id=row["timeBucketId"]),
