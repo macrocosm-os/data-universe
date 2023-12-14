@@ -127,8 +127,8 @@ class DataEntityBucketId(StrictBaseModel):
         default=None,
     )
 
-    # class Config:
-    #     use_enum_values = True
+    class Config:
+        use_enum_values = True
 
 
 class DataEntityBucket(StrictBaseModel):
