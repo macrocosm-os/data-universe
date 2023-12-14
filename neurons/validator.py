@@ -591,19 +591,16 @@ class Validator(BaseNeuron):
                         f"{hotkey} Failed to delete miner index.",
                         traceback.format_exc(),
                     )
+        # Update the iterator. It will keep its current position if possible.
+        self.miner_iterator.set_miner_uids(self.get_miner_uids(self.metagraph))
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
         if len(self.hotkeys) < len(self.metagraph.hotkeys):
-            self.on_metagraph_size_changed(self.metagraph)
+            self.scorer.resize(self.metagraph.n)
 
         # Update the hotkeys.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
-
-    def on_metagraph_size_changed(self, metagraph: bt.Metagraph):
-        """Handles changes to the metagraph size."""
-        self.scorer.resize(metagraph.n)
-        self.miner_iterator.set_miner_uids(self.get_miner_uids(metagraph))
 
     def save_state(self):
         """Saves the state of the validator to a file."""
