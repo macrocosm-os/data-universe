@@ -231,7 +231,7 @@ class MysqlValidatorStorage(ValidatorStorage):
             bt.logging.trace(f"DataSource is: {s}")
             # Score the bytes as the fraction of the total content bytes for that bucket across all valid miners.
             data_entity_bucket_id = DataEntityBucketId(
-                time_bucket=TimeBucket(id=row["timeBucketId"]), source=s
+                source=DataSource.X, time_bucket=TimeBucket(id=row["timeBucketId"])
             )
             bt.logging.trace(f"Created data_entity_bucket_id: {data_entity_bucket_id}")
             if label != "NULL":
