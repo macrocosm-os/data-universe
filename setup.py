@@ -1,7 +1,5 @@
 # The MIT License (MIT)
-# Copyright © 2023 Yuma Rao
-# TODO(developer): Set your name
-# Copyright © 2023 <your name>
+# Copyright © 2023 Data Universe
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
@@ -55,8 +53,7 @@ with open(path.join(here, "README.md"), encoding="utf-8") as f:
 
 # loading version from setup.py
 with codecs.open(
-    # TODO: Fix this path, if we need this file??
-    os.path.join(here, "template/__init__.py"),
+    os.path.join(here, "neurons/__init__.py"),
     encoding="utf-8",
 ) as init_file:
     version_match = re.search(
@@ -71,10 +68,10 @@ setup(
     long_description=long_description,
     long_description_content_type="text/markdown",
     url="https://github.com/RusticLuftig/data-universe",
-    author="Data Universe Team", 
+    author="Data Universe Team",
     packages=find_packages(),
     include_package_data=True,
-    author_email="sid.data.universe@gmail.com", 
+    author_email="sid.data.universe@gmail.com",
     license="MIT",
     python_requires=">=3.8",
     install_requires=requirements,
@@ -82,7 +79,6 @@ setup(
         "Development Status :: 3 - Alpha",
         "Intended Audience :: Developers",
         "Topic :: Software Development :: Build Tools",
-        # Pick your license as you wish
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3 :: Only",
         "Programming Language :: Python :: 3.8",
