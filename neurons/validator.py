@@ -58,7 +58,7 @@ from rewards.miner_scorer import MinerScorer
 
 class Validator(BaseNeuron):
     # The minimum amount of time that must pass before we re-evaluate a miner.
-    MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=30)
+    MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=1)
 
     SCORER_FILENAME = "scorer.pickle"
 
