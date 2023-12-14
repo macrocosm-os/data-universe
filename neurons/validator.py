@@ -283,7 +283,7 @@ class Validator(BaseNeuron):
             and isinstance(responses, list)
             and len(responses) == 1
             and isinstance(responses[0], expected_class)
-            and responses[0].success
+            and responses[0].is_success
         ):
             return responses[0]
         return None
