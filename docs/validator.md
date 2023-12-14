@@ -43,9 +43,9 @@ sudo apt install mysql-server
 sudo systemctl start mysql.service
 sudo mysql
 
-mysql> CREATE DATABASE ValidatorStorage;
-mysql> CREATE USER 'data-universe-user'@'localhost' IDENTIFIED BY 'MyStrongPassword';
-mysql> GRANT SELECT ON ValidatorStorage.* TO 'data-universe-user'@'localhost';
+CREATE DATABASE ValidatorStorage;
+CREATE USER 'data-universe-user'@'localhost' IDENTIFIED BY 'MyStrongPassword';
+GRANT ALL PRIVILEGES ON ValidatorStorage.* TO 'data-universe-user'@'localhost';
 ```
 
 1. Setup the Validator to have access to your created user.
