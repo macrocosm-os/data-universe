@@ -1,10 +1,20 @@
 import threading
 from common import utils
-from common.data import DataEntityBucket, DataEntityBucketId, DataLabel, DataSource, MinerIndex, ScorableDataEntityBucket, ScorableMinerIndex, TimeBucket
+from common.data import (
+    DataEntityBucket,
+    DataEntityBucketId,
+    DataLabel,
+    DataSource,
+    MinerIndex,
+    ScorableDataEntityBucket,
+    ScorableMinerIndex,
+    TimeBucket,
+)
 from storage.validator.validator_storage import ValidatorStorage
 from typing import Optional, Set
 import datetime as dt
 import mysql.connector
+
 
 class MysqlValidatorStorage(ValidatorStorage):
     """MySQL backed Validator Storage"""
@@ -34,8 +44,10 @@ class MysqlValidatorStorage(ValidatorStorage):
 
     def __init__(self, host: str, user: str, password: str, database: str):
         # Get the connection to the user-created MySQL database.
-        self.connection = mysql.connector.connect(host=host, user=user, password=password, database=database)
-    
+        self.connection = mysql.connector.connect(
+            host=host, user=user, password=password, database=database
+        )
+
         cursor = self.connection.cursor()
 
         # Create the MinerIndex table if it doesn't exist
@@ -43,7 +55,7 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         # Create the Miner table if it doesn't exist
         cursor.execute(MysqlValidatorStorage.MINER_TABLE_CREATE)
-    
+
         # Create the Label table if it doesn't exist
         cursor.execute(MysqlValidatorStorage.LABEL_TABLE_CREATE)
 
@@ -55,7 +67,7 @@ class MysqlValidatorStorage(ValidatorStorage):
 
     def _upsert_miner(self, hotkey: str, now_str: str) -> int:
         """Stores an encountered miner hotkey returning this Validator's unique id for it"""
-        
+
         minerId = 0
 
         # Buffer to ensure rowcount is correct.
@@ -67,11 +79,16 @@ class MysqlValidatorStorage(ValidatorStorage):
             # If it does we can use the already fetched id.
             minerId = cursor.fetchone()[0]
             # If it does we only update the lastUpdated. (ON DUPLICATE KEY UPDATE consumes an autoincrement value)
-            cursor.execute("UPDATE Miner SET lastUpdated = %s WHERE hotkey = %s", [now_str, hotkey])
+            cursor.execute(
+                "UPDATE Miner SET lastUpdated = %s WHERE hotkey = %s", [now_str, hotkey]
+            )
             self.connection.commit()
         else:
             # If it doesn't we insert it.
-            cursor.execute("INSERT IGNORE INTO Miner (hotkey, lastUpdated) VALUES (%s, %s)", [hotkey, now_str])
+            cursor.execute(
+                "INSERT IGNORE INTO Miner (hotkey, lastUpdated) VALUES (%s, %s)",
+                [hotkey, now_str],
+            )
             self.connection.commit()
             # Then we get the newly created minerId
             cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
@@ -114,29 +131,40 @@ class MysqlValidatorStorage(ValidatorStorage):
         # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []
         for data_entity_bucket in index.data_entity_buckets:
-            label = "NULL" if (data_entity_bucket.id.label is None) else data_entity_bucket.id.label.value
+            label = (
+                "NULL"
+                if (data_entity_bucket.id.label is None)
+                else data_entity_bucket.id.label.value
+            )
 
             # Get or insert this Validator's labelId for the specified label.
             label_id = self._get_or_insert_label(label)
 
-            values.append([miner_id,
-                           data_entity_bucket.id.time_bucket.id,
-                           data_entity_bucket.id.source.value,
-                           label_id,
-                           data_entity_bucket.size_bytes])
+            values.append(
+                [
+                    miner_id,
+                    data_entity_bucket.id.time_bucket.id,
+                    data_entity_bucket.id.source.value,
+                    label_id,
+                    data_entity_bucket.size_bytes,
+                ]
+            )
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
             self.delete_miner_index(index.hotkey)
 
             # Insert the new keys.
-            cursor.executemany("""INSERT INTO MinerIndex VALUES (%s, %s, %s, %s, %s)""", values)
+            cursor.executemany(
+                """INSERT INTO MinerIndex VALUES (%s, %s, %s, %s, %s)""", values
+            )
             self.connection.commit()
 
-
-    def read_miner_index(self, hotkey: str, valid_miners: Set[str]) -> Optional[ScorableMinerIndex]:
+    def read_miner_index(
+        self, hotkey: str, valid_miners: Set[str]
+    ) -> Optional[ScorableMinerIndex]:
         """Gets a scored index for all of the data that a specific miner promises to provide.
-        
+
         Args:
             hotkey (str): The hotkey of the miner to read the index for.
             valid_miners (Set[str]): The set of miners that should be used for uniqueness scoring.
@@ -151,7 +179,7 @@ class MysqlValidatorStorage(ValidatorStorage):
         valid_miners.add(hotkey)
 
         # Add enough %s for the IN query to match the valid_miners list.
-        format_valid_miners = ','.join(['%s'] * len(valid_miners))
+        format_valid_miners = ",".join(["%s"] * len(valid_miners))
 
         # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
         sql_string = """SELECT mi1.*, m1.hotkey, m1.lastUpdated, l.labelValue, agg.totalContentSize 
@@ -167,7 +195,9 @@ class MysqlValidatorStorage(ValidatorStorage):
                        ) agg ON mi1.timeBucketId = agg.timeBucketId
                             AND mi1.source = agg.source
                             AND mi1.labelId = agg.labelId 
-                       WHERE m1.hotkey = %s""".format(format_valid_miners)
+                       WHERE m1.hotkey = %s""".format(
+            format_valid_miners
+        )
 
         # Build the args, ensuring our final tuple has at least 2 elements.
         args = []
@@ -183,27 +213,33 @@ class MysqlValidatorStorage(ValidatorStorage):
         for row in cursor:
             # Set last_updated to the first value since they are all the same for a given miner.
             if last_updated == None:
-                last_updated = row['lastUpdated']
+                last_updated = row["lastUpdated"]
 
             # Get the relevant primary key fields for comparing to other miners.
-            label=row['labelValue']
+            label = row["labelValue"]
             # Get the total bytes for this bucket for this miner before adjusting for uniqueness.
-            content_size_bytes=row['contentSizeBytes']
+            content_size_bytes = row["contentSizeBytes"]
             # Get the total bytes for this bucket across all valid miners (+ this miner).
-            total_content_size_bytes=row['totalContentSize']
+            total_content_size_bytes = row["totalContentSize"]
 
             # Score the bytes as the fraction of the total content bytes for that bucket across all valid miners.
             data_entity_bucket_id = DataEntityBucketId(
-                time_bucket=TimeBucket(id=row['timeBucketId']),
-                source=DataSource(row['source']))
+                time_bucket=TimeBucket(id=row["timeBucketId"]),
+                source=DataSource(row["source"]),
+            )
             if label != "NULL":
                 data_entity_bucket_id.label = DataLabel(value=label)
 
-            data_entity_bucket = DataEntityBucket(id=data_entity_bucket_id, size_bytes=content_size_bytes)
+            data_entity_bucket = DataEntityBucket(
+                id=data_entity_bucket_id, size_bytes=content_size_bytes
+            )
             scored_data_entity_bucket = ScorableDataEntityBucket(
                 data_entity_bucket=data_entity_bucket,
-                scorable_bytes=content_size_bytes*content_size_bytes/total_content_size_bytes)
-            
+                scorable_bytes=content_size_bytes
+                * content_size_bytes
+                / total_content_size_bytes,
+            )
+
             # Add the bucket to the list of scored buckets on the overall index.
             scored_data_entity_buckets.append(scored_data_entity_bucket)
 
@@ -211,15 +247,18 @@ class MysqlValidatorStorage(ValidatorStorage):
         if last_updated == None:
             return None
 
-        scored_index = ScorableMinerIndex(hotkey=hotkey, scorable_data_entity_buckets=scored_data_entity_buckets, last_updated=last_updated)
+        scored_index = ScorableMinerIndex(
+            hotkey=hotkey,
+            scorable_data_entity_buckets=scored_data_entity_buckets,
+            last_updated=last_updated,
+        )
         return scored_index
-
 
     def delete_miner_index(self, hotkey: str):
         """Removes the index for the specified miner.
-        
-            Args:
-            miner (str): The hotkey of the miner to remove from the index.
+
+        Args:
+        miner (str): The hotkey of the miner to remove from the index.
         """
 
         # Get the minerId from the hotkey.
@@ -234,11 +273,11 @@ class MysqlValidatorStorage(ValidatorStorage):
 
     def read_miner_last_updated(self, hotkey: str) -> Optional[dt.datetime]:
         """Gets when a specific miner was last updated. Or none.
-        
+
         Args:
             hotkey (str): The hotkey of the miner to check for last updated.
         """
-    
+
         # Buffer to ensure rowcount is correct.
         cursor = self.connection.cursor(buffered=True)
         # Check to see if the Miner already exists.

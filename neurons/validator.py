@@ -267,7 +267,7 @@ class Validator(BaseNeuron):
         """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
         bt.logging.trace(f"{hotkey}: Getting miner index.")
         valid_miners = self.scorer.get_credible_miners()
-        return self.storage.read_miner_index(hotkey=hotkey, valid_miners=valid_miners)
+        return self.storage.read_miner_index(hotkey=hotkey, valid_miners=set(valid_miners))
 
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
