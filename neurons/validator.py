@@ -301,7 +301,7 @@ class Validator(BaseNeuron):
         axon_info = self.metagraph.axons[uid]
         hotkey = self.metagraph.hotkeys[uid]
 
-        bt.logging.trace(f"{uid}: Evaluating miner")
+        bt.logging.trace(f"{hotkey}: Evaluating miner")
 
         # Query the miner for the latest index.
         index = await self._update_and_get_miner_index(hotkey, axon_info)
@@ -312,6 +312,8 @@ class Validator(BaseNeuron):
             )
             self.scorer.reset(uid)
             return
+
+        bt.logging.trace(f"{hotkey}: Got miner index={index}")
 
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (

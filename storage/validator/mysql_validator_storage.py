@@ -14,6 +14,7 @@ from storage.validator.validator_storage import ValidatorStorage
 from typing import Optional, Set
 import datetime as dt
 import mysql.connector
+import bittensor as bt
 
 
 class MysqlValidatorStorage(ValidatorStorage):
@@ -210,7 +211,10 @@ class MysqlValidatorStorage(ValidatorStorage):
         scored_data_entity_buckets = []
 
         # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
+        bt.logging.trace(f"{hotkey}: Reading miner index")
         for row in cursor:
+            bt.logging.trace(f"Got row: {row}")
+
             # Set last_updated to the first value since they are all the same for a given miner.
             if last_updated == None:
                 last_updated = row["lastUpdated"]

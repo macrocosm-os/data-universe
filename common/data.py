@@ -8,9 +8,10 @@ from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
 
 class StrictBaseModel(BaseModel):
     """A BaseModel that enforces stricter validation constraints"""
-    
+
     class Config:
         extra = "forbid"
+
 
 class DateRange(StrictBaseModel):
     """Represents a specific time range from start time inclusive to end time exclusive."""
@@ -116,8 +117,10 @@ class DataEntity(StrictBaseModel):
             and self.label == other.label
         )
 
+
 class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
+
     time_bucket: TimeBucket
     source: DataSource
     label: Optional[DataLabel] = Field(
@@ -133,14 +136,19 @@ class DataEntityBucket(StrictBaseModel):
 
     A single bucket is limited to 128MBs to ensure requests sent over the network aren't too large.
     """
-    id: DataEntityBucketId = Field(description="Identifies the qualities by which this bucket is grouped.")
+
+    id: DataEntityBucketId = Field(
+        description="Identifies the qualities by which this bucket is grouped."
+    )
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
 
 class ScorableDataEntityBucket(StrictBaseModel):
     """Composes both a DataEntityBucket and additional information required for scoring."""
 
-    data_entity_bucket: DataEntityBucket = Field(description="The DataEntityBucket that has additional information attached.")
+    data_entity_bucket: DataEntityBucket = Field(
+        description="The DataEntityBucket that has additional information attached."
+    )
     # Scorable bytes are the bytes that can be credited to this miner for scoring.
     # This is always less than or equal to the total size of the chunk.
     # This scorable bytes are computed as:
@@ -148,13 +156,15 @@ class ScorableDataEntityBucket(StrictBaseModel):
     # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
     scorable_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
+
 class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     data_entity_buckets: List[DataEntityBucket] = Field(
         description="Buckets the miner is serving.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX)
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+    )
 
 
 class ScorableMinerIndex(BaseModel):
@@ -163,6 +173,6 @@ class ScorableMinerIndex(BaseModel):
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
         description="DataEntityBuckets the miner is serving, scored on uniqueness.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")
