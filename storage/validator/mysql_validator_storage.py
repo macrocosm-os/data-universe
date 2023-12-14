@@ -231,6 +231,7 @@ class MysqlValidatorStorage(ValidatorStorage):
                 time_bucket=TimeBucket(id=row["timeBucketId"]),
                 source=DataSource(row["source"]),
             )
+            bt.logging.trace(f"Created data_entity_bucket_id: {data_entity_bucket_id}")
             if label != "NULL":
                 data_entity_bucket_id.label = DataLabel(value=label)
 
