@@ -65,8 +65,8 @@ class TimeBucket(StrictBaseModel):
 class DataSource(Enum):
     """The source of data. This will be expanded over time as we increase the types of data we collect."""
 
-    REDDIT = auto()
-    X = auto()
+    REDDIT = 1
+    X = 2
 
 
 class DataLabel(StrictBaseModel):
