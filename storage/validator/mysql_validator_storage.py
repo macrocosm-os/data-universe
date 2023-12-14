@@ -285,6 +285,6 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         if cursor.rowcount:
             # If it does we can use the already fetched id.
-            return dt.datetime(cursor.fetchone()[0])
+            return cursor.fetchone()[0]
         else:
             return None
