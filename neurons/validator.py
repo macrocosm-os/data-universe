@@ -246,6 +246,11 @@ class Validator(BaseNeuron):
         bt.logging.trace(f"{hotkey}: Miner returned response: {response}")
         bt.logging.trace(f"{hotkey}: Miner returned empty response? {response is None}")
 
+        bt.logging.trace(
+            f"{hotkey}: Miner returned right class? {isinstance(response, GetMinerIndex)}"
+        )
+        bt.logging.trace(f"{hotkey}: response is success? {response.success}")
+
         if (
             response is None
             or not isinstance(response, GetMinerIndex)
