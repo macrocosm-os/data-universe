@@ -16,7 +16,7 @@ class MinerScorer:
 
     # Start new miner's at a 50% credibility.
     STARTING_CREDIBILITY = 0.5
-    
+
     # The minimum credibility score a miner must have to be considered trustworthy.
     CREDIBLE_THRESHOLD = 0.8
 
@@ -38,6 +38,22 @@ class MinerScorer:
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
         self.lock = threading.Lock()
 
+    def save_state(self, filepath):
+        """Save the current state to the provided filepath."""
+        torch.save(
+            {
+                "scores": self.scores,
+                "credibility": self.miner_credibility,
+            },
+            filepath,
+        )
+        
+    def load_state(self, filepath):
+        """Load the state from the provided filepath."""
+        state = torch.load(filepath)
+        self.scores = state["scores"]
+        self.miner_credibility = state["credibility"]
+
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
         # Return a copy to ensure outside code can't modify the scores.
@@ -49,18 +65,22 @@ class MinerScorer:
         with self.lock:
             self.scores[uid] = 0.0
             self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
-            
+
     def get_miner_credibility_for_test(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'.
-        
+
         Should only be used in tests."""
         with self.lock:
             return self.miner_credibility[uid].item()
-            
+
     def get_credible_miners(self) -> List[int]:
         """Returns the list of miner UIDs that are considered trustworthy."""
         with self.lock:
-            return [index for index, value in enumerate(self.miner_credibility) if value >= MinerScorer.CREDIBLE_THRESHOLD]
+            return [
+                index
+                for index, value in enumerate(self.miner_credibility)
+                if value >= MinerScorer.CREDIBLE_THRESHOLD
+            ]
 
     def resize(self, num_neurons: int) -> None:
         """Resizes the score tensor to the new number of neurons.
