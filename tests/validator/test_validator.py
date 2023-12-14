@@ -107,7 +107,7 @@ class TestValidator(unittest.TestCase):
         self.assertAlmostEqual(ratios[2], 0.5, delta=0.05)
 
     def test_are_entities_valid_invalid_entities(self):
-        """Tests a bunch of bases where the entities are invalid."""
+        """Tests a bunch of cases where the entities are invalid."""
         datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
         default_label = DataLabel(value="label")
         default_data_entity_bucket = DataEntityBucket(

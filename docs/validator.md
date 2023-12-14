@@ -32,7 +32,7 @@ git clone https://github.com/RusticLuftig/data-universe.git
 1. Install the requirements. From your virtual environment, run
 ```shell
 cd data-universe
-pip install -r requirements.txt
+python -m pip install -e .
 ```
 
 1. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).

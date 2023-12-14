@@ -97,7 +97,7 @@ def _choose_scrape_configs(
         results.append(
             ScrapeConfig(
                 entity_limit=label_config.max_data_entities,
-                date_range=chosen_bucket.get_date_range(),
+                date_range=TimeBucket.to_date_range(chosen_bucket),
                 labels=labels_to_scrape,
             )
         )

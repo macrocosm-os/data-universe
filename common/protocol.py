@@ -15,7 +15,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import typing
 import bittensor as bt
 import pydantic
 from common import constants
@@ -37,19 +36,9 @@ class GetMinerIndex(bt.Synapse):
         description="All of the data entity buckets that a Miner can serve.",
         frozen=False,
         repr=False,
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+        default_factory=list,
     )
-
-    def deserialize(self) -> int:
-        """
-        Deserialize the data_entity_buckets output. This method retrieves the response from
-        the miner in the form of data_entity_buckets, deserializes it and returns it
-        as the output of the dendrite.query() call.
-
-        Returns:
-        - List[DataEntityBucket]: The deserialized response, which in this case is the value of data_entity_buckets.
-        """
-        return self.data_entity_buckets
 
 
 class GetDataEntityBucket(bt.Synapse):
@@ -75,18 +64,8 @@ class GetDataEntityBucket(bt.Synapse):
         description="All of the data that makes up the requested DataEntityBucket.",
         frozen=False,
         repr=False,
+        default_factory=list,
     )
-
-    def deserialize(self) -> int:
-        """
-        Deserialize the data_entities output. This method retrieves the response from
-        the miner in the form of data_entities, deserializes it and returns it
-        as the output of the dendrite.query() call.
-
-        Returns:
-        - List[DataEntity]: The deserialized response, which in this case is the value of data_entities.
-        """
-        return self.data_entities
 
 
 # TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
