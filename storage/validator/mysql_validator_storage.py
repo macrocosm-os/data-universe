@@ -236,6 +236,9 @@ class MysqlValidatorStorage(ValidatorStorage):
                 label=DataLabel(value="test"),
             )
             bt.logging.trace(f"Created data_entity_bucket_id: {data_entity_bucket_id}")
+            bt.logging.trace(
+                f"DataEntityBucketId.source is: {data_entity_bucket_id.source}"
+            )
             if label != "NULL":
                 data_entity_bucket_id.label = DataLabel(value=label)
 
