@@ -36,6 +36,7 @@ from common.data import (
     DateRange,
     MinerIndex,
     ScorableMinerIndex,
+    TimeBucket,
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 import common.utils as utils
@@ -167,7 +168,7 @@ class Validator(BaseNeuron):
         # 1. Check the entity size, labels, source, and timestamp.
         actual_size = 0
         claimed_size = 0
-        expected_datetime_range: DateRange = data_entity_bucket.id.time_bucket.get_date_range()
+        expected_datetime_range: DateRange = TimeBucket.to_date_range(data_entity_bucket.id.time_bucket)
         for entity in entities:
             actual_size += len(entity.content or b"")
             claimed_size += entity.content_size_bytes

@@ -6,7 +6,7 @@ class MinerStorage(ABC):
     """An abstract class which defines the contract that all implementations of MinerStorage must fulfill."""
 
     @abstractmethod
-    def store_data_entities(self, dataEntities: List[DataEntity]):
+    def store_data_entities(self, data_entities: List[DataEntity]):
         """Stores any number of DataEntities, making space if necessary."""
         raise NotImplemented
     

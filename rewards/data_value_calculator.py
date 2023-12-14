@@ -43,7 +43,7 @@ class DataValueCalculator:
         # that is max_age_in_hours old is scored 0.5.
         # All data older than max_age_in_hours is scored 0.
         data_age_in_hours = (
-            dt.datetime.now(tz=dt.timezone.utc) - time_bucket.get_date_range().start
+            dt.datetime.now(tz=dt.timezone.utc) - TimeBucket.to_date_range(time_bucket).start
         ).total_seconds() // 3600
 
         # Safe guard against future data.

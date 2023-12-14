@@ -1,3 +1,4 @@
+import contextlib
 import unittest
 import os
 from common import constants
@@ -42,10 +43,11 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.test_storage.store_data_entities([entity1, entity2])
 
         # Confirm the entities were stored.
-        cursor = self.test_storage.connection.cursor()
-        cursor.execute("SELECT COUNT(*) FROM DataEntity")
-        rows = cursor.fetchone()[0]
-        self.assertEqual(rows, 2)
+        with contextlib.closing(self.test_storage._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT COUNT(*) FROM DataEntity")
+            rows = cursor.fetchone()[0]
+            self.assertEqual(rows, 2)
 
     def test_store_identical_entities(self):
         """Tests that we can handle attempts to store the same entity"""
@@ -72,10 +74,11 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.test_storage.store_data_entities([entity1, entity2])
 
         # Confirm that only one set of entities were stored.
-        cursor = self.test_storage.connection.cursor()
-        cursor.execute("SELECT COUNT(*) FROM DataEntity")
-        rows = cursor.fetchone()[0]
-        self.assertEqual(rows, 2)
+        with contextlib.closing(self.test_storage._create_connection()) as connection:
+            cursor = connection.cursor()        
+            cursor.execute("SELECT COUNT(*) FROM DataEntity")
+            rows = cursor.fetchone()[0]
+            self.assertEqual(rows, 2)
 
 
     # TODO Consider storing what we can and discarding the rest.
@@ -123,13 +126,14 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.test_storage.store_data_entities([entity3])
 
         # Confirm the oldest entity was deleted to make room.
-        cursor = self.test_storage.connection.cursor()
-        cursor.execute("SELECT uri FROM DataEntity")
-        uris = []
-        for row in cursor:
-            uris.append(row["uri"])
+        with contextlib.closing(self.test_storage._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT uri FROM DataEntity")
+            uris = []
+            for row in cursor:
+                uris.append(row["uri"])
 
-        self.assertEqual(uris, ["test_entity_2", "test_entity_3"])
+            self.assertEqual(uris, ["test_entity_2", "test_entity_3"])
 
 
     def test_list_data_entity_buckets(self):
