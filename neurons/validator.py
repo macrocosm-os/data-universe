@@ -28,12 +28,12 @@ import threading
 import time
 import os
 import bittensor as bt
-from common import data
 from common.data import (
     DataEntityBucket,
     DataEntity,
     DataEntityBucketId,
     DateRange,
+    DataSource,
     MinerIndex,
     ScorableMinerIndex,
     TimeBucket,
@@ -42,10 +42,10 @@ from common.protocol import GetDataEntityBucket, GetMinerIndex
 import common.utils as utils
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
-from scraping.scraper import ValidationResult
+from scraping.scraper import ScraperId, ValidationResult
 from storage.validator.mysql_validator_storage import MysqlValidatorStorage
 from storage.validator.validator_storage import ValidatorStorage
-from validator.miner_iterator import MinerIterator
+from vali_utils.miner_iterator import MinerIterator
 
 from typing import List, Optional, Tuple
 from traceback import print_exception
@@ -59,6 +59,12 @@ class Validator(BaseNeuron):
     MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=30)
 
     SCORER_FILENAME = "scorer.pickle"
+
+    # Mapping of scrapers to use based on the data source to validate.
+    PREFERED_SCRAPERS = {
+        DataSource.X: ScraperId.X_FLASH,
+        DataSource.REDDIT: ScraperId.REDDIT_LITE,
+    }
 
     def __init__(self, config=None):
         super().__init__(config=config)
@@ -81,12 +87,9 @@ class Validator(BaseNeuron):
 
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
-        
+
         # Setup dependencies.
-        self.miner_uids = sorted(
-            [utils.is_miner(uid, self.metagraph) for uid in self.metagraph.uids]
-        )
-        self.miner_iterator = MinerIterator(self.miner_uids)
+        self.miner_iterator = MinerIterator(self.get_miner_uids(self.metagraph))
         self.scraper_provider = ScraperProvider()
 
         # Setup the database.
@@ -123,20 +126,30 @@ class Validator(BaseNeuron):
             sys.exit(1)
 
     @classmethod
-    def choose_data_entity_bucket_to_query(cls, index: ScorableMinerIndex) -> DataEntityBucketId:
+    def choose_data_entity_bucket_to_query(
+        cls, index: ScorableMinerIndex
+    ) -> DataEntityBucketId:
         """Chooses a random DataEntityBucket to query from a MinerIndex.
 
         The random selection is done based on choosing a random byte in the total index to query, and then selecting
         that DataEntityBucket
         """
-        total_size = sum(scorable_bucket.data_entity_bucket.size_bytes for scorable_bucket in index.scorable_data_entity_buckets)
+        total_size = sum(
+            scorable_bucket.data_entity_bucket.size_bytes
+            for scorable_bucket in index.scorable_data_entity_buckets
+        )
         chosen_byte = random.uniform(0, total_size)
         iterated_bytes = 0
         for scorable_bucket in index.scorable_data_entity_buckets:
-            if iterated_bytes + scorable_bucket.data_entity_bucket.size_bytes >= chosen_byte:
+            if (
+                iterated_bytes + scorable_bucket.data_entity_bucket.size_bytes
+                >= chosen_byte
+            ):
                 return scorable_bucket.data_entity_bucket.id
             iterated_bytes += scorable_bucket.data_entity_bucket.size_bytes
-        assert False, "Failed to choose a DataEntityBucket to query... which should never happen"
+        assert (
+            False
+        ), "Failed to choose a DataEntityBucket to query... which should never happen"
 
     @classmethod
     def choose_entities_to_verify(cls, entities: List[DataEntity]) -> List[DataEntity]:
@@ -168,7 +181,10 @@ class Validator(BaseNeuron):
         # 1. Check the entity size, labels, source, and timestamp.
         actual_size = 0
         claimed_size = 0
-        expected_datetime_range: DateRange = TimeBucket.to_date_range(data_entity_bucket.id.time_bucket)
+        expected_datetime_range: DateRange = (
+            TimeBucket.to_date_range(data_entity_bucket.id.time_bucket)
+        )
+
         for entity in entities:
             actual_size += len(entity.content or b"")
             claimed_size += entity.content_size_bytes
@@ -257,9 +273,7 @@ class Validator(BaseNeuron):
         """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
         bt.logging.trace(f"{hotkey}: Getting miner index.")
         valid_miners = self.scorer.get_credible_miners()
-        return self.storage.read_miner_index(
-            hotkey=hotkey, valid_miners=valid_miners
-        )
+        return self.storage.read_miner_index(hotkey=hotkey, valid_miners=valid_miners)
 
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
@@ -273,7 +287,7 @@ class Validator(BaseNeuron):
         """
         axon_info = self.metagraph.axons[uid]
         hotkey = self.metagraph.hotkeys[uid]
-        
+
         bt.logging.trace(f"{uid}: Evaluating miner")
 
         # Query the miner for the latest index.
@@ -287,11 +301,17 @@ class Validator(BaseNeuron):
             return
 
         # From that index, find a data entity bucket to sample and get it from the miner.
-        chosen_data_entity_bucket: DataEntityBucket = Validator.choose_data_entity_bucket_to_query(index)
-        bt.logging.trace(f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}")
+        chosen_data_entity_bucket: DataEntityBucket = (
+            Validator.choose_data_entity_bucket_to_query(index)
+        )
+        bt.logging.trace(
+            f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}"
+        )
         response = await self.dendrite.forward(
             axons=[axon_info],
-            synapse=GetDataEntityBucket(data_entity_bucket_id=chosen_data_entity_bucket),
+            synapse=GetDataEntityBucket(
+                data_entity_bucket_id=chosen_data_entity_bucket
+            ),
             timeout=60,
         )
 
@@ -320,7 +340,9 @@ class Validator(BaseNeuron):
         )
 
         data_entities: List[DataEntity] = response.data_entities
-        (valid, reason) = Validator.are_entities_valid(data_entities, chosen_data_entity_bucket)
+        (valid, reason) = Validator.are_entities_valid(
+            data_entities, chosen_data_entity_bucket
+        )
         if not valid:
             bt.logging.trace(
                 f"Miner {hotkey} failed basic entity validation with reason {reason}."
@@ -329,16 +351,16 @@ class Validator(BaseNeuron):
                 uid, index, [ValidationResult(is_valid=False, reason=reason)]
             )
             return
-        
+
         # Perform uniqueness validation on the entity contents.
         # If we didn't, the miner could just return the same data over and over again.
         unique = Validator.are_entities_unique(data_entities)
         if not unique:
-            bt.logging.trace(
-                f"Miner {hotkey} failed enitity uniqueness checks."
-            )
+            bt.logging.trace(f"Miner {hotkey} failed enitity uniqueness checks.")
             self.scorer.on_miner_evaluated(
-                uid, index, [ValidationResult(is_valid=False, reason="Duplicate entities found.")]
+                uid,
+                index,
+                [ValidationResult(is_valid=False, reason="Duplicate entities found.")],
             )
             return
 
@@ -351,7 +373,9 @@ class Validator(BaseNeuron):
             f"{hotkey}: Basic validation passed. Validating {entities_to_validate}"
         )
 
-        scraper = self.scraper_provider.get(chosen_data_entity_bucket.source)
+        scraper = self.scraper_provider.get(
+            Validator.PREFERED_SCRAPERS[chosen_data_entity_bucket.source]
+        )
         validation_results = scraper.validate(entities_to_validate)
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
@@ -373,12 +397,12 @@ class Validator(BaseNeuron):
                 last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
             ).total_seconds()
 
-        uids_to_eval = [
-            next(self.miner_iterator)
-            # Run in batches of 10.
-            # TODO: Maybe make this configurable and run evaluations based on expected throughput
-            for _ in range(10)
-        ]
+        # Run in batches of 10.
+        # TODO: Maybe make this configurable and run evaluations based on expected throughput
+        miners_to_eval = 10
+        # Use a set in case the network has fewer than 10 miners.
+        uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
+
         coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
         await asyncio.gather(*coroutines)
 
@@ -486,6 +510,16 @@ class Validator(BaseNeuron):
             self.is_running = False
             bt.logging.debug("Stopped")
 
+    def get_miner_uids(self, metagraph: bt.Metagraph) -> List[int]:
+        """Gets the uids of all miners in the metagraph."""
+        return sorted(
+            [
+                uid.item()
+                for uid in metagraph.uids
+                if utils.is_miner(uid.item(), metagraph) and uid.item() != self.uid
+            ]
+        )
+
     def set_weights(self):
         """
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
@@ -559,6 +593,8 @@ class Validator(BaseNeuron):
                         f"{hotkey} Failed to delete miner index.",
                         traceback.format_exc(),
                     )
+        # Update the iterator. It will keep its current position if possible.
+        self.miner_iterator.set_miner_uids(self.get_miner_uids(self.metagraph))
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
@@ -572,17 +608,12 @@ class Validator(BaseNeuron):
         """Saves the state of the validator to a file."""
         bt.logging.info("Saving validator state.")
 
+        if not os.path.exists(self.config.neuron.full_path):
+            os.makedirs(self.config.neuron.full_path)
+
         # Save the state of the validator to file.
-        torch.save(
-            {
-                "step": self.step,
-                "hotkeys": self.hotkeys,
-            },
-            self.config.neuron.full_path + "/state.pt",
-        )
-        utils.serialize_to_file(
-            self.scorer,
-            os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME),
+        self.scorer.save_state(
+            os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME)
         )
 
     def load_state(self):
@@ -590,12 +621,12 @@ class Validator(BaseNeuron):
         bt.logging.info("Loading validator state.")
 
         # Load the state of the validator from file.
-        state = torch.load(os.path.join(self.config.neuron.full_path, "/state.pt"))
-        self.step = state["step"]
-        self.hotkeys = state["hotkeys"]
-        self.scorer = utils.deserialize_from_file(
-            os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME)
-        )
+        filepath = os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME)
+        if not os.path.exists(filepath):
+            bt.logging.warning("No state file found. Starting from scratch.")
+            return
+
+        self.scorer.load_state(filepath)
 
 
 # The main function parses the configuration and runs the validator.

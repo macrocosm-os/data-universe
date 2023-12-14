@@ -1,4 +1,4 @@
-from validator.miner_iterator import MinerIterator
+from vali_utils.miner_iterator import MinerIterator
 import unittest
 
 
