@@ -14,8 +14,8 @@ class MinerScorer:
     Thread safe.
     """
 
-    # Start new miner's at a 50% credibility.
-    STARTING_CREDIBILITY = 0.5
+    # Start new miner's at a credibility of 0.
+    STARTING_CREDIBILITY = 0
 
     # The minimum credibility score a miner must have to be considered trustworthy.
     CREDIBLE_THRESHOLD = 0.8
@@ -24,7 +24,7 @@ class MinerScorer:
         self,
         num_neurons: int,
         value_calculator: DataValueCalculator,
-        alpha: float = 0.05,
+        alpha: float = 0.075,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
@@ -47,7 +47,7 @@ class MinerScorer:
             },
             filepath,
         )
-        
+
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
         state = torch.load(filepath)
