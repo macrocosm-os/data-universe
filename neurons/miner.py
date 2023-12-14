@@ -24,6 +24,7 @@ import typing
 import bittensor as bt
 from common import utils
 from common.protocol import GetDataEntityBucket, GetMinerIndex
+from neurons.config import NeuronType
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
@@ -67,7 +68,9 @@ class Miner(BaseNeuron):
         )
 
         # Configure the ScraperCoordinator
-        scraping_config = ConfigReader.load_config(self.config.neuron.scraping_config_file)
+        scraping_config = ConfigReader.load_config(
+            self.config.neuron.scraping_config_file
+        )
         bt.logging.info(f"Loaded scraping config: {scraping_config}")
 
         self.scraping_coordinator = ScraperCoordinator(
@@ -75,6 +78,9 @@ class Miner(BaseNeuron):
             miner_storage=self.storage,
             config=scraping_config,
         )
+
+    def neuron_type(self) -> NeuronType:
+        return NeuronType.MINER
 
     def run(self):
         """
@@ -102,10 +108,7 @@ class Miner(BaseNeuron):
         last_sync_block = self.block
         try:
             while not self.should_exit:
-                while (
-                    self.block - last_sync_block
-                    < self.config.neuron.epoch_length
-                ):
+                while self.block - last_sync_block < self.config.neuron.epoch_length:
                     # Wait before checking again.
                     time.sleep(12)
 
@@ -247,7 +250,9 @@ class Miner(BaseNeuron):
     async def get_index_priority(self, synapse: GetMinerIndex) -> float:
         return self.default_priority(synapse)
 
-    async def get_data_entity_bucket(self, synapse: GetDataEntityBucket) -> GetDataEntityBucket:
+    async def get_data_entity_bucket(
+        self, synapse: GetDataEntityBucket
+    ) -> GetDataEntityBucket:
         """Runs after the GetDataEntityBucket synapse has been deserialized (i.e. after synapse.data is available)."""
         bt.logging.info(
             "Responding to a GetDataEntityBucket request for Bucket ID: "
@@ -266,7 +271,9 @@ class Miner(BaseNeuron):
     ) -> typing.Tuple[bool, str]:
         return self.default_blacklist(synapse)
 
-    async def get_data_entity_bucket_priority(self, synapse: GetDataEntityBucket) -> float:
+    async def get_data_entity_bucket_priority(
+        self, synapse: GetDataEntityBucket
+    ) -> float:
         return self.default_priority(synapse)
 
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:

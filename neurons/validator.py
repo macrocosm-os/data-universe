@@ -40,6 +40,7 @@ from common.data import (
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 import common.utils as utils
+from neurons.config import NeuronType
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -78,13 +79,6 @@ class Validator(BaseNeuron):
         # Set up initial scoring weights for validation
         self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
 
-        # TODO: Configure this to expose access to data to neurons on certain subnets.
-        # Serve axon to enable external connections.
-        if not self.config.neuron.axon_off:
-            self.serve_axon()
-        else:
-            bt.logging.warning("axon off, not serving ip to chain.")
-
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
 
@@ -96,18 +90,18 @@ class Validator(BaseNeuron):
         if not self.config.neuron.database_password:
             raise ValueError("Database password not set.")
 
-        self.storage = MysqlValidatorStorage(
-            host=self.config.neuron.database_host,
-            user=self.config.neuron.database_user,
-            password=self.config.neuron.database_password,
-            database=self.config.neuron.database_name,
-        )
+        # Setup storage in setup()
+        self.storage: ValidatorStorage = None
 
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = asyncio.Lock()
+        self.is_setup = False
+
+    def neuron_type(self) -> NeuronType:
+        return NeuronType.VALIDATOR
 
     def serve_axon(self):
         """Serve axon to enable external connections."""
@@ -181,8 +175,8 @@ class Validator(BaseNeuron):
         # 1. Check the entity size, labels, source, and timestamp.
         actual_size = 0
         claimed_size = 0
-        expected_datetime_range: DateRange = (
-            TimeBucket.to_date_range(data_entity_bucket.id.time_bucket)
+        expected_datetime_range: DateRange = TimeBucket.to_date_range(
+            data_entity_bucket.id.time_bucket
         )
 
         for entity in entities:
@@ -409,6 +403,30 @@ class Validator(BaseNeuron):
         # Run the next evaluation batch immediately.
         return 0
 
+    def setup(self):
+        """A one-time setup method that must be called before the Validator starts its main loop."""
+        assert not self.is_setup, "Validator already setup."
+
+        # Setup the DB.
+        self.storage = MysqlValidatorStorage(
+            host=self.config.neuron.database_host,
+            user=self.config.neuron.database_user,
+            password=self.config.neuron.database_password,
+            database=self.config.neuron.database_name,
+        )
+
+        # Load any state from previous runs.
+        self.load_state()
+
+        # TODO: Configure this to expose access to data to neurons on certain subnets.
+        # Serve axon to enable external connections.
+        if not self.config.neuron.axon_off:
+            self.serve_axon()
+        else:
+            bt.logging.warning("axon off, not serving ip to chain.")
+
+        self.is_setup = True
+
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
@@ -418,8 +436,7 @@ class Validator(BaseNeuron):
         3. Evaluates miners
         4. Saves state
         """
-
-        self.load_state()
+        assert self.is_setup, "Validator must be setup before running."
 
         # Check that validator is registered on the network.
         self.sync()
@@ -440,7 +457,7 @@ class Validator(BaseNeuron):
                     self.run_next_eval_batch()
                 )
 
-                # Sync metagraph and potentially set weights.
+                # Maybe sync the metagraph and potentially set weights.
                 self.sync()
 
                 self.step += 1
@@ -467,6 +484,10 @@ class Validator(BaseNeuron):
         Starts the validator's operations in a background thread upon entering the context.
         This method facilitates the use of the validator in a 'with' statement.
         """
+
+        # Setup the Validator.
+        self.setup()
+
         if not self.is_running:
             bt.logging.debug("Starting validator in background thread.")
             self.should_exit = False

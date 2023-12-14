@@ -16,6 +16,9 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+from enum import auto
+import enum
+from math import e
 import os
 import argparse
 from pathlib import Path
@@ -29,7 +32,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def check_config(cls, config: "bt.Config"):
+def check_config(config: bt.config):
     r"""Checks/validates the config namespace object."""
     bt.logging.check_config(config)
 
@@ -42,34 +45,41 @@ def check_config(cls, config: "bt.Config"):
             config.neuron.name,
         )
     )
-    print("full path:", full_path)
+
     config.neuron.full_path = os.path.expanduser(full_path)
     if not os.path.exists(config.neuron.full_path):
         os.makedirs(config.neuron.full_path, exist_ok=True)
 
     if not config.neuron.dont_save_events:
         # Add custom event logger for the events.
-        logger.level("EVENTS", no=38, icon="📝")
-        logger.add(
-            os.path.join(config.neuron.full_path, "events.log"),
-            rotation=config.neuron.events_retention_size,
-            serialize=True,
-            enqueue=True,
-            backtrace=False,
-            diagnose=False,
-            level="EVENTS",
-            format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
-        )
+        try:
+            # Check if the level is already configured. If it isn't, a ValueError is raised.
+            logger.level("EVENTS")
+        except ValueError:
+            logger.level("EVENTS", no=38, icon="📝")
+            logger.add(
+                os.path.join(config.neuron.full_path, "events.log"),
+                rotation=config.neuron.events_retention_size,
+                serialize=True,
+                enqueue=True,
+                backtrace=False,
+                diagnose=False,
+                level="EVENTS",
+                format="{time:YYYY-MM-DD at HH:mm:ss} | {level} | {message}",
+            )
 
 
-def add_args(cls, parser):
+class NeuronType(enum.Enum):
+    MINER = auto()
+    VALIDATOR = auto()
+
+
+def add_args(neuron_type: NeuronType, parser):
     """
     Adds relevant arguments to the parser for operation.
     """
     # Netuid Arg: The netuid of the subnet to connect to.
     parser.add_argument("--netuid", type=int, help="Subnet netuid", default=13)
-
-    neuron_type = "validator" if "miner" not in cls.__name__.lower() else "miner"
 
     parser.add_argument(
         "--neuron.epoch_length",
@@ -92,7 +102,7 @@ def add_args(cls, parser):
         default=False,
     )
 
-    if neuron_type == "validator":
+    if neuron_type == NeuronType.VALIDATOR:
         parser.add_argument(
             "--neuron.axon_off",
             "--axon_off",
@@ -131,7 +141,7 @@ def add_args(cls, parser):
             default=os.getenv("DATABASE_USER_PASSWORD"),
         )
 
-    else:
+    elif neuron_type == NeuronType.MINER:
         parser.add_argument(
             "--neuron.database_name",
             type=str,
@@ -157,15 +167,5 @@ def add_args(cls, parser):
             default=default_file,
         )
 
-
-def config(cls):
-    """
-    Returns the configuration object specific to this miner or validator after adding relevant arguments.
-    """
-    parser = argparse.ArgumentParser()
-    bt.wallet.add_args(parser)
-    bt.subtensor.add_args(parser)
-    bt.logging.add_args(parser)
-    bt.axon.add_args(parser)
-    cls.add_args(parser)
-    return bt.config(parser)
+    else:
+        raise ValueError(f"Invalid neuron type: {neuron_type}")
