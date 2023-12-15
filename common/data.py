@@ -24,7 +24,7 @@ class DateRange:
     """Represents a specific time range from start time inclusive to end time exclusive."""
 
     # The start time inclusive of the time range.
-    start: dt.datetime = Field(description="")
+    start: dt.datetime
 
     # The end time exclusive of the time range.
     end: dt.datetime
