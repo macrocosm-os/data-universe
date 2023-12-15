@@ -41,6 +41,9 @@ class TestGetDataEntityBucket(unittest.TestCase):
         deserialized = GetDataEntityBucket.parse_raw(json)
         self.assertEqual(request, deserialized)
 
+        # Check that the enum is deserialized correctly
+        self.assertEqual(deserialized.data_entity_bucket_id.source, DataSource.REDDIT)
+
         # Also check that the headers can be constructed.
         request.to_headers()
 

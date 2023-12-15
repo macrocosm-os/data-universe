@@ -2,7 +2,7 @@ import dataclasses
 from common import constants
 from . import utils
 import datetime as dt
-from enum import Enum, auto
+from enum import Enum, IntEnum, auto
 from typing import List, Type, Optional
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
 
@@ -67,7 +67,7 @@ class TimeBucket(StrictBaseModel):
         )
 
 
-class DataSource(Enum):
+class DataSource(IntEnum):
     """The source of data. This will be expanded over time as we increase the types of data we collect."""
 
     REDDIT = 1
