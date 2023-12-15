@@ -7,7 +7,7 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, PositiveInt
 
-from common.data import DataEntity, DataLabel, DataSource, DateRange
+from common.data import DataEntity, DataLabel, DataSource, DateRange, StrictBaseModel
 from storage.miner.miner_storage import MinerStorage
 
 
@@ -18,7 +18,7 @@ class ScraperId(str, Enum):
     X_FLASH = "X.flash"
 
 
-class ValidationResult(BaseModel):
+class ValidationResult(StrictBaseModel):
     """Data class to contain the result of a scraping validation."""
 
     class Config:
@@ -34,7 +34,7 @@ class ValidationResult(BaseModel):
     )
 
 
-class ScrapeConfig(BaseModel):
+class ScrapeConfig(StrictBaseModel):
     """Data class to contain the configuration to be used for scraping."""
 
     class Config:
@@ -54,7 +54,7 @@ class ScrapeConfig(BaseModel):
     )
 
 
-class LabelScrapingFrequency(BaseModel):
+class LabelScrapingFrequency(StrictBaseModel):
     """Data class to contain the frequency distribution for a set of labels."""
 
     class Config:
@@ -66,7 +66,7 @@ class LabelScrapingFrequency(BaseModel):
     frequency: float
 
 
-class SourceScrapingFrequency(BaseModel):
+class SourceScrapingFrequency(StrictBaseModel):
     """Data class to contain the frequency distribution for a source across labels."""
 
     class Config:
@@ -81,7 +81,7 @@ class SourceScrapingFrequency(BaseModel):
     label_frequencies: List[LabelScrapingFrequency]
 
 
-class ScrapingDistribution(BaseModel):
+class ScrapingDistribution(StrictBaseModel):
     """A relative distribution across sources and labels."""
 
     class Config:
@@ -95,7 +95,7 @@ class Scraper(abc.ABC):
     """An abstract base class for scrapers across all data sources.
 
     A scraper should be able to scrape batches of data and verify the correctness of a DataEntity by URI.
-    
+
     Scrapers must be thread-safe.
     """
 
@@ -111,4 +111,3 @@ class Scraper(abc.ABC):
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of data based on the specified ScrapeConfig."""
         pass
-

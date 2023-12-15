@@ -1,27 +1,33 @@
+import dataclasses
 from common import constants
 from . import utils
 import datetime as dt
-from enum import Enum, auto
+from enum import Enum, IntEnum, auto
 from typing import List, Type, Optional
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
 
 
 class StrictBaseModel(BaseModel):
     """A BaseModel that enforces stricter validation constraints"""
-    
+
     class Config:
         extra = "forbid"
 
-class DateRange(StrictBaseModel):
+        # JSON serialization doesn't seem to work correctly without
+        # enabling `use_enum_values`. It's possible this isn't an
+        # issue with newer version of pydantic, which we can't use.
+        use_enum_values = True
+
+
+@dataclasses.dataclass(frozen=True)
+class DateRange:
     """Represents a specific time range from start time inclusive to end time exclusive."""
 
-    # Makes the object "Immutable" once created.
-    model_config = ConfigDict(frozen=True)
+    # The start time inclusive of the time range.
+    start: dt.datetime
 
-    start: dt.datetime = Field(
-        description="The start time inclusive of the time range."
-    )
-    end: dt.datetime = Field(description="The end time exclusive of the time range.")
+    # The end time exclusive of the time range.
+    end: dt.datetime
 
     def contains(self, datetime: dt.datetime) -> bool:
         """Returns True if the provided datetime is within this DateRange."""
@@ -61,11 +67,11 @@ class TimeBucket(StrictBaseModel):
         )
 
 
-class DataSource(Enum):
+class DataSource(IntEnum):
     """The source of data. This will be expanded over time as we increase the types of data we collect."""
 
-    REDDIT = auto()
-    X = auto()
+    REDDIT = 1
+    X = 2
 
 
 class DataLabel(StrictBaseModel):
@@ -107,19 +113,24 @@ class DataEntity(StrictBaseModel):
     content: bytes
     content_size_bytes: int = Field(ge=0)
 
-    def matches_non_content_fields(self, other: "DataEntity") -> bool:
+    @classmethod
+    def are_non_content_fields_equal(
+        cls, this: "DataEntity", other: "DataEntity"
+    ) -> bool:
         """Returns whether this entity matches the non-content fields of another entity."""
         return (
-            self.uri == other.uri
-            and self.datetime == other.datetime
-            and self.source == other.source
-            and self.label == other.label
+            this.uri == other.uri
+            and this.datetime == other.datetime
+            and this.source == other.source
+            and this.label == other.label
         )
+
 
 class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
+
     time_bucket: TimeBucket
-    source: DataSource
+    source: DataSource = Field()
     label: Optional[DataLabel] = Field(
         default=None,
     )
@@ -133,14 +144,19 @@ class DataEntityBucket(StrictBaseModel):
 
     A single bucket is limited to 128MBs to ensure requests sent over the network aren't too large.
     """
-    id: DataEntityBucketId = Field(description="Identifies the qualities by which this bucket is grouped.")
+
+    id: DataEntityBucketId = Field(
+        description="Identifies the qualities by which this bucket is grouped."
+    )
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
 
 class ScorableDataEntityBucket(StrictBaseModel):
     """Composes both a DataEntityBucket and additional information required for scoring."""
 
-    data_entity_bucket: DataEntityBucket = Field(description="The DataEntityBucket that has additional information attached.")
+    data_entity_bucket: DataEntityBucket = Field(
+        description="The DataEntityBucket that has additional information attached."
+    )
     # Scorable bytes are the bytes that can be credited to this miner for scoring.
     # This is always less than or equal to the total size of the chunk.
     # This scorable bytes are computed as:
@@ -148,21 +164,23 @@ class ScorableDataEntityBucket(StrictBaseModel):
     # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
     scorable_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
+
 class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     data_entity_buckets: List[DataEntityBucket] = Field(
         description="Buckets the miner is serving.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX)
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+    )
 
 
-class ScorableMinerIndex(BaseModel):
+class ScorableMinerIndex(StrictBaseModel):
     """The Miner index, with additional information required for scoring."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
         description="DataEntityBuckets the miner is serving, scored on uniqueness.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")
