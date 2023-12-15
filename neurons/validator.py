@@ -325,7 +325,7 @@ class Validator(BaseNeuron):
         responses = await self.dendrite.forward(
             axons=[axon_info],
             synapse=GetDataEntityBucket(
-                data_entity_bucket_id=chosen_data_entity_bucket
+                data_entity_bucket_id=chosen_data_entity_bucket.id
             ),
             timeout=60,
         )
@@ -666,6 +666,10 @@ class Validator(BaseNeuron):
             return
 
         self.scorer.load_state(filepath)
+
+        bt.logging.trace(
+            f"Loaded state. Scores={self.scorer.get_scores()}. Cred={self.scorer.miner_credibility}"
+        )
 
 
 # The main function parses the configuration and runs the validator.

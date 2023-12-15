@@ -211,7 +211,6 @@ class MysqlValidatorStorage(ValidatorStorage):
         scored_data_entity_buckets = []
 
         # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
-        bt.logging.trace(f"{hotkey}: Reading miner index")
         for row in cursor:
             bt.logging.trace(f"Got row: {row}")
 
@@ -226,19 +225,13 @@ class MysqlValidatorStorage(ValidatorStorage):
             # Get the total bytes for this bucket across all valid miners (+ this miner).
             total_content_size_bytes = row["totalContentSize"]
 
-            bt.logging.trace(f"Source is: {row['source']}")
-            s = DataSource(row["source"])
-            bt.logging.trace(f"DataSource is: {s}")
             # Score the bytes as the fraction of the total content bytes for that bucket across all valid miners.
             data_entity_bucket_id = DataEntityBucketId(
                 time_bucket=TimeBucket(id=row["timeBucketId"]),
-                source=1,
+                source=row["source"],
                 label=DataLabel(value="test"),
             )
-            bt.logging.trace(f"Created data_entity_bucket_id: {data_entity_bucket_id}")
-            bt.logging.trace(
-                f"DataEntityBucketId.source is: {data_entity_bucket_id.source}"
-            )
+
             if label != "NULL":
                 data_entity_bucket_id.label = DataLabel(value=label)
 
