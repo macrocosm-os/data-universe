@@ -123,7 +123,7 @@ class Validator(BaseNeuron):
     @classmethod
     def choose_data_entity_bucket_to_query(
         cls, index: ScorableMinerIndex
-    ) -> DataEntityBucketId:
+    ) -> DataEntityBucket:
         """Chooses a random DataEntityBucket to query from a MinerIndex.
 
         The random selection is done based on choosing a random byte in the total index to query, and then selecting
@@ -140,7 +140,7 @@ class Validator(BaseNeuron):
                 iterated_bytes + scorable_bucket.data_entity_bucket.size_bytes
                 >= chosen_byte
             ):
-                return scorable_bucket.data_entity_bucket.id
+                return scorable_bucket.data_entity_bucket
             iterated_bytes += scorable_bucket.data_entity_bucket.size_bytes
         assert (
             False
@@ -316,14 +316,14 @@ class Validator(BaseNeuron):
         bt.logging.trace(f"{hotkey}: Got miner index={index}")
 
         # From that index, find a data entity bucket to sample and get it from the miner.
-        chosen_data_entity_bucket_id: DataEntityBucketId = (
+        chosen_data_entity_bucket: DataEntityBucket = (
             Validator.choose_data_entity_bucket_to_query(index)
         )
         bt.logging.trace(
-            f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket_id}"
+            f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}"
         )
         request = GetDataEntityBucket(
-            data_entity_bucket_id=chosen_data_entity_bucket_id
+            data_entity_bucket_id=chosen_data_entity_bucket.id
         )
         bt.logging.trace(
             f"{hotkey} sending request: {request.dict()}. Headers={request.to_headers()}"
@@ -357,7 +357,7 @@ class Validator(BaseNeuron):
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
         (valid, reason) = Validator.are_entities_valid(
-            data_entities, chosen_data_entity_bucket_id
+            data_entities, chosen_data_entity_bucket
         )
         if not valid:
             bt.logging.trace(
