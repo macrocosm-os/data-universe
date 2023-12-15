@@ -33,12 +33,52 @@ class SqliteMinerStorage(MinerStorage):
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
                                 ON DataEntity (timeBucketId, source, label)"""
 
+    # Use a timezone aware adapter for timestamp columns.
+    def tz_aware_timestamp_adapter(val):
+        datepart, timepart = val.split(b" ")
+        year, month, day = map(int, datepart.split(b"-"))
+
+        if b"+" in timepart:
+            timepart, tz_offset = timepart.rsplit(b"+", 1)
+            if tz_offset == b"00:00":
+                tzinfo = dt.timezone.utc
+            else:
+                hours, minutes = map(int, tz_offset.split(b":", 1))
+                tzinfo = dt.timezone(dt.timedelta(hours=hours, minutes=minutes))
+        elif b"-" in timepart:
+            timepart, tz_offset = timepart.rsplit(b"-", 1)
+            if tz_offset == b"00:00":
+                tzinfo = dt.timezone.utc
+            else:
+                hours, minutes = map(int, tz_offset.split(b":", 1))
+                tzinfo = dt.timezone(dt.timedelta(hours=-hours, minutes=-minutes))
+        else:
+            tzinfo = None
+
+        timepart_full = timepart.split(b".")
+        hours, minutes, seconds = map(int, timepart_full[0].split(b":"))
+
+        if len(timepart_full) == 2:
+            microseconds = int("{:0<6.6}".format(timepart_full[1].decode()))
+        else:
+            microseconds = 0
+
+        val = dt.datetime(
+            year, month, day, hours, minutes, seconds, microseconds, tzinfo
+        )
+
+        return val
+
     def __init__(
         self,
         database="SqliteMinerStorage.sqlite",
         max_database_size_bytes_hint=utils.mb_to_bytes(10000),
     ):
+        sqlite3.register_converter(
+            "timestamp", SqliteMinerStorage.tz_aware_timestamp_adapter
+        )
         self.database = database
+
         # TODO Account for non-content columns when restricting total database size.
         self.database_max_content_size_bytes = max_database_size_bytes_hint
 
