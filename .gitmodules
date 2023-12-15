@@ -1,0 +1,3 @@
+[submodule "bittensor"]
+	path = bittensor
+	url = https://github.com/opentensor/bittensor.git
