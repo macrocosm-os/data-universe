@@ -63,7 +63,7 @@ class Validator(BaseNeuron):
     SCORER_FILENAME = "scorer.pickle"
 
     # Mapping of scrapers to use based on the data source to validate.
-    PREFERED_SCRAPERS = {
+    PREFERRED_SCRAPERS = {
         DataSource.X: ScraperId.X_FLASH,
         DataSource.REDDIT: ScraperId.REDDIT_LITE,
     }
@@ -390,7 +390,7 @@ class Validator(BaseNeuron):
         )
 
         scraper = self.scraper_provider.get(
-            Validator.PREFERED_SCRAPERS[chosen_data_entity_bucket.id.source]
+            Validator.PREFERRED_SCRAPERS[chosen_data_entity_bucket.id.source]
         )
         validation_results = scraper.validate(entities_to_validate)
 
