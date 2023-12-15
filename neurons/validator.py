@@ -325,7 +325,9 @@ class Validator(BaseNeuron):
         request = GetDataEntityBucket(
             data_entity_bucket_id=chosen_data_entity_bucket_id
         )
-        bt.logging.trace(f"{hotkey} sending request: {request}")
+        bt.logging.trace(
+            f"{hotkey} sending request: {request.dict()}. Headers={request.to_headers()}"
+        )
         responses = await self.dendrite.forward(
             axons=[axon_info],
             synapse=request,
