@@ -251,7 +251,9 @@ class RedditLiteScraper(Scraper):
         # One final check. Does the Reddit content match the data entity information?
         try:
             actual_entity = RedditContent.to_data_entity(actual_content)
-            if not actual_entity.matches_non_content_fields(entity_to_validate):
+            if not DataEntity.are_non_content_fields_equal(
+                actual_entity, entity_to_validate
+            ):
                 return ValidationResult(
                     is_valid=False,
                     reason="The DataEntity fields are incorrect based on the Reddit content",

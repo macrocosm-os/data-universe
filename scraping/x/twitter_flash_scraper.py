@@ -178,7 +178,7 @@ class TwitterFlashScraper(Scraper):
         # One final check. Does the tweet content match the data entity information?
         try:
             tweet_entity = XContent.to_data_entity(tweet)
-            if not tweet_entity.matches_non_content_fields(entity):
+            if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
                 return ValidationResult(
                     is_valid=False,
                     reason="The DataEntity fields are incorrect based on the tweet",

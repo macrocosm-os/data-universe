@@ -1,3 +1,4 @@
+import dataclasses
 from common import constants
 from . import utils
 import datetime as dt
@@ -18,16 +19,15 @@ class StrictBaseModel(BaseModel):
         use_enum_values = True
 
 
-class DateRange(StrictBaseModel):
+@dataclasses.dataclass(frozen=True)
+class DateRange:
     """Represents a specific time range from start time inclusive to end time exclusive."""
 
-    # Makes the object "Immutable" once created.
-    model_config = ConfigDict(frozen=True)
+    # The start time inclusive of the time range.
+    start: dt.datetime = Field(description="")
 
-    start: dt.datetime = Field(
-        description="The start time inclusive of the time range."
-    )
-    end: dt.datetime = Field(description="The end time exclusive of the time range.")
+    # The end time exclusive of the time range.
+    end: dt.datetime
 
     def contains(self, datetime: dt.datetime) -> bool:
         """Returns True if the provided datetime is within this DateRange."""
@@ -113,13 +113,16 @@ class DataEntity(StrictBaseModel):
     content: bytes
     content_size_bytes: int = Field(ge=0)
 
-    def matches_non_content_fields(self, other: "DataEntity") -> bool:
+    @classmethod
+    def are_non_content_fields_equal(
+        cls, this: "DataEntity", other: "DataEntity"
+    ) -> bool:
         """Returns whether this entity matches the non-content fields of another entity."""
         return (
-            self.uri == other.uri
-            and self.datetime == other.datetime
-            and self.source == other.source
-            and self.label == other.label
+            this.uri == other.uri
+            and this.datetime == other.datetime
+            and this.source == other.source
+            and this.label == other.label
         )
 
 
