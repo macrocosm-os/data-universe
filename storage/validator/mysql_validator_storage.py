@@ -212,8 +212,6 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
         for row in cursor:
-            bt.logging.trace(f"Got row: {row}")
-
             # Set last_updated to the first value since they are all the same for a given miner.
             if last_updated == None:
                 last_updated = row["lastUpdated"]

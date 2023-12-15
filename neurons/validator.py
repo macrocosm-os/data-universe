@@ -322,11 +322,13 @@ class Validator(BaseNeuron):
         bt.logging.trace(
             f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket_id}"
         )
+        request = GetDataEntityBucket(
+            data_entity_bucket_id=chosen_data_entity_bucket_id
+        )
+        bt.logging.trace(f"{hotkey} sending request: {request}")
         responses = await self.dendrite.forward(
             axons=[axon_info],
-            synapse=GetDataEntityBucket(
-                data_entity_bucket_id=chosen_data_entity_bucket_id
-            ),
+            synapse=request,
             timeout=60,
         )
 
