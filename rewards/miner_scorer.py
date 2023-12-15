@@ -120,6 +120,9 @@ class MinerScorer:
             validation_results (List[ValidationResult]): The results of data validation performed on the data provided by the miner.
         """
         with self.lock:
+            bt.logging.trace(
+                f"Evaluating Miner {uid} with validation results: {validation_results}."
+            )
             # First, update the miner's credibilty
             self._update_credibility(uid, validation_results)
 
