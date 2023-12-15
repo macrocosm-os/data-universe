@@ -1,10 +1,10 @@
 from typing import Dict
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
 
-from common.data import DataLabel, DataSource
+from common.data import DataLabel, DataSource, StrictBaseModel
 
 
-class DataSourceDesirability(BaseModel):
+class DataSourceDesirability(StrictBaseModel):
     """The Desirability for a data source."""
 
     # Makes the object "Immutable" once created.
@@ -42,7 +42,7 @@ class DataSourceDesirability(BaseModel):
         return value
 
 
-class DataDesirabilityLookup(BaseModel):
+class DataDesirabilityLookup(StrictBaseModel):
     """Information about data desirability across data sources."""
 
     # Makes the object "Immutable" once created.

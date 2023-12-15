@@ -100,8 +100,10 @@ class TwitterFlashScraper(Scraper):
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
-        
-        bt.logging.trace(f"Twitter scraper peforming scrape with config: {scrape_config}")
+
+        bt.logging.trace(
+            f"Twitter scraper peforming scrape with config: {scrape_config}"
+        )
 
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
@@ -138,7 +140,7 @@ class TwitterFlashScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         x_contents = self._best_effort_parse_dataset(dataset)
-        return [x_content.to_data_entity() for x_content in x_contents]
+        return [XContent.to_data_entity(x_content) for x_content in x_contents]
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
@@ -175,7 +177,7 @@ class TwitterFlashScraper(Scraper):
         # Wahey! A valid Tweet.
         # One final check. Does the tweet content match the data entity information?
         try:
-            tweet_entity = tweet.to_data_entity()
+            tweet_entity = XContent.to_data_entity(tweet)
             if not tweet_entity.matches_non_content_fields(entity):
                 return ValidationResult(
                     is_valid=False,

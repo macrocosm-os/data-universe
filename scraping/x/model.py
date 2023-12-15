@@ -2,12 +2,12 @@ import datetime as dt
 import json
 from re import X
 from typing import List
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import ConfigDict, Field
 
-from common.data import DataEntity, DataLabel, DataSource
+from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
 
 
-class XContent(BaseModel):
+class XContent(StrictBaseModel):
     """The content model for tweets.
 
     The model helps standardize the data format for tweets, even if they're scraped using different methods.
@@ -25,18 +25,19 @@ class XContent(BaseModel):
         description="A list of hashtags associated with the tweet, in order they appear in the tweet. Note: it's critical this ordering is respected as the first tag is used as the DataLabel for the index.",
     )
 
-    # TODO: Add unit tests for the below.
-    # We already have reasonable confidence these work from manual testing, but additional unit tests certainly wouldn't hurt.
-    def to_data_entity(self) -> DataEntity:
+    @classmethod
+    def to_data_entity(cls, content: "XContent") -> DataEntity:
         """Converts the XContent to a DataEntity."""
 
-        content_bytes = self.json().encode("utf-8")
+        content_bytes = content.json().encode("utf-8")
         return DataEntity(
-            uri=self.url,
-            datetime=self.timestamp,
+            uri=content.url,
+            datetime=content.timestamp,
             source=DataSource.X,
             label=(
-                DataLabel(value=self.tweet_hashtags[0]) if self.tweet_hashtags else None
+                DataLabel(value=content.tweet_hashtags[0])
+                if content.tweet_hashtags
+                else None
             ),
             content=content_bytes,
             content_size_bytes=len(content_bytes),

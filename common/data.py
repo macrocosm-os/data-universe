@@ -12,6 +12,11 @@ class StrictBaseModel(BaseModel):
     class Config:
         extra = "forbid"
 
+        # JSON serialization doesn't seem to work correctly without
+        # enabling `use_enum_values`. It's possible this isn't an
+        # issue with newer version of pydantic, which we can't use.
+        use_enum_values = True
+
 
 class DateRange(StrictBaseModel):
     """Represents a specific time range from start time inclusive to end time exclusive."""
@@ -127,9 +132,6 @@ class DataEntityBucketId(StrictBaseModel):
         default=None,
     )
 
-    class Config:
-        use_enum_values = True
-
 
 class DataEntityBucket(StrictBaseModel):
     """Summarizes a group of data entities stored by a miner.
@@ -170,7 +172,7 @@ class MinerIndex(StrictBaseModel):
     )
 
 
-class ScorableMinerIndex(BaseModel):
+class ScorableMinerIndex(StrictBaseModel):
     """The Miner index, with additional information required for scoring."""
 
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")

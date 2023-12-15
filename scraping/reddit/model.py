@@ -1,9 +1,9 @@
 import datetime as dt
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+from pydantic import Field
 
-from common.data import DataEntity, DataLabel, DataSource
+from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
 
 
 class RedditDataType(str, Enum):
@@ -11,7 +11,7 @@ class RedditDataType(str, Enum):
     COMMENT = "comment"
 
 
-class RedditContent(BaseModel):
+class RedditContent(StrictBaseModel):
     """The content model for Reddit data.
 
     Useful to standardize the representation of Reddit data, that could be scraped from different sources.
@@ -41,15 +41,16 @@ class RedditContent(BaseModel):
         default=None,
     )
 
-    def to_data_entity(self) -> DataEntity:
+    @classmethod
+    def to_data_entity(cls, content: "RedditContent") -> DataEntity:
         """Converts the RedditContent to a DataEntity."""
 
-        content_bytes = self.json(by_alias=True).encode("utf-8")
+        content_bytes = content.json(by_alias=True).encode("utf-8")
         return DataEntity(
-            uri=self.url,
-            datetime=self.created_at,
+            uri=content.url,
+            datetime=content.created_at,
             source=DataSource.REDDIT,
-            label=DataLabel(value=self.community),
+            label=DataLabel(value=content.community),
             content=content_bytes,
             content_size_bytes=len(content_bytes),
         )

@@ -6,10 +6,12 @@ import bittensor as bt
 
 from dotenv import load_dotenv
 
+from common.data import StrictBaseModel
+
 load_dotenv()
 
 
-class RunConfig(BaseModel):
+class RunConfig(StrictBaseModel):
     """Configuration parameters for a single Apify Actor run."""
 
     api_key: str = Field(

@@ -84,37 +84,40 @@ class SqliteMinerStorage(MinerStorage):
         with contextlib.closing(self._create_connection()) as connection:
             # Ensure only one thread is clearing space when necessary.
             with self.clearing_space_lock:
-                    # If we would exceed our maximum configured stored content size then clear space.
-                    cursor = connection.cursor()
-                    cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
+                # If we would exceed our maximum configured stored content size then clear space.
+                cursor = connection.cursor()
+                cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
 
-                    # If there are no rows we convert the None result to 0
-                    result = cursor.fetchone()
-                    current_content_size = result[0] if result[0] else 0
+                # If there are no rows we convert the None result to 0
+                result = cursor.fetchone()
+                current_content_size = result[0] if result[0] else 0
 
-                    if (
-                        current_content_size + added_content_size
-                        > self.database_max_content_size_bytes
-                    ):
-                        content_bytes_to_clear = (
-                            self.database_max_content_size_bytes // 10
-                            if self.database_max_content_size_bytes // 10 > added_content_size
-                            else added_content_size
-                        )
-                        self.clear_content_from_oldest(content_bytes_to_clear)
+                if (
+                    current_content_size + added_content_size
+                    > self.database_max_content_size_bytes
+                ):
+                    content_bytes_to_clear = (
+                        self.database_max_content_size_bytes // 10
+                        if self.database_max_content_size_bytes // 10
+                        > added_content_size
+                        else added_content_size
+                    )
+                    self.clear_content_from_oldest(content_bytes_to_clear)
 
             # Parse every DataEntity into an list of value lists for inserting.
             values = []
 
             for data_entity in data_entities:
-                label = "NULL" if (data_entity.label is None) else data_entity.label.value
+                label = (
+                    "NULL" if (data_entity.label is None) else data_entity.label.value
+                )
                 timeBucketId = TimeBucket.from_datetime(data_entity.datetime).id
                 values.append(
                     [
                         data_entity.uri,
                         data_entity.datetime,
                         timeBucketId,
-                        data_entity.source.value,
+                        data_entity.source,
                         label,
                         data_entity.content,
                         data_entity.content_size_bytes,
@@ -147,7 +150,7 @@ class SqliteMinerStorage(MinerStorage):
                         WHERE timeBucketId = ? AND source = ? AND label = ?""",
                 [
                     data_entity_bucket_id.time_bucket.id,
-                    data_entity_bucket_id.source.value,
+                    data_entity_bucket_id.source,
                     label,
                 ],
             )
@@ -214,7 +217,8 @@ class SqliteMinerStorage(MinerStorage):
                 # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
                 size = (
                     constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                    if row["bucketSize"] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    if row["bucketSize"]
+                    >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
                     else row["bucketSize"]
                 )
 
