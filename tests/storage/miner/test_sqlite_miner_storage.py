@@ -339,6 +339,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             datetime=bucket1_datetime,
             source=DataSource.REDDIT,
             content=bytes(10),
+            label="label_1",
             content_size_bytes=10,
         )
 
@@ -358,6 +359,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             datetime=bucket2_datetime,
             source=DataSource.X,
             content=bytes(20),
+            label="label_2",
             content_size_bytes=20,
         )
 
@@ -365,7 +367,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             uri="test_entity_3",
             datetime=bucket2_datetime + dt.timedelta(seconds=1),
             source=DataSource.X,
-            content=bytes(30),
+            content=bytes(30),,
+            label="label_2",
             content_size_bytes=30,
         )
 
