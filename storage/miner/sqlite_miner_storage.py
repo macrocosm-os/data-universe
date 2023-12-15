@@ -224,7 +224,7 @@ class SqliteMinerStorage(MinerStorage):
 
                     # Add the optional Label field if not null.
                     if row["label"] != "NULL":
-                        data_entity_bucket_id.label = DataLabel(value=row["label"])
+                        data_entity.label = DataLabel(value=row["label"])
 
                     data_entities.append(data_entity)
                     running_size += row["contentSizeBytes"]
