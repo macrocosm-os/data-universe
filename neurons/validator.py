@@ -316,7 +316,7 @@ class Validator(BaseNeuron):
         bt.logging.trace(f"{hotkey}: Got miner index={index}")
 
         # From that index, find a data entity bucket to sample and get it from the miner.
-        chosen_data_entity_bucket_id: DataEntityBucket = (
+        chosen_data_entity_bucket_id: DataEntityBucketId = (
             Validator.choose_data_entity_bucket_to_query(index)
         )
         bt.logging.trace(
