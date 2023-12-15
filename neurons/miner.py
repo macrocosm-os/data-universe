@@ -264,6 +264,9 @@ class Miner(BaseNeuron):
             synapse.data_entity_bucket_id
         )
 
+        bt.logging.trace(
+            f"Miner responding to a GetDataEntityBucket request with the following entities: {synapse.data_entities}"
+        )
         return synapse
 
     async def get_data_entity_bucket_blacklist(
