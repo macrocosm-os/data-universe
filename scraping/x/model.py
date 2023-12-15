@@ -2,12 +2,12 @@ import datetime as dt
 import json
 from re import X
 from typing import List
-from pydantic import ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field
 
-from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
+from common.data import DataEntity, DataLabel, DataSource
 
 
-class XContent(StrictBaseModel):
+class XContent(BaseModel):
     """The content model for tweets.
 
     The model helps standardize the data format for tweets, even if they're scraped using different methods.

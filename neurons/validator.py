@@ -316,16 +316,16 @@ class Validator(BaseNeuron):
         bt.logging.trace(f"{hotkey}: Got miner index={index}")
 
         # From that index, find a data entity bucket to sample and get it from the miner.
-        chosen_data_entity_bucket: DataEntityBucket = (
+        chosen_data_entity_bucket_id: DataEntityBucket = (
             Validator.choose_data_entity_bucket_to_query(index)
         )
         bt.logging.trace(
-            f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}"
+            f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket_id}"
         )
         responses = await self.dendrite.forward(
             axons=[axon_info],
             synapse=GetDataEntityBucket(
-                data_entity_bucket_id=chosen_data_entity_bucket.id
+                data_entity_bucket_id=chosen_data_entity_bucket_id
             ),
             timeout=60,
         )
@@ -353,7 +353,7 @@ class Validator(BaseNeuron):
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
         (valid, reason) = Validator.are_entities_valid(
-            data_entities, chosen_data_entity_bucket
+            data_entities, chosen_data_entity_bucket_id
         )
         if not valid:
             bt.logging.trace(
@@ -386,7 +386,7 @@ class Validator(BaseNeuron):
         )
 
         scraper = self.scraper_provider.get(
-            Validator.PREFERED_SCRAPERS[chosen_data_entity_bucket.source]
+            Validator.PREFERED_SCRAPERS[chosen_data_entity_bucket_id.source]
         )
         validation_results = scraper.validate(entities_to_validate)
 

@@ -1,9 +1,9 @@
 import datetime as dt
 from enum import Enum
 from typing import Optional
-from pydantic import Field
+from pydantic import BaseModel, Field
 
-from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
+from common.data import DataEntity, DataLabel, DataSource
 
 
 class RedditDataType(str, Enum):
@@ -11,7 +11,7 @@ class RedditDataType(str, Enum):
     COMMENT = "comment"
 
 
-class RedditContent(StrictBaseModel):
+class RedditContent(BaseModel):
     """The content model for Reddit data.
 
     Useful to standardize the representation of Reddit data, that could be scraped from different sources.
