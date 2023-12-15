@@ -13,6 +13,7 @@ from typing import List
 import datetime as dt
 import sqlite3
 import contextlib
+import bittensor as bt
 
 
 class SqliteMinerStorage(MinerStorage):
@@ -182,6 +183,9 @@ class SqliteMinerStorage(MinerStorage):
             if (data_entity_bucket_id.label is None)
             else data_entity_bucket_id.label.value
         )
+        bt.logging.trace(
+            f"Miner is listing data entities in data entity bucket: {data_entity_bucket_id}"
+        )
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
@@ -201,6 +205,7 @@ class SqliteMinerStorage(MinerStorage):
             running_size = 0
 
             for row in cursor:
+                bt.logging.trace(f"One row the miner is seeing is: {row}")
                 if (
                     running_size + row["contentSizeBytes"]
                     >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
