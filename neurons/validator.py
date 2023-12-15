@@ -392,7 +392,7 @@ class Validator(BaseNeuron):
         scraper = self.scraper_provider.get(
             Validator.PREFERRED_SCRAPERS[chosen_data_entity_bucket.id.source]
         )
-        validation_results = scraper.validate(entities_to_validate)
+        validation_results = await scraper.validate(entities_to_validate)
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
