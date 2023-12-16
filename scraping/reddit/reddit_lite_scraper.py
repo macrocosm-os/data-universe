@@ -157,7 +157,7 @@ class RedditLiteScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         contents = self._best_effort_parse_dataset(dataset)
-        bt.logging.trace(
+        bt.logging.info(
             f"Completed scrape for {run_input['searches']}. Scraped {len(contents)} items"
         )
 
