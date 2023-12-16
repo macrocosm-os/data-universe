@@ -398,27 +398,39 @@ class Validator(BaseNeuron):
         Args:
             block (int): The block at which we started this evaluation.
         """
-        next_uid = self.miner_iterator.peek()
-        hotkey = self.metagraph.hotkeys[next_uid]
-        last_evaluated = self.storage.read_miner_last_updated(hotkey)
-        now = datetime.datetime.utcnow()
-        if last_evaluated and (now - last_evaluated) < Validator.MIN_EVALUATION_PERIOD:
-            # Return the number of seconds until we expect to be able to run the next evaluation batch.
-            return (
-                last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
-            ).total_seconds()
+        seconds_until_next_batch = 0
 
         # Run in batches of 10.
         # TODO: Maybe make this configurable and run evaluations based on expected throughput
         miners_to_eval = 10
         # Use a set in case the network has fewer than 10 miners.
-        uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
+        uids_to_check = {next(self.miner_iterator) for _ in range(miners_to_eval)}
+        uids_to_eval = set()
+
+        # If any of the miners have been seen recently then it means we have looped through our iterator and should wait.
+        for uid in uids_to_check:
+            hotkey = self.metagraph.hotkeys[uid]
+            last_evaluated = self.storage.read_miner_last_updated(hotkey)
+            now = datetime.datetime.utcnow()
+
+            # If we have aleady evaluated this miner recently then do not evaluate it.
+            if (
+                last_evaluated
+                and (now - last_evaluated) < Validator.MIN_EVALUATION_PERIOD
+            ):
+                # Set the number of seconds until we expect to be able to run the next evaluation batch.
+                # If multiple miners in this batch had already been seen just use the last one for reference.
+                seconds_until_next_batch = (
+                    last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
+                ).total_seconds()
+            else:
+                uids_to_eval.add(uid)
 
         coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
         await asyncio.gather(*coroutines)
 
         # Run the next evaluation batch immediately.
-        return 0
+        return seconds_until_next_batch
 
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
