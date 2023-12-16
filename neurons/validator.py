@@ -18,29 +18,23 @@
 
 import copy
 import datetime
-import hashlib
-import random
 import sys
 import traceback
-import typing
 import torch
 import asyncio
 import threading
 import time
 import os
+import common.utils as utils
 import bittensor as bt
 from common.data import (
     DataEntityBucket,
     DataEntity,
-    DataEntityBucketId,
-    DateRange,
     DataSource,
     MinerIndex,
     ScorableMinerIndex,
-    TimeBucket,
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
-import common.utils as utils
 from neurons.config import NeuronType
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
@@ -48,8 +42,9 @@ from scraping.scraper import ScraperId, ValidationResult
 from storage.validator.mysql_validator_storage import MysqlValidatorStorage
 from storage.validator.validator_storage import ValidatorStorage
 from vali_utils.miner_iterator import MinerIterator
+from vali_utils import utils as vali_utils
 
-from typing import List, Optional, Tuple, Type
+from typing import List, Optional, Type
 from traceback import print_exception
 
 from neurons.base_neuron import BaseNeuron
@@ -120,123 +115,12 @@ class Validator(BaseNeuron):
             bt.logging.error(f"Failed to setup Axon: {e}")
             sys.exit(1)
 
-    @classmethod
-    def choose_data_entity_bucket_to_query(
-        cls, index: ScorableMinerIndex
-    ) -> DataEntityBucket:
-        """Chooses a random DataEntityBucket to query from a MinerIndex.
-
-        The random selection is done based on choosing a random byte in the total index to query, and then selecting
-        that DataEntityBucket
-        """
-        total_size = sum(
-            scorable_bucket.data_entity_bucket.size_bytes
-            for scorable_bucket in index.scorable_data_entity_buckets
-        )
-        chosen_byte = random.uniform(0, total_size)
-        iterated_bytes = 0
-        for scorable_bucket in index.scorable_data_entity_buckets:
-            if (
-                iterated_bytes + scorable_bucket.data_entity_bucket.size_bytes
-                >= chosen_byte
-            ):
-                return scorable_bucket.data_entity_bucket
-            iterated_bytes += scorable_bucket.data_entity_bucket.size_bytes
-        assert (
-            False
-        ), "Failed to choose a DataEntityBucket to query... which should never happen"
-
-    @classmethod
-    def choose_entities_to_verify(cls, entities: List[DataEntity]) -> List[DataEntity]:
-        """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""
-
-        # For now, we just sample 1 entity, based on size.
-        # In future, consider sampling every N bytes.
-        chosen_entities = []
-        total_size = sum(entity.content_size_bytes for entity in entities)
-        chosen_byte = random.uniform(0, total_size)
-        iterated_bytes = 0
-        for entity in entities:
-            if iterated_bytes + entity.content_size_bytes >= chosen_byte:
-                chosen_entities.append(entity)
-                break
-            iterated_bytes += entity.content_size_bytes
-        return chosen_entities
-
-    @classmethod
-    def are_entities_valid(
-        cls, entities: List[DataEntity], data_entity_bucket: DataEntityBucket
-    ) -> Tuple[bool, str]:
-        """Performs basic validation on all entities in a DataEntityBucket.
-
-        Returns a tuple of (is_valid, reason) where is_valid is True if the entities are valid,
-        and reason is a string describing why they are not valid.
-        """
-
-        # 1. Check the entity size, labels, source, and timestamp.
-        actual_size = 0
-        claimed_size = 0
-        expected_datetime_range: DateRange = TimeBucket.to_date_range(
-            data_entity_bucket.id.time_bucket
-        )
-
-        for entity in entities:
-            actual_size += len(entity.content or b"")
-            claimed_size += entity.content_size_bytes
-            if entity.source != data_entity_bucket.id.source:
-                return (
-                    False,
-                    f"Entity source {entity.source} does not match data_entity_bucket source {data_entity_bucket.id.source}",
-                )
-            if entity.label != data_entity_bucket.id.label:
-                return (
-                    False,
-                    f"Entity label {entity.label} does not match data_entity_bucket label {data_entity_bucket.id.label}",
-                )
-            if not expected_datetime_range.contains(entity.datetime):
-                return (
-                    False,
-                    f"Entity datetime {entity.datetime} is not in the expected range {expected_datetime_range}",
-                )
-
-        if actual_size < claimed_size or actual_size < data_entity_bucket.size_bytes:
-            return (
-                False,
-                f"Size not as expected. Actual={actual_size}. Claimed={claimed_size}. Expected={data_entity_bucket.size_bytes}",
-            )
-
-        return (True, "")
-
-    @classmethod
-    def are_entities_unique(cls, entities: List[DataEntity]) -> bool:
-        """Checks that all entities in a DataEntityBucket are unique.
-
-        This is currently done by comparing hashes of only the content as the entire scrape response is serialized into
-        the content of each DataEntity.
-
-        Returns a tuple of (is_unique, reason) where is_unique is True if the entities are unique,
-        and reason is a string describing why they are not unique.
-        """
-
-        # Create a set to store the hash of each entity content.
-        entity_content_hash_set = set()
-
-        for entity in entities:
-            entity_content_hash = hashlib.sha1(entity.content).hexdigest()
-            # Check that this hash has not been seen before.
-            if entity_content_hash in entity_content_hash_set:
-                return False
-            else:
-                entity_content_hash_set.add(entity_content_hash)
-
-        return True
-
     async def _update_and_get_miner_index(
         self, hotkey: str, miner_axon: bt.AxonInfo
     ) -> Optional[ScorableMinerIndex]:
         """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
 
-        bt.logging.trace(f"{hotkey}: Updating miner index.")
+        bt.logging.trace(f"{hotkey}: Getting MinerIndex from miner.")
 
         responses: List[GetMinerIndex] = await self.dendrite.forward(
             axons=[miner_axon],
@@ -244,7 +128,7 @@ class Validator(BaseNeuron):
             timeout=60,
         )
 
-        miner_index = self.check_and_get_response(responses, GetMinerIndex)
+        miner_index = vali_utils.get_single_successul_response(responses, GetMinerIndex)
         if not miner_index:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
@@ -265,29 +149,12 @@ class Validator(BaseNeuron):
 
     def _get_miner_index(self, hotkey: str) -> Optional[ScorableMinerIndex]:
         """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
-        bt.logging.trace(f"{hotkey}: Getting miner index.")
         valid_miners = self.scorer.get_credible_miners()
         return self.storage.read_miner_index(
             hotkey=hotkey, valid_miners=set(valid_miners)
         )
 
-    def check_and_get_response(
-        self, responses: List[bt.Synapse], expected_class: Type
-    ) -> Optional[bt.Synapse]:
-        """Helper function to extract the single response from a list of responses, if the response is valid.
-
-        return: (response, is_valid): The response if it's valid, else None.
-        """
-        if (
-            responses
-            and isinstance(responses, list)
-            and len(responses) == 1
-            and isinstance(responses[0], expected_class)
-            and responses[0].is_success
-        ):
-            return responses[0]
-        return None
-
+    # TODO: Pull this out into a separate MinerEvaluator to make this more testable.
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
 
@@ -315,7 +182,7 @@ class Validator(BaseNeuron):
 
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
-            Validator.choose_data_entity_bucket_to_query(index)
+            vali_utils.choose_data_entity_bucket_to_query(index)
         )
         bt.logging.trace(
             f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}"
@@ -329,7 +196,9 @@ class Validator(BaseNeuron):
             timeout=60,
         )
 
-        data_entity_bucket = self.check_and_get_response(responses, GetDataEntityBucket)
+        data_entity_bucket = vali_utils.get_single_successul_response(
+            responses, GetDataEntityBucket
+        )
         # Treat a failed response the same way we treat a failed validation.
         # If we didn't, the miner could just not respond to queries for data entity buckets it doesn't have.
         if data_entity_bucket is None:
@@ -351,7 +220,7 @@ class Validator(BaseNeuron):
         )
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
-        (valid, reason) = Validator.are_entities_valid(
+        (valid, reason) = vali_utils.are_entities_valid(
             data_entities, chosen_data_entity_bucket
         )
         if not valid:
@@ -365,7 +234,7 @@ class Validator(BaseNeuron):
 
         # Perform uniqueness validation on the entity contents.
         # If we didn't, the miner could just return the same data over and over again.
-        unique = Validator.are_entities_unique(data_entities)
+        unique = vali_utils.are_entities_unique(data_entities)
         if not unique:
             bt.logging.trace(f"Miner {hotkey} failed enitity uniqueness checks.")
             self.scorer.on_miner_evaluated(
@@ -376,7 +245,7 @@ class Validator(BaseNeuron):
             return
 
         # Basic validation and uniqueness passed. Now sample some entities for data correctness.
-        entities_to_validate: List[DataEntity] = Validator.choose_entities_to_verify(
+        entities_to_validate: List[DataEntity] = vali_utils.choose_entities_to_verify(
             data_entities
         )
 
@@ -389,9 +258,12 @@ class Validator(BaseNeuron):
         )
         validation_results = await scraper.validate(entities_to_validate)
 
+        bt.logging.trace(
+            f"{hotkey}: Data validation finished with results: {validation_results}"
+        )
+
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
-    # TODO: Pull this out into a separate MinerEvaluator to make this more testable.
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
 
@@ -435,6 +307,8 @@ class Validator(BaseNeuron):
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
+
+        bt.logging.info("Setting up validator.")
 
         # Setup the DB.
         self.storage = MysqlValidatorStorage(
@@ -624,7 +498,6 @@ class Validator(BaseNeuron):
         previous_metagraph = copy.deepcopy(self.metagraph)
 
         # Sync the metagraph.
-        # TODO: In the past, this call has hung on me. We may want to do something special here to handle that.
         self.metagraph.sync(subtensor=self.subtensor)
 
         # Check if the metagraph axon info has changed.
@@ -656,7 +529,7 @@ class Validator(BaseNeuron):
 
     def save_state(self):
         """Saves the state of the validator to a file."""
-        bt.logging.info("Saving validator state.")
+        bt.logging.trace("Saving validator state.")
 
         if not os.path.exists(self.config.neuron.full_path):
             os.makedirs(self.config.neuron.full_path)
@@ -687,4 +560,4 @@ if __name__ == "__main__":
     with Validator() as validator:
         while True:
             bt.logging.trace("Validator running...", time.time())
-            time.sleep(5)
+            time.sleep(60)

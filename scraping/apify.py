@@ -52,7 +52,7 @@ class ActorRunner:
     def __init__(self):
         pass
 
-    async def run(config: RunConfig, run_input: dict) -> List[dict]:
+    async def run(self, config: RunConfig, run_input: dict) -> List[dict]:
         """
         Run an Apify actor and return the json results.
 
@@ -69,7 +69,6 @@ class ActorRunner:
 
         client = ApifyClientAsync(config.api_key)
 
-        bt.logging.trace(f"Running actor ({config.actor_id}) [{config.debug_info}]")
         run = await client.actor(config.actor_id).call(
             run_input=run_input,
             max_items=config.max_data_entities,
@@ -78,7 +77,11 @@ class ActorRunner:
             wait_secs=config.timeout_secs + 5,
         )
 
-        if "status" not in run or run["status"].casefold() != "SUCCEEDED".casefold():
+        # We want a success status. Timeout is also okay because it will return partial results.
+        if "status" not in run or not (
+            run["status"].casefold() == "SUCCEEDED".casefold()
+            or run["status"].casefold() == "TIMED-OUT".casefold()
+        ):
             raise ActorRunError(
                 f"Actor ({config.actor_id}) [{config.debug_info}] failed: {run}"
             )
@@ -87,7 +90,4 @@ class ActorRunner:
 
         items = [i async for i in iterator]
 
-        bt.logging.trace(
-            f"Actor ({config.actor_id}) [{config.debug_info}] returned {len(items)} items"
-        )
         return items

@@ -68,7 +68,9 @@ def _choose_scrape_configs(
     scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime
 ) -> List[ScrapeConfig]:
     """For the given scraper, returns a list of scrapes (defined by ScrapeConfig) to be run."""
-    assert scraper_id in config.scraper_configs, f"Scraper Id {scraper_id} not in config"
+    assert (
+        scraper_id in config.scraper_configs
+    ), f"Scraper Id {scraper_id} not in config"
 
     scraper_config = config.scraper_configs[scraper_id]
     results = []
@@ -116,15 +118,19 @@ class ScraperCoordinator:
                 scraper_id: dt.timedelta(seconds=cfg.cadence_seconds)
                 for scraper_id, cfg in config.scraper_configs.items()
             }
-            
+
             # Initialize the last scrape time as now, to protect against frequent scraping during Miner crash loops.
-            self.last_scrape_time_per_scraper_id: Dict[ScraperId, dt.datetime] = {scraper_id: now for scraper_id in config.scraper_configs.keys()}
+            self.last_scrape_time_per_scraper_id: Dict[ScraperId, dt.datetime] = {
+                scraper_id: now for scraper_id in config.scraper_configs.keys()
+            }
 
         def get_scraper_ids_ready_to_scrape(self, now: dt.datetime) -> List[ScraperId]:
             """Returns a list of ScraperIds which are due to run."""
             results = []
             for scraper_id, cadence in self.cadence_by_scraper_id.items():
-                last_scrape_time = self.last_scrape_time_per_scraper_id.get(scraper_id, None)
+                last_scrape_time = self.last_scrape_time_per_scraper_id.get(
+                    scraper_id, None
+                )
                 if last_scrape_time is None or now - last_scrape_time >= cadence:
                     results.append(scraper_id)
             return results
@@ -153,9 +159,9 @@ class ScraperCoordinator:
         Runs the Coordinator on a background thread. The coordinator will run until the process dies.
         """
         assert not self.is_running, "ScrapingCoordinator already running"
-        
+
         bt.logging.info("Starting ScrapingCoordinator in a background thread")
-        
+
         self.is_running = True
         self.thread = threading.Thread(target=self.run, daemon=True).start()
 
@@ -167,7 +173,7 @@ class ScraperCoordinator:
         bt.logging.info("Stopping the ScrapingCoordinator")
         self.is_running = False
 
-    async def _start(self):        
+    async def _start(self):
         workers = []
         for i in range(self.max_workers):
             worker = asyncio.create_task(
@@ -179,7 +185,9 @@ class ScraperCoordinator:
 
         while self.is_running:
             now = dt.datetime.utcnow()
-            scraper_ids_to_scrape_now = self.tracker.get_scraper_ids_ready_to_scrape(now)
+            scraper_ids_to_scrape_now = self.tracker.get_scraper_ids_ready_to_scrape(
+                now
+            )
             if not scraper_ids_to_scrape_now:
                 bt.logging.trace("Nothing ready to scrape yet. Trying again in 15s")
                 # Nothing is due a scrape. Wait a few seconds and try again

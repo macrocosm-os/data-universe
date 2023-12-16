@@ -104,18 +104,19 @@ class RedditLiteScraper(Scraper):
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
 
-        bt.logging.trace(
-            f"Reddit scraper peforming scrape with config: {scrape_config}"
-        )
-
         assert (
             not scrape_config.labels or len(scrape_config.labels) <= 1
         ), "Can only scrape 1 subreddit at a time."
 
+        # The scraper defaults to 10 max items, so make sure we always override it.
+        max_items = scrape_config.entity_limit or 100
         run_input = {
             **RedditLiteScraper.BASE_RUN_INPUT,
             "time": self._get_time_input(scrape_config.date_range.end),
             "sort": self._get_sort_input(scrape_config.date_range.end),
+            "maxItems": max_items,
+            "maxPostCount": max_items,
+            "maxComments": max_items,
         }
 
         if scrape_config.labels:
@@ -133,7 +134,7 @@ class RedditLiteScraper(Scraper):
             word = random.choice(["the", "he", "she", "they", "it", "and"])
             run_input["searches"] = [word]
 
-        bt.logging.trace(f"Performing scrape with run_input: {run_input}")
+        bt.logging.trace(f"Running Reddit scraper with search: {run_input['searches']}")
 
         # Construct the input to the runner.
         run_config = RunConfig(
@@ -156,6 +157,10 @@ class RedditLiteScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         contents = self._best_effort_parse_dataset(dataset)
+        bt.logging.trace(
+            f"Completed scrape for {run_input['searches']}. Scraped {len(contents)} items"
+        )
+
         return [RedditContent.to_data_entity(content) for content in contents]
 
     def _get_time_input(self, datetime: dt.datetime) -> str:
@@ -198,7 +203,7 @@ class RedditLiteScraper(Scraper):
             try:
                 results.append(RedditContent(**data))
             except Exception:
-                bt.logging.trace(
+                bt.logging.warning(
                     f"Failed to decode RedditContent from Apify response: {traceback.format_exc()}"
                 )
         return results

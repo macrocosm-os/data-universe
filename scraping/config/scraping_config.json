@@ -6,29 +6,47 @@
             "labels_to_scrape": [
                 {
                     "label_choices": [
+                        "#bitcoin",
+                        "#bitcoincharts",
+                        "#bitcoiner",
+                        "#bitcoinexchange",
+                        "#bitcoinmining",
+                        "#bitcoinnews",
+                        "#bitcoinprice",
+                        "#bitcointechnology",
+                        "#bitcointrading",
                         "#bittensor",
+                        "#btc",
+                        "#cryptocurrency",
+                        "#crypto",
+                        "#defi",
+                        "#decentralizedfinance",
                         "#tao"
                     ],
-                    "max_age_hint_minutes": 1440,
-                    "max_data_entities": 100
-                },
-                {
-                    "label_choices": [
-                        "#decentralizedfinance",
-                        "#btc"
-                    ],
-                    "max_data_entities": 100
+                    "max_data_entities": 75
                 }
             ]
         },
         {
             "scraper_id": "Reddit.lite",
-            "cadence_seconds": 900,
+            "cadence_seconds": 1800,
             "labels_to_scrape": [
                 {
                     "label_choices": [
                         "r/bittensor_",
-                        "r/bitcoin"
+                        "r/bitcoin",
+                        "r/BitcoinCash",
+                        "r/Bittensor_",
+                        "r/Btc",
+                        "r/Cryptocurrency",
+                        "r/Cryptomarkets",
+                        "r/EthereumClassic",
+                        "r/Ethtrader",
+                        "r/Filecoin",
+                        "r/Monero",
+                        "r/Polkadot",
+                        "r/Solana",
+                        "r/WallstreetBets"
                     ],
                     "max_data_entities": 50
                 }
