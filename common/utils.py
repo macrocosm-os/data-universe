@@ -36,7 +36,7 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
 
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a validator."""
-    return metagraph.validator_permit[uid] and metagraph.S[uid] >= 1024
+    return metagraph.validator_permit[uid] and metagraph.S[uid] >= 512
 
 
 def serialize_to_file(obj: Any, filename: str) -> None:
