@@ -155,9 +155,9 @@ class MysqlValidatorStorage(ValidatorStorage):
             # Clear the previous keys for this miner.
             self.delete_miner_index(index.hotkey)
 
-            # Insert the new keys.
+            # Insert the new keys. (Replace into to defend against a miner giving us multiple duplicate rows.)
             cursor.executemany(
-                """INSERT INTO MinerIndex VALUES (%s, %s, %s, %s, %s)""", values
+                """REPLACE INTO MinerIndex VALUES (%s, %s, %s, %s, %s)""", values
             )
             self.connection.commit()
 
