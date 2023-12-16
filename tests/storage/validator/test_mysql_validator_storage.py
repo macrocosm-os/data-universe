@@ -138,7 +138,7 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Confirm the second label  has the next value.
         self.assertEqual(label_id + 1, label_id_2)
 
-    def test_upsert_miner_index_insrt_index(self):
+    def test_upsert_miner_index_insert_index(self):
         """Tests that we can insert a miner index"""
         # Create two DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
@@ -168,6 +168,30 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)
         cursor.execute("SELECT * FROM MinerIndex")
         self.assertEqual(cursor.rowcount, 2)
+
+    def test_upsert_miner_index_insert_index_with_duplicates(self):
+        """Tests that we can insert a miner index with duplicates, taking the last one."""
+        # Create two identical DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        bucket_1 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
+
+        # Create the index containing the buckets.
+        index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_1])
+
+        # Store the index.
+        self.test_storage.upsert_miner_index(index)
+
+        # Confirm we have one row in the index.
+        cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)
+        cursor.execute("SELECT * FROM MinerIndex")
+        self.assertEqual(cursor.rowcount, 1)
 
     def test_upsert_miner_index_update_index(self):
         """Tests that we can update a miner index"""
