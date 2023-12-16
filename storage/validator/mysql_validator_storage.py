@@ -69,7 +69,7 @@ class MysqlValidatorStorage(ValidatorStorage):
     def _upsert_miner(self, hotkey: str, now_str: str) -> int:
         """Stores an encountered miner hotkey returning this Validator's unique id for it"""
 
-        minerId = 0
+        miner_id = 0
 
         # Buffer to ensure rowcount is correct.
         cursor = self.connection.cursor(buffered=True)
@@ -78,7 +78,7 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         if cursor.rowcount:
             # If it does we can use the already fetched id.
-            minerId = cursor.fetchone()[0]
+            miner_id = cursor.fetchone()[0]
             # If it does we only update the lastUpdated. (ON DUPLICATE KEY UPDATE consumes an autoincrement value)
             cursor.execute(
                 "UPDATE Miner SET lastUpdated = %s WHERE hotkey = %s", [now_str, hotkey]
@@ -93,14 +93,14 @@ class MysqlValidatorStorage(ValidatorStorage):
             self.connection.commit()
             # Then we get the newly created minerId
             cursor.execute("SELECT minerId FROM Miner WHERE hotkey = %s", [hotkey])
-            minerId = cursor.fetchone()[0]
+            miner_id = cursor.fetchone()[0]
 
-        return minerId
+        return miner_id
 
     def _get_or_insert_label(self, label: str) -> int:
         """Gets an encountered label or stores a new one returning this Validator's unique id for it"""
 
-        labelId = 0
+        label_id = 0
 
         # Buffer to ensure rowcount is correct.
         cursor = self.connection.cursor(buffered=True)
@@ -109,19 +109,23 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         if cursor.rowcount:
             # If it does we can use the already fetched id.
-            labelId = cursor.fetchone()[0]
+            label_id = cursor.fetchone()[0]
         else:
             # If it doesn't we insert it.
             cursor.execute("INSERT IGNORE INTO Label (labelValue) VALUES (%s)", [label])
             self.connection.commit()
             # Then we get the newly created labelId
             cursor.execute("SELECT labelId FROM Label WHERE labelValue = %s", [label])
-            labelId = cursor.fetchone()[0]
+            label_id = cursor.fetchone()[0]
 
-        return labelId
+        return label_id
 
     def upsert_miner_index(self, index: MinerIndex):
         """Stores the index for all of the data that a specific miner promises to provide."""
+
+        bt.logging.trace(
+            f"{index.hotkey}: Upserting miner index with len({index.data_entity_buckets}) buckets"
+        )
 
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
         cursor = self.connection.cursor()
@@ -263,6 +267,8 @@ class MysqlValidatorStorage(ValidatorStorage):
         Args:
         miner (str): The hotkey of the miner to remove from the index.
         """
+
+        bt.logging.trace(f"{hotkey}: Deleting miner index")
 
         # Get the minerId from the hotkey.
         cursor = self.connection.cursor(buffered=True)

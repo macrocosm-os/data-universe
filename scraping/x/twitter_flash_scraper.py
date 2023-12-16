@@ -17,6 +17,8 @@ class TwitterFlashScraper(Scraper):
 
     ACTOR_ID = "wHMoznVs94gOcxcZl"
 
+    SCRAPE_TIMEOUT_SECS = 120
+
     BASE_RUN_INPUT = {
         "filter:blue_verified": False,
         "filter:has_engagement": False,
@@ -101,10 +103,6 @@ class TwitterFlashScraper(Scraper):
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
 
-        bt.logging.trace(
-            f"Twitter scraper peforming scrape with config: {scrape_config}"
-        )
-
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
         query = f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)} until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
@@ -123,6 +121,7 @@ class TwitterFlashScraper(Scraper):
             actor_id=TwitterFlashScraper.ACTOR_ID,
             debug_info=f"Scrape {query}",
             max_data_entities=scrape_config.entity_limit,
+            timeout_secs=TwitterFlashScraper.SCRAPE_TIMEOUT_SECS,
         )
 
         bt.logging.trace(f"Performing Twitter scrape for query: {query}")
@@ -140,6 +139,10 @@ class TwitterFlashScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         x_contents = self._best_effort_parse_dataset(dataset)
+        bt.logging.trace(
+            f"Completed scrape for {query}. Scraped {len(x_contents)} items"
+        )
+
         return [XContent.to_data_entity(x_content) for x_content in x_contents]
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
@@ -151,7 +154,7 @@ class TwitterFlashScraper(Scraper):
             try:
                 results.append(XContent(**data))
             except Exception:
-                bt.logging.trace(
+                bt.logging.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}"
                 )
         return results

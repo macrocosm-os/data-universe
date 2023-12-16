@@ -118,6 +118,9 @@ class Miner(BaseNeuron):
 
                 # Sync metagraph and potentially set weights.
                 self.sync()
+
+                self._log_status(self.step)
+
                 last_sync_block = self.block
                 self.step += 1
 
@@ -304,5 +307,4 @@ class Miner(BaseNeuron):
 if __name__ == "__main__":
     with Miner() as miner:
         while True:
-            bt.logging.trace("Miner running...", time.time())
             time.sleep(60)

@@ -91,6 +91,11 @@ class MinerScorer:
             assert num_neurons >= self.scores.size(
                 0
             ), f"Tried to downsize the number of neurons from {self.scores.size(0)} to {num_neurons}"
+
+            bt.logging.trace(
+                f"Resizing MinerScorer from {self.scores.size(0)} to {num_neurons}"
+            )
+
             to_add = num_neurons - self.scores.size(0)
             self.scores = torch.cat(
                 [self.scores, torch.zeros(to_add, dtype=torch.float32)]
@@ -160,9 +165,4 @@ class MinerScorer:
 
         Requires: self.lock is held.
         """
-
-        bt.logging.trace(
-            f"Updating miner {uid}'s score with reward {reward}. Current score = {self.scores[uid]}"
-        )
         self.scores[uid] = self.alpha * reward + (1 - self.alpha) * self.scores[uid]
-        bt.logging.trace(f"Updated miner {uid}'s score to {self.scores[uid]}")
