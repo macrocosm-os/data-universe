@@ -227,7 +227,6 @@ class MysqlValidatorStorage(ValidatorStorage):
             data_entity_bucket_id = DataEntityBucketId(
                 time_bucket=TimeBucket(id=row["timeBucketId"]),
                 source=row["source"],
-                label=DataLabel(value="test"),
             )
 
             if label != "NULL":
