@@ -429,7 +429,7 @@ class Validator(BaseNeuron):
         coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
         await asyncio.gather(*coroutines)
 
-        # Run the next evaluation batch immediately.
+        # Run the next evaluation batch after waiting the appropriate amount of time.
         return seconds_until_next_batch
 
     def setup(self):
@@ -677,6 +677,9 @@ class Validator(BaseNeuron):
             return
 
         self.scorer.load_state(filepath)
+
+        # Resize the scorer in case the loaded state is old and missing newly added neurons.
+        self.scorer.resize(self.metagraph.n)
 
 
 # The main function parses the configuration and runs the validator.
