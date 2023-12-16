@@ -338,8 +338,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             uri="test_entity_1",
             datetime=bucket1_datetime,
             source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
             content=bytes(10),
-            label="label_1",
             content_size_bytes=10,
         )
 
@@ -358,8 +358,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             uri="test_entity_2",
             datetime=bucket2_datetime,
             source=DataSource.X,
+            label=DataLabel(value="label_2"),
             content=bytes(20),
-            label="label_2",
             content_size_bytes=20,
         )
 
@@ -367,8 +367,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             uri="test_entity_3",
             datetime=bucket2_datetime + dt.timedelta(seconds=1),
             source=DataSource.X,
+            label=DataLabel(value="label_2"),
             content=bytes(30),
-            label="label_2",
             content_size_bytes=30,
         )
 
@@ -379,7 +379,9 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
         # Create the DataEntityBucketId to query by.
         bucket2_id = DataEntityBucketId(
-            time_bucket=TimeBucket.from_datetime(bucket2_datetime), source=DataSource.X
+            time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
         )
 
         # Get the entities by the bucket
