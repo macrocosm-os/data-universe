@@ -39,7 +39,7 @@ class TwitterFlashScraper(Scraper):
         "max_attempts": 5,
     }
 
-    def __init__(self, runner: ActorRunner = ActorRunner):
+    def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:

@@ -68,6 +68,9 @@ class Miner(BaseNeuron):
         )
 
         # Configure the ScraperCoordinator
+        bt.logging.info(
+            f"Loading scraping config from {self.config.neuron.scraping_config_file}"
+        )
         scraping_config = ConfigReader.load_config(
             self.config.neuron.scraping_config_file
         )
@@ -206,7 +209,7 @@ class Miner(BaseNeuron):
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
-        bt.logging.info("resync_metagraph()")
+        bt.logging.debug("resync_metagraph()")
 
         # Sync the metagraph.
         self.metagraph.sync(subtensor=self.subtensor)
@@ -234,13 +237,15 @@ class Miner(BaseNeuron):
 
     async def get_index(self, synapse: GetMinerIndex) -> GetMinerIndex:
         """Runs after the GetMinerIndex synapse has been deserialized (i.e. after synapse.data is available)."""
-        bt.logging.info("Responding to a GetMinerIndex request.")
+        bt.logging.trace(
+            f"Got to a GetMinerIndex request from {synapse.dendrite.hotkey}."
+        )
 
         # List all the data entity buckets that this miner currently has.
         synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
 
-        bt.logging.info(
-            f"Returning miner index with size: len({synapse.data_entity_buckets})"
+        bt.logging.debug(
+            f"Returning miner index with size: {len(synapse.data_entity_buckets)}"
         )
 
         return synapse
@@ -257,14 +262,17 @@ class Miner(BaseNeuron):
         self, synapse: GetDataEntityBucket
     ) -> GetDataEntityBucket:
         """Runs after the GetDataEntityBucket synapse has been deserialized (i.e. after synapse.data is available)."""
-        bt.logging.info(
-            "Responding to a GetDataEntityBucket request for Bucket ID: "
-            + str(synapse.data_entity_bucket_id)
+        bt.logging.trace(
+            f"Got to a GetDataEntityBucket request from {synapse.dendrite.hotkey}."
         )
 
         # List all the data entities that this miner has for the requested DataEntityBucket.
         synapse.data_entities = self.storage.list_data_entities_in_data_entity_bucket(
             synapse.data_entity_bucket_id
+        )
+
+        bt.logging.debug(
+            f"Responding to a GetDataEntityBucket request for Bucket ID: {str(synapse.data_entity_bucket_id)} with # entities={len(synapse.data_entities)}"
         )
 
         return synapse

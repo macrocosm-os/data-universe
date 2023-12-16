@@ -33,7 +33,7 @@ class RedditLiteScraper(Scraper):
         "searchPosts": True,
     }
 
-    def __init__(self, runner: ActorRunner = ActorRunner):
+    def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
