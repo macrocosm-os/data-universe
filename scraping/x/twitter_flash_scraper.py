@@ -144,7 +144,7 @@ class TwitterFlashScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         x_contents = self._best_effort_parse_dataset(dataset)
-        bt.logging.trace(
+        bt.logging.info(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items"
         )
 
