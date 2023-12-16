@@ -1,3 +1,5 @@
+Please join us at our discord channel within the official Bittensor discord. https://discord.gg/9tTJxSqC
+
 # Data Universe
 
 Data is a critical pillar of AI and Data Universe is that pillar for Bittensor.
