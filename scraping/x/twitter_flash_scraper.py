@@ -116,7 +116,12 @@ class TwitterFlashScraper(Scraper):
             query += " e"
 
         # Construct the input to the runner.
-        run_input = {**TwitterFlashScraper.BASE_RUN_INPUT, "queries": [query]}
+        max_items = scrape_config.entity_limit or 1000
+        run_input = {
+            **TwitterFlashScraper.BASE_RUN_INPUT,
+            "queries": [query],
+            "max_tweets": max_items,
+        }
         run_config = RunConfig(
             actor_id=TwitterFlashScraper.ACTOR_ID,
             debug_info=f"Scrape {query}",
