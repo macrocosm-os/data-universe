@@ -1,46 +1,29 @@
-import asyncio
-import random
-import traceback
-import bittensor as bt
-from typing import Any, Dict, List
-from common.data import DataEntity, DataLabel, DataSource, DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
-from scraping.apify import ActorRunError, ActorRunner, RunConfig
-from scraping.reddit.model import RedditContent, RedditDataType
+import bittensor as bt
+from common.data import DataEntity, DataLabel, DataSource, DateRange
+from typing import List
+import asyncpraw
 from scraping.reddit.utils import (
     is_valid_reddit_url,
     validate_reddit_content,
     get_time_input,
-    get_sort_input,
+    get_custom_sort_input,
     normalize_label,
 )
+from scraping.reddit.model import RedditContent, RedditDataType
+import traceback
 import datetime as dt
+import asyncio
+import random
+import os
 
 
-class RedditLiteScraper(Scraper):
+class RedditCustomScraper(Scraper):
     """
     Scrapes Reddit data using the Reddit Scraper Lite actor.
     """
 
-    ACTOR_ID = "oAuCIx3ItNrs2okjQ"
-
-    # The Reddit Actor seems a lot slower. Bump the timeout to 2 mins.
-    SCRAPE_TIMEOUT_SECS = 120
-
-    BASE_RUN_INPUT = {
-        "debugMode": False,
-        "includeNSFW": False,
-        "proxy": {"useApifyProxy": True},
-        "scrollTimeout": 40,
-        "searchCommunities": False,
-        "searchUsers": False,
-        "skipComments": False,
-        "searchComments": True,
-        "searchPosts": True,
-    }
-
-    def __init__(self, runner: ActorRunner = ActorRunner()):
-        self.runner = runner
+    USER_AGENT = "User-Agent: python:data-universe-app:v1"
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
@@ -68,31 +51,39 @@ class RedditLiteScraper(Scraper):
                     is_valid=False, reason="Failed to decode data entity"
                 )
 
-            run_input = self._get_validation_run_input(reddit_content_to_verify)
-            run_config = RunConfig(
-                actor_id=RedditLiteScraper.ACTOR_ID,
-                debug_info=f"Validate {entity.uri}",
-                max_data_entities=1,
-            )
+            # Retrieve the Reddit Post/Comment from PRAW.
+            content = None
 
-            # Retrieve the Reddit Post/Comment from Apify.
-            dataset: List[dict] = None
             try:
-                dataset: List[dict] = await self.runner.run(run_config, run_input)
-            except ActorRunError as e:
+                async with asyncpraw.Reddit(
+                    client_id=os.getenv("REDDIT_CLIENT_ID"),
+                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                    username=os.getenv("REDDIT_USERNAME"),
+                    password=os.getenv("REDDIT_PASSWORD"),
+                    user_agent=RedditCustomScraper.USER_AGENT,
+                ) as reddit:
+                    if reddit_content_to_verify.data_type == RedditDataType.POST:
+                        submission = await reddit.submission(
+                            url=reddit_content_to_verify.url
+                        )
+                        # Parse the response.
+                        content = self._best_effort_parse_submission(submission)
+                    else:
+                        comment = await reddit.comment(url=reddit_content_to_verify.url)
+                        # Parse the response.
+                        content = self._best_effort_parse_comment(comment)
+            except Exception as e:
                 bt.logging.error(f"Failed to validate entity: {traceback.format_exc()}")
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
-                # one caused by malicious input. In my own testing I was able to make the Actor timeout by
+                # one caused by malicious input. In my own testing I was able to make the request timeout by
                 # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
                 # pass malicious input for chunks they don't have.
                 return ValidationResult(
                     is_valid=False,
-                    reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                    reason="Failed to retrieve submission. This can happen if the URI is invalid, or Reddit is having an issue.",
                 )
 
-            # Parse the response
-            items = self._best_effort_parse_dataset(dataset)
-            if len(items) < 1:
+            if not content:
                 results.append(
                     ValidationResult(
                         is_valid=False,
@@ -102,113 +93,155 @@ class RedditLiteScraper(Scraper):
                 continue
 
             # We found the Reddit content. Validate it.
-            actual_content = items[0]
-            results.append(validate_reddit_content(actual_content, entity))
+            results.append(
+                validate_reddit_content(
+                    actual_content=content, entity_to_validate=entity
+                )
+            )
 
         return results
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
+        bt.logging.trace(
+            f"Reddit custom scraper peforming scrape with config: {scrape_config}"
+        )
 
         assert (
             not scrape_config.labels or len(scrape_config.labels) <= 1
         ), "Can only scrape 1 subreddit at a time."
 
-        # The scraper defaults to 10 max items, so make sure we always override it.
-        max_items = scrape_config.entity_limit or 100
-        run_input = {
-            **RedditLiteScraper.BASE_RUN_INPUT,
-            "time": get_time_input(scrape_config.date_range.end),
-            "sort": get_sort_input(scrape_config.date_range.end),
-            "maxItems": max_items,
-            "maxPostCount": max_items,
-            "maxComments": max_items,
-        }
-
-        if scrape_config.labels:
-            run_input["searches"] = [
-                f"subreddit:{normalize_label(scrape_config.labels[0])}"
-            ]
-        else:
-            # No label provided. Search all
-            # I'm sure there's some magic combination of inputs to the Actor that'll
-            # make it do the sane thing and just search Reddit's home page, while respecting
-            # the 'time' field, but I couldn't get that to work.
-            # Instead, let's just search for a random and super common word.
-            # I'm sorry for making this English only.
-            # TODO: Figure out something a little more sophisticated.
-            word = random.choice(["the", "he", "she", "they", "it", "and"])
-            run_input["searches"] = [word]
-
-        bt.logging.trace(f"Running Reddit scraper with search: {run_input['searches']}")
-
-        # Construct the input to the runner.
-        run_config = RunConfig(
-            actor_id=RedditLiteScraper.ACTOR_ID,
-            debug_info=f"Scrape {run_input['searches']}",
-            max_data_entities=scrape_config.entity_limit,
-            timeout_secs=RedditLiteScraper.SCRAPE_TIMEOUT_SECS,
+        # Strip the r/ from the config or use 'all' if no label is provided.
+        subreddit_name = (
+            normalize_label(scrape_config.labels[0]) if scrape_config.labels else "all"
         )
 
-        # Run the Actor and retrieve the scraped data.
-        dataset: List[dict] = None
+        bt.logging.trace(f"Running custom Reddit scraper with search: {subreddit_name}")
+
+        # Randomize between fetching submissions and comments to reduce api calls.
+        fetch_submissions = bool(random.getrandbits(1))
+
+        # Get the search terms for the reddit query.
+        search_limit = scrape_config.entity_limit
+        search_sort = get_custom_sort_input(scrape_config.date_range.end)
+        search_time = get_time_input(scrape_config.date_range.end)
+
+        # In either case we parse the response into a list of RedditContents.
+        contents = None
         try:
-            dataset: List[dict] = await self.runner.run(run_config, run_input)
-        except ActorRunError:
+            async with asyncpraw.Reddit(
+                client_id=os.getenv("REDDIT_CLIENT_ID"),
+                client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                username=os.getenv("REDDIT_USERNAME"),
+                password=os.getenv("REDDIT_PASSWORD"),
+                user_agent=RedditCustomScraper.USER_AGENT,
+            ) as reddit:
+                subreddit = await reddit.subreddit(subreddit_name)
+
+                if fetch_submissions:
+                    submissions = None
+                    match search_sort:
+                        case "new":
+                            submissions = subreddit.new(limit=search_limit)
+                        case "top":
+                            submissions = subreddit.top(
+                                limit=search_limit, time_filter=search_time
+                            )
+                        case "hot":
+                            submissions = subreddit.hot(limit=search_limit)
+
+                    contents = [
+                        self._best_effort_parse_submission(submission)
+                        async for submission in submissions
+                    ]
+                else:
+                    comments = subreddit.comments(limit=search_limit)
+
+                    contents = [
+                        self._best_effort_parse_comment(comment)
+                        async for comment in comments
+                    ]
+        except Exception:
             bt.logging.error(
-                f"Failed to scrape reddit using query {run_input['searches']}: {traceback.format_exc()}"
+                f"Failed to scrape reddit using subreddit {subreddit_name}, limit {search_limit}, time {search_time}, sort {search_sort}: {traceback.format_exc()}"
             )
             # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
-        contents = self._best_effort_parse_dataset(dataset)
-        bt.logging.trace(
-            f"Completed scrape for {run_input['searches']}. Scraped {len(contents)} items"
+        parsed_contents = [content for content in contents if content != None]
+
+        bt.logging.info(
+            f"Completed scrape for subreddit {subreddit_name}. Scraped {len(parsed_contents)} items"
         )
 
-        return [RedditContent.to_data_entity(content) for content in contents]
+        return [RedditContent.to_data_entity(content) for content in parsed_contents]
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[RedditContent]:
-        """Performs a best effort parsing of Apify dataset into List[RedditContent]
+    def _best_effort_parse_submission(
+        self, submission: asyncpraw.models.Submission
+    ) -> RedditContent:
+        """Performs a best effort parsing of a Reddit submission into a RedditContent
 
         Any errors are logged and ignored."""
-        results: List[RedditContent] = []
-        for data in dataset:
-            try:
-                results.append(RedditContent(**data))
-            except Exception:
-                bt.logging.warning(
-                    f"Failed to decode RedditContent from Apify response: {traceback.format_exc()}"
-                )
-        return results
+        content = None
 
-    def _get_validation_run_input(self, content: RedditContent) -> Dict[str, Any]:
-        run_input = {
-            **RedditLiteScraper.BASE_RUN_INPUT,
-            "startUrls": [{"url": content.url}],
-        }
+        try:
+            content = RedditContent(
+                id=submission.name,
+                url=submission.url,
+                username=submission.author.name,
+                communityName=submission.subreddit_name_prefixed,
+                body=submission.selftext,
+                createdAt=dt.datetime.utcfromtimestamp(submission.created_utc).replace(
+                    tzinfo=dt.timezone.utc
+                ),
+                dataType=RedditDataType.POST,
+                # Post only fields
+                title=submission.title,
+                # Comment only fields
+                parentId=None,
+            )
+        except Exception:
+            bt.logging.trace(
+                f"Failed to decode RedditContent from Reddit Submission: {traceback.format_exc()}"
+            )
 
-        # Add run_inputs based on the type of content we're validating
-        if content.data_type == RedditDataType.POST:
-            run_input["searchComments"] = False
-            run_input["skipComments"] = True
-            run_input["maxPostCount"] = 1
-            run_input["maxComments"] = 0
-        elif content.data_type == RedditDataType.COMMENT:
-            run_input["searchPosts"] = False
-            run_input["maxComments"] = 1
-            run_input["maxPostCount"] = 0
-        else:
-            assert (
-                False
-            ), "Someone forgot to update this code after adding a RedditDataType..."
+        return content
 
-        return run_input
+    def _best_effort_parse_comment(
+        self, comment: asyncpraw.models.Comment
+    ) -> RedditContent:
+        """Performs a best effort parsing of a Reddit comment into a RedditContent
+
+        Any errors are logged and ignored."""
+        content = None
+
+        try:
+            content = RedditContent(
+                id=comment.name,
+                url="https://www.reddit.com" + comment.permalink,
+                username=comment.author.name,
+                communityName=comment.subreddit_name_prefixed,
+                body=comment.body,
+                createdAt=dt.datetime.utcfromtimestamp(comment.created_utc).replace(
+                    tzinfo=dt.timezone.utc
+                ),
+                dataType=RedditDataType.COMMENT,
+                # Post only fields
+                title=None,
+                # Comment only fields
+                parentId=comment.link_id,
+            )
+        except Exception:
+            bt.logging.trace(
+                f"Failed to decode RedditContent from Reddit Submission: {traceback.format_exc()}"
+            )
+
+        return content
 
 
 async def test_scrape():
-    scraper = RedditLiteScraper()
+    scraper = RedditCustomScraper()
 
     entities = await scraper.scrape(
         ScrapeConfig(
@@ -239,7 +272,7 @@ async def test_scrape():
 
 
 async def test_validate():
-    scraper = RedditLiteScraper()
+    scraper = RedditCustomScraper()
 
     true_entities = [
         DataEntity(
