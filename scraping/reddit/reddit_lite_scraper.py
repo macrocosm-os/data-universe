@@ -109,7 +109,7 @@ class RedditLiteScraper(Scraper):
         ), "Can only scrape 1 subreddit at a time."
 
         # The scraper defaults to 10 max items, so make sure we always override it.
-        max_items = scrape_config.entity_limit or 1000
+        max_items = scrape_config.entity_limit or 100
         run_input = {
             **RedditLiteScraper.BASE_RUN_INPUT,
             "time": self._get_time_input(scrape_config.date_range.end),

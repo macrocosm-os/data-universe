@@ -116,7 +116,7 @@ class TwitterFlashScraper(Scraper):
             query += " e"
 
         # Construct the input to the runner.
-        max_items = scrape_config.entity_limit or 1000
+        max_items = scrape_config.entity_limit or 150
         run_input = {
             **TwitterFlashScraper.BASE_RUN_INPUT,
             "queries": [query],
