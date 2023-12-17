@@ -1,3 +1,4 @@
+from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 import bittensor as bt
 from common.data import DataEntity, DataLabel, DataSource, DateRange
@@ -16,6 +17,10 @@ import datetime as dt
 import asyncio
 import random
 import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 class RedditCustomScraper(Scraper):
@@ -192,10 +197,11 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
+            user = submission.author.name if submission.author else model.DELETED_USER
             content = RedditContent(
                 id=submission.name,
                 url=submission.url,
-                username=submission.author.name,
+                username=user,
                 communityName=submission.subreddit_name_prefixed,
                 body=submission.selftext,
                 createdAt=dt.datetime.utcfromtimestamp(submission.created_utc).replace(
@@ -223,10 +229,11 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
+            user = comment.author.name if comment.author else model.DELETED_USER
             content = RedditContent(
                 id=comment.name,
                 url="https://www.reddit.com" + comment.permalink,
-                username=comment.author.name,
+                username=user,
                 communityName=comment.subreddit_name_prefixed,
                 body=comment.body,
                 createdAt=dt.datetime.utcfromtimestamp(comment.created_utc).replace(
@@ -326,6 +333,23 @@ async def test_validate():
         print(f"Expecting a failed validation. Result={results}")
 
 
+async def test_u_deleted():
+    """Verifies that the RedditLiteScraper can handle deleted users."""
+    comment = DataEntity(
+        uri="https://www.reddit.com/r/AskReddit/comments/ablzuq/people_who_havent_pooped_in_2019_yet_why_are_you/ed1j7is/",
+        datetime=dt.datetime(2019, 1, 1, 22, 59, 9, tzinfo=dt.timezone.utc),
+        source=1,
+        label=DataLabel(value="r/askreddit"),
+        content=b'{"id": "t1_ed1j7is", "url": "https://www.reddit.com/r/AskReddit/comments/ablzuq/people_who_havent_pooped_in_2019_yet_why_are_you/ed1j7is/", "username": "[deleted]", "communityName": "r/AskReddit", "body": "Aw man what a terrible way to spend NYE! I hope you feel better soon bud!", "createdAt": "2019-01-01T22:59:09+00:00", "dataType": "comment", "title": null, "parentId": "t1_ed1dqvy"}',
+        content_size_bytes=387,
+    )
+
+    scraper = RedditCustomScraper()
+    result = await scraper.validate(entities=[comment])
+    print(f"Expecting a passed validation: {result}")
+
+
 if __name__ == "__main__":
     asyncio.run(test_scrape())
     asyncio.run(test_validate())
+    asyncio.run(test_u_deleted())
