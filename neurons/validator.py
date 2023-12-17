@@ -60,7 +60,7 @@ class Validator(BaseNeuron):
     # Mapping of scrapers to use based on the data source to validate.
     PREFERRED_SCRAPERS = {
         DataSource.X: ScraperId.X_FLASH,
-        DataSource.REDDIT: ScraperId.REDDIT_LITE,
+        DataSource.REDDIT: ScraperId.REDDIT_CUSTOM,
     }
 
     def __init__(self, config=None):
