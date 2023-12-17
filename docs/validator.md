@@ -19,7 +19,7 @@ Validators do not require a GPU and should be able to run on a relatively low-ti
 # Getting Started
 
 ## Prerequisites
-1. As of Dec 11th 2023, all DataSources are scraped via Apify, so you'll need to [setup your Apify API token](apify.md). This won't be a requirement in the future.
+1. As of Dec 17th 2023, we support Twitter and Reddit scraping via Apify so you'll need to [setup your Apify API token](apify.md). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. Validators will default to using the personal reddit account for reliability but this can be changed editing the PREFERRED_SCRAPERS map in validator.py locally.
 
 1. Clone the repo
 
@@ -70,11 +70,11 @@ pm2 start python -- ./neurons/validator.py --wallet.name your-wallet --wallet.ho
 
 ## Flags
 
-The Miner offers some flags to customize properties, such as the database name and the maximum amount of data to store.
+The Validator offers some flags to customize properties, such as the database name and the maximum amount of data to store.
 
 You can view the full set of flags by running
 ```shell
-python ./neurons/miner.py -h
+python ./neurons/validator.py -h
 ```
 
 # Coming Soon
