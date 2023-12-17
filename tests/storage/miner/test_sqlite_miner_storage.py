@@ -19,7 +19,9 @@ from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 class TestSqliteMinerStorage(unittest.TestCase):
     def setUp(self):
         # Make a test database for the test to operate against.
-        self.test_storage = SqliteMinerStorage("TestDb.sqlite", 500)
+        self.test_storage = SqliteMinerStorage(
+            "TestDb.sqlite", max_database_size_gb_hint=1
+        )
 
     def tearDown(self):
         # Clean up the test database.
@@ -103,7 +105,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             datetime=now,
             source=DataSource.REDDIT,
             content=bytes(1000),
-            content_size_bytes=1000,
+            content_size_bytes=1.1 * 1024 * 1024 * 1024,
         )
 
         # Attempt to store the entity.
@@ -113,34 +115,34 @@ class TestSqliteMinerStorage(unittest.TestCase):
     def test_store_over_max_content_size_succeeds(self):
         """Tests that we succeed on clearing space when going over maximum configured content storage."""
         now = dt.datetime.now()
+        mb_400 = 400 * 1024 * 1024
         # Create three entities such that only two fit the maximum allowed content size.
         entity1 = DataEntity(
             uri="test_entity_1",
             datetime=now,
             source=DataSource.REDDIT,
-            content=bytes(200),
-            content_size_bytes=200,
+            content=b"entity1",
+            content_size_bytes=mb_400,
         )
         entity2 = DataEntity(
             uri="test_entity_2",
             datetime=now + dt.timedelta(hours=1),
             source=DataSource.REDDIT,
-            content=bytes(10),
-            content_size_bytes=200,
+            content=b"entity2",
+            content_size_bytes=mb_400,
         )
         entity3 = DataEntity(
             uri="test_entity_3",
             datetime=now + dt.timedelta(hours=2),
             source=DataSource.REDDIT,
-            content=bytes(200),
-            content_size_bytes=200,
+            content=b"entity3",
+            content_size_bytes=mb_400,
         )
 
         # Store two entities that take up all but 100 bytes of the maximum allowed.
         self.test_storage.store_data_entities([entity1, entity2])
         # Store the third entity that would go over the maximum allowed.
         self.test_storage.store_data_entities([entity3])
-
         # Confirm the oldest entity was deleted to make room.
         with contextlib.closing(self.test_storage._create_connection()) as connection:
             cursor = connection.cursor()

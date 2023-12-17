@@ -23,7 +23,7 @@ class TestMinerConfig(unittest.TestCase):
 
             self.assertEqual(config.neuron.database_name, "mydb")
             # Check the default values are still there.
-            self.assertEqual(config.neuron.max_database_size_bytes_hint, 10485760000)
+            self.assertEqual(config.neuron.max_database_size_gb_hint, 250)
 
 
 if __name__ == "__main__":

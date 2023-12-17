@@ -10,11 +10,17 @@ from functools import lru_cache, update_wrapper
 
 _KB = 1024
 _MB = 1024 * _KB
+_GB = 1024 * _MB
 
 
 def mb_to_bytes(mb: int) -> int:
     """Returns the total number of bytes."""
     return mb * _MB
+
+
+def gb_to_bytes(gb: int) -> int:
+    """Returns the total number of bytes."""
+    return gb * _GB
 
 
 def seconds_to_hours(seconds: int) -> int:

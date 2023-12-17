@@ -64,7 +64,7 @@ class Miner(BaseNeuron):
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
             self.config.neuron.database_name,
-            self.config.neuron.max_database_size_bytes_hint,
+            self.config.neuron.max_database_size_gb_hint,
         )
 
         # Configure the ScraperCoordinator
