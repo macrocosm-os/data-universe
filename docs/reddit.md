@@ -6,7 +6,7 @@ In addition to the [Apify actor based scraping](apify.md) we also support using 
 
 ## Getting a reddit account.
 
-If you already have a reddit account you can use that one. Otherwise [sign up](https://www.reddit.com/register/) for one with a password.
+If you already have a reddit account you can use that one. Otherwise [sign up](https://www.reddit.com/register/) for one (must support password based auth).
 
 ## Setting up your account for use with a script type app.
 
