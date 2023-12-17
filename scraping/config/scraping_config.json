@@ -51,6 +51,31 @@
                     "max_data_entities": 50
                 }
             ]
+        },
+        {
+            "scraper_id": "Reddit.custom",
+            "cadence_seconds": 60,
+            "labels_to_scrape": [
+                {
+                    "label_choices": [
+                        "r/bittensor_",
+                        "r/bitcoin",
+                        "r/BitcoinCash",
+                        "r/Bittensor_",
+                        "r/Btc",
+                        "r/Cryptocurrency",
+                        "r/Cryptomarkets",
+                        "r/EthereumClassic",
+                        "r/Ethtrader",
+                        "r/Filecoin",
+                        "r/Monero",
+                        "r/Polkadot",
+                        "r/Solana",
+                        "r/WallstreetBets"
+                    ],
+                    "max_data_entities": 100
+                }
+            ]
         }
     ]
 }

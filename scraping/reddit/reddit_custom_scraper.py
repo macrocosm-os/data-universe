@@ -25,7 +25,7 @@ load_dotenv()
 
 class RedditCustomScraper(Scraper):
     """
-    Scrapes Reddit data using the Reddit Scraper Lite actor.
+    Scrapes Reddit data using the a personal reddit account.
     """
 
     USER_AGENT = "User-Agent: python:data-universe-app:v1"
