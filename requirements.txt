@@ -1,4 +1,5 @@
 apify-client
+asyncpraw
 bittensor>=6.0
 jupyter
 mysql-connector-python
