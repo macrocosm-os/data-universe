@@ -47,9 +47,12 @@ class RedditCustomScraper(Scraper):
                 bt.logging.error(
                     f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}"
                 )
-                return ValidationResult(
-                    is_valid=False, reason="Failed to decode data entity"
+                results.append(
+                    ValidationResult(
+                        is_valid=False, reason="Failed to decode data entity"
+                    )
                 )
+                continue
 
             # Retrieve the Reddit Post/Comment from PRAW.
             content = None
@@ -78,10 +81,13 @@ class RedditCustomScraper(Scraper):
                 # one caused by malicious input. In my own testing I was able to make the request timeout by
                 # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
                 # pass malicious input for chunks they don't have.
-                return ValidationResult(
-                    is_valid=False,
-                    reason="Failed to retrieve submission. This can happen if the URI is invalid, or Reddit is having an issue.",
+                results.append(
+                    ValidationResult(
+                        is_valid=False,
+                        reason="Failed to retrieve submission. This can happen if the URI is invalid, or Reddit is having an issue.",
+                    )
                 )
+                continue
 
             if not content:
                 results.append(
