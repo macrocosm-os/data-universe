@@ -73,15 +73,15 @@ Let's walk through an example to explain how all these properties fit together.
                     "label_choices": [
                         "#bittensor",
                     ],
-                    "max_age_in_minutes": 1440,
-                    "max_items": 100
+                    "max_age_hint_minutes": 1440,
+                    "max_data_entities": 100
                 },
                 {
                     "label_choices": [
                         "#decentralizedfinance",
                         "#btc"
                     ],
-                    "max_items": 50
+                    "max_data_entities": 50
                 }
             ]
         },
