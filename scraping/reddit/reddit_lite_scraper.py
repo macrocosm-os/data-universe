@@ -64,9 +64,12 @@ class RedditLiteScraper(Scraper):
                 bt.logging.error(
                     f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}"
                 )
-                return ValidationResult(
-                    is_valid=False, reason="Failed to decode data entity"
+                results.append(
+                    ValidationResult(
+                        is_valid=False, reason="Failed to decode data entity"
+                    )
                 )
+                continue
 
             run_input = self._get_validation_run_input(reddit_content_to_verify)
             run_config = RunConfig(
@@ -85,10 +88,13 @@ class RedditLiteScraper(Scraper):
                 # one caused by malicious input. In my own testing I was able to make the Actor timeout by
                 # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
                 # pass malicious input for chunks they don't have.
-                return ValidationResult(
-                    is_valid=False,
-                    reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                results.append(
+                    ValidationResult(
+                        is_valid=False,
+                        reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                    )
                 )
+                continue
 
             # Parse the response
             items = self._best_effort_parse_dataset(dataset)
@@ -287,6 +293,23 @@ async def test_validate():
         print(f"Expecting a failed validation. Result={results}")
 
 
+async def test_u_deleted():
+    """Verifies that the RedditLiteScraper can handle deleted users."""
+    comment = DataEntity(
+        uri="https://www.reddit.com/r/AskReddit/comments/ablzuq/people_who_havent_pooped_in_2019_yet_why_are_you/ed1j7is/",
+        datetime=dt.datetime(2019, 1, 1, 22, 59, 9, tzinfo=dt.timezone.utc),
+        source=1,
+        label=DataLabel(value="r/askreddit"),
+        content=b'{"id": "t1_ed1j7is", "url": "https://www.reddit.com/r/AskReddit/comments/ablzuq/people_who_havent_pooped_in_2019_yet_why_are_you/ed1j7is/", "username": "[deleted]", "communityName": "r/AskReddit", "body": "Aw man what a terrible way to spend NYE! I hope you feel better soon bud!", "createdAt": "2019-01-01T22:59:09+00:00", "dataType": "comment", "title": null, "parentId": "t1_ed1dqvy"}',
+        content_size_bytes=387,
+    )
+
+    scraper = RedditLiteScraper()
+    result = await scraper.validate(entities=[comment])
+    print(f"Expecting a passed validation: {result}")
+
+
 if __name__ == "__main__":
     asyncio.run(test_scrape())
     asyncio.run(test_validate())
+    asyncio.run(test_u_deleted())
