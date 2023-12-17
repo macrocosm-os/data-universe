@@ -11,7 +11,7 @@ Miners do not require a GPU and should be able to run on a low-tier machine, as 
 # Getting Started
 
 ## Prerequisites
-1. As of Dec 11th 2023, all DataSources are scraped via Apify, so you'll need to [setup your Apify API token](apify.md).
+1. As of Dec 17th 2023, we support Twitter and Reddit scraping via Apify so you'll need to [setup your Apify API token](apify.md). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free.
 
 2. Clone the repo
 
@@ -51,7 +51,15 @@ python ./neurons/miner.py -h
 
 ## Configuring 
 
-The frequency and types of data your Miner will scrape is configured in the [scraping_config.json](https://github.com/RusticLuftig/data-universe/blob/main/scraping/config/scraping_config.json) file. This file defines which scrapers your Miner will use. To customize your Miner, you either edit `scraping_config.json` or create your own file and pass its filepath via the `--neuron.scraping_config_file` flag.
+The frequency and types of data your Miner will scrape is configured in the [scraping_config.json](https://github.com/RusticLuftig/data-universe/blob/main/scraping/config/scraping_config.json) file. This file defines which scrapers your Miner will use. To customize your Miner, you either edit `scraping_config.json` or create your own file and pass its filepath via the `--neuron.scraping_config_file` flag. 
+
+By default `scraping_config.json` is setup use both the apify actor and the personal reddit account for scraping reddit.
+
+If you do not want to use Apify you should remove the sections where the `scraper_id` is set to either `Reddit.lite` or `X.flash`.
+
+If you do not want to use a personal Reddit account you should remove the sections where the `scraper_id` is set to either `Reddit.custom`.
+
+If either of them is in the configuration but not setup properly in your `.env` file then your miner will log errors but still scrape using any configured scrapers that are properly setup.
 
 For each scraper, you can define:
 
