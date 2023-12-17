@@ -124,7 +124,7 @@ class MysqlValidatorStorage(ValidatorStorage):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
         bt.logging.trace(
-            f"{index.hotkey}: Upserting miner index with len({index.data_entity_buckets}) buckets"
+            f"{index.hotkey}: Upserting miner index with {len(index.data_entity_buckets)} buckets"
         )
 
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
