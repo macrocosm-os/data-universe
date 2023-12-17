@@ -79,10 +79,13 @@ class TwitterFlashScraper(Scraper):
                 # one caused by malicious input. In my own testing I was able to make the Actor timeout by
                 # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
                 # pass malicious input for chunks they don't have.
-                return ValidationResult(
-                    is_valid=False,
-                    reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                results.append(
+                    ValidationResult(
+                        is_valid=False,
+                        reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                    )
                 )
+                continue
 
             # Parse the response
             tweets = self._best_effort_parse_dataset(dataset)
