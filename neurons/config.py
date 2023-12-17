@@ -150,10 +150,12 @@ def add_args(neuron_type: NeuronType, parser):
         )
 
         parser.add_argument(
-            "--neuron.max_database_size_bytes_hint",
+            "--neuron.max_database_size_gb_hint",
             type=int,
-            help="Hint for the size of the database to target. Expect additional some additional overhead.",
-            default=utils.mb_to_bytes(10000),
+            help="Hint for the size of the database to target in GBs. Expect additional some additional overhead.",
+            # We intentionally choose a large default to avoid Miner's accidentally deleting data when they
+            # run with the default value.
+            default=250,
         )
 
         root_dir = Path(os.path.dirname(__file__)).parent

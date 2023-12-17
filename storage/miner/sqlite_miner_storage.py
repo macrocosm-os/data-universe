@@ -72,13 +72,15 @@ class SqliteMinerStorage(MinerStorage):
     def __init__(
         self,
         database="SqliteMinerStorage.sqlite",
-        max_database_size_bytes_hint=utils.mb_to_bytes(10000),
+        max_database_size_gb_hint=250,
     ):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
         self.database = database
 
         # TODO Account for non-content columns when restricting total database size.
-        self.database_max_content_size_bytes = max_database_size_bytes_hint
+        self.database_max_content_size_bytes = utils.gb_to_bytes(
+            max_database_size_gb_hint
+        )
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
