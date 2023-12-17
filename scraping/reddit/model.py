@@ -5,6 +5,11 @@ from pydantic import BaseModel, Field
 
 from common.data import DataEntity, DataLabel, DataSource
 
+# The username used for deleted users.
+# This is the value returned by the Apify lite scraper.
+# Other scrapers may need to adapt their code to use this value.
+DELETED_USER = "[deleted]"
+
 
 class RedditDataType(str, Enum):
     POST = "post"
