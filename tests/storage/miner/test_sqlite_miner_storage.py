@@ -86,14 +86,22 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
         # Store the entities.
         self.test_storage.store_data_entities([entity1, entity2])
+
+        # Update the contents
+        entity1.content = bytes(50)
+        entity1.content_size_bytes = 50
+        entity2.content = bytes(100)
+        entity2.content_size_bytes = 100
+
+        # Store the entities again.
         self.test_storage.store_data_entities([entity1, entity2])
 
-        # Confirm that only one set of entities were stored.
+        # Confirm that only one set of entities were stored and the content matches the latest.
         with contextlib.closing(self.test_storage._create_connection()) as connection:
             cursor = connection.cursor()
-            cursor.execute("SELECT COUNT(*) FROM DataEntity")
-            rows = cursor.fetchone()[0]
-            self.assertEqual(rows, 2)
+            cursor.execute("SELECT SUM(contentSizeBytes) FROM DataEntity")
+            size = cursor.fetchone()[0]
+            self.assertEqual(size, 150)
 
     # TODO Consider storing what we can and discarding the rest.
     def test_store_over_max_content_size_fail(self):
@@ -213,8 +221,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             size_bytes=50,
         )
 
-        # Confirm we get back the expected summaries.
-        self.assertEqual(data_entity_buckets, [expected_bucket_1, expected_bucket_2])
+        # Confirm we get back the expected summaries in order of size.
+        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
 
     def test_list_data_entity_buckets_no_labels(self):
         """Tests that we can list the data entity buckets with no labels from storage."""
@@ -271,8 +279,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             size_bytes=50,
         )
 
-        # Confirm we get back the expected summaries.
-        self.assertEqual(data_entity_buckets, [expected_bucket_1, expected_bucket_2])
+        # Confirm we get back the expected summaries in order of size.
+        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
 
     def test_list_data_entity_buckets_too_old(self):
         """Tests that we can list the data entity buckets from storage, discarding out of date ones."""
