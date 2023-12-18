@@ -125,7 +125,7 @@ class Validator(BaseNeuron):
         responses: List[GetMinerIndex] = await self.dendrite.forward(
             axons=[miner_axon],
             synapse=GetMinerIndex(),
-            timeout=60,
+            timeout=300,
         )
 
         miner_index = vali_utils.get_single_successul_response(responses, GetMinerIndex)
@@ -193,7 +193,7 @@ class Validator(BaseNeuron):
             synapse=GetDataEntityBucket(
                 data_entity_bucket_id=chosen_data_entity_bucket.id
             ),
-            timeout=60,
+            timeout=180,
         )
 
         data_entity_bucket = vali_utils.get_single_successul_response(
