@@ -213,8 +213,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             size_bytes=50,
         )
 
-        # Confirm we get back the expected summaries.
-        self.assertEqual(data_entity_buckets, [expected_bucket_1, expected_bucket_2])
+        # Confirm we get back the expected summaries in order of size.
+        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
 
     def test_list_data_entity_buckets_no_labels(self):
         """Tests that we can list the data entity buckets with no labels from storage."""
@@ -271,8 +271,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             size_bytes=50,
         )
 
-        # Confirm we get back the expected summaries.
-        self.assertEqual(data_entity_buckets, [expected_bucket_1, expected_bucket_2])
+        # Confirm we get back the expected summaries in order of size.
+        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
 
     def test_list_data_entity_buckets_too_old(self):
         """Tests that we can list the data entity buckets from storage, discarding out of date ones."""
