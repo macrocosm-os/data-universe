@@ -98,7 +98,7 @@ class SqliteMinerStorage(MinerStorage):
         # Create the database if it doesn't exist, defaulting to the local directory.
         # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
         connection = sqlite3.connect(
-            self.database, detect_types=sqlite3.PARSE_DECLTYPES
+            self.database, detect_types=sqlite3.PARSE_DECLTYPES, timeout=60.0
         )
         # Allow this connection to parse results from returned rows by column name.
         connection.row_factory = sqlite3.Row
