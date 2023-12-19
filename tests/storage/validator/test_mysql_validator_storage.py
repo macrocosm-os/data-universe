@@ -1,5 +1,7 @@
+import random
 import unittest
 import os
+from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
 from common.data import (
     DataEntityBucket,
     DataEntity,
@@ -138,6 +140,24 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Confirm the second label  has the next value.
         self.assertEqual(label_id + 1, label_id_2)
 
+    def test_get_label_value_to_id_dict(self):
+        """Tests that we can get a mapping for all labels."""
+        # Insert multiples labels.
+        label_id1 = self.test_storage._get_or_insert_label("test_label_value1")
+        label_id2 = self.test_storage._get_or_insert_label("test_label_value2")
+        label_id3 = self.test_storage._get_or_insert_label("test_label_value3")
+        label_id4 = self.test_storage._get_or_insert_label("test_label_value4")
+        label_id5 = self.test_storage._get_or_insert_label("test_label_value5")
+
+        # Get the map and confirm we see all the keys.
+        label_value_to_id_dict = self.test_storage._get_label_value_to_id_dict()
+
+        self.assertEqual(label_id1, label_value_to_id_dict["test_label_value1"])
+        self.assertEqual(label_id2, label_value_to_id_dict["test_label_value2"])
+        self.assertEqual(label_id3, label_value_to_id_dict["test_label_value3"])
+        self.assertEqual(label_id4, label_value_to_id_dict["test_label_value4"])
+        self.assertEqual(label_id5, label_value_to_id_dict["test_label_value5"])
+
     def test_upsert_miner_index_insert_index(self):
         """Tests that we can insert a miner index"""
         # Create two DataEntityBuckets for the index.
@@ -239,6 +259,49 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         cursor.execute("SELECT source FROM MinerIndex")
         for row in cursor:
             self.assertEqual(DataSource.X, DataSource(row["source"]))
+
+    def test_roundtrip_large_miner_index(self):
+        """Tests that we can roundtrip a large size miner index"""
+        # Prestore the labels
+        self.test_storage._get_or_insert_label("label1")
+        self.test_storage._get_or_insert_label("label2")
+        self.test_storage._get_or_insert_label("label3")
+        self.test_storage._get_or_insert_label("label4")
+        self.test_storage._get_or_insert_label("label5")
+
+        # Create the DataEntityBuckets for the index.
+        buckets = []
+
+        now = dt.datetime.utcnow()
+        for i in range(100000):  # DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+            buckets.append(
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=TimeBucket.from_datetime(
+                            now - dt.timedelta(seconds=i)
+                        ),  # 3 mil seconds ~ 34 days
+                        source=random.choice([DataSource.REDDIT, DataSource.X]),
+                        label=DataLabel(
+                            value=random.choice(
+                                ["label1", "label2", "label3", "label4", "label5"]
+                            )
+                        ),
+                    ),
+                    size_bytes=10,
+                )
+            )
+
+        # Create the index containing the buckets.
+        index = MinerIndex(hotkey="hotkey1", data_entity_buckets=buckets)
+
+        # Store the index.
+        self.test_storage.upsert_miner_index(index)
+
+        # Confirm we can read the index.
+        scorable_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
+        self.assertGreater(
+            len(scorable_index.scorable_data_entity_buckets), 100000 / 3600
+        )  # for overlapping buckets
 
     def test_read_miner_index(self):
         """Tests that we can read (and score) a miner index."""
