@@ -151,7 +151,6 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         # Get all label ids for use in mapping.
         label_value_to_id_dict = self._get_label_value_to_id_dict()
-
         # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []
         for data_entity_bucket in index.data_entity_buckets:
@@ -185,10 +184,16 @@ class MysqlValidatorStorage(ValidatorStorage):
             # Clear the previous keys for this miner.
             self.delete_miner_index(index.hotkey)
 
-            # Insert the new keys. (Replace into to defend against a miner giving us multiple duplicate rows.)
-            cursor.executemany(
-                """REPLACE INTO MinerIndex VALUES (%s, %s, %s, %s, %s)""", values
-            )
+            # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
+            # Batch in groups of 1m if necessary to avoid congestion issues.
+            value_subsets = [
+                values[x : x + 1000000] for x in range(0, len(values), 1000000)
+            ]
+            for value_subset in value_subsets:
+                cursor.executemany(
+                    """INSERT IGNORE INTO MinerIndex VALUES (%s, %s, %s, %s, %s)""",
+                    value_subset,
+                )
             self.connection.commit()
 
     def read_miner_index(

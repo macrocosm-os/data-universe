@@ -273,7 +273,8 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         buckets = []
 
         now = dt.datetime.utcnow()
-        for i in range(100000):  # DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+        # Note that there will be duplicate buckets in here and also some that are beyond the max time allowed.
+        for i in range(DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX):
             buckets.append(
                 DataEntityBucket(
                     id=DataEntityBucketId(
@@ -300,7 +301,8 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Confirm we can read the index.
         scorable_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
         self.assertGreater(
-            len(scorable_index.scorable_data_entity_buckets), 100000 / 3600
+            len(scorable_index.scorable_data_entity_buckets),
+            DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX / 3600,
         )  # for overlapping buckets
 
     def test_read_miner_index(self):
