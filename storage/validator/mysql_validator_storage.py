@@ -11,7 +11,7 @@ from common.data import (
     TimeBucket,
 )
 from storage.validator.validator_storage import ValidatorStorage
-from typing import Optional, Set
+from typing import Optional, Set, Dict
 import datetime as dt
 import mysql.connector
 import bittensor as bt
@@ -120,6 +120,22 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         return label_id
 
+    def _get_label_value_to_id_dict(self) -> Dict[str, int]:
+        """Gets an encountered label or stores a new one returning this Validator's unique id for it"""
+
+        label_value_to_id_dict = {}
+
+        # Get a cursor to the database with dictionary enabled for accessing columns by name.
+        cursor = self.connection.cursor(dictionary=True)
+
+        cursor.execute("SELECT labelValue, labelId FROM Label")
+
+        # Reach each row and add to the mapping dictionary
+        for row in cursor:
+            label_value_to_id_dict[row["labelValue"]] = row["labelId"]
+
+        return label_value_to_id_dict
+
     def upsert_miner_index(self, index: MinerIndex):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
@@ -133,6 +149,9 @@ class MysqlValidatorStorage(ValidatorStorage):
         # Upsert this Validator's minerId for the specified hotkey.
         miner_id = self._upsert_miner(index.hotkey, now_str)
 
+        # Get all label ids for use in mapping.
+        label_value_to_id_dict = self._get_label_value_to_id_dict()
+
         # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []
         for data_entity_bucket in index.data_entity_buckets:
@@ -143,7 +162,14 @@ class MysqlValidatorStorage(ValidatorStorage):
             )
 
             # Get or insert this Validator's labelId for the specified label.
-            label_id = self._get_or_insert_label(label)
+            label_id = -1
+            if label in label_value_to_id_dict:
+                # Use the already known value if available.
+                label_id = label_value_to_id_dict[label]
+            else:
+                # Else add to the label table and use that id.
+                label_id = self._get_or_insert_label(label)
+                label_value_to_id_dict[label] = label_id
 
             values.append(
                 [
