@@ -156,10 +156,14 @@ class MinerScorer:
         total_bytes_validated = sum(
             result.content_size_bytes_validated for result in validation_results
         )
-        credibility = sum(
-            result.is_valid * result.content_size_bytes_validated
-            for result in validation_results
-        ) / float(total_bytes_validated)
+
+        credibility = 0
+
+        if total_bytes_validated > 0:
+            credibility = sum(
+                result.is_valid * result.content_size_bytes_validated
+                for result in validation_results
+            ) / float(total_bytes_validated)
 
         # Use EMA to update the miner's credibility.
         self.miner_credibility[uid] = (
