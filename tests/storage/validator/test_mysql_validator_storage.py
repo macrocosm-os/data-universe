@@ -140,6 +140,49 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Confirm the second label  has the next value.
         self.assertEqual(label_id + 1, label_id_2)
 
+    def test_insert_labels(self):
+        """Tests that we can store multiple labels at once."""
+        # Insert 2 labels.
+        self.test_storage._insert_labels({"label1", "label2"})
+
+        # Confirm the labels were stored and that the information matches.
+        cursor = self.test_storage.connection.cursor(buffered=True)
+        cursor.execute("SELECT * FROM Label")
+
+        self.assertEqual(2, cursor.rowcount)
+
+    def test_insert_labels_existing_label(self):
+        """Tests that we can ignore an already existing label when inserting labels."""
+        # Insert a label.
+        self.test_storage._insert_labels(set(["label1"]))
+        # Insert the same label.
+        self.test_storage._insert_labels(set(["label1"]))
+
+        # Confirm the label was stored and that the information matches.
+        cursor = self.test_storage.connection.cursor(buffered=True)
+        cursor.execute("SELECT * FROM Label")
+
+        self.assertEqual(1, cursor.rowcount)
+
+    def test_insert_labels_existing_label_does_not_increment_id(self):
+        """Tests that inserting an already encountered label does not use up an auto increment."""
+        # Insert a label.
+        self.test_storage._insert_labels(set(["label1"]))
+
+        # Get the label id.
+        label_1_id = self.test_storage._get_or_insert_label("label1")
+
+        # Insert the same label and another label.
+        self.test_storage._insert_labels(set(["label1", "label2"]))
+
+        # Confirm the first label has the same ID
+        label_1_id_retry = self.test_storage._get_or_insert_label("label1")
+        self.assertEqual(label_1_id, label_1_id_retry)
+
+        # Confirm the second label  has the next value.
+        label_2_id = self.test_storage._get_or_insert_label("label2")
+        self.assertEqual(label_1_id + 1, label_2_id)
+
     def test_get_label_value_to_id_dict(self):
         """Tests that we can get a mapping for all labels."""
         # Insert multiples labels.
