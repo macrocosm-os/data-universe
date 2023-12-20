@@ -108,6 +108,10 @@ class DataLabel:
     def __getattribute__(self, prop):
         if prop == "value":
             v = super().__getattribute__(prop)
+            if v and len(v) > constants.MAX_DATA_LABEL_LENGTH:
+                raise ValueError(
+                    f"DataLabel cannot be longer than {constants.MAX_DATA_LABEL_LENGTH} characters."
+                )
             return v.lower() if v else None
         return super().__getattribute__(prop)
 
