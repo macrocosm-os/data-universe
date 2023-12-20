@@ -38,18 +38,27 @@ def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityB
 def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""
 
-    # For now, we just sample 2 entities, based on size. Can select the same entity twice.
+    # For now, we just sample 2 entities, based on size. Ensure we choose different entities.
     # In future, consider sampling every N bytes.
     chosen_entities = []
     total_size = sum(entity.content_size_bytes for entity in entities)
 
-    for _ in range(2):
+    # Ensure we don't try to choose more entities than exist to choose from.
+    num_entities_to_choose = min(2, len(entities))
+    for _ in range(num_entities_to_choose):
         chosen_byte = random.uniform(0, total_size)
         iterated_bytes = 0
         for entity in entities:
+            if entity in chosen_entities:
+                # Ensure we skip over already chosen entities if we see them again.
+                continue
+
             if iterated_bytes + entity.content_size_bytes >= chosen_byte:
                 chosen_entities.append(entity)
+                # Adjust total_size to account for the entity we already selected.
+                total_size -= entity.content_size_bytes
                 break
+
             iterated_bytes += entity.content_size_bytes
 
     return chosen_entities

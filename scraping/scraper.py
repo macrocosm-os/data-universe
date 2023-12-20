@@ -29,6 +29,10 @@ class ValidationResult(StrictBaseModel):
     # include more information about the validation.
     is_valid: bool
 
+    content_size_bytes_validated: int = Field(
+        description="The content size in bytes validated as part of this check", ge=0
+    )
+
     reason: str = Field(
         description="An optional reason for the validation result.",
         default="",
