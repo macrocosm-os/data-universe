@@ -31,13 +31,21 @@ def validate_reddit_content(
         bt.logging.error(
             f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}"
         )
-        return ValidationResult(is_valid=False, reason="Failed to decode data entity")
+        return ValidationResult(
+            is_valid=False,
+            reason="Failed to decode data entity",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
 
     if actual_content != content_to_validate:
         bt.logging.trace(
             f"RedditContent does not match: {actual_content} != {content_to_validate}"
         )
-        return ValidationResult(is_valid=False, reason="Content does not match")
+        return ValidationResult(
+            is_valid=False,
+            reason="Content does not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
 
     # Wahey! The content is valid.
     # One final check. Does the Reddit content match the data entity information?
@@ -49,6 +57,7 @@ def validate_reddit_content(
             return ValidationResult(
                 is_valid=False,
                 reason="The DataEntity fields are incorrect based on the Reddit content",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
     except Exception:
         # This shouldn't really happen, but let's safeguard against it anyway to avoid us somehow accepting
@@ -59,10 +68,15 @@ def validate_reddit_content(
         return ValidationResult(
             is_valid=False,
             reason="Failed to convert RedditContent to DataEntity",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
     # At last, all checks have passed. The DataEntity is indeed valid. Nice work!
-    return ValidationResult(is_valid=True, reason="Good job, you honest miner!")
+    return ValidationResult(
+        is_valid=True,
+        reason="Good job, you honest miner!",
+        content_size_bytes_validated=entity_to_validate.content_size_bytes,
+    )
 
 
 def get_time_input(datetime: dt.datetime) -> str:

@@ -112,9 +112,34 @@ class TestValidatorUtils(unittest.TestCase):
 
         total = sum(counts)
         ratios = [count / total for count in counts]
-        self.assertAlmostEqual(ratios[0], 1 / 6, delta=0.05)
-        self.assertAlmostEqual(ratios[1], 1 / 3, delta=0.05)
-        self.assertAlmostEqual(ratios[2], 0.5, delta=0.05)
+        # The chance 1 is not picked: 0.58 (rounding) -> picked .42
+        # 2 is picked first then 3 -> 2/6 * 3/4 = 0.25
+        # 3 is picked first then 2 -> 3/6 * 2/3 = 0.33
+        self.assertAlmostEqual(ratios[0], 0.42 / 2, delta=0.05)
+        # The chance 2 is not picked: 0.27 (rounding) -> picked .73
+        # 1 is picked first then 3 -> 1/6 * 3/5 = 0.1
+        # 3 is picked first then 1 -> 3/6 * 1/3 = 0.16
+        self.assertAlmostEqual(ratios[1], 0.73 / 2, delta=0.05)
+        # The chance 3 is not picked: 0.15 (rounding) -> picked .85
+        # 1 is picked first then 2 -> 1/6 * 2/5 = 0.06
+        # 2 is picked first then 1 -> 2/6 * 1/4 = 0.08
+        self.assertAlmostEqual(ratios[2], 0.85 / 2, delta=0.05)
+
+    def test_choose_entities_to_verify_not_enough_entities(self):
+        """Calls choose_entity_to_verify with only 1 entity and ensure we do not double count it."""
+        entities = [
+            DataEntity(
+                uri="uri1",
+                datetime=dt.datetime.now(tz=dt.timezone.utc),
+                source=DataSource.REDDIT,
+                content=b"content1",
+                content_size_bytes=100,
+            ),
+        ]
+
+        chosen_entities = ValiUtils.choose_entities_to_verify(entities)
+
+        self.assertEqual(len(chosen_entities), 1)
 
     def test_are_entities_valid_invalid_entities(self):
         """Tests a bunch of cases where the entities are invalid."""

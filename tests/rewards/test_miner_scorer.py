@@ -73,7 +73,9 @@ class TestMinerScorer(unittest.TestCase):
         )
 
     def _add_score_to_uid(self, uid: int):
-        validation_results = [ValidationResult(is_valid=True)]
+        validation_results = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=100)
+        ]
         self.scorer.on_miner_evaluated(uid, self.scorable_index, validation_results)
 
     def test_reset_score(self):
@@ -126,12 +128,12 @@ class TestMinerScorer(unittest.TestCase):
         shady_miner = 1
 
         honest_validation = [
-            ValidationResult(is_valid=True),
-            ValidationResult(is_valid=True),
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
         ]
         shady_validation = [
-            ValidationResult(is_valid=True),
-            ValidationResult(is_valid=False),
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
+            ValidationResult(is_valid=False, content_size_bytes_validated=100),
         ]
 
         # Perform a bunch of validations for them.
@@ -146,6 +148,50 @@ class TestMinerScorer(unittest.TestCase):
         # Now verify the honest miner is credible
         self.assertEqual([honest_miner], self.scorer.get_credible_miners())
 
+    def test_on_miner_evaluated_credibilty_normalized_by_size(self):
+        """Compares miners with varying levels of "honesty" by validation bytes as measured by the validation results,
+        to ensure the relative scores are as expected."""
+        # The honest miner always passes validation.
+        honest_miner = 0
+        # The shady miner passes 50% of validations but most of their data is invalid.
+        shady_miner = 1
+        # The dishonest always fails validation.
+        dishonest_miner = 2
+
+        # Content size bytes validated do not need to match the scored bytes. They are just used for relative
+        # credibility weighting.
+        honest_validation = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
+            ValidationResult(is_valid=True, content_size_bytes_validated=900),
+        ]
+        shady_validation = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
+            ValidationResult(is_valid=False, content_size_bytes_validated=900),
+        ]
+        dishonest_validation = [
+            ValidationResult(is_valid=False, content_size_bytes_validated=100),
+            ValidationResult(is_valid=False, content_size_bytes_validated=900),
+        ]
+        for _ in range(20):
+            self.scorer.on_miner_evaluated(
+                honest_miner, self.scorable_index, honest_validation
+            )
+            self.scorer.on_miner_evaluated(
+                shady_miner, self.scorable_index, shady_validation
+            )
+            self.scorer.on_miner_evaluated(
+                dishonest_miner, self.scorable_index, dishonest_validation
+            )
+
+        scores = self.scorer.get_scores()
+        # Expect the honest miner to have scored more than 10x the shady miner.
+        self.assertGreater(
+            scores[honest_miner].item(),
+            10 * scores[shady_miner].item(),
+        )
+        # Expect the dishonest miner to have scored ~0.
+        self.assertAlmostEqual(scores[dishonest_miner].item(), 0.0, delta=5)
+
     def test_on_miner_evaluated_verify_credibility_impacts_score(self):
         """Compares miners with varying levels of "honesty" as measured by the validation results, to ensure the relative
         scores are as expected."""
@@ -157,16 +203,16 @@ class TestMinerScorer(unittest.TestCase):
         dishonest_miner = 2
 
         honest_validation = [
-            ValidationResult(is_valid=True),
-            ValidationResult(is_valid=True),
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
         ]
         shady_validation = [
-            ValidationResult(is_valid=True),
-            ValidationResult(is_valid=False),
+            ValidationResult(is_valid=True, content_size_bytes_validated=100),
+            ValidationResult(is_valid=False, content_size_bytes_validated=100),
         ]
         dishonest_validation = [
-            ValidationResult(is_valid=False),
-            ValidationResult(is_valid=False),
+            ValidationResult(is_valid=False, content_size_bytes_validated=100),
+            ValidationResult(is_valid=False, content_size_bytes_validated=100),
         ]
         for _ in range(20):
             self.scorer.on_miner_evaluated(
@@ -259,10 +305,15 @@ class TestMinerScorer(unittest.TestCase):
             last_updated=self.now,
         )
 
-        honest_validation = [ValidationResult(is_valid=True)]
+        honest_validation = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=200)
+        ]
         # Since half the shady_miner's data is fake, it should fail validation half the time.
         # To make the test deterministic, we'll make it fail every other time.
-        shady_validations = [[ValidationResult(is_valid=i % 2 == 1)] for i in range(10)]
+        shady_validations = [
+            [ValidationResult(is_valid=i % 2 == 1, content_size_bytes_validated=400)]
+            for i in range(10)
+        ]
         for i in range(10):
             self.scorer.on_miner_evaluated(
                 honest_miner, honest_index, honest_validation
