@@ -221,7 +221,10 @@ class Validator(BaseNeuron):
                 index,
                 [
                     ValidationResult(
-                        is_valid=False, reason="Response failed or is invalid"
+                        is_valid=False,
+                        reason="Response failed or is invalid",
+                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
+                        # Since there is just one failed result though the normalization by size doesn't matter.
                     )
                 ],
             )
@@ -241,7 +244,16 @@ class Validator(BaseNeuron):
                 f"Miner {hotkey} failed basic entity validation with reason {reason}."
             )
             self.scorer.on_miner_evaluated(
-                uid, index, [ValidationResult(is_valid=False, reason=reason)]
+                uid,
+                index,
+                [
+                    ValidationResult(
+                        is_valid=False,
+                        reason=reason,
+                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
+                        # Since there is just one failed result though the normalization by size doesn't matter.
+                    )
+                ],
             )
             return
 
@@ -253,7 +265,14 @@ class Validator(BaseNeuron):
             self.scorer.on_miner_evaluated(
                 uid,
                 index,
-                [ValidationResult(is_valid=False, reason="Duplicate entities found.")],
+                [
+                    ValidationResult(
+                        is_valid=False,
+                        reason="Duplicate entities found.",
+                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
+                        # Since there is just one failed result though the normalization by size doesn't matter.
+                    )
+                ],
             )
             return
 
