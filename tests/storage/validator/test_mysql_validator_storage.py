@@ -201,6 +201,18 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         self.assertEqual(label_id4, label_value_to_id_dict["test_label_value4"])
         self.assertEqual(label_id5, label_value_to_id_dict["test_label_value5"])
 
+    def test_get_label_value_to_id_dict_special_characters(self):
+        """Tests that we can get a mapping for all labels when using special characters."""
+        # Insert multiples labels.
+        label_id1 = self.test_storage._get_or_insert_label("#mineria")
+        label_id2 = self.test_storage._get_or_insert_label("#minería")
+
+        # Get the map and confirm we see all the keys.
+        label_value_to_id_dict = self.test_storage._get_label_value_to_id_dict()
+
+        self.assertEqual(label_id1, label_value_to_id_dict["#mineria"])
+        self.assertEqual(label_id2, label_value_to_id_dict["#minería"])
+
     def test_upsert_miner_index_insert_index(self):
         """Tests that we can insert a miner index"""
         # Create two DataEntityBuckets for the index.
