@@ -331,7 +331,15 @@ class Validator(BaseNeuron):
                 uids_to_eval.add(uid)
 
         coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
-        await asyncio.gather(*coroutines)
+        done, pending = await asyncio.wait(coroutines, timeout=300)
+
+        for future in pending:
+            future.cancel()  # Cancel unfinished tasks.
+
+        if pending:
+            bt.logging.trace(
+                f"Validator run next eval batch timed out on the following calls: {pending}"
+            )
 
         # Run the next evaluation batch after waiting the appropriate amount of time.
         return seconds_until_next_batch
