@@ -251,7 +251,7 @@ class SqliteMinerStorage(MinerStorage):
                         """,
                 [
                     oldest_time_bucket_id,
-                    constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+                    200000,  # Set to largest 200k buckets until CompressedDataIndex is available to return.
                 ],
             )
 
