@@ -54,7 +54,10 @@ class TwitterFlashScraper(Scraper):
         for entity in entities:
             # First check the URI is a valid Twitter URL.
             if not is_valid_twitter_url(entity.uri):
-                results.append(ValidationResult(is_valid=False, reason="Invalid URI"))
+                results.append(
+                    ValidationResult(is_valid=False, reason="Invalid URI"),
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
                 continue
 
             run_input = {
@@ -83,6 +86,7 @@ class TwitterFlashScraper(Scraper):
                     ValidationResult(
                         is_valid=False,
                         reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
@@ -92,7 +96,9 @@ class TwitterFlashScraper(Scraper):
             if len(tweets) < 1:
                 results.append(
                     ValidationResult(
-                        is_valid=False, reason="Tweet not found or is invalid"
+                        is_valid=False,
+                        reason="Tweet not found or is invalid",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
@@ -178,12 +184,18 @@ class TwitterFlashScraper(Scraper):
                 f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}"
             )
             return ValidationResult(
-                is_valid=False, reason="Failed to decode data entity"
+                is_valid=False,
+                reason="Failed to decode data entity",
+                content_size_bytes_validated=entity.content_size_bytes,
             )
 
         if tweet_to_verify != tweet:
             bt.logging.trace(f"Tweets do not match: {tweet_to_verify} != {tweet}")
-            return ValidationResult(is_valid=False, reason="Tweet does not match")
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
 
         # Wahey! A valid Tweet.
         # One final check. Does the tweet content match the data entity information?
@@ -193,6 +205,7 @@ class TwitterFlashScraper(Scraper):
                 return ValidationResult(
                     is_valid=False,
                     reason="The DataEntity fields are incorrect based on the tweet",
+                    content_size_bytes_validated=entity.content_size_bytes,
                 )
         except Exception:
             # This shouldn't really happen, but let's safeguard against it anyway to avoid us somehow accepting
@@ -203,10 +216,15 @@ class TwitterFlashScraper(Scraper):
             return ValidationResult(
                 is_valid=False,
                 reason="Failed to convert XContent to DataEntity",
+                content_size_bytes_validated=entity.content_size_bytes,
             )
 
         # At last, all checks have passed. The DataEntity is indeed valid. Nice work!
-        return ValidationResult(is_valid=True, reason="Good job, you honest miner!")
+        return ValidationResult(
+            is_valid=True,
+            reason="Good job, you honest miner!",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
 
 
 async def test_scrape():

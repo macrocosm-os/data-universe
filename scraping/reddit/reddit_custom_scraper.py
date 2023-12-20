@@ -41,7 +41,13 @@ class RedditCustomScraper(Scraper):
         for entity in entities:
             # First check the URI is a valid Reddit URL.
             if not is_valid_reddit_url(entity.uri):
-                results.append(ValidationResult(is_valid=False, reason="Invalid URI"))
+                results.append(
+                    ValidationResult(
+                        is_valid=False,
+                        reason="Invalid URI",
+                        content_size_bytes_validated=entity.content_size_bytes,
+                    )
+                )
                 continue
 
             # Parse out the RedditContent object that we're validating
@@ -54,7 +60,9 @@ class RedditCustomScraper(Scraper):
                 )
                 results.append(
                     ValidationResult(
-                        is_valid=False, reason="Failed to decode data entity"
+                        is_valid=False,
+                        reason="Failed to decode data entity",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
@@ -91,6 +99,7 @@ class RedditCustomScraper(Scraper):
                     ValidationResult(
                         is_valid=False,
                         reason="Failed to retrieve submission. This can happen if the URI is invalid, or Reddit is having an issue.",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
@@ -100,6 +109,7 @@ class RedditCustomScraper(Scraper):
                     ValidationResult(
                         is_valid=False,
                         reason="Reddit post/comment not found or is invalid",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
