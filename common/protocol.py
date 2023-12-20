@@ -18,11 +18,30 @@
 import bittensor as bt
 import pydantic
 from common import constants
-from common.data import DataEntityBucket, DataEntity, DataEntityBucketId
-from typing import List, Optional
+from common.data import (
+    CompressedEntityBucket,
+    CompressedMinerIndex,
+    DataEntityBucket,
+    DataEntity,
+    DataEntityBucketId,
+    DataSource,
+)
+from typing import Dict, List, Optional
+
+from common.pydantic_dict_encoder import PydanticDictEncodersMixin
 
 
-class GetMinerIndex(bt.Synapse):
+class BaseProtocol(bt.Synapse):
+    class Config:
+        arbitrary_types_allowed = True
+        validate_assignment = True
+
+    version: int = pydantic.Field(
+        description="Protocol version", default=constants.PROTOCOL_VERSION
+    )
+
+
+class GetMinerIndex(BaseProtocol):
     """
     Protocol by which Validators can retrieve the Index from a Miner.
 
@@ -31,6 +50,7 @@ class GetMinerIndex(bt.Synapse):
     """
 
     # Required request output, filled by receiving axon.
+    # TODO: Deprecate in favor of the compressed index.
     data_entity_buckets: List[DataEntityBucket] = pydantic.Field(
         title="data_entity_buckets",
         description="All of the data entity buckets that a Miner can serve.",
@@ -40,8 +60,15 @@ class GetMinerIndex(bt.Synapse):
         default_factory=list,
     )
 
+    compressed_index: Optional[CompressedMinerIndex] = pydantic.Field(
+        description="The compressed index of the Miner.",
+        frozen=False,
+        repr=False,
+        default=None,
+    )
 
-class GetDataEntityBucket(bt.Synapse):
+
+class GetDataEntityBucket(PydanticDictEncodersMixin, BaseProtocol):
     """
     Protocol by which Validators can retrieve the DataEntities of a Bucket from a Miner.
 
@@ -50,12 +77,21 @@ class GetDataEntityBucket(bt.Synapse):
     - data_entities: A list of DataEntity objects that make up the requested DataEntityBucket.
     """
 
+    class Config:
+        # Sadly, we have to write our own dictionary encoders since bittensor uses .dict() instead of .json().
+        # Using jsonify_dict_encode did not work because nested classes would be json serialized first into a string
+        # rather than being added as a nested dictionary. Thus deserialization was failing.
+        dict_encoders = {
+            DataEntityBucketId: DataEntityBucketId.todict,
+            DataEntity: DataEntity.todict,
+        }
+        jsonify_dict_encode = False
+
     # Required request input, filled by sending dendrite caller.
     data_entity_bucket_id: Optional[DataEntityBucketId] = pydantic.Field(
         title="data_entity_bucket_id",
         description="The identifier for the requested DataEntityBucket.",
         frozen=True,
-        repr=False,
         default=None,
     )
 

@@ -88,10 +88,21 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.test_storage.store_data_entities([entity1, entity2])
 
         # Update the contents
-        entity1.content = bytes(50)
-        entity1.content_size_bytes = 50
-        entity2.content = bytes(100)
-        entity2.content_size_bytes = 100
+        entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=now,
+            source=DataSource.REDDIT,
+            content=bytes(50),
+            content_size_bytes=50,
+        )
+        entity2 = DataEntity(
+            uri="test_entity_2",
+            datetime=now,
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(100),
+            content_size_bytes=100,
+        )
 
         # Store the entities again.
         self.test_storage.store_data_entities([entity1, entity2])
