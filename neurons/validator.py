@@ -210,8 +210,7 @@ class Validator(BaseNeuron):
                     ValidationResult(
                         is_valid=False,
                         reason="Response failed or is invalid",
-                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
-                        # Since there is just one failed result though the normalization by size doesn't matter.
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
             )
@@ -237,8 +236,7 @@ class Validator(BaseNeuron):
                     ValidationResult(
                         is_valid=False,
                         reason=reason,
-                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
-                        # Since there is just one failed result though the normalization by size doesn't matter.
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
             )
@@ -256,8 +254,7 @@ class Validator(BaseNeuron):
                     ValidationResult(
                         is_valid=False,
                         reason="Duplicate entities found.",
-                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
-                        # Since there is just one failed result though the normalization by size doesn't matter.
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
             )
