@@ -120,8 +120,17 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         return label_id
 
+    def _insert_labels(self, labels: Set[str]):
+        """Stores labels creating new unique ids if they have not been encountered yet."""
+        cursor = self.connection.cursor()
+
+        vals = [[label] for label in labels]
+
+        cursor.executemany("INSERT IGNORE INTO Label (labelValue) VALUES (%s)", vals)
+        self.connection.commit()
+
     def _get_label_value_to_id_dict(self) -> Dict[str, int]:
-        """Gets an encountered label or stores a new one returning this Validator's unique id for it"""
+        """Gets a dictionary map for all label values to this Validator's unique id for it."""
 
         label_value_to_id_dict = {}
 
@@ -136,6 +145,10 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         return label_value_to_id_dict
 
+    def _label_value_parse(self, label: Optional[DataLabel]) -> str:
+        """Parses the value to store in the database out of an Optional DataLabel."""
+        return "NULL" if (label is None) else label.value
+
     def upsert_miner_index(self, index: MinerIndex):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
@@ -149,26 +162,25 @@ class MysqlValidatorStorage(ValidatorStorage):
         # Upsert this Validator's minerId for the specified hotkey.
         miner_id = self._upsert_miner(index.hotkey, now_str)
 
+        # Ensure that all the label ids in the upcoming entity buckets are known for this Validator.
+        label_values = set()
+
+        for data_entity_bucket in index.data_entity_buckets:
+            label = self._label_value_parse(data_entity_bucket.id.label)
+            label_values.add(label)
+
+        self._insert_labels(label_values)
+
         # Get all label ids for use in mapping.
         label_value_to_id_dict = self._get_label_value_to_id_dict()
+
         # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []
         for data_entity_bucket in index.data_entity_buckets:
-            label = (
-                "NULL"
-                if (data_entity_bucket.id.label is None)
-                else data_entity_bucket.id.label.value
-            )
+            label = self._label_value_parse(data_entity_bucket.id.label)
 
-            # Get or insert this Validator's labelId for the specified label.
-            label_id = -1
-            if label in label_value_to_id_dict:
-                # Use the already known value if available.
-                label_id = label_value_to_id_dict[label]
-            else:
-                # Else add to the label table and use that id.
-                label_id = self._get_or_insert_label(label)
-                label_value_to_id_dict[label] = label_id
+            # Get or this Validator's labelId for the specified label.
+            label_id = label_value_to_id_dict[label]
 
             values.append(
                 [
