@@ -46,7 +46,10 @@ class MysqlValidatorStorage(ValidatorStorage):
     def __init__(self, host: str, user: str, password: str, database: str):
         # Get the connection to the user-created MySQL database.
         self.connection = mysql.connector.connect(
-            host=host, user=user, password=password, database=database
+            host=host,
+            user=user,
+            password=password,
+            database=database,
         )
 
         cursor = self.connection.cursor()
@@ -59,6 +62,12 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         # Create the Label table if it doesn't exist
         cursor.execute(MysqlValidatorStorage.LABEL_TABLE_CREATE)
+
+        # Update the database to use the correct collation for accent sensitivity.
+        # This can't escape the database name as it is part of the command, but it is against your own database.
+        cursor.execute("ALTER DATABASE " + database + " COLLATE utf8mb4_0900_as_ci;")
+
+        self.connection.commit()
 
         # Lock to avoid concurrency issues on clearing and inserting an index.
         self.upsert_miner_index_lock = threading.Lock()
