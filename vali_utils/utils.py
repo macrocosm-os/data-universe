@@ -98,10 +98,7 @@ def are_entities_valid(
 
         tz_datetime = entity.datetime
         # If the data entity does not specify any timezone information then use UTC for validation checks.
-        if (
-            tz_datetime.tzinfo is None
-            or tz_datetime.tzinfo.utcoffset(tz_datetime.tzinfo) is None
-        ):
+        if tz_datetime.tzinfo is None:
             tz_datetime = tz_datetime.replace(tzinfo=dt.timezone.utc)
 
         if not expected_datetime_range.contains(tz_datetime):
