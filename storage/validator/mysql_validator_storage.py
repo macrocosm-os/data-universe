@@ -189,17 +189,21 @@ class MysqlValidatorStorage(ValidatorStorage):
             label = self._label_value_parse(data_entity_bucket.id.label)
 
             # Get or this Validator's labelId for the specified label.
-            label_id = label_value_to_id_dict[label]
+            try:
+                label_id = label_value_to_id_dict[label]
 
-            values.append(
-                [
-                    miner_id,
-                    data_entity_bucket.id.time_bucket.id,
-                    int(data_entity_bucket.id.source),
-                    label_id,
-                    data_entity_bucket.size_bytes,
-                ]
-            )
+                values.append(
+                    [
+                        miner_id,
+                        data_entity_bucket.id.time_bucket.id,
+                        int(data_entity_bucket.id.source),
+                        label_id,
+                        data_entity_bucket.size_bytes,
+                    ]
+                )
+            except:
+                # In the case that we fail to get a label (due to unsupported characters) we drop just that one bucket.
+                pass
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.

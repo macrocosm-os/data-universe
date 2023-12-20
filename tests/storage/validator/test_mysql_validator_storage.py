@@ -206,12 +206,18 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         # Insert multiples labels.
         label_id1 = self.test_storage._get_or_insert_label("#mineria")
         label_id2 = self.test_storage._get_or_insert_label("#minería")
+        label_id3 = self.test_storage._get_or_insert_label("#🌌")
+        # label_id4 = self.test_storage._get_or_insert_label("#jewelry")
+        # label_id5 = self.test_storage._get_or_insert_label("#𝙅𝙚𝙬𝙚𝙡𝙧𝙮")
 
         # Get the map and confirm we see all the keys.
         label_value_to_id_dict = self.test_storage._get_label_value_to_id_dict()
 
         self.assertEqual(label_id1, label_value_to_id_dict["#mineria"])
         self.assertEqual(label_id2, label_value_to_id_dict["#minería"])
+        self.assertEqual(label_id3, label_value_to_id_dict["#🌌"])
+        # self.assertEqual(label_id5, label_value_to_id_dict["#jewelry"])
+        # self.assertEqual(label_id5, label_value_to_id_dict["#𝙅𝙚𝙬𝙚𝙡𝙧𝙮"])
 
     def test_upsert_miner_index_insert_index(self):
         """Tests that we can insert a miner index"""
@@ -243,6 +249,37 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)
         cursor.execute("SELECT * FROM MinerIndex")
         self.assertEqual(cursor.rowcount, 2)
+
+    def test_upsert_miner_index_insert_index_unhandled_special_character(self):
+        """Tests that we can insert a miner index with an unhandled special character"""
+        # Create two DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        bucket_1 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="#𝙅𝙚𝙬𝙚𝙡𝙧𝙮"),
+            ),
+            size_bytes=10,
+        )
+
+        bucket_2 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
+            ),
+            size_bytes=50,
+        )
+
+        # Create the index containing the buckets.
+        index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
+
+        # Store the index.
+        self.test_storage.upsert_miner_index(index)
+
+        # Confirm we have one row in the index.
+        cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)
+        cursor.execute("SELECT * FROM MinerIndex")
+        self.assertEqual(cursor.rowcount, 1)
 
     def test_upsert_miner_index_insert_index_with_duplicates(self):
         """Tests that we can insert a miner index with duplicates, taking the last one."""
