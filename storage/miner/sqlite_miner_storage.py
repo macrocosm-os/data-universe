@@ -157,7 +157,7 @@ class SqliteMinerStorage(MinerStorage):
                         data_entity.uri,
                         data_entity.datetime,
                         time_bucket_id,
-                        data_entity.source,
+                        int(data_entity.source),
                         label,
                         data_entity.content,
                         data_entity.content_size_bytes,
@@ -188,7 +188,7 @@ class SqliteMinerStorage(MinerStorage):
                         WHERE timeBucketId = ? AND source = ? AND label = ?""",
                 [
                     data_entity_bucket_id.time_bucket.id,
-                    data_entity_bucket_id.source,
+                    int(data_entity_bucket_id.source),
                     label,
                 ],
             )
@@ -206,21 +206,23 @@ class SqliteMinerStorage(MinerStorage):
                     # If we would go over the max DataEntityBucket size instead return early.
                     return data_entities
                 else:
+                    # Add the optional Label field if not null.
+                    label = None
+                    if row["label"] != "NULL":
+                        label = DataLabel(value=row["label"])
+
                     # Construct the new DataEntity with all non null columns.
                     data_entity = DataEntity(
                         uri=row["uri"],
                         datetime=row["datetime"],
                         source=DataSource(row["source"]),
                         content=row["content"],
-                        content_size_bytes=row["contentSizeBytes"],
+                        content_size_bytes=int(row["contentSizeBytes"]),
+                        label=label,
                     )
 
-                    # Add the optional Label field if not null.
-                    if row["label"] != "NULL":
-                        data_entity.label = DataLabel(value=row["label"])
-
                     data_entities.append(data_entity)
-                    running_size += row["contentSizeBytes"]
+                    running_size += int(row["contentSizeBytes"])
 
             # If we reach the end of the cursor then return all of the data entities for this DataEntityBucket.
             bt.logging.trace(
@@ -265,17 +267,19 @@ class SqliteMinerStorage(MinerStorage):
                 )
 
                 # Construct the new DataEntityBucket with all non null columns.
+                label = None
+                # Add the optional Label field if not null.
+                if row["label"] != "NULL":
+                    label = DataLabel(value=row["label"])
+
                 data_entity_bucket_id = DataEntityBucketId(
                     time_bucket=TimeBucket(id=row["timeBucketId"]),
                     source=DataSource(row["source"]),
+                    label=label,
                 )
 
-                # Add the optional Label field if not null.
-                if row["label"] != "NULL":
-                    data_entity_bucket_id.label = DataLabel(value=row["label"])
-
                 data_entity_bucket = DataEntityBucket(
-                    id=data_entity_bucket_id, size_bytes=size
+                    id=data_entity_bucket_id, size_bytes=int(size)
                 )
 
                 data_entity_buckets.append(data_entity_bucket)

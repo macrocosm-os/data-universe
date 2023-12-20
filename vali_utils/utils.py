@@ -2,13 +2,17 @@ import bittensor as bt
 import hashlib
 import random
 from typing import List, Optional, Tuple, Type
+from common import constants
 from common.data import (
+    CompressedMinerIndex,
     DataEntity,
     DataEntityBucket,
     DateRange,
+    MinerIndex,
     ScorableMinerIndex,
     TimeBucket,
 )
+from common.protocol import GetMinerIndex
 
 
 def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
@@ -132,7 +136,7 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
     return True
 
 
-def get_single_successul_response(
+def get_single_successful_response(
     responses: List[bt.Synapse], expected_class: Type
 ) -> Optional[bt.Synapse]:
     """Helper function to extract the single response from a list of responses, if the response is valid.
@@ -148,3 +152,37 @@ def get_single_successul_response(
     ):
         return responses[0]
     return None
+
+
+def get_miner_index_from_response(response: GetMinerIndex, hotkey: str) -> MinerIndex:
+    """Gets a MinerIndex from a GetMinerIndex response."""
+    assert response.is_success
+
+    # If the uncompressed index is available, use it.
+    if response.data_entity_buckets:
+        index = MinerIndex(
+            hotkey=hotkey,
+            data_entity_buckets=response.data_entity_buckets,
+        )
+    elif response.compressed_index:
+        # Otherwise, decompress the compressed index.
+        index = CompressedMinerIndex.decompress(response.compressed_index, hotkey)
+    else:
+        raise ValueError("GetMinerIndex response has no index.")
+
+    # Now perform basic validation.
+    if (
+        len(index.data_entity_buckets)
+        > constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+    ):
+        raise ValueError(
+            f"Miner index has {len(index.data_entity_buckets)} buckets. This exceeds the maximum of {constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX} buckets."
+        )
+
+    for bucket in index.data_entity_buckets:
+        if bucket.size_bytes > constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
+            raise ValueError(
+                f"Miner index bucket {bucket.id} has size {bucket.size_bytes} bytes. This exceeds the maximum of {constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES} bytes."
+            )
+
+    return index

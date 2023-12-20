@@ -128,15 +128,28 @@ class Validator(BaseNeuron):
             timeout=300,
         )
 
-        miner_index = vali_utils.get_single_successul_response(responses, GetMinerIndex)
-        if not miner_index:
+        get_miner_index_response = vali_utils.get_single_successful_response(
+            responses, GetMinerIndex
+        )
+        if not get_miner_index_response:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
             # Miner failed to update the index. Use the latest index, if present.
             return self._get_miner_index(hotkey)
 
-        # Miner successfully updated the index. Store it and return it.
+        # Validate the index.
+        miner_index = None
+        try:
+            miner_index = vali_utils.get_miner_index_from_response(
+                get_miner_index_response, hotkey
+            )
+        except ValueError as e:
+            bt.logging.debug(f"{hotkey}: Miner returned an invalid index. Reason: {e}")
+            # Miner returned an invalid index. Use the latest index, if present.
+            return self._get_miner_index(hotkey)
+
+        # Miner replied with a valid index. Store it and return it.
         bt.logging.trace(
             f"{hotkey}: Got new miner index. Size={len(miner_index.data_entity_buckets)}"
         )
@@ -196,7 +209,7 @@ class Validator(BaseNeuron):
             timeout=180,
         )
 
-        data_entity_bucket = vali_utils.get_single_successul_response(
+        data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
         )
         # Treat a failed response the same way we treat a failed validation.
