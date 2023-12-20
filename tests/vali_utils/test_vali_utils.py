@@ -18,6 +18,7 @@ from common.data import (
 )
 from common.protocol import GetMinerIndex
 import vali_utils.utils as vali_utils
+import pytz
 
 
 class TestValiUtils(unittest.TestCase):
@@ -317,6 +318,75 @@ class TestValiUtils(unittest.TestCase):
         data_entity_bucket = DataEntityBucket(
             id=DataEntityBucketId(
                 time_bucket=TimeBucket.from_datetime(datetime),
+                source=DataSource.REDDIT,
+                label=label,
+            ),
+            size_bytes=10,
+        )
+        entities = [
+            DataEntity(
+                uri="http://1",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+            DataEntity(
+                uri="http://2",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+        ]
+        valid, _ = vali_utils.are_entities_valid(entities, data_entity_bucket)
+        self.assertTrue(valid)
+
+    def test_are_entities_valid_non_utc_timezones(self):
+        """Tests are_entities_valid with different timezones."""
+        datetime = dt.datetime(
+            2023, 12, 10, 12, 1, 0, tzinfo=pytz.timezone("America/Los_Angeles")
+        )
+        label = DataLabel(value="label")
+        data_entity_bucket = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(datetime),
+                source=DataSource.REDDIT,
+                label=label,
+            ),
+            size_bytes=10,
+        )
+        entities = [
+            DataEntity(
+                uri="http://1",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+            DataEntity(
+                uri="http://2",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"12345",
+                content_size_bytes=5,
+            ),
+        ]
+        valid, _ = vali_utils.are_entities_valid(entities, data_entity_bucket)
+        self.assertTrue(valid)
+
+    def test_are_entities_valid_no_timezones_default_utc(self):
+        """Tests are_entities_valid with no timezones."""
+        datetime_utc = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
+        datetime = dt.datetime(2023, 12, 10, 12, 1, 0)
+        label = DataLabel(value="label")
+        data_entity_bucket = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(datetime_utc),
                 source=DataSource.REDDIT,
                 label=label,
             ),
