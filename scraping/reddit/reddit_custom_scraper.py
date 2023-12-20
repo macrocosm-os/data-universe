@@ -90,7 +90,9 @@ class RedditCustomScraper(Scraper):
                         # Parse the response.
                         content = self._best_effort_parse_comment(comment)
             except Exception as e:
-                bt.logging.error(f"Failed to validate entity: {traceback.format_exc()}")
+                bt.logging.error(
+                    f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}"
+                )
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
                 # one caused by malicious input. In my own testing I was able to make the request timeout by
                 # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
