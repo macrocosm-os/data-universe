@@ -157,6 +157,8 @@ class TestMinerScorer(unittest.TestCase):
         shady_miner = 1
         # The dishonest always fails validation.
         dishonest_miner = 2
+        # The empty miner always has 0 credibility on validation.
+        empty_miner = 3
 
         # Content size bytes validated do not need to match the scored bytes. They are just used for relative
         # credibility weighting.
@@ -172,6 +174,10 @@ class TestMinerScorer(unittest.TestCase):
             ValidationResult(is_valid=False, content_size_bytes_validated=100),
             ValidationResult(is_valid=False, content_size_bytes_validated=900),
         ]
+        empty_validation = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=0),
+            ValidationResult(is_valid=False, content_size_bytes_validated=0),
+        ]
         for _ in range(20):
             self.scorer.on_miner_evaluated(
                 honest_miner, self.scorable_index, honest_validation
@@ -182,6 +188,9 @@ class TestMinerScorer(unittest.TestCase):
             self.scorer.on_miner_evaluated(
                 dishonest_miner, self.scorable_index, dishonest_validation
             )
+            self.scorer.on_miner_evaluated(
+                empty_miner, self.scorable_index, empty_validation
+            )
 
         scores = self.scorer.get_scores()
         # Expect the honest miner to have scored more than 10x the shady miner.
@@ -191,6 +200,8 @@ class TestMinerScorer(unittest.TestCase):
         )
         # Expect the dishonest miner to have scored ~0.
         self.assertAlmostEqual(scores[dishonest_miner].item(), 0.0, delta=5)
+        # Expect the empty miner to have scored ~0.
+        self.assertAlmostEqual(scores[empty_miner].item(), 0.0, delta=5)
 
     def test_on_miner_evaluated_verify_credibility_impacts_score(self):
         """Compares miners with varying levels of "honesty" as measured by the validation results, to ensure the relative
