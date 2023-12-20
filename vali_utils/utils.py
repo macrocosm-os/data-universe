@@ -2,6 +2,7 @@ import bittensor as bt
 import hashlib
 import random
 from typing import List, Optional, Tuple, Type
+import datetime as dt
 from common import constants
 from common.data import (
     CompressedMinerIndex,
@@ -97,7 +98,16 @@ def are_entities_valid(
                 False,
                 f"Entity label {entity.label} does not match data_entity_bucket label {data_entity_bucket.id.label}",
             )
-        if not expected_datetime_range.contains(entity.datetime):
+
+        tz_datetime = entity.datetime
+        # If the data entity does not specify any timezone information then use UTC for validation checks.
+        if (
+            tz_datetime.tzinfo is None
+            or tz_datetime.tzinfo.utcoffset(tz_datetime.tzinfo) is None
+        ):
+            tz_datetime = tz_datetime.replace(tzinfo=dt.timezone.utc)
+
+        if not expected_datetime_range.contains(tz_datetime):
             return (
                 False,
                 f"Entity datetime {entity.datetime} is not in the expected range {expected_datetime_range}",
