@@ -24,6 +24,7 @@ import torch
 import asyncio
 import threading
 import time
+import datetime as dt
 import os
 import common.utils as utils
 import bittensor as bt
@@ -93,7 +94,8 @@ class Validator(BaseNeuron):
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
-        self.lock = asyncio.Lock()
+        self.lock = threading.RLock()
+        self.last_eval_time = dt.datetime.utcnow()
         self.is_setup = False
 
     def neuron_type(self) -> NeuronType:
@@ -154,6 +156,17 @@ class Validator(BaseNeuron):
             hotkey=hotkey, valid_miners=set(valid_miners)
         )
 
+    def _on_start_miner_eval(self):
+        with self.lock:
+            self.last_eval_time = dt.datetime.utcnow()
+
+    def is_healthy(self) -> bool:
+        """Returns true if the validator is healthy and is evaluating Miners."""
+        with self.lock:
+            return dt.datetime.utcnow() - self.last_eval_time < datetime.timedelta(
+                minutes=35
+            )
+
     # TODO: Pull this out into a separate MinerEvaluator to make this more testable.
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
@@ -167,6 +180,8 @@ class Validator(BaseNeuron):
         """
         axon_info = self.metagraph.axons[uid]
         hotkey = self.metagraph.hotkeys[uid]
+
+        self._on_start_miner_eval()
 
         bt.logging.trace(f"{hotkey}: Evaluating miner")
 
@@ -583,5 +598,10 @@ class Validator(BaseNeuron):
 if __name__ == "__main__":
     with Validator() as validator:
         while True:
+            if not validator.is_healthy():
+                bt.logging.error("Validator is unhealthy. Restarting")
+                # Sys.exit() may not shutdown the process because it'll wait for other threads
+                # to complete. Use os._exit() instead.
+                os._exit(1)
             bt.logging.trace("Validator running...", time.time())
             time.sleep(60)
