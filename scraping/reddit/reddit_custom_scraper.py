@@ -28,7 +28,7 @@ class RedditCustomScraper(Scraper):
     Scrapes Reddit data using the a personal reddit account.
     """
 
-    USER_AGENT = "User-Agent: python:data-universe-app:v1"
+    USER_AGENT = "User-Agent: python: "
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
@@ -41,7 +41,13 @@ class RedditCustomScraper(Scraper):
         for entity in entities:
             # First check the URI is a valid Reddit URL.
             if not is_valid_reddit_url(entity.uri):
-                results.append(ValidationResult(is_valid=False, reason="Invalid URI"))
+                results.append(
+                    ValidationResult(
+                        is_valid=False,
+                        reason="Invalid URI",
+                        content_size_bytes_validated=entity.content_size_bytes,
+                    )
+                )
                 continue
 
             # Parse out the RedditContent object that we're validating
@@ -54,7 +60,9 @@ class RedditCustomScraper(Scraper):
                 )
                 results.append(
                     ValidationResult(
-                        is_valid=False, reason="Failed to decode data entity"
+                        is_valid=False,
+                        reason="Failed to decode data entity",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
@@ -68,7 +76,8 @@ class RedditCustomScraper(Scraper):
                     client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
                     username=os.getenv("REDDIT_USERNAME"),
                     password=os.getenv("REDDIT_PASSWORD"),
-                    user_agent=RedditCustomScraper.USER_AGENT,
+                    user_agent=RedditCustomScraper.USER_AGENT
+                    + os.getenv("REDDIT_USERNAME"),
                 ) as reddit:
                     if reddit_content_to_verify.data_type == RedditDataType.POST:
                         submission = await reddit.submission(
@@ -81,7 +90,9 @@ class RedditCustomScraper(Scraper):
                         # Parse the response.
                         content = self._best_effort_parse_comment(comment)
             except Exception as e:
-                bt.logging.error(f"Failed to validate entity: {traceback.format_exc()}")
+                bt.logging.error(
+                    f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}"
+                )
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
                 # one caused by malicious input. In my own testing I was able to make the request timeout by
                 # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
@@ -90,6 +101,7 @@ class RedditCustomScraper(Scraper):
                     ValidationResult(
                         is_valid=False,
                         reason="Failed to retrieve submission. This can happen if the URI is invalid, or Reddit is having an issue.",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
@@ -99,6 +111,7 @@ class RedditCustomScraper(Scraper):
                     ValidationResult(
                         is_valid=False,
                         reason="Reddit post/comment not found or is invalid",
+                        content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue

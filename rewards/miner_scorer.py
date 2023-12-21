@@ -152,10 +152,20 @@ class MinerScorer:
             len(validation_results) > 0
         ), "Must be provided at least 1 validation result."
 
-        # Use EMA to update the miner's credibility.
-        credibility = sum(result.is_valid for result in validation_results) / float(
-            len(validation_results)
+        # Weight the current set of validation_results by the total content size validaed
+        total_bytes_validated = sum(
+            result.content_size_bytes_validated for result in validation_results
         )
+
+        credibility = 0
+
+        if total_bytes_validated > 0:
+            credibility = sum(
+                result.is_valid * result.content_size_bytes_validated
+                for result in validation_results
+            ) / float(total_bytes_validated)
+
+        # Use EMA to update the miner's credibility.
         self.miner_credibility[uid] = (
             self.alpha * credibility + (1 - self.alpha) * self.miner_credibility[uid]
         )

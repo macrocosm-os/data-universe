@@ -164,10 +164,8 @@ class SqliteMinerStorage(MinerStorage):
                     ]
                 )
 
-            # Insert ignoring duplicate keys.
-            cursor.executemany(
-                "INSERT OR IGNORE INTO DataEntity VALUES (?,?,?,?,?,?,?)", values
-            )
+            # Insert overwriting duplicate keys (in case of updated content).
+            cursor.executemany("REPLACE INTO DataEntity VALUES (?,?,?,?,?,?,?)", values)
 
             # Commit the insert.
             connection.commit()
@@ -246,11 +244,12 @@ class SqliteMinerStorage(MinerStorage):
                 """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
                         WHERE timeBucketId >= ?
                         GROUP BY timeBucketId, source, label
+                        ORDER BY bucketSize DESC
                         LIMIT ?
                         """,
                 [
                     oldest_time_bucket_id,
-                    constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+                    200000,  # Set to largest 200k buckets until CompressedDataIndex is available to return.
                 ],
             )
 

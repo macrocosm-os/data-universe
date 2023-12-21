@@ -24,6 +24,7 @@ import torch
 import asyncio
 import threading
 import time
+import datetime as dt
 import os
 import common.utils as utils
 import bittensor as bt
@@ -93,7 +94,8 @@ class Validator(BaseNeuron):
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
-        self.lock = asyncio.Lock()
+        self.lock = threading.RLock()
+        self.last_eval_time = dt.datetime.utcnow()
         self.is_setup = False
 
     def neuron_type(self) -> NeuronType:
@@ -154,6 +156,17 @@ class Validator(BaseNeuron):
             hotkey=hotkey, valid_miners=set(valid_miners)
         )
 
+    def _on_start_miner_eval(self):
+        with self.lock:
+            self.last_eval_time = dt.datetime.utcnow()
+
+    def is_healthy(self) -> bool:
+        """Returns true if the validator is healthy and is evaluating Miners."""
+        with self.lock:
+            return dt.datetime.utcnow() - self.last_eval_time < datetime.timedelta(
+                minutes=35
+            )
+
     # TODO: Pull this out into a separate MinerEvaluator to make this more testable.
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
@@ -167,6 +180,8 @@ class Validator(BaseNeuron):
         """
         axon_info = self.metagraph.axons[uid]
         hotkey = self.metagraph.hotkeys[uid]
+
+        self._on_start_miner_eval()
 
         bt.logging.trace(f"{hotkey}: Evaluating miner")
 
@@ -208,7 +223,9 @@ class Validator(BaseNeuron):
                 index,
                 [
                     ValidationResult(
-                        is_valid=False, reason="Response failed or is invalid"
+                        is_valid=False,
+                        reason="Response failed or is invalid",
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
             )
@@ -228,7 +245,15 @@ class Validator(BaseNeuron):
                 f"Miner {hotkey} failed basic entity validation with reason {reason}."
             )
             self.scorer.on_miner_evaluated(
-                uid, index, [ValidationResult(is_valid=False, reason=reason)]
+                uid,
+                index,
+                [
+                    ValidationResult(
+                        is_valid=False,
+                        reason=reason,
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
+                    )
+                ],
             )
             return
 
@@ -240,7 +265,13 @@ class Validator(BaseNeuron):
             self.scorer.on_miner_evaluated(
                 uid,
                 index,
-                [ValidationResult(is_valid=False, reason="Duplicate entities found.")],
+                [
+                    ValidationResult(
+                        is_valid=False,
+                        reason="Duplicate entities found.",
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
+                    )
+                ],
             )
             return
 
@@ -298,8 +329,16 @@ class Validator(BaseNeuron):
             else:
                 uids_to_eval.add(uid)
 
-        coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
-        await asyncio.gather(*coroutines)
+        tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
+        done, pending = await asyncio.wait(tasks, timeout=300)
+
+        for future in pending:
+            future.cancel()  # Cancel unfinished tasks.
+
+        if pending:
+            bt.logging.trace(
+                f"Validator run next eval batch timed out on the following calls: {pending}"
+            )
 
         # Run the next evaluation batch after waiting the appropriate amount of time.
         return seconds_until_next_batch
@@ -559,5 +598,10 @@ class Validator(BaseNeuron):
 if __name__ == "__main__":
     with Validator() as validator:
         while True:
+            if not validator.is_healthy():
+                bt.logging.error("Validator is unhealthy. Restarting")
+                # Sys.exit() may not shutdown the process because it'll wait for other threads
+                # to complete. Use os._exit() instead.
+                os._exit(1)
             bt.logging.trace("Validator running...", time.time())
             time.sleep(60)

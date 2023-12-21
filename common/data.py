@@ -72,6 +72,12 @@ class DataSource(IntEnum):
 
     REDDIT = 1
     X = 2
+    # Additional enum values reserved for yet to be implemented sources.
+    UNKNOWN_3 = 3
+    UNKNOWN_4 = 4
+    UNKNOWN_5 = 5
+    UNKNOWN_6 = 6
+    UNKNOWN_7 = 7
 
 
 class DataLabel(StrictBaseModel):
