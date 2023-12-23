@@ -302,36 +302,49 @@ class Validator(BaseNeuron):
         Args:
             block (int): The block at which we started this evaluation.
         """
-        seconds_until_next_batch = 0
 
         # Run in batches of 10.
         # TODO: Maybe make this configurable and run evaluations based on expected throughput
         miners_to_eval = 10
+
+        # Check if the next miner is due an update.
+        next_uid = self.miner_iterator.peek()
+        hotkey = self.metagraph.hotkeys[next_uid]
+        last_evaluated = self.storage.read_miner_last_updated(hotkey)
+        now = datetime.datetime.utcnow()
+        due_update = (
+            last_evaluated is None
+            or (now - last_evaluated) >= Validator.MIN_EVALUATION_PERIOD
+        )
+
+        # If the next miner is not due an update, then all subsequent miners are also not due an update.
+        # So we wait until this miner is due an update.
+        if not due_update:
+            return (
+                last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
+            ).total_seconds()
+
+        # Otherwise, execute the next batch of evaluations and skip any miners who were evaluated recently.
         # Use a set in case the network has fewer than 10 miners.
         uids_to_check = {next(self.miner_iterator) for _ in range(miners_to_eval)}
         uids_to_eval = set()
 
-        # If any of the miners have been seen recently then it means we have looped through our iterator and should wait.
+        # Evaluate all miners in the batch who are due an update.
         for uid in uids_to_check:
             hotkey = self.metagraph.hotkeys[uid]
             last_evaluated = self.storage.read_miner_last_updated(hotkey)
-            now = datetime.datetime.utcnow()
 
             # If we have aleady evaluated this miner recently then do not evaluate it.
             if (
-                last_evaluated
-                and (now - last_evaluated) < Validator.MIN_EVALUATION_PERIOD
+                not last_evaluated
+                or (now - last_evaluated) >= Validator.MIN_EVALUATION_PERIOD
             ):
-                # Set the number of seconds until we expect to be able to run the next evaluation batch.
-                # If multiple miners in this batch had already been seen just use the last one for reference.
-                seconds_until_next_batch = (
-                    last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
-                ).total_seconds()
-            else:
                 uids_to_eval.add(uid)
 
+        assert uids_to_eval, "Expected at least 1 miner to evaluate"
+
         coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
-        done, pending = await asyncio.wait(coroutines, timeout=300)
+        _, pending = await asyncio.wait(coroutines, timeout=300)
 
         for future in pending:
             future.cancel()  # Cancel unfinished tasks.
@@ -341,8 +354,8 @@ class Validator(BaseNeuron):
                 f"Validator run next eval batch timed out on the following calls: {pending}"
             )
 
-        # Run the next evaluation batch after waiting the appropriate amount of time.
-        return seconds_until_next_batch
+        # Run the next evaluation batch immediately.
+        return 0
 
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
@@ -400,16 +413,27 @@ class Validator(BaseNeuron):
                     self.run_next_eval_batch()
                 )
 
+                next_batch_start_time = datetime.datetime.utcnow() + datetime.timedelta(
+                    seconds=next_batch_delay_secs
+                )
+
                 # Maybe sync the metagraph and potentially set weights.
                 self.sync()
 
                 self.step += 1
 
-                if next_batch_delay_secs > 0:
+                wait_time = max(
+                    0,
+                    (
+                        next_batch_start_time - datetime.datetime.utcnow()
+                    ).total_seconds(),
+                )
+
+                if wait_time > 0:
                     bt.logging.debug(
-                        f"Waiting {next_batch_delay_secs} seconds until running next evaluation loop."
+                        f"Waiting {wait_time} seconds until running next evaluation loop."
                     )
-                    time.sleep(next_batch_delay_secs)
+                    time.sleep(wait_time)
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
