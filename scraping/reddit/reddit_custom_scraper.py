@@ -10,6 +10,7 @@ from scraping.reddit.utils import (
     get_time_input,
     get_custom_sort_input,
     normalize_label,
+    normalize_permalink,
 )
 from scraping.reddit.model import RedditContent, RedditDataType
 import traceback
@@ -211,7 +212,8 @@ class RedditCustomScraper(Scraper):
             user = submission.author.name if submission.author else model.DELETED_USER
             content = RedditContent(
                 id=submission.name,
-                url="https://www.reddit.com" + submission.permalink,
+                url="https://www.reddit.com"
+                + normalize_permalink(submission.permalink),
                 username=user,
                 communityName=submission.subreddit_name_prefixed,
                 body=submission.selftext,
@@ -243,7 +245,7 @@ class RedditCustomScraper(Scraper):
             user = comment.author.name if comment.author else model.DELETED_USER
             content = RedditContent(
                 id=comment.name,
-                url="https://www.reddit.com" + comment.permalink,
+                url="https://www.reddit.com" + normalize_permalink(comment.permalink),
                 username=user,
                 communityName=comment.subreddit_name_prefixed,
                 body=comment.body,
