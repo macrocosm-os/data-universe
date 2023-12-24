@@ -196,7 +196,7 @@ class MysqlValidatorStorage(ValidatorStorage):
                     [
                         miner_id,
                         data_entity_bucket.id.time_bucket.id,
-                        int(data_entity_bucket.id.source),
+                        data_entity_bucket.id.source,
                         label_id,
                         data_entity_bucket.size_bytes,
                     ]
@@ -284,24 +284,22 @@ class MysqlValidatorStorage(ValidatorStorage):
             total_content_size_bytes = row["totalContentSize"]
 
             # Score the bytes as the fraction of the total content bytes for that bucket across all valid miners.
-            data_label = None
-            if label != "NULL":
-                data_label = DataLabel(value=label)
-
             data_entity_bucket_id = DataEntityBucketId(
                 time_bucket=TimeBucket(id=row["timeBucketId"]),
                 source=row["source"],
-                label=data_label,
             )
 
+            if label != "NULL":
+                data_entity_bucket_id.label = DataLabel(value=label)
+
             data_entity_bucket = DataEntityBucket(
-                id=data_entity_bucket_id, size_bytes=int(content_size_bytes)
+                id=data_entity_bucket_id, size_bytes=content_size_bytes
             )
             scored_data_entity_bucket = ScorableDataEntityBucket(
                 data_entity_bucket=data_entity_bucket,
-                scorable_bytes=float(
-                    content_size_bytes * content_size_bytes / total_content_size_bytes
-                ),
+                scorable_bytes=content_size_bytes
+                * content_size_bytes
+                / total_content_size_bytes,
             )
 
             # Add the bucket to the list of scored buckets on the overall index.

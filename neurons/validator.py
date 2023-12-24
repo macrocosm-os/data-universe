@@ -24,6 +24,7 @@ import torch
 import asyncio
 import threading
 import time
+import datetime as dt
 import os
 import common.utils as utils
 import bittensor as bt
@@ -93,7 +94,8 @@ class Validator(BaseNeuron):
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
-        self.lock = asyncio.Lock()
+        self.lock = threading.RLock()
+        self.last_eval_time = dt.datetime.utcnow()
         self.is_setup = False
 
     def neuron_type(self) -> NeuronType:
@@ -128,28 +130,15 @@ class Validator(BaseNeuron):
             timeout=300,
         )
 
-        get_miner_index_response = vali_utils.get_single_successful_response(
-            responses, GetMinerIndex
-        )
-        if not get_miner_index_response:
+        miner_index = vali_utils.get_single_successul_response(responses, GetMinerIndex)
+        if not miner_index:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
             # Miner failed to update the index. Use the latest index, if present.
             return self._get_miner_index(hotkey)
 
-        # Validate the index.
-        miner_index = None
-        try:
-            miner_index = vali_utils.get_miner_index_from_response(
-                get_miner_index_response, hotkey
-            )
-        except ValueError as e:
-            bt.logging.debug(f"{hotkey}: Miner returned an invalid index. Reason: {e}")
-            # Miner returned an invalid index. Use the latest index, if present.
-            return self._get_miner_index(hotkey)
-
-        # Miner replied with a valid index. Store it and return it.
+        # Miner successfully updated the index. Store it and return it.
         bt.logging.trace(
             f"{hotkey}: Got new miner index. Size={len(miner_index.data_entity_buckets)}"
         )
@@ -167,6 +156,17 @@ class Validator(BaseNeuron):
             hotkey=hotkey, valid_miners=set(valid_miners)
         )
 
+    def _on_start_miner_eval(self):
+        with self.lock:
+            self.last_eval_time = dt.datetime.utcnow()
+
+    def is_healthy(self) -> bool:
+        """Returns true if the validator is healthy and is evaluating Miners."""
+        with self.lock:
+            return dt.datetime.utcnow() - self.last_eval_time < datetime.timedelta(
+                minutes=35
+            )
+
     # TODO: Pull this out into a separate MinerEvaluator to make this more testable.
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
@@ -180,6 +180,8 @@ class Validator(BaseNeuron):
         """
         axon_info = self.metagraph.axons[uid]
         hotkey = self.metagraph.hotkeys[uid]
+
+        self._on_start_miner_eval()
 
         bt.logging.trace(f"{hotkey}: Evaluating miner")
 
@@ -209,7 +211,7 @@ class Validator(BaseNeuron):
             timeout=180,
         )
 
-        data_entity_bucket = vali_utils.get_single_successful_response(
+        data_entity_bucket = vali_utils.get_single_successul_response(
             responses, GetDataEntityBucket
         )
         # Treat a failed response the same way we treat a failed validation.
@@ -223,8 +225,7 @@ class Validator(BaseNeuron):
                     ValidationResult(
                         is_valid=False,
                         reason="Response failed or is invalid",
-                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
-                        # Since there is just one failed result though the normalization by size doesn't matter.
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
             )
@@ -250,8 +251,7 @@ class Validator(BaseNeuron):
                     ValidationResult(
                         is_valid=False,
                         reason=reason,
-                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
-                        # Since there is just one failed result though the normalization by size doesn't matter.
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
             )
@@ -269,8 +269,7 @@ class Validator(BaseNeuron):
                     ValidationResult(
                         is_valid=False,
                         reason="Duplicate entities found.",
-                        content_size_bytes_validated=data_entity_bucket.content_size_bytes,  # Whole bucket fails.
-                        # Since there is just one failed result though the normalization by size doesn't matter.
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
             )
@@ -623,5 +622,10 @@ class Validator(BaseNeuron):
 if __name__ == "__main__":
     with Validator() as validator:
         while True:
+            if not validator.is_healthy():
+                bt.logging.error("Validator is unhealthy. Restarting")
+                # Sys.exit() may not shutdown the process because it'll wait for other threads
+                # to complete. Use os._exit() instead.
+                os._exit(1)
             bt.logging.trace("Validator running...", time.time())
             time.sleep(60)
