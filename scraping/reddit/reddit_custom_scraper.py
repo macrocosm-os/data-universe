@@ -213,7 +213,7 @@ class RedditCustomScraper(Scraper):
             user = submission.author.name if submission.author else model.DELETED_USER
             content = RedditContent(
                 id=submission.name,
-                url=submission.url,
+                url="https://www.reddit.com" + submission.permalink,
                 username=user,
                 communityName=submission.subreddit_name_prefixed,
                 body=submission.selftext,
