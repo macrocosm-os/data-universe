@@ -3,7 +3,8 @@ import random
 import traceback
 import bittensor as bt
 from typing import Any, Dict, List
-from common.data import DataEntity, DataLabel, DataSource, DateRange
+from common.data import DataEntity, DataLabel, DataSource
+from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunError, ActorRunner, RunConfig
 from scraping.reddit.model import RedditContent, RedditDataType

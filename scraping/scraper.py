@@ -7,7 +7,8 @@ from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, PositiveInt
 
-from common.data import DataEntity, DataLabel, DataSource, DateRange, StrictBaseModel
+from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
+from common.date_range import DateRange
 from storage.miner.miner_storage import MinerStorage
 
 

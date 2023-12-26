@@ -3,7 +3,7 @@ from typing import List
 import torch
 import bittensor as bt
 
-from common.data import ScorableMinerIndex
+from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult
 

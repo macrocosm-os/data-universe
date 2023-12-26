@@ -1,5 +1,8 @@
+import json
+from typing import Type
 import unittest
 import datetime as dt
+import bittensor as bt
 from common.data import (
     DataEntity,
     DataEntityBucketId,
@@ -7,13 +10,31 @@ from common.data import (
     DataSource,
     TimeBucket,
 )
+from common import old_protocol
 
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 
 
+def serialize_like_dendrite(synapse: bt.Synapse) -> str:
+    """Serializes a synapse like a Dendrite would."""
+    d = synapse.dict()
+    return json.dumps(d)
+
+
+def serialize_like_axon(synapse: bt.Synapse) -> str:
+    """Serializes a synapse like an Axon would."""
+    return serialize_like_dendrite(synapse)
+
+
+def deserialize(json_str: str, cls: Type) -> bt.Synapse:
+    """Deserializes the same way a dendrite/axon does."""
+    d = json.loads(json_str)
+    return cls(**d)
+
+
 class TestGetMinerIndex(unittest.TestCase):
-    def test_synapse_serialization(self):
-        """Tests that the protocol messages can be serialized/deserialized for transport."""
+    def test_get_miner_index_old_format_round_trip(self):
+        """Tests that the old miner index format can be serialized/deserialized for transport."""
         request = GetMinerIndex()
         json = request.json()
         print(json)
@@ -23,7 +44,177 @@ class TestGetMinerIndex(unittest.TestCase):
         # Also check that the headers can be constructed.
         request.to_headers()
 
-        # TODO: Add a test for the response.
+        # Now construct a response and check it.
+        response = GetMinerIndex(
+            data_entity_buckets=[
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=TimeBucket(id=5),
+                        label=DataLabel(value="r/bittensor_"),
+                        source=DataSource.REDDIT,
+                    ),
+                    size_bytes=100,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=TimeBucket(id=6),
+                        source=DataSource.X,
+                    ),
+                    size_bytes=200,
+                ),
+            ]
+        )
+
+        serialized = serialize_like_axon(response)
+        deserialized = deserialize(serialized, GetMinerIndex)
+        self.assertEqual(response, deserialized)
+
+    def test_get_miner_index_new_format_round_trip(self):
+        """Tests that the compressed miner index can be serialized/deserialized for transport."""
+
+        request = GetMinerIndex()
+
+        serialized = serialize_like_dendrite(request)
+        deserialized = deserialize(serialized, GetMinerIndex)
+        self.assertEqual(request, deserialized)
+
+        # Also check that the headers can be constructed.
+        request.to_headers()
+
+        # Now construct a response and check it.
+        response = GetMinerIndex(
+            compressed_index_serialized=CompressedMinerIndex(
+                sources={
+                    DataSource.REDDIT.value: [
+                        CompressedEntityBucket(
+                            label="r/bittensor_",
+                            time_bucket_ids=[5, 6],
+                            sizes_bytes=[100, 200],
+                        )
+                    ],
+                    DataSource.X.value: [
+                        CompressedEntityBucket(
+                            time_bucket_ids=[10, 11, 12], sizes_bytes=[300, 400, 500]
+                        ),
+                        CompressedEntityBucket(
+                            label="#bittensor", time_bucket_ids=[5], sizes_bytes=[100]
+                        ),
+                    ],
+                }
+            ).json()
+        )
+
+        serialized = serialize_like_axon(response)
+        deserialized = deserialize(serialized, GetMinerIndex)
+        self.assertEqual(response, deserialized)
+
+    def test_old_miner_new_vali_round_trip(self):
+        """Verifies round trip communication betwee a new vali and an old miner"""
+        request = GetMinerIndex()
+
+        serialized = serialize_like_dendrite(request)
+        deserialized = deserialize(serialized, old_protocol.GetMinerIndex)
+        # We can't check equality because the new GetMinerIndex includes a version field.
+
+        # Now construct a response from the old miner and deserialize it into the new format.
+        response = old_protocol.GetMinerIndex(
+            data_entity_buckets=[
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=TimeBucket(id=5),
+                        label=DataLabel(value="r/bittensor_"),
+                        source=DataSource.REDDIT,
+                    ),
+                    size_bytes=100,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=TimeBucket(id=6),
+                        source=DataSource.X,
+                    ),
+                    size_bytes=200,
+                ),
+            ]
+        )
+
+        serialized = serialize_like_axon(response)
+        deserialized = deserialize(serialized, GetMinerIndex)
+        self.assertEqual(2, len(deserialized.data_entity_buckets))
+        self.assertEqual(
+            DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket(id=5),
+                    label=DataLabel(value="r/bittensor_"),
+                    source=DataSource.REDDIT,
+                ),
+                size_bytes=100,
+            ),
+            deserialized.data_entity_buckets[0],
+        )
+        self.assertEqual(
+            DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket(id=6),
+                    source=DataSource.X,
+                ),
+                size_bytes=200,
+            ),
+            deserialized.data_entity_buckets[1],
+        )
+
+    def test_new_miner_old_vali_round_trip(self):
+        """Verifies round trip communication betwee a new miner and an old vali"""
+        request = old_protocol.GetMinerIndex()
+
+        serialized = serialize_like_dendrite(request)
+        deserialized = deserialize(serialized, GetMinerIndex)
+        # We can't check equality because the new GetMinerIndex includes a version field.
+
+        # Now construct a response from the old miner and deserialize it into the new format.
+        response = GetMinerIndex(
+            data_entity_buckets=[
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=TimeBucket(id=5),
+                        label=DataLabel(value="r/bittensor_"),
+                        source=DataSource.REDDIT,
+                    ),
+                    size_bytes=100,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=TimeBucket(id=6),
+                        source=DataSource.X,
+                    ),
+                    size_bytes=200,
+                ),
+            ]
+        )
+
+        serialized = serialize_like_axon(response)
+        deserialized = deserialize(serialized, old_protocol.GetMinerIndex)
+        self.assertEqual(2, len(deserialized.data_entity_buckets))
+        self.assertEqual(
+            DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket(id=5),
+                    label=DataLabel(value="r/bittensor_"),
+                    source=DataSource.REDDIT,
+                ),
+                size_bytes=100,
+            ),
+            deserialized.data_entity_buckets[0],
+        )
+        self.assertEqual(
+            DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket(id=6),
+                    source=DataSource.X,
+                ),
+                size_bytes=200,
+            ),
+            deserialized.data_entity_buckets[1],
+        )
 
 
 class TestGetDataEntityBucket(unittest.TestCase):

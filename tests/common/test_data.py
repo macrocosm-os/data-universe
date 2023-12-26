@@ -1,6 +1,20 @@
 import datetime as dt
+import random
+import string
+import time
 
-from common.data import DataSource, TimeBucket
+from common import constants, utils
+
+from common.data import (
+    CompressedEntityBucket,
+    CompressedMinerIndex,
+    DataEntityBucket,
+    DataEntityBucketId,
+    DataLabel,
+    DataSource,
+    MinerIndex,
+    TimeBucket,
+)
 import unittest
 
 
@@ -23,6 +37,77 @@ class TestData(unittest.TestCase):
         """Tests that the data source enum can be initialized"""
         source = 1
         self.assertEqual(DataSource.REDDIT, DataSource(source))
+
+    def test_compressed_index_supports_max_index(self):
+        """Tests that the compressed version of the maximal Miner index is under our response size limit."""
+
+        target_buckets = constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+
+        # Figure out how many time buckets and labels we need to fill the index.
+        buckets_per_source = target_buckets // len(DataSource)
+        num_time_buckets = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 7 * 24
+        num_labels = buckets_per_source // num_time_buckets
+
+        # Double check the math
+        total_buckets = len(DataSource) * num_time_buckets * num_labels
+        self.assertAlmostEqual(
+            target_buckets,
+            total_buckets,
+            delta=target_buckets * 0.05,
+        )
+
+        start = time.time()
+        sources = {}
+
+        def generate_random_string(length):
+            # Combine letters and digits for the random string
+            characters = string.ascii_letters + string.digits
+            return "".join(random.choice(characters) for _ in range(length))
+
+        for source in list(DataSource):
+            compressed_buckets = [None] * num_labels
+            for label_i in range(0, num_labels):
+                label = generate_random_string(random.randint(4, 32))
+                compressed_buckets[label_i] = CompressedEntityBucket(
+                    label=label,
+                    time_bucket_ids=[i for i in range(1, num_time_buckets + 1)],
+                    sizes_bytes=[
+                        random.randint(1, 112345678)
+                        for i in range(1, num_time_buckets + 1)
+                    ],
+                )
+            sources[int(source)] = compressed_buckets
+
+        print(f"Time to create index: {time.time() - start}")
+        maximal_index = CompressedMinerIndex(
+            sources=sources,
+        )
+
+        start = time.time()
+        serialized_compressed_index = maximal_index.json()
+        print(f"Time to serialize index: {time.time() - start}")
+
+        start = time.time()
+        get_miner_index = GetMinerIndex(
+            compressed_index_serialized=serialized_compressed_index
+        )
+        print(f"Time to create synapse: {time.time() - start}")
+
+        start = time.time()
+        compressed_json = get_miner_index.json()
+        print(f"Time to serialize synapse: {time.time() - start}")
+        print(f"Compressed index size: {len(compressed_json)}")
+        self.assertLess(len(compressed_json), utils.mb_to_bytes(mb=128))
+
+        start = time.time()
+        deserialized_index = GetMinerIndex.parse_raw(compressed_json)
+        deserialized_compressed_index = CompressedMinerIndex.parse_raw(
+            deserialized_index.compressed_index_serialized
+        )
+        print(f"Time to deserialize synapse: {time.time() - start}")
+
+        # Verify the deserialized form is as expected.
+        self.assertEqual(deserialized_compressed_index, maximal_index)
 
 
 if __name__ == "__main__":

@@ -1,37 +1,28 @@
 import dataclasses
+import time
 from common import constants
+from common.date_range import DateRange
 from . import utils
 import datetime as dt
-from enum import Enum, IntEnum, auto
-from typing import List, Type, Optional
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
+from enum import IntEnum
+from typing import Any, Dict, List, Type, Optional
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    PositiveInt,
+    validator,
+)
 
 
 class StrictBaseModel(BaseModel):
     """A BaseModel that enforces stricter validation constraints"""
 
     class Config:
-        extra = "forbid"
-
         # JSON serialization doesn't seem to work correctly without
         # enabling `use_enum_values`. It's possible this isn't an
         # issue with newer version of pydantic, which we can't use.
         use_enum_values = True
-
-
-@dataclasses.dataclass(frozen=True)
-class DateRange:
-    """Represents a specific time range from start time inclusive to end time exclusive."""
-
-    # The start time inclusive of the time range.
-    start: dt.datetime
-
-    # The end time exclusive of the time range.
-    end: dt.datetime
-
-    def contains(self, datetime: dt.datetime) -> bool:
-        """Returns True if the provided datetime is within this DateRange."""
-        return self.start <= datetime < self.end
 
 
 class TimeBucket(StrictBaseModel):
@@ -157,20 +148,7 @@ class DataEntityBucket(StrictBaseModel):
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
 
-class ScorableDataEntityBucket(StrictBaseModel):
-    """Composes both a DataEntityBucket and additional information required for scoring."""
-
-    data_entity_bucket: DataEntityBucket = Field(
-        description="The DataEntityBucket that has additional information attached."
-    )
-    # Scorable bytes are the bytes that can be credited to this miner for scoring.
-    # This is always less than or equal to the total size of the chunk.
-    # This scorable bytes are computed as:
-    # 1 byte for every byte in size_bytes that no other miner has in their index.
-    # 1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
-    scorable_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
-
-
+# TODO: Deprecate once Miner's use the CompressedMinerIndex.
 class MinerIndex(StrictBaseModel):
     """The Miner index."""
 
@@ -181,12 +159,54 @@ class MinerIndex(StrictBaseModel):
     )
 
 
-class ScorableMinerIndex(StrictBaseModel):
-    """The Miner index, with additional information required for scoring."""
+# For the Compressed data classes, we intentionally avoid using nested classes (particularly
+# nested pydantic classes) to avoid the performance hit of the extra validation.
+@dataclasses.dataclass()
+class CompressedEntityBucket:
+    """A compressed version of the DataEntityBucket to reduce bytes sent on the wire."""
 
-    hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
-        description="DataEntityBuckets the miner is serving, scored on uniqueness.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+    # The label of the bucket.
+    label: Optional[str] = None
+
+    # A list of time bucket ids for this label and source. Must match the length of sizes_bytes.
+    time_bucket_ids: List[int] = dataclasses.field(
+        default_factory=list,
     )
-    last_updated: dt.datetime = Field(description="Time last updated in UTC.")
+
+    # A list of sizes in bytes for each time bucket where sizes_bytes[i] is the size_bytes for time_bucket_ids[i].",
+    sizes_bytes: List[int] = dataclasses.field(
+        default_factory=list,
+    )
+
+
+class CompressedMinerIndex(BaseModel):
+    """A compressed version of the MinerIndex to reduce bytes sent on the wire."""
+
+    # A map from source to a list of compressed buckets.
+    sources: Dict[int, List[CompressedEntityBucket]]
+
+    @validator("sources")
+    @classmethod
+    def validate_index_size(
+        cls, sources: Dict[int, List[CompressedEntityBucket]]
+    ) -> Dict[int, List[CompressedEntityBucket]]:
+        """Converts the value to lower case to consistent casing throughout the system."""
+        size = sum(
+            len(compressed_bucket.time_bucket_ids)
+            for compressed_buckets in sources.values()
+            for compressed_bucket in compressed_buckets
+        )
+        if size > constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX:
+            raise ValueError(
+                f"Compressed index is too large. {size} buckets > {constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX}"
+            )
+        return sources
+
+    @classmethod
+    def size(cls, index: "CompressedMinerIndex") -> int:
+        """Returns the number of buckets in a compressed index."""
+        return sum(
+            len(compressed_bucket.time_bucket_ids)
+            for compressed_buckets in index.sources.values()
+            for compressed_bucket in compressed_buckets
+        )

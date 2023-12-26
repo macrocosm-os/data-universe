@@ -18,8 +18,22 @@
 import bittensor as bt
 import pydantic
 from common import constants
-from common.data import DataEntityBucket, DataEntity, DataEntityBucketId
-from typing import List, Optional
+from common.data import (
+    DataEntityBucket,
+    DataEntity,
+    DataEntityBucketId,
+)
+from typing import Dict, List, Optional
+
+
+class BaseProtocol(bt.Synapse):
+    class Config:
+        arbitrary_types_allowed = True
+        validate_assignment = True
+
+    version: int = pydantic.Field(
+        description="Protocol version", default=constants.PROTOCOL_VERSION
+    )
 
 
 class GetMinerIndex(bt.Synapse):
@@ -40,8 +54,18 @@ class GetMinerIndex(bt.Synapse):
         default_factory=list,
     )
 
+    # We opt to send the compressed index in pre-serialized form to have full control
+    # over serialization and deserialization, rather than relying on fastapi and bittensors
+    # interactions with pydantic serialization, which can be problematic for certain types.
+    compressed_index_serialized: Optional[str] = pydantic.Field(
+        description="The compressed index of the Miner of type CompressedMinerIndex.",
+        frozen=False,
+        repr=False,
+        default=None,
+    )
 
-class GetDataEntityBucket(bt.Synapse):
+
+class GetDataEntityBucket(BaseProtocol):
     """
     Protocol by which Validators can retrieve the DataEntities of a Bucket from a Miner.
 

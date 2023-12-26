@@ -1,7 +1,8 @@
+from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 import bittensor as bt
-from common.data import DataEntity, DataLabel, DataSource, DateRange
+from common.data import DataEntity, DataLabel, DataSource
 from typing import List
 import asyncpraw
 from scraping.reddit.utils import (
