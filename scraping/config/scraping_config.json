@@ -23,7 +23,8 @@
                         "#decentralizedfinance",
                         "#tao"
                     ],
-                    "max_data_entities": 75
+                    "max_data_entities": 75,
+                    "timeout_secs": 120
                 }
             ]
         },
