@@ -135,7 +135,7 @@ class TwitterFlashScraper(Scraper):
             actor_id=TwitterFlashScraper.ACTOR_ID,
             debug_info=f"Scrape {query}",
             max_data_entities=scrape_config.entity_limit,
-            timeout_secs=scrape_config.entity_limit if scrape_config.entity_limit is not None else TwitterFlashScraper.SCRAPE_TIMEOUT_SECS,
+            timeout_secs=scrape_config.timeout_secs if scrape_config.timeout_secs is not None else TwitterFlashScraper.SCRAPE_TIMEOUT_SECS,
         )
 
         bt.logging.trace(f"Performing Twitter scrape for query: {query}")
