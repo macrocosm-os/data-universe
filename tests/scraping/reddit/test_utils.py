@@ -1,6 +1,6 @@
 import unittest
 
-from scraping.reddit.utils import is_valid_reddit_url
+from scraping.reddit.utils import is_valid_reddit_url, normalize_permalink
 
 
 class TestUtils(unittest.TestCase):
@@ -16,6 +16,15 @@ class TestUtils(unittest.TestCase):
                 "https://www.reddit.com/r/bittensor_/comments/18e1fl6/wrappedtao_is_it_safe/"
             )
         )
+
+    def test_normalize_permalink(self):
+        """Tests that normalize_permalink correctly adds a leading '/' if necessary."""
+        good_permalink = "/r/bittensor_/comments/18e1fl6/wrappedtao_is_it_safe/"
+
+        bad_permalink = "r/bittensor_/comments/18e1fl6/wrappedtao_is_it_safe/"
+
+        self.assertTrue(normalize_permalink(bad_permalink) == good_permalink)
+        self.assertTrue(normalize_permalink(good_permalink) == good_permalink)
 
 
 if __name__ == "__main__":
