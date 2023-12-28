@@ -18,8 +18,6 @@ As a rule of thumb:
 
 
 import datetime as dt
-from numpy import size
-
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
@@ -96,7 +94,7 @@ class ScorableDataEntityBucket:
     def to_data_entity_bucket(self) -> DataEntityBucket:
         return DataEntityBucket(
             id=DataEntityBucketId(
-                time_bucket_id=TimeBucket(id=self.time_bucket_id),
+                time_bucket=TimeBucket(id=self.time_bucket_id),
                 source=self.source,
                 label=DataLabel(value=self.label),
             ),

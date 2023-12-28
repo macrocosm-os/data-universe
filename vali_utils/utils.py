@@ -5,6 +5,7 @@ from typing import List, Optional, Tuple, Type, Union
 import datetime as dt
 from common import constants
 from common.data import (
+    CompressedMinerIndex,
     DataEntity,
     DataEntityBucket,
     MinerIndex,

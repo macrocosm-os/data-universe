@@ -1,5 +1,6 @@
 import datetime as dt
 import unittest
+from common import utils
 from common.data import (
     DataEntityBucket,
     DataEntity,
@@ -7,9 +8,8 @@ from common.data import (
     DataLabel,
     TimeBucket,
     DataSource,
-    ScorableDataEntityBucket,
-    ScorableMinerIndex,
 )
+from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from common.protocol import GetMinerIndex
 import vali_utils.utils as vali_utils
 import pytz
@@ -22,42 +22,30 @@ class TestValidatorUtils(unittest.TestCase):
             hotkey="abc123",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(
-                                dt.datetime.now(tz=dt.timezone.utc)
-                            ),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="0"),
-                        ),
-                        size_bytes=100,
+                    time_bucket_id=utils.time_bucket_id_from_datetime(
+                        dt.datetime.now(tz=dt.timezone.utc)
                     ),
+                    source=DataSource.REDDIT,
+                    label="0",
+                    size_bytes=100,
                     scorable_bytes=100,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(
-                                dt.datetime.now(tz=dt.timezone.utc)
-                            ),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="1"),
-                        ),
-                        size_bytes=200,
+                    time_bucket_id=utils.time_bucket_id_from_datetime(
+                        dt.datetime.now(tz=dt.timezone.utc)
                     ),
+                    source=DataSource.REDDIT,
+                    label="1",
+                    size_bytes=200,
                     scorable_bytes=200,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(
-                                dt.datetime.now(tz=dt.timezone.utc)
-                            ),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="2"),
-                        ),
-                        size_bytes=300,
+                    time_bucket_id=utils.time_bucket_id_from_datetime(
+                        dt.datetime.now(tz=dt.timezone.utc)
                     ),
+                    source=DataSource.REDDIT,
+                    label="2",
+                    size_bytes=300,
                     scorable_bytes=300,
                 ),
             ],

@@ -4,7 +4,7 @@ import random
 import time
 import unittest
 import os
-from common import constants
+from common import constants, utils
 from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
 from common.data import (
     CompressedEntityBucket,
@@ -462,24 +462,18 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-            data_entity_bucket=DataEntityBucket(
-                id=DataEntityBucketId(
-                    time_bucket=TimeBucket.from_datetime(now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="label_1"),
-                ),
-                size_bytes=10,
-            ),
+            time_bucket_id=utils.time_bucket_id_from_datetime(now),
+            source=DataSource.REDDIT,
+            label="label_1",
+            size_bytes=10,
             scorable_bytes=10,
         )
 
         expected_bucket_2 = ScorableDataEntityBucket(
-            data_entity_bucket=DataEntityBucket(
-                id=DataEntityBucketId(
-                    time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
-                ),
-                size_bytes=50,
-            ),
+            time_bucket_id=utils.time_bucket_id_from_datetime(now),
+            source=DataSource.X,
+            label=None,
+            size_bytes=50,
             scorable_bytes=50,
         )
 
@@ -493,7 +487,6 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
 
         # Confirm the scored index matches expectations.
-        self.assertEqual(scored_index.hotkey, "hotkey1")
         self.assertEqual(
             scored_index.scorable_data_entity_buckets[0], expected_bucket_1
         )
@@ -524,14 +517,10 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-            data_entity_bucket=DataEntityBucket(
-                id=DataEntityBucketId(
-                    time_bucket=TimeBucket.from_datetime(now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="label_1"),
-                ),
-                size_bytes=10,
-            ),
+            time_bucket_id=utils.time_bucket_id_from_datetime(now),
+            source=DataSource.REDDIT,
+            label="label_1",
+            size_bytes=10,
             scorable_bytes=2,
         )
 
@@ -549,7 +538,6 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         )
 
         # Confirm the scored index matches expectations.
-        self.assertEqual(scored_index.hotkey, "hotkey1")
         self.assertEqual(
             scored_index.scorable_data_entity_buckets[0], expected_bucket_1
         )
@@ -577,14 +565,10 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-            data_entity_bucket=DataEntityBucket(
-                id=DataEntityBucketId(
-                    time_bucket=TimeBucket.from_datetime(now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="label_1"),
-                ),
-                size_bytes=10,
-            ),
+            time_bucket_id=utils.time_bucket_id_from_datetime(now),
+            source=DataSource.REDDIT,
+            label="label_1",
+            size_bytes=10,
             scorable_bytes=10,
         )
 
@@ -600,7 +584,6 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
 
         # Confirm the scored index matches expectations.
-        self.assertEqual(scored_index.hotkey, "hotkey1")
         self.assertEqual(
             scored_index.scorable_data_entity_buckets[0], expected_bucket_1
         )
@@ -628,14 +611,10 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         )
 
         expected_bucket_1 = ScorableDataEntityBucket(
-            data_entity_bucket=DataEntityBucket(
-                id=DataEntityBucketId(
-                    time_bucket=TimeBucket.from_datetime(now),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="label_1"),
-                ),
-                size_bytes=10,
-            ),
+            time_bucket_id=utils.time_bucket_id_from_datetime(now),
+            source=DataSource.REDDIT,
+            label="label_1",
+            size_bytes=10,
             scorable_bytes=2,
         )
 
@@ -651,7 +630,6 @@ class TestMysqlValidatorStorage(unittest.TestCase):
         scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey2"]))
 
         # Confirm the scored index matches expectations.
-        self.assertEqual(scored_index.hotkey, "hotkey1")
         self.assertEqual(
             scored_index.scorable_data_entity_buckets[0], expected_bucket_1
         )

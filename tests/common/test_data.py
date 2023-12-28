@@ -8,14 +8,14 @@ from common import constants, utils
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
-    DataEntityBucket,
-    DataEntityBucketId,
     DataLabel,
     DataSource,
     MinerIndex,
     TimeBucket,
 )
 import unittest
+
+from common.protocol import GetMinerIndex
 
 
 class TestData(unittest.TestCase):

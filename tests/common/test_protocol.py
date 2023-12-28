@@ -4,7 +4,10 @@ import unittest
 import datetime as dt
 import bittensor as bt
 from common.data import (
+    CompressedEntityBucket,
+    CompressedMinerIndex,
     DataEntity,
+    DataEntityBucket,
     DataEntityBucketId,
     DataLabel,
     DataSource,
