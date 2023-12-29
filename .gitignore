@@ -10,6 +10,9 @@ __pycache__/
 # Playground notebooks
 *Playground.ipynb
 
+# Test created DB
+myDb
+
 # C extensions
 *.so
 

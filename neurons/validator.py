@@ -131,7 +131,7 @@ class Validator(BaseNeuron):
             timeout=300,
         )
 
-        response = vali_utils.get_single_successul_response(responses, GetMinerIndex)
+        response = vali_utils.get_single_successful_response(responses, GetMinerIndex)
         if not response:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
@@ -229,7 +229,7 @@ class Validator(BaseNeuron):
             timeout=180,
         )
 
-        data_entity_bucket = vali_utils.get_single_successul_response(
+        data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
         )
         # Treat a failed response the same way we treat a failed validation.

@@ -140,7 +140,7 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
     return True
 
 
-def get_single_successul_response(
+def get_single_successful_response(
     responses: List[bt.Synapse], expected_class: Type
 ) -> Optional[bt.Synapse]:
     """Helper function to extract the single response from a list of responses, if the response is valid.

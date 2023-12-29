@@ -190,7 +190,7 @@ class CompressedMinerIndex(BaseModel):
     def validate_index_size(
         cls, sources: Dict[int, List[CompressedEntityBucket]]
     ) -> Dict[int, List[CompressedEntityBucket]]:
-        """Converts the value to lower case to consistent casing throughout the system."""
+        """Converts the value to lower case for consistent casing throughout the system."""
         size = sum(
             len(compressed_bucket.time_bucket_ids)
             for compressed_buckets in sources.values()
