@@ -360,8 +360,8 @@ class Validator(BaseNeuron):
 
         assert uids_to_eval, "Expected at least 1 miner to evaluate"
 
-        coroutines = [self.eval_miner(uid) for uid in uids_to_eval]
-        _, pending = await asyncio.wait(coroutines, timeout=300)
+        tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
+        done, pending = await asyncio.wait(tasks, timeout=300)
 
         for future in pending:
             future.cancel()  # Cancel unfinished tasks.
