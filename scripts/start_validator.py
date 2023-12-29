@@ -26,8 +26,7 @@ from shlex import split
 from typing import List
 
 log = logging.getLogger(__name__)
-# TODO: Switch back to 5 minutes.
-UPDATES_CHECK_TIME = timedelta(minutes=1)
+UPDATES_CHECK_TIME = timedelta(minutes=15)
 ROOT_DIR = Path(__file__).parent.parent
 
 
@@ -40,7 +39,7 @@ def get_version() -> str:
         cwd=ROOT_DIR,
     )
     commit = result.stdout.decode().strip()
-    assert len(commit) == 40, f"Invalid commit hash: {commit}"  # noqa: PLR2004
+    assert len(commit) == 40, f"Invalid commit hash: {commit}"
     return commit[:8]
 
 
@@ -112,14 +111,12 @@ def upgrade_packages() -> None:
         log.error("Failed to upgrade packages, proceeding anyway. %s", exc)
 
 
-def main(pm2_name: str, auto_update: bool, args: List[str]) -> None:
+def main(pm2_name: str, args: List[str]) -> None:
     """
     Run the validator process and automatically update it when a new version is released.
     This will check for updates every `UPDATES_CHECK_TIME` and update the validator
     if a new version is available. Update is performed as simple `git pull --rebase`.
     """
-
-    log.info("Starting validator auto-update=%s", auto_update)
 
     validator = start_validator_process(pm2_name, args)
     current_version = latest_version = get_version()
@@ -127,10 +124,9 @@ def main(pm2_name: str, auto_update: bool, args: List[str]) -> None:
 
     try:
         while True:
-            if auto_update:
-                pull_latest_version()
-                latest_version = get_version()
-                log.info("Latest version: %s", latest_version)
+            pull_latest_version()
+            latest_version = get_version()
+            log.info("Latest version: %s", latest_version)
 
             if latest_version != current_version:
                 log.info(
@@ -165,14 +161,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--pm2_name", default="net13vali", help="Name of the PM2 process."
     )
-    parser.add_argument(
-        "--autoupdate",
-        action="store_true",
-        dest="autoupdate",
-        default=True,
-        help="Disable automatic update.",
-    )
 
     flags, extra_args = parser.parse_known_args()
 
-    main(flags.pm2_name, flags.autoupdate, extra_args)
+    main(flags.pm2_name, extra_args)
