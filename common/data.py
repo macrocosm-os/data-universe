@@ -148,7 +148,7 @@ class DataEntityBucket(StrictBaseModel):
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
 
-# TODO: Deprecate once Miner's use the CompressedMinerIndex.
+# TODO: Deprecate once Miners use the CompressedMinerIndex.
 class MinerIndex(StrictBaseModel):
     """The Miner index."""
 

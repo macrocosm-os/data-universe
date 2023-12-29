@@ -53,7 +53,6 @@ def time_bucket_id_from_datetime(datetime: dt.datetime) -> int:
     Args:
         datetime (datetime.datetime): A datetime object, assumed to be in UTC.
     """
-    datetime.astimezone(dt.timezone.utc)
     return seconds_to_hours(datetime.astimezone(tz=dt.timezone.utc).timestamp())
 
 

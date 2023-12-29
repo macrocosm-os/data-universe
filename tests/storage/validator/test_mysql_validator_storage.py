@@ -418,7 +418,7 @@ class TestMysqlValidatorStorage(unittest.TestCase):
             last_updated=dt.datetime.utcnow(),
         )
 
-        # We casn't assert equality because of the last_updated time.
+        # We can't assert equality because of the last_updated time.
         # Verify piece-wise equality instead.
         def sort_key(entity):
             return (

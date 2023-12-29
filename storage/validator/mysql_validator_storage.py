@@ -243,11 +243,6 @@ class MysqlValidatorStorage(ValidatorStorage):
         buckets_by_source = defaultdict(list)
         for source, compressed_buckets in index.sources.items():
             for bucket in compressed_buckets:
-                if bucket.label and len(bucket.label) > constants.MAX_LABEL_LENGTH:
-                    bt.logging.trace(
-                        f"Ignoring label {bucket.label} because it's too long"
-                    )
-                    continue
                 label = self._label_value_parse_str(bucket.label)
                 label_values.add(label)
                 buckets_by_source[source].append(bucket)
@@ -263,7 +258,6 @@ class MysqlValidatorStorage(ValidatorStorage):
             for compressed_bucket in buckets_by_source[source]:
                 label = self._label_value_parse_str(compressed_bucket.label)
 
-                # Get or this Validator's labelId for the specified label.
                 try:
                     label_id = label_value_to_id_dict[label]
 
