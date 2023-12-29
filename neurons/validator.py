@@ -131,8 +131,8 @@ class Validator(BaseNeuron):
             timeout=300,
         )
 
-        miner_index = vali_utils.get_single_successul_response(responses, GetMinerIndex)
-        if not miner_index:
+        response = vali_utils.get_single_successul_response(responses, GetMinerIndex)
+        if not response:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
@@ -142,9 +142,7 @@ class Validator(BaseNeuron):
         # Validate the index.
         miner_index = None
         try:
-            miner_index = vali_utils.get_miner_index_from_response(
-                get_miner_index_response, hotkey
-            )
+            miner_index = vali_utils.get_miner_index_from_response(response, hotkey)
         except ValueError as e:
             bt.logging.debug(f"{hotkey}: Miner returned an invalid index. Reason: {e}")
             # Miner returned an invalid index. Use the latest index, if present.

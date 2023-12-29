@@ -1,12 +1,22 @@
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Tuple
 import time
+import datetime as dt
 
-def get_only_element_matching_filter(iterable: Iterable[Any], filter: Callable[[Any], bool]) -> Any:
+from common.data import MinerIndex
+from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
+
+
+def get_only_element_matching_filter(
+    iterable: Iterable[Any], filter: Callable[[Any], bool]
+) -> Any:
     """Returns the only element in the iterable that matches the filter, or raises an exception if there are zero or more than one elements."""
     results = [x for x in iterable if filter(x)]
     if len(results) != 1:
-        raise Exception(f"Expected exactly one element matching filter, but found {len(results)}")
+        raise Exception(
+            f"Expected exactly one element matching filter, but found {len(results)}"
+        )
     return results[0]
+
 
 def wait_for_condition(condition: Callable[[], bool], timeout: float = 10.0):
     """Waits until the provided condition is true, or until the timeout is reached."""
@@ -15,3 +25,54 @@ def wait_for_condition(condition: Callable[[], bool], timeout: float = 10.0):
         if time.time() - start_time > timeout:
             raise Exception("Timed out waiting for condition to be true.")
         time.sleep(0.1)
+
+
+def convert_to_scorable_miner_index(
+    index: MinerIndex, last_updated: dt.datetime
+) -> ScorableMinerIndex:
+    """Converts a MinerIndex to a ScorableMinerIndex, assuming size_bytes are fully scorable."""
+
+    return ScorableMinerIndex(
+        scorable_data_entity_buckets=[
+            ScorableDataEntityBucket(
+                time_bucket_id=bucket.id.time_bucket.id,
+                source=bucket.id.source,
+                label=bucket.id.label.value if bucket.id.label else None,
+                size_bytes=bucket.size_bytes,
+                scorable_bytes=bucket.size_bytes,
+            )
+            for bucket in index.data_entity_buckets
+        ],
+        last_updated=last_updated,
+    )
+
+
+def are_scorable_indexes_equal(
+    index1: ScorableMinerIndex, index2: ScorableMinerIndex
+) -> Tuple[bool, str]:
+    """Compares two ScorableMinerIndex instances for equality."""
+
+    # Compare the last_updated fields.
+    if index1.last_updated != index2.last_updated:
+        return (
+            False,
+            f"last_updated fields do not match. {index1.last_updated} != {index2.last_updated}",
+        )
+
+    def sort_key(bucket: ScorableDataEntityBucket):
+        return (
+            bucket.time_bucket_id,
+            bucket.source,
+            bucket.label if bucket.label else "NULL",
+        )
+
+    index1_sorted = sorted(index1.scorable_data_entity_buckets, key=sort_key)
+    index2_sorted = sorted(index2.scorable_data_entity_buckets, key=sort_key)
+    for bucket1, bucket2 in zip(index1_sorted, index2_sorted):
+        if bucket1 != bucket2:
+            return (
+                False,
+                f"Buckets do not match. {bucket1} != {bucket2}",
+            )
+
+    return True, None

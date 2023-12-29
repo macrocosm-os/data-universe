@@ -170,8 +170,8 @@ def get_miner_index_from_response(
             hotkey=hotkey,
             data_entity_buckets=response.data_entity_buckets,
         )
-    elif response.compressed_index:
+    elif response.compressed_index_serialized:
         # Otherwise, decompress the compressed index.
-        return CompressedMinerIndex.parse_raw(response.compressed_index)
+        return CompressedMinerIndex.parse_raw(response.compressed_index_serialized)
 
     raise ValueError("GetMinerIndex response has no index.")
