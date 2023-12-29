@@ -7,6 +7,12 @@ __pycache__/
 .vscode/
 .env
 
+# Playground notebooks
+*Playground.ipynb
+
+# Test created DB
+myDb
+
 # C extensions
 *.so
 

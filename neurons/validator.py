@@ -26,14 +26,15 @@ import threading
 import time
 import datetime as dt
 import os
+from common.data_v2 import ScorableMinerIndex
 import common.utils as utils
 import bittensor as bt
 from common.data import (
+    CompressedMinerIndex,
     DataEntityBucket,
     DataEntity,
     DataSource,
     MinerIndex,
-    ScorableMinerIndex,
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 from neurons.config import NeuronType
@@ -130,23 +131,40 @@ class Validator(BaseNeuron):
             timeout=300,
         )
 
-        miner_index = vali_utils.get_single_successul_response(responses, GetMinerIndex)
-        if not miner_index:
+        response = vali_utils.get_single_successful_response(responses, GetMinerIndex)
+        if not response:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
             # Miner failed to update the index. Use the latest index, if present.
             return self._get_miner_index(hotkey)
 
-        # Miner successfully updated the index. Store it and return it.
-        bt.logging.trace(
-            f"{hotkey}: Got new miner index. Size={len(miner_index.data_entity_buckets)}"
-        )
-        self.storage.upsert_miner_index(
-            MinerIndex(
-                hotkey=hotkey, data_entity_buckets=miner_index.data_entity_buckets
+        # Validate the index.
+        miner_index = None
+        try:
+            miner_index = vali_utils.get_miner_index_from_response(response, hotkey)
+        except ValueError as e:
+            bt.logging.debug(f"{hotkey}: Miner returned an invalid index. Reason: {e}")
+            # Miner returned an invalid index. Use the latest index, if present.
+            return self._get_miner_index(hotkey)
+
+        assert miner_index is not None, "Miner index should not be None"
+
+        # Miner replied with a valid index. Store it and return it.
+        if isinstance(miner_index, MinerIndex):
+            bt.logging.trace(
+                f"{hotkey}: Got new uncompressed miner index. Size={len(miner_index.data_entity_buckets)}"
             )
-        )
+            self.storage.upsert_miner_index(miner_index)
+        else:
+            assert isinstance(
+                miner_index, CompressedMinerIndex
+            ), f"Expected either a MinerIndex or CompressedMinerIndex but got {type(miner_index)}"
+            bt.logging.trace(
+                f"{hotkey}: Got new compressed miner index. Size={CompressedMinerIndex.size(miner_index)}"
+            )
+            self.storage.upsert_compressed_miner_index(miner_index, hotkey)
+
         return self._get_miner_index(hotkey)
 
     def _get_miner_index(self, hotkey: str) -> Optional[ScorableMinerIndex]:
@@ -211,7 +229,7 @@ class Validator(BaseNeuron):
             timeout=180,
         )
 
-        data_entity_bucket = vali_utils.get_single_successul_response(
+        data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
         )
         # Treat a failed response the same way we treat a failed validation.

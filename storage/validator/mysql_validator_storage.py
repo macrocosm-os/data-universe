@@ -1,15 +1,12 @@
+from collections import defaultdict
 import threading
-from common import utils
+from common import constants
 from common.data import (
-    DataEntityBucket,
-    DataEntityBucketId,
+    CompressedMinerIndex,
     DataLabel,
-    DataSource,
     MinerIndex,
-    ScorableDataEntityBucket,
-    ScorableMinerIndex,
-    TimeBucket,
 )
+from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from storage.validator.validator_storage import ValidatorStorage
 from typing import Optional, Set, Dict
 import datetime as dt
@@ -158,6 +155,11 @@ class MysqlValidatorStorage(ValidatorStorage):
         """Parses the value to store in the database out of an Optional DataLabel."""
         return "NULL" if (label is None) else label.value
 
+    def _label_value_parse_str(self, label: Optional[str]) -> str:
+        """Same as _label_value_parse but with a string as input"""
+        return "NULL" if (label is None) else label.casefold()
+
+    # TODO: Deprecate
     def upsert_miner_index(self, index: MinerIndex):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
@@ -208,6 +210,76 @@ class MysqlValidatorStorage(ValidatorStorage):
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
             self.delete_miner_index(index.hotkey)
+
+            # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
+            # Batch in groups of 1m if necessary to avoid congestion issues.
+            value_subsets = [
+                values[x : x + 1000000] for x in range(0, len(values), 1000000)
+            ]
+            for value_subset in value_subsets:
+                cursor.executemany(
+                    """INSERT IGNORE INTO MinerIndex VALUES (%s, %s, %s, %s, %s)""",
+                    value_subset,
+                )
+            self.connection.commit()
+
+    def upsert_compressed_miner_index(self, index: CompressedMinerIndex, hotkey: str):
+        """Stores the index for all of the data that a specific miner promises to provide."""
+
+        bt.logging.trace(
+            f"{hotkey}: Upserting miner index with {CompressedMinerIndex.size(index)} buckets"
+        )
+
+        now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+        cursor = self.connection.cursor()
+
+        # Upsert this Validator's minerId for the specified hotkey.
+        miner_id = self._upsert_miner(hotkey, now_str)
+
+        # Ensure that all the label ids in the upcoming entity buckets are known for this Validator.
+        label_values = set()
+
+        # Collect all buckets that we'll insert, by skipping over any with an invalid label
+        buckets_by_source = defaultdict(list)
+        for source, compressed_buckets in index.sources.items():
+            for bucket in compressed_buckets:
+                label = self._label_value_parse_str(bucket.label)
+                label_values.add(label)
+                buckets_by_source[source].append(bucket)
+
+        self._insert_labels(label_values)
+
+        # Get all label ids for use in mapping.
+        label_value_to_id_dict = self._get_label_value_to_id_dict()
+
+        # Parse every DataEntityBucket from the index into a list of values to insert.
+        values = []
+        for source in buckets_by_source:
+            for compressed_bucket in buckets_by_source[source]:
+                label = self._label_value_parse_str(compressed_bucket.label)
+
+                try:
+                    label_id = label_value_to_id_dict[label]
+
+                    for time_bucket_id, size_bytes in zip(
+                        compressed_bucket.time_bucket_ids, compressed_bucket.sizes_bytes
+                    ):
+                        values.append(
+                            [
+                                miner_id,
+                                time_bucket_id,
+                                source,
+                                label_id,
+                                size_bytes,
+                            ]
+                        )
+                except:
+                    # In the case that we fail to get a label (due to unsupported characters) we drop just that one bucket.
+                    pass
+
+        with self.upsert_miner_index_lock:
+            # Clear the previous keys for this miner.
+            self.delete_miner_index(hotkey)
 
             # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
             # Batch in groups of 1m if necessary to avoid congestion issues.
@@ -277,29 +349,20 @@ class MysqlValidatorStorage(ValidatorStorage):
                 last_updated = row["lastUpdated"]
 
             # Get the relevant primary key fields for comparing to other miners.
-            label = row["labelValue"]
+            label = row["labelValue"] if row["labelValue"] != "NULL" else None
             # Get the total bytes for this bucket for this miner before adjusting for uniqueness.
             content_size_bytes = row["contentSizeBytes"]
             # Get the total bytes for this bucket across all valid miners (+ this miner).
             total_content_size_bytes = row["totalContentSize"]
 
-            # Score the bytes as the fraction of the total content bytes for that bucket across all valid miners.
-            data_entity_bucket_id = DataEntityBucketId(
-                time_bucket=TimeBucket(id=row["timeBucketId"]),
-                source=row["source"],
-            )
-
-            if label != "NULL":
-                data_entity_bucket_id.label = DataLabel(value=label)
-
-            data_entity_bucket = DataEntityBucket(
-                id=data_entity_bucket_id, size_bytes=content_size_bytes
-            )
             scored_data_entity_bucket = ScorableDataEntityBucket(
-                data_entity_bucket=data_entity_bucket,
-                scorable_bytes=content_size_bytes
-                * content_size_bytes
-                / total_content_size_bytes,
+                time_bucket_id=int(row["timeBucketId"]),
+                source=int(row["source"]),
+                label=label,
+                size_bytes=int(content_size_bytes),
+                scorable_bytes=float(
+                    content_size_bytes * content_size_bytes / total_content_size_bytes
+                ),
             )
 
             # Add the bucket to the list of scored buckets on the overall index.
@@ -310,7 +373,6 @@ class MysqlValidatorStorage(ValidatorStorage):
             return None
 
         scored_index = ScorableMinerIndex(
-            hotkey=hotkey,
             scorable_data_entity_buckets=scored_data_entity_buckets,
             last_updated=last_updated,
         )

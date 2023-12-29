@@ -8,6 +8,8 @@ from typing import Any, Callable
 import bittensor as bt
 from functools import lru_cache, update_wrapper
 
+from common.date_range import DateRange
+
 _KB = 1024
 _MB = 1024 * _KB
 _GB = 1024 * _MB
@@ -43,6 +45,24 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a validator."""
     return metagraph.validator_permit[uid] and metagraph.S[uid] >= 512
+
+
+def time_bucket_id_from_datetime(datetime: dt.datetime) -> int:
+    """Returns the Timebucket ID from the provided datetime.
+
+    Args:
+        datetime (datetime.datetime): A datetime object, assumed to be in UTC.
+    """
+    return seconds_to_hours(datetime.astimezone(tz=dt.timezone.utc).timestamp())
+
+
+@classmethod
+def time_bucket_id_to_date_range(bucket: int) -> DateRange:
+    """Returns the date range from a Timebucket ID."""
+    return DateRange(
+        start=datetime_from_hours_since_epoch(bucket),
+        end=datetime_from_hours_since_epoch(bucket + 1),
+    )
 
 
 def serialize_to_file(obj: Any, filename: str) -> None:

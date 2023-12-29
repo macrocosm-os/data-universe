@@ -1,11 +1,15 @@
+import bittensor as bt
 import datetime as dt
 import unittest
-from common import utils
+from common import constants
 from common.data import (
+    CompressedEntityBucket,
+    CompressedMinerIndex,
     DataEntityBucket,
     DataEntity,
     DataEntityBucketId,
     DataLabel,
+    MinerIndex,
     TimeBucket,
     DataSource,
 )
@@ -13,9 +17,10 @@ from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from common.protocol import GetMinerIndex
 import vali_utils.utils as vali_utils
 import pytz
+from common import utils
 
 
-class TestValidatorUtils(unittest.TestCase):
+class TestValiUtils(unittest.TestCase):
     def test_choose_data_entity_bucket_to_query(self):
         """Calls choose_data_entity_bucket_to_query 10000 times and ensures the distribution of bucketss chosen is as expected."""
         index = ScorableMinerIndex(
@@ -446,6 +451,94 @@ class TestValidatorUtils(unittest.TestCase):
         ]
         unique = vali_utils.are_entities_unique(entities)
         self.assertFalse(unique)
+
+    def test_get_miner_index_from_response_old_index(self):
+        """Tests get_miner_index_from_response with an old index."""
+
+        buckets = [
+            DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket(id=5),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="r/bittensor_"),
+                ),
+                size_bytes=100,
+            ),
+            DataEntityBucket(
+                id=DataEntityBucketId(
+                    time_bucket=TimeBucket(id=6),
+                    source=DataSource.X,
+                    label=DataLabel(value="#bittensor"),
+                ),
+                size_bytes=200,
+            ),
+        ]
+        response = GetMinerIndex(
+            data_entity_buckets=buckets, dendrite=bt.TerminalInfo(status_code=200)
+        )
+
+        index = vali_utils.get_miner_index_from_response(response, "hk")
+        expected_index = MinerIndex(hotkey="hk", data_entity_buckets=buckets)
+        self.assertEqual(index, expected_index)
+
+    def test_get_miner_index_from_response_compressed_index(self):
+        """Tests get_miner_index_from_response with a compressed index."""
+
+        compressed_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label="r/bittensor_",
+                        time_bucket_ids=[5, 6],
+                        sizes_bytes=[100, 200],
+                    )
+                ],
+                DataSource.X: [
+                    CompressedEntityBucket(
+                        label="#bittensor",
+                        time_bucket_ids=[6],
+                        sizes_bytes=[300],
+                    )
+                ],
+            }
+        )
+
+        response = GetMinerIndex(
+            compressed_index_serialized=compressed_index.json(),
+            dendrite=bt.TerminalInfo(status_code=200),
+        )
+
+        index = vali_utils.get_miner_index_from_response(response, "hk")
+        self.assertEqual(index, compressed_index)
+
+    def test_get_miner_index_from_response_new_index_bucket_size_too_large(self):
+        """Tests get_miner_index_from_response with a compressed index that has a bucket that is too large."""
+
+        compressed_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label="r/bittensor_",
+                        time_bucket_ids=[5, 6],
+                        sizes_bytes=[100, 200],
+                    )
+                ],
+                DataSource.X: [
+                    CompressedEntityBucket(
+                        label="#bittensor",
+                        time_bucket_ids=[6],
+                        sizes_bytes=[constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES + 1],
+                    )
+                ],
+            }
+        )
+
+        response = GetMinerIndex(
+            compressed_index=compressed_index, dendrite=bt.TerminalInfo(status_code=200)
+        )
+
+        with self.assertRaises(ValueError):
+            vali_utils.get_miner_index_from_response(response, "hk")
 
 
 if __name__ == "__main__":

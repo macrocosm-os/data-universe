@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 from typing import List
 import torch
+from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from scraping.scraper import ValidationResult
 from common import constants
@@ -12,12 +13,11 @@ from common.data import (
     DataLabel,
     DataSource,
     TimeBucket,
-    ScorableDataEntityBucket,
-    ScorableMinerIndex,
 )
 from rewards.miner_scorer import MinerScorer
 import datetime as dt
 import rewards.data_value_calculator
+from common import utils
 
 
 @patch.object(rewards.data_value_calculator.dt, "datetime", Mock(wraps=dt.datetime))
@@ -45,26 +45,18 @@ class TestMinerScorer(unittest.TestCase):
             hotkey="abc123",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="otherlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
                 ),
@@ -258,26 +250,18 @@ class TestMinerScorer(unittest.TestCase):
             hotkey="honest",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="otherlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
                 ),
@@ -289,26 +273,18 @@ class TestMinerScorer(unittest.TestCase):
             hotkey="shady",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel"),
-                        ),
-                        size_bytes=400,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=400,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=200,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel"),
-                        ),
-                        size_bytes=400,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="otherlabel",
+                    size_bytes=400,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=10,
                 ),
