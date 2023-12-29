@@ -1,11 +1,11 @@
-apify-client
-asyncpraw
-bittensor>=6.0
-jupyter
-mysql-connector-python
-numpy
-# Bittensor requires pydantic <2.0.0
-pydantic==1.10
-python-dotenv
-pytz
-torch
+apify-client==1.6.1
+asyncpraw==7.7.1
+bittensor==6.5.0
+jupyter==1.0.0
+mysql-connector-python==8.2.0
+numpy==1.26.2
+# Bittensor require pydantic < 2.0.0
+pydantic==1.10.0
+python-dotenv==1.0.0
+pytz==2023.3.post1
+torch==2.1.2

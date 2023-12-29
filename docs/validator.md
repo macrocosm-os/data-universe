@@ -59,7 +59,26 @@ Alternatively, you can provide it via the `--neuron.database_password` flag.
 
 ## Running the Validator
 
-For this guide, we'll use [pm2](https://pm2.keymetrics.io/) to manage the Miner process, because it'll restart the Miner if it crashes. If you don't already have it, install pm2.
+### With auto-updates
+
+We highly recommend running the validator with auto-updates. This will help ensure your validator is always running the latest release, helping to maintain a high vtrust.
+
+Prerequisites:
+1. To run with auto-update, you will need to have [pm2](https://pm2.keymetrics.io/) installed.
+2. Make sure your virtual environment is activated. This is important because the auto-updater will automatically update the package dependencies with pip.
+3. Make sure you're using the main branch: `git checkout main`.
+
+From the data-universe folder:
+```shell
+pm2 start --name net13-vali-updater --interpreter python scripts/start_validator.py -- --pm2_name net13-vali --wallet.name cold_wallet --wallet.hotkey hotkey_wallet [other vali flags]
+```
+
+This will start a process called `net13-vali-updater`. This process periodically checks for a new git commit on the current branch. When one is found, it performs a `pip install` for the latest packages, and restarts the validator process (who's name is given by the `--pm2_name` flag)
+
+
+### Without auto-updates
+
+If you'd prefer to manage your own validator updates...
 
 From the data-universe folder:
 ```shell
@@ -81,7 +100,6 @@ python ./neurons/validator.py -h
 
 We are working hard to add more features to the Subnet. For the Validators, we have plans to:
 
-1. Implement an auto-update script.
-2. Have the Validator serve an Axon on the network, so neurons on other Subnets can retrieve data.
-3. Add scrapers for other DataSources.
-4. Add other (and cheaper) scrapers for the Validators to use.
+1. Have the Validator serve an Axon on the network, so neurons on other Subnets can retrieve data.
+2. Add scrapers for other DataSources.
+3. Add other (and cheaper) scrapers for the Validators to use.
