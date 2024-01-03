@@ -32,8 +32,7 @@ class MysqlValidatorStorage(ValidatorStorage):
                                     minerId             INT             NOT NULL,
                                     bucketId            INT             NOT NULL,
                                     contentSizeBytes    INT             NOT NULL,
-                                    PRIMARY KEY(minerId, bucketId),
-                                    INDEX bucket_size_idx (bucketId, contentSizeBytes)
+                                    PRIMARY KEY(minerId, bucketId)
                                     )"""
 
     # Mapping table from miner hotkey to minerId and lastUpdated for use in the primary table.
