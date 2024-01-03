@@ -27,6 +27,15 @@ class MysqlValidatorStorage(ValidatorStorage):
                                 PRIMARY KEY(minerId, timeBucketId, source, labelId)
                                 )"""
 
+    # Updated Primary table in which the DataEntityBuckets for all miners are stored.
+    MINER_INDEX_2_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS MinerIndex2 (
+                                    minerId             INT             NOT NULL,
+                                    bucketId            INT             NOT NULL,
+                                    contentSizeBytes    INT             NOT NULL,
+                                    PRIMARY KEY(minerId, bucketId),
+                                    INDEX bucket_size_idx (bucketId, contentSizeBytes)
+                                    )"""
+
     # Mapping table from miner hotkey to minerId and lastUpdated for use in the primary table.
     MINER_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Miner (
                             hotkey      VARCHAR(64) NOT NULL    PRIMARY KEY,
@@ -34,10 +43,29 @@ class MysqlValidatorStorage(ValidatorStorage):
                             lastUpdated DATETIME(6) NOT NULL
                             )"""
 
+    MINER_2_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Miner2 (
+                            hotkey      VARCHAR(64) NOT NULL    PRIMARY KEY,
+                            minerId     INT         NOT NULL    AUTO_INCREMENT UNIQUE,
+                            lastUpdated DATETIME(6) NOT NULL,
+                            credibility FLOAT(5, 2) NOT NULL    DEFAULT 0.00,
+                            INDEX id_cred_idx (minerId, credibility)
+                            )"""
+
     # Mapping table from label string to labelId for use in the primary table.
     LABEL_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Label (
                             labelValue  VARCHAR(32) NOT NULL    PRIMARY KEY,
                             labelId     INT         NOT NULL    AUTO_INCREMENT UNIQUE
+                            )"""
+
+    # Mapping table from timeBucketId, source, and labelId to bucketId for use in the primary table.
+    BUCKET_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Bucket (
+                            timeBucketId        INT             NOT NULL,
+                            source              TINYINT         NOT NULL,
+                            labelId             INT             NOT NULL,
+                            credAdjSize         INT             NOT NULL,
+                            bucketId            INT             NOT NULL    AUTO_INCREMENT UNIQUE,
+                            PRIMARY KEY(timeBucketId, source, labelId),
+                            INDEX bucket_size_idx (bucketId, credAdjSize)
                             )"""
 
     def __init__(self, host: str, user: str, password: str, database: str):
@@ -54,11 +82,20 @@ class MysqlValidatorStorage(ValidatorStorage):
         # Create the MinerIndex table if it doesn't exist
         cursor.execute(MysqlValidatorStorage.MINER_INDEX_TABLE_CREATE)
 
+        # Create the MinerIndex2 table if it doesn't exist
+        cursor.execute(MysqlValidatorStorage.MINER_INDEX_2_TABLE_CREATE)
+
         # Create the Miner table if it doesn't exist
         cursor.execute(MysqlValidatorStorage.MINER_TABLE_CREATE)
 
+        # Create the Miner2 table if it doesn't exist
+        cursor.execute(MysqlValidatorStorage.MINER_2_TABLE_CREATE)
+
         # Create the Label table if it doesn't exist
         cursor.execute(MysqlValidatorStorage.LABEL_TABLE_CREATE)
+
+        # Create the Bucket table if it doesn't exist
+        cursor.execute(MysqlValidatorStorage.BUCKET_TABLE_CREATE)
 
         # Update the database to use the correct collation for accent sensitivity.
         # This can't escape the database name as it is part of the command, but it is against your own database.
@@ -68,11 +105,12 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         # Lock to avoid concurrency issues on clearing and inserting an index.
         self.upsert_miner_index_lock = threading.Lock()
+        self.upsert_miner_index_2_lock = threading.Lock()
 
     def __del__(self):
         self.connection.close()
 
-    def _upsert_miner(self, hotkey: str, now_str: str) -> int:
+    def _upsert_miner(self, hotkey: str, now_str: str, credibility: int = 0) -> int:
         """Stores an encountered miner hotkey returning this Validator's unique id for it"""
 
         miner_id = 0
@@ -85,16 +123,17 @@ class MysqlValidatorStorage(ValidatorStorage):
         if cursor.rowcount:
             # If it does we can use the already fetched id.
             miner_id = cursor.fetchone()[0]
-            # If it does we only update the lastUpdated. (ON DUPLICATE KEY UPDATE consumes an autoincrement value)
+            # If it does we only update the lastUpdated and credibility. (ON DUPLICATE KEY UPDATE consumes an autoincrement value)
             cursor.execute(
-                "UPDATE Miner SET lastUpdated = %s WHERE hotkey = %s", [now_str, hotkey]
+                "UPDATE Miner SET lastUpdated = %s, credibility = %s, WHERE hotkey = %s",
+                [now_str, credibility, hotkey],
             )
             self.connection.commit()
         else:
             # If it doesn't we insert it.
             cursor.execute(
-                "INSERT IGNORE INTO Miner (hotkey, lastUpdated) VALUES (%s, %s)",
-                [hotkey, now_str],
+                "INSERT IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (%s, %s, %s)",
+                [hotkey, now_str, credibility],
             )
             self.connection.commit()
             # Then we get the newly created minerId
