@@ -160,7 +160,7 @@ class MysqlValidatorStorage(ValidatorStorage):
         return "NULL" if (label is None) else label.casefold()
 
     # TODO: Deprecate
-    def upsert_miner_index(self, index: MinerIndex):
+    def upsert_miner_index(self, index: MinerIndex, credibility: float = 0):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
         bt.logging.trace(
@@ -223,7 +223,9 @@ class MysqlValidatorStorage(ValidatorStorage):
                 )
             self.connection.commit()
 
-    def upsert_compressed_miner_index(self, index: CompressedMinerIndex, hotkey: str):
+    def upsert_compressed_miner_index(
+        self, index: CompressedMinerIndex, hotkey: str, credibility: float = 0
+    ):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
         bt.logging.trace(

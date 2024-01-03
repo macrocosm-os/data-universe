@@ -10,12 +10,14 @@ class ValidatorStorage(ABC):
     """An abstract class which defines the contract that all implementations of ValidatorStorage must fulfill."""
 
     @abstractmethod
-    def upsert_miner_index(self, index: MinerIndex):
+    def upsert_miner_index(self, index: MinerIndex, credibility: float = 0):
         """Stores the index for all of the data that a specific miner promises to provide."""
         raise NotImplemented
 
     @abstractmethod
-    def upsert_compressed_miner_index(self, index: CompressedMinerIndex):
+    def upsert_compressed_miner_index(
+        self, index: CompressedMinerIndex, hotkey: str, credibility: float = 0
+    ):
         """Stores the index for all of the data that a specific miner promises to provide."""
         raise NotImplemented
 
