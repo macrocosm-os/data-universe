@@ -292,6 +292,10 @@ class MysqlValidatorStorage(ValidatorStorage):
                     value_subset,
                 )
             self.connection.commit()
+            
+    def get_miner_index_size(self, miner_hotkey: str) -> Optional[int]:
+        # TODO: Implement when new schema is ready.
+        raise NotImplementedError
 
     def read_miner_index(
         self, hotkey: str, valid_miners: Set[str]

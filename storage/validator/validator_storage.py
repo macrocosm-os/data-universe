@@ -27,6 +27,11 @@ class ValidatorStorage(ABC):
         raise NotImplemented
 
     @abstractmethod
+    def get_miner_index_size(self, miner_hotkey: str) -> Optional[int]:
+        """Returns the total byte size of the miner's index or None if the Miner doesn't have an index."""
+        raise NotImplemented
+
+    @abstractmethod
     def delete_miner_index(self, miner_hotkey: str):
         """Removes the index for the specified miner."""
         raise NotImplemented
