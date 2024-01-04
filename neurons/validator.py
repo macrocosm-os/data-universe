@@ -119,7 +119,7 @@ class Validator(BaseNeuron):
             sys.exit(1)
 
     async def _update_and_get_miner_index(
-        self, hotkey: str, miner_axon: bt.AxonInfo
+        self, hotkey: str, uid: int, miner_axon: bt.AxonInfo
     ) -> Optional[ScorableMinerIndex]:
         """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
 
@@ -151,11 +151,12 @@ class Validator(BaseNeuron):
         assert miner_index is not None, "Miner index should not be None"
 
         # Miner replied with a valid index. Store it and return it.
+        miner_credibility = self.scorer.get_miner_credibility(uid)
         if isinstance(miner_index, MinerIndex):
             bt.logging.trace(
                 f"{hotkey}: Got new uncompressed miner index. Size={len(miner_index.data_entity_buckets)}"
             )
-            self.storage.upsert_miner_index(miner_index)
+            self.storage.upsert_miner_index(miner_index, miner_credibility)
         else:
             assert isinstance(
                 miner_index, CompressedMinerIndex
@@ -163,7 +164,9 @@ class Validator(BaseNeuron):
             bt.logging.trace(
                 f"{hotkey}: Got new compressed miner index. Size={CompressedMinerIndex.size(miner_index)}"
             )
-            self.storage.upsert_compressed_miner_index(miner_index, hotkey)
+            self.storage.upsert_compressed_miner_index(
+                miner_index, hotkey, miner_credibility
+            )
 
         return self._get_miner_index(hotkey)
 
@@ -204,7 +207,7 @@ class Validator(BaseNeuron):
         bt.logging.trace(f"{hotkey}: Evaluating miner")
 
         # Query the miner for the latest index.
-        index = await self._update_and_get_miner_index(hotkey, axon_info)
+        index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
         if not index:
             # The miner hasn't provided an index yet, so we can't validate them. Set their score to 0 and move on.
             bt.logging.trace(

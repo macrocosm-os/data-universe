@@ -66,10 +66,8 @@ class MinerScorer:
             self.scores[uid] = 0.0
             self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
 
-    def get_miner_credibility_for_test(self, uid: int) -> float:
-        """Returns the credibility of miner 'uid'.
-
-        Should only be used in tests."""
+    def get_miner_credibility(self, uid: int) -> float:
+        """Returns the credibility of miner 'uid'."""
         with self.lock:
             return self.miner_credibility[uid].item()
 

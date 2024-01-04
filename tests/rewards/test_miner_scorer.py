@@ -79,12 +79,12 @@ class TestMinerScorer(unittest.TestCase):
         self._add_score_to_uid(uid)
         scores = self.scorer.get_scores()
         self.assertGreater(scores[uid], 0.0)
-        self.assertGreater(self.scorer.get_miner_credibility_for_test(uid), 0)
+        self.assertGreater(self.scorer.get_miner_credibility(uid), 0)
 
         self.scorer.reset(uid)
         scores = self.scorer.get_scores()
         self.assertEqual(scores[uid], 0.0)
-        self.assertEqual(self.scorer.get_miner_credibility_for_test(uid), 0)
+        self.assertEqual(self.scorer.get_miner_credibility(uid), 0)
 
     def test_resize(self):
         """Test resize retains scores after the resize."""
