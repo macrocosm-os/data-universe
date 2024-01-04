@@ -209,11 +209,21 @@ class Validator(BaseNeuron):
         # Query the miner for the latest index.
         index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
         if not index:
-            # The miner hasn't provided an index yet, so we can't validate them. Set their score to 0 and move on.
+            # The miner hasn't provided an index yet, so we can't validate them. Count as a failed validation.
             bt.logging.trace(
-                f"{hotkey}: Failed to get an index for miner. Setting score to 0."
+                f"{hotkey}: Failed to get an index for miner. Counting as a failed validation."
             )
-            self.scorer.reset(uid)
+            self.scorer.on_miner_evaluated(
+                uid,
+                index,
+                [
+                    ValidationResult(
+                        is_valid=False,
+                        reason="No available miner index.",
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
+                    )
+                ],
+            )
             return
 
         # From that index, find a data entity bucket to sample and get it from the miner.
