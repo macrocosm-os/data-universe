@@ -1,3 +1,4 @@
+import threading
 from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
@@ -30,7 +31,18 @@ class RedditCustomScraper(Scraper):
     Scrapes Reddit data using the a personal reddit account.
     """
 
-    USER_AGENT = "User-Agent: python: "
+    def __init__(self):
+        self.client_lock = threading.Lock()
+        self.client = asyncpraw.Reddit(
+            client_id=os.getenv("REDDIT_CLIENT_ID"),
+            client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+            username=os.getenv("REDDIT_USERNAME"),
+            password=os.getenv("REDDIT_PASSWORD"),
+            user_agent="User-Agent: python: " + os.getenv("REDDIT_USERNAME"),
+        )
+
+    def __del__(self):
+        self.client.close()
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
@@ -73,22 +85,17 @@ class RedditCustomScraper(Scraper):
             content = None
 
             try:
-                async with asyncpraw.Reddit(
-                    client_id=os.getenv("REDDIT_CLIENT_ID"),
-                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                    username=os.getenv("REDDIT_USERNAME"),
-                    password=os.getenv("REDDIT_PASSWORD"),
-                    user_agent=RedditCustomScraper.USER_AGENT
-                    + os.getenv("REDDIT_USERNAME"),
-                ) as reddit:
+                with self.client_lock:
                     if reddit_content_to_verify.data_type == RedditDataType.POST:
-                        submission = await reddit.submission(
+                        submission = await self.client.submission(
                             url=reddit_content_to_verify.url
                         )
                         # Parse the response.
                         content = self._best_effort_parse_submission(submission)
                     else:
-                        comment = await reddit.comment(url=reddit_content_to_verify.url)
+                        comment = await self.client.comment(
+                            url=reddit_content_to_verify.url
+                        )
                         # Parse the response.
                         content = self._best_effort_parse_comment(comment)
             except Exception as e:
@@ -155,14 +162,8 @@ class RedditCustomScraper(Scraper):
         # In either case we parse the response into a list of RedditContents.
         contents = None
         try:
-            async with asyncpraw.Reddit(
-                client_id=os.getenv("REDDIT_CLIENT_ID"),
-                client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                username=os.getenv("REDDIT_USERNAME"),
-                password=os.getenv("REDDIT_PASSWORD"),
-                user_agent=RedditCustomScraper.USER_AGENT,
-            ) as reddit:
-                subreddit = await reddit.subreddit(subreddit_name)
+            with self.client_lock:
+                subreddit = await self.client.subreddit(subreddit_name)
 
                 if fetch_submissions:
                     submissions = None
