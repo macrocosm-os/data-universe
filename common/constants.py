@@ -14,3 +14,9 @@ MAX_LABEL_LENGTH = 32
 
 # The current protocol version.
 PROTOCOL_VERSION = 1
+
+# Flat limit for score increase in a single evaluation.
+SCORE_GROWTH_LIMIT_FLAT = utils.mb_to_bytes(1)
+
+# Percent limit for score increase in a single evaluation.
+SCORE_GROWTH_LIMIT_PERCENT = 1.05

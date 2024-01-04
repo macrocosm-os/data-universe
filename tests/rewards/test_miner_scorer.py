@@ -317,6 +317,31 @@ class TestMinerScorer(unittest.TestCase):
                     scores[shady_miner].item(),
                 )
 
+    def test_update_score_respects_flat_limit(self):
+        """Verifies that a score can only increase by a flat amount one cycle."""
+        uid = 0
+        self.scorer.scores[uid] = 0
+
+        # Update by an amount big enough to account for alpha.
+        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_FLAT * 1000)
+
+        self.assertEqual(self.scorer.scores[uid], constants.SCORE_GROWTH_LIMIT_FLAT)
+
+    def test_update_score_respects_flat_limit(self):
+        """Verifies that a score can only increase by a flat amount one cycle."""
+        uid = 0
+        # Start with an amount big enough to account for alpha and beat out the flat increase.
+        self.scorer.scores[uid] = constants.SCORE_GROWTH_LIMIT_FLAT * 1000
+
+        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_FLAT * 100000)
+
+        self.assertEqual(
+            self.scorer.scores[uid],
+            constants.SCORE_GROWTH_LIMIT_FLAT
+            * 1000
+            * constants.SCORE_GROWTH_LIMIT_PERCENT,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
