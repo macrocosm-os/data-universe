@@ -317,6 +317,32 @@ class TestMinerScorer(unittest.TestCase):
                     scores[shady_miner].item(),
                 )
 
+    def test_update_score_respects_growth_limit_threshhold(self):
+        """Verifies that a score can only increase up to the threshold in one cycle."""
+        uid = 0
+        self.scorer.scores[uid] = 0
+
+        # Update by an amount big enough to account for alpha.
+        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_THRESHOLD * 1000)
+
+        self.assertEqual(
+            self.scorer.scores[uid], constants.SCORE_GROWTH_LIMIT_THRESHOLD
+        )
+
+    def test_update_score_respects_percent_limit(self):
+        """Verifies that a score can only increase by a percent amount in one cycle."""
+        uid = 0
+        # Start with an amount big enough to account for alpha and beat out the flat increase.
+        self.scorer.scores[uid] = constants.SCORE_GROWTH_LIMIT_THRESHOLD
+
+        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_THRESHOLD * 1000)
+
+        self.assertEqual(
+            self.scorer.scores[uid],
+            constants.SCORE_GROWTH_LIMIT_THRESHOLD
+            * constants.SCORE_GROWTH_LIMIT_PERCENT,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

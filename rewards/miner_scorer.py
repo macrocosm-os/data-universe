@@ -2,6 +2,7 @@ import threading
 from typing import List
 import torch
 import bittensor as bt
+from common import constants
 
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
@@ -173,4 +174,14 @@ class MinerScorer:
 
         Requires: self.lock is held.
         """
-        self.scores[uid] = self.alpha * reward + (1 - self.alpha) * self.scores[uid]
+        new_score = self.alpha * reward + (1 - self.alpha) * self.scores[uid]
+
+        # If the score is over the growth limit threshold then ensure it isn't growing faster than the percent limit.
+        if new_score > constants.SCORE_GROWTH_LIMIT_THRESHOLD:
+            new_score = min(
+                new_score, self.scores[uid] * constants.SCORE_GROWTH_LIMIT_PERCENT
+            )
+            # Still allow a score to go from 0 to the SCORE_GROWTH_LIMIT_THRESHOLD in one go.
+            new_score = max(new_score, constants.SCORE_GROWTH_LIMIT_THRESHOLD)
+
+        self.scores[uid] = new_score
