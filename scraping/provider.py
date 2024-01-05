@@ -16,13 +16,18 @@ class ScraperProvider:
     """A scraper provider will provide the correct scraper based on the source to be scraped."""
 
     def __init__(
-        self, factories: Dict[DataSource, Callable[[], Scraper]] = DEFAULT_FACTORIES
+        self, factories: Dict[ScraperId, Callable[[], Scraper]] = DEFAULT_FACTORIES
     ):
         self.factories = factories
+        self.scrapers = dict()
 
     def get(self, scraper_id: ScraperId) -> Scraper:
         """Returns a scraper for the given scraper id."""
 
         assert scraper_id in self.factories, f"Scraper id {scraper_id} not supported."
 
-        return self.factories[scraper_id]()
+        # Instantiate the scraper if it has not been instantiated yet.
+        if scraper_id not in self.scrapers:
+            self.scrapers[scraper_id] = self.factories[scraper_id]()
+
+        return self.scrapers[scraper_id]
