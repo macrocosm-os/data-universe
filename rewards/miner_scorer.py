@@ -176,13 +176,12 @@ class MinerScorer:
         """
         new_score = self.alpha * reward + (1 - self.alpha) * self.scores[uid]
 
-        # Check that score does not increase too fast so that credibility has time to adjust.
-        new_score_flat_limit = min(
-            new_score, self.scores[uid] + constants.SCORE_GROWTH_LIMIT_FLAT
-        )
-        new_score_percent_limit = min(
-            new_score, self.scores[uid] * constants.SCORE_GROWTH_LIMIT_PERCENT
-        )
+        # If the score is over the growth limit threshold then ensure it isn't growing faster than the percent limit.
+        if new_score > constants.SCORE_GROWTH_LIMIT_THRESHOLD:
+            new_score = min(
+                new_score, self.scores[uid] * constants.SCORE_GROWTH_LIMIT_PERCENT
+            )
+            # Still allow a score to go from 0 to the SCORE_GROWTH_LIMIT_THRESHOLD in one go.
+            new_score = max(new_score, constants.SCORE_GROWTH_LIMIT_THRESHOLD)
 
-        # Allow score to increase by either the flat or percent amount, whichever is greater.
-        self.scores[uid] = max(new_score_flat_limit, new_score_percent_limit)
+        self.scores[uid] = new_score
