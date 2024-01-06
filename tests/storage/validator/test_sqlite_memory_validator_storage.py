@@ -404,7 +404,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         )
 
     def test_many_large_indexes_perf(self):
-        labels = [f"label{i}" for i in range(100000)]
+        labels = [f"label{i}" for i in range(500000)]
         time_buckets = [i for i in range(1000, 10000)]
         miners = [f"hotkey{i}" for i in range(200)]
 
@@ -413,18 +413,18 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 DataSource.REDDIT: [
                     CompressedEntityBucket(
                         label=label,
-                        time_bucket_ids=random.sample(time_buckets, 500),
-                        sizes_bytes=[i for i in range(500)],
+                        time_bucket_ids=random.sample(time_buckets, 1),
+                        sizes_bytes=[i for i in range(1)],
                     )
-                    for label in random.sample(labels, 1000)
+                    for label in labels
                 ],
                 DataSource.X: [
                     CompressedEntityBucket(
                         label=label,
-                        time_bucket_ids=random.sample(time_buckets, 500),
-                        sizes_bytes=[i for i in range(500)],
+                        time_bucket_ids=random.sample(time_buckets, 1),
+                        sizes_bytes=[i for i in range(1)],
                     )
-                    for label in random.sample(labels, 1000)
+                    for label in labels
                 ],
             }
             index = CompressedMinerIndex(sources=buckets_by_source)

@@ -3,10 +3,46 @@ import datetime as dt
 import bittensor as bt
 import sqlite3
 import threading
-from typing import Dict, Optional, Set, Tuple
+from typing import Any, Dict, Optional, Set, Tuple
 from common.data import CompressedMinerIndex, DataLabel, MinerIndex
 from common.data_v2 import ScorableMinerIndex
 from storage.validator.validator_storage import ValidatorStorage
+
+
+class AutoIncrementDict:
+    """A dictionary that automatically assigns ids to keys.
+
+    Provides O(1) ability to insert a key and get its id, and to lookup the key for an id.
+
+    Not thread safe.
+    """
+
+    def __init__(self):
+        self.available_ids = set()
+        self.items = []
+        self.indexes = {}
+
+    def get_or_insert(self, key: Any) -> int:
+        if key not in self.indexes:
+            if self.available_ids:
+                key_id = self.available_ids.pop()
+                self.items[key_id] = key
+                self.indexes[key] = key_id
+            else:
+                self.items.append(key)
+                self.indexes[key] = len(self.items) - 1
+
+        return self.indexes[key]
+
+    def get_by_id(self, id: int) -> Any:
+        return self.items[id]
+
+    def delete_key(self, key: Any):
+        if key in self.indexes:
+            key_id = self.indexes[key]
+            self.items[key_id] = None
+            del self.indexes[key]
+            self.available_ids.add(key_id)
 
 
 # Use a timezone aware adapter for timestamp columns.
@@ -62,13 +98,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     MINER_TABLE_HOTKEY_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
                                 ON DataEntity (timeBucketId, source, label)"""
 
-    # Integer Primary Key = ROWID alias which is auto-increment when assigning NULL on insert.
-    LABEL_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Label (
-                            labelId     INTEGER         PRIMARY KEY,
-                            labelValue  VARCHAR(32)     NOT NULL,
-                            UNIQUE(labelValue)
-                            )"""
-
     # Updated Primary table in which the DataEntityBuckets for all miners are stored.
     # TODO consider a index on BucketId/ContentSizeBytes for uniqueness
     MINER_INDEX_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS MinerIndex (
@@ -80,10 +109,14 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                     PRIMARY KEY(minerId, source, labelId, timeBucketId)
                                     ) WITHOUT ROWID"""
 
+    MINER_INDEX_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS bucket_size_index
+                            ON MinerIndex (source, labelId, timeBucketId, contentSizeBytes)"""
+
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
 
         self.connection = self._create_connection()
+        self.label_dict = AutoIncrementDict()
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
@@ -92,11 +125,9 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor.execute(SqliteMemoryValidatorStorage.MINER_TABLE_CREATE)
             # Whichever indexes we need.
 
-            # Create the Label table (if it does not already exist).
-            cursor.execute(SqliteMemoryValidatorStorage.LABEL_TABLE_CREATE)
-
             # Create the Index table (if it does not already exist)/
             cursor.execute(SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_CREATE)
+            cursor.execute(SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_INDEX)
 
             # Lock to avoid concurrency issues on clearing and inserting an index.
             self.upsert_miner_index_lock = threading.Lock()
@@ -132,49 +163,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             miner_id = cursor.fetchone()[0]
 
         return miner_id
-
-    def _insert_labels(self, labels: Set[str]):
-        """Stores labels creating new unique ids if they have not been encountered yet."""
-        with contextlib.closing(self._create_connection()) as connection:
-            cursor = connection.cursor()
-
-            vals = [[label] for label in labels]
-
-            cursor.executemany(
-                "INSERT OR IGNORE INTO Label (labelValue) VALUES (?)", vals
-            )
-            connection.commit()
-
-    def _get_label_value_to_id_dict(self, labels: Set[str]) -> Dict[str, int]:
-        """Gets a dictionary map for all label values to this Validator's unique id for it."""
-
-        label_value_to_id_dict = {}
-
-        with contextlib.closing(self._create_connection()) as connection:
-            cursor = connection.cursor()
-
-            # TODO check that temporary tables are correctly removed if an exception is thrown in this section.
-            # Create a temporary table and insert values
-            cursor.execute("CREATE TEMPORARY TABLE TempTable (labelValue VARCHAR(32))")
-            cursor.executemany(
-                "INSERT INTO TempTable (labelValue) VALUES (?)",
-                [(value,) for value in labels],
-            )
-
-            # Retrieve values from the "Label" table based on the temporary table
-            cursor.execute(
-                """
-                SELECT l.labelId, l.labelValue
-                FROM Label l
-                JOIN TempTable t ON l.labelValue = t.labelValue
-            """
-            )
-
-            # Read each row and add to the mapping dictionary
-            for row in cursor:
-                label_value_to_id_dict[row["labelValue"]] = row["labelId"]
-
-        return label_value_to_id_dict
 
     def _label_value_parse(self, label: Optional[DataLabel]) -> str:
         """Parses the value to store in the database out of an Optional DataLabel."""
@@ -283,15 +271,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             for compressed_bucket in compressed_buckets
         }
 
-        print("Inserting label Values")
-
-        self._insert_labels(label_values)
-
-        print("Getting label dict")
-
-        # Get all label ids for use in mapping.
-        label_value_to_id_dict = self._get_label_value_to_id_dict(label_values)
-
         print("Constructing values for miner index")
 
         # Parse every DataEntityBucket from the index into a list of values to insert.
@@ -306,9 +285,9 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                             [
                                 miner_id,
                                 int(source),
-                                label_value_to_id_dict[
+                                self.label_dict.get_or_insert(
                                     self._label_value_parse_str(compressed_bucket.label)
-                                ],
+                                ),
                                 time_bucket_id,
                                 size_bytes,
                             ]
@@ -322,7 +301,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             print("Deleting for miner index")
             self.delete_miner_index(hotkey)
 
-            print("Inserting miner index")
+            print(f"Inserting miner index of size {len(values)}")
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
                 # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
