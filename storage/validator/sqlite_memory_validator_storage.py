@@ -93,13 +93,10 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                             UNIQUE(hotkey)
                             )"""
 
-    # INDEX id_cred_idx (minerId, credibility)
-    # INDEX on minerId hotkey as well?
-    MINER_TABLE_HOTKEY_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
-                                ON DataEntity (timeBucketId, source, label)"""
+    MINER_TABLE_CREDIBILTY_INDEX = """CREATE INDEX IF NOT EXISTS miner_credibility_index
+                                      ON Miner (minerId, credibility)"""
 
     # Updated Primary table in which the DataEntityBuckets for all miners are stored.
-    # TODO consider a index on BucketId/ContentSizeBytes for uniqueness
     MINER_INDEX_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS MinerIndex (
                                     minerId             INTEGER         NOT NULL,
                                     source              TINYINT         NOT NULL,
@@ -109,8 +106,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                     PRIMARY KEY(minerId, source, labelId, timeBucketId)
                                     ) WITHOUT ROWID"""
 
-    MINER_INDEX_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS bucket_size_index
-                            ON MinerIndex (source, labelId, timeBucketId, contentSizeBytes)"""
+    MINER_INDEX_TABLE_BUCKET_SIZE_INDEX = """CREATE INDEX IF NOT EXISTS bucket_size_index
+                                             ON MinerIndex (source, labelId, timeBucketId, contentSizeBytes)"""
 
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
@@ -123,11 +120,13 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
             # Create the Miner table (if it does not already exist).
             cursor.execute(SqliteMemoryValidatorStorage.MINER_TABLE_CREATE)
-            # Whichever indexes we need.
+            cursor.execute(SqliteMemoryValidatorStorage.MINER_TABLE_CREDIBILTY_INDEX)
 
-            # Create the Index table (if it does not already exist)/
+            # Create the Index table (if it does not already exist).
             cursor.execute(SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_CREATE)
-            cursor.execute(SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_INDEX)
+            cursor.execute(
+                SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_BUCKET_SIZE_INDEX
+            )
 
             # Lock to avoid concurrency issues on clearing and inserting an index.
             self.upsert_miner_index_lock = threading.Lock()
@@ -174,84 +173,47 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
     def upsert_miner_index(self, index: MinerIndex, credibility: float = 0):
         """Stores the index for all of the data that a specific miner promises to provide."""
-        raise NotImplemented
-        # now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+        now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
-        # # Upsert this Validator's minerId for the specified hotkey.
-        # miner_id = self._upsert_miner(index.hotkey, now_str, credibility)
+        # Upsert this Validator's minerId for the specified hotkey.
+        miner_id = self._upsert_miner(index.hotkey, now_str, credibility)
 
-        # # Ensure that all the label ids in the upcoming entity buckets are known for this Validator.
-        # label_values = set()
+        # Parse every DataEntityBucket from the index into a list of values to insert.
+        values = []
+        for data_entity_bucket in index.data_entity_buckets:
+            try:
+                values.append(
+                    [
+                        miner_id,
+                        int(data_entity_bucket.id.source),
+                        self.label_dict.get_or_insert(
+                            self._label_value_parse(data_entity_bucket.id.label)
+                        ),
+                        data_entity_bucket.id.time_bucket.id,
+                        data_entity_bucket.size_bytes,
+                    ]
+                )
+            except:
+                # In the case that we fail to get a label (due to unsupported characters) we drop just that one bucket.
+                pass
 
-        # for data_entity_bucket in index.data_entity_buckets:
-        #     label_values.add(self._label_value_parse(data_entity_bucket.id.label))
+        with self.upsert_miner_index_lock:
+            # Clear the previous keys for this miner.
+            self.delete_miner_index(index.hotkey)
 
-        # self._insert_labels(label_values)
-
-        # # Get all label ids for use in mapping.
-        # label_value_to_id_dict = self._get_label_value_to_id_dict(label_values)
-
-        # # Ensure that all the bucket ids in the upcoming entity buckets are known for this Validator.
-        # bucket_values = set()
-
-        # for data_entity_bucket in index.data_entity_buckets:
-        #     bucket_values.add(
-        #         (
-        #             int(data_entity_bucket.id.source),
-        #             label_value_to_id_dict[
-        #                 self._label_value_parse(data_entity_bucket.id.label)
-        #             ],
-        #             data_entity_bucket.id.time_bucket.id,
-        #         )
-        #     )
-
-        # self._insert_buckets(bucket_values)
-
-        # # Get all bucket ids for use in mapping.
-        # bucket_value_to_id_dict = self._get_bucket_value_to_id_dict(bucket_values)
-
-        # # Parse every DataEntityBucket from the index into a list of values to insert.
-        # values = []
-        # for data_entity_bucket in index.data_entity_buckets:
-        #     try:
-        #         bucket_id = bucket_value_to_id_dict[
-        #             (
-        #                 int(data_entity_bucket.id.source),
-        #                 label_value_to_id_dict[
-        #                     self._label_value_parse(data_entity_bucket.id.label)
-        #                 ],
-        #                 data_entity_bucket.id.time_bucket.id,
-        #             )
-        #         ]
-
-        #         values.append(
-        #             [
-        #                 miner_id,
-        #                 bucket_id,
-        #                 data_entity_bucket.size_bytes,
-        #             ]
-        #         )
-        #     except:
-        #         # In the case that we fail to get a label (due to unsupported characters) we drop just that one bucket.
-        #         pass
-
-        # with self.upsert_miner_index_lock:
-        #     # Clear the previous keys for this miner.
-        #     self.delete_miner_index(index.hotkey)
-
-        #     with contextlib.closing(self._create_connection()) as connection:
-        #         cursor = connection.cursor()
-        #         # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
-        #         # Batch in groups of 1m if necessary to avoid congestion issues.
-        #         value_subsets = [
-        #             values[x : x + 1000000] for x in range(0, len(values), 1000000)
-        #         ]
-        #         for value_subset in value_subsets:
-        #             cursor.executemany(
-        #                 """INSERT OR IGNORE INTO MinerIndex (minerId, bucketId, contentSizeBytes) VALUES (?, ?, ?)""",
-        #                 value_subset,
-        #             )
-        #         self.connection.commit()
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+                # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
+                # Batch in groups of 1m if necessary to avoid congestion issues.
+                value_subsets = [
+                    values[x : x + 1000000] for x in range(0, len(values), 1000000)
+                ]
+                for value_subset in value_subsets:
+                    cursor.executemany(
+                        """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
+                        value_subset,
+                    )
+                self.connection.commit()
 
     def upsert_compressed_miner_index(
         self, index: CompressedMinerIndex, hotkey: str, credibility: float = 0
@@ -261,15 +223,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
         # Upsert this Validator's minerId for the specified hotkey.
         miner_id = self._upsert_miner(hotkey, now_str, credibility)
-
-        print("Creating label Values")
-
-        # Ensure that all the label ids in the upcoming entity buckets are known for this Validator.
-        label_values = {
-            self._label_value_parse_str(compressed_bucket.label)
-            for _, compressed_buckets in index.sources.items()
-            for compressed_bucket in compressed_buckets
-        }
 
         print("Constructing values for miner index")
 
@@ -340,4 +293,14 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
     def read_miner_last_updated(self, miner_hotkey: str) -> Optional[dt.datetime]:
         """Gets when a specific miner was last updated."""
-        raise NotImplemented
+
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                "SELECT lastUpdated FROM Miner WHERE hotkey = ?", [miner_hotkey]
+            )
+            last_updated = cursor.fetchone()[0]
+            if last_updated is not None:
+                return last_updated
+            else:
+                return None
