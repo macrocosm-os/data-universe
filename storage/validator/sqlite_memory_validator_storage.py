@@ -137,7 +137,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             "file::memory:?cache=shared",
             uri=True,
             detect_types=sqlite3.PARSE_DECLTYPES,
-            timeout=60.0,
+            timeout=120.0,
         )
         # Avoid using a row_factory that would allow parsing results by column name for performance.
         # connection.row_factory = sqlite3.Row
@@ -272,7 +272,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 connection.commit()
                 print("Done committing")
 
-    # TODO consider moving the adj content size bytes calc off the hot path to a background thread.
     def read_miner_index(
         self,
         miner_hotkey: str,
@@ -294,10 +293,17 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             miner_credibility = result[2]
 
             # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
-            sql_string = """WITH TempAgg AS (
+            sql_string = """WITH
+                            TempBuckets AS (
+                                SELECT source, labelId, timeBucketId
+                                FROM MinerIndex
+                                WHERE MinerId = ?
+                            ),
+                            TempAgg AS (
                                 SELECT source, labelId, timeBucketId,
                                 SUM(contentSizeBytes * credibility) as totalAdjContentSizeBytes
                                 FROM MinerIndex
+                                INNER JOIN TempBuckets USING (source, labelId, timeBucketId)
                                 JOIN Miner USING (minerId)
                                 GROUP BY source, labelId, timeBucketId
                             )
@@ -308,7 +314,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                             WHERE minerId = ?"""
 
             print("Executing read query")
-            cursor.execute(sql_string, [miner_credibility, miner_id])
+            cursor.execute(sql_string, [miner_id, miner_credibility, miner_id])
 
             # Create to a list to hold each of the ScorableDataEntityBuckets we generate for this miner.
             scored_data_entity_buckets = []

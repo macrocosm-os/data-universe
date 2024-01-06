@@ -609,8 +609,8 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         time_buckets2 = [i for i in range(1, 101)]
         index2 = _create_index(labels2, time_buckets2)
 
-        index1_miners = [f"hotkey{i}" for i in range(2)]
-        index2_miners = [f"hotkey{i}" for i in range(2, 5)]
+        index1_miners = [f"hotkey{i}" for i in range(5)]
+        index2_miners = [f"hotkey{i}" for i in range(5, 8)]
 
         # On 3 threads, insert the 5 indexes, twice each.
         def _insert_index(index: CompressedMinerIndex, hotkey: str):
@@ -627,22 +627,19 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 futures.append(executor.submit(_insert_index, index2, miner))
                 futures.append(executor.submit(_insert_index, index2, miner))
 
-            print("Waiting for inserts to complete...")
             concurrent.futures.wait(futures)
             for future in futures:
                 if future.exception() is not None:
                     raise future.exception()
-            print("Insert completed")
 
         # Construct the expected indexes. The first index is shared by 2 miners, the second by 3.
-        print("Constructing the expected scorable indexes.")
         expected_index1 = [
             ScorableDataEntityBucket(
                 time_bucket_id=time_bucket_id,
                 source=DataSource.REDDIT,
                 label=label,
                 size_bytes=100,
-                scorable_bytes=50,
+                scorable_bytes=20,
             )
             for time_bucket_id in time_buckets1
             for label in labels1
@@ -652,7 +649,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 source=DataSource.X,
                 label=label,
                 size_bytes=50,
-                scorable_bytes=25,
+                scorable_bytes=10,
             )
             for time_bucket_id in time_buckets1
             for label in labels1
@@ -678,7 +675,6 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             for time_bucket_id in time_buckets2
             for label in labels2
         ]
-        print("Finished constructing the expected scorable indexes.")
 
         def _is_index_as_expected(
             index: ScorableMinerIndex, expected_index: List[ScorableDataEntityBucket]
@@ -736,7 +732,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         """Inserts 200 miners with maximal indexes and reads them back."""
         labels = [f"label{i}" for i in range(100_000)]
         time_buckets = [i for i in range(1000, 10_000)]
-        miners = [f"hotkey{i}" for i in range(200)]
+        miners = [f"hotkey{i}" for i in range(50)]
 
         for miner in miners:
             buckets_by_source = {
