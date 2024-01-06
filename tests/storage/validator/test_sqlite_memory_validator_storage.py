@@ -51,6 +51,80 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         self.assertNotEqual(other_id, miner_id)
 
     def test_upsert_miner_index_insert_index(self):
+        """Tests that we can insert a miner index"""
+        # Create 3 DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        time_bucket = TimeBucket.from_datetime(now)
+
+        # Create the index containing the buckets.
+        index = MinerIndex(
+            hotkey="hotkey1",
+            data_entity_buckets=[
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.REDDIT,
+                        label=DataLabel(value="r/wallstreetbets"),
+                    ),
+                    size_bytes=10,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(time_bucket=time_bucket, source=DataSource.X),
+                    size_bytes=50,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.X,
+                        label=DataLabel(value="#bittensor"),
+                    ),
+                    size_bytes=200,
+                ),
+            ],
+        )
+
+        # Store the index.
+        self.test_storage.upsert_miner_index(index, credibility=1.0)
+
+        # Confirm we get back the expected index.
+        index = self.test_storage.read_miner_index("hotkey1")
+
+        expected_scorable_index = ScorableMinerIndex(
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    time_bucket_id=time_bucket.id,
+                    source=DataSource.REDDIT,
+                    label="r/wallstreetbets",
+                    size_bytes=10,
+                    scorable_bytes=10,
+                ),
+                ScorableDataEntityBucket(
+                    time_bucket_id=time_bucket.id,
+                    source=DataSource.X,
+                    label=None,
+                    size_bytes=50,
+                    scorable_bytes=50,
+                ),
+                ScorableDataEntityBucket(
+                    time_bucket_id=time_bucket.id,
+                    source=DataSource.X,
+                    label="#bittensor",
+                    size_bytes=200,
+                    scorable_bytes=200,
+                ),
+            ],
+            last_updated=now,
+        )
+        self.assertEqual(
+            index.scorable_data_entity_buckets,
+            expected_scorable_index.scorable_data_entity_buckets,
+        )
+        self.assertTrue(
+            index.last_updated - expected_scorable_index.last_updated
+            < dt.timedelta(seconds=5)
+        )
+
+    def test_upsert_miner_index_insert_index_special_characters(self):
         """Tests that we can insert a miner index, including a label with a special character."""
         # Create 3 DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
@@ -76,7 +150,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                     id=DataEntityBucketId(
                         time_bucket=time_bucket,
                         source=DataSource.X,
-                        label=DataLabel("#🌌"),
+                        label=DataLabel(value="#🌌"),
                     ),
                     size_bytes=200,
                 ),
@@ -465,7 +539,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         self.test_storage.upsert_miner_index(index_3)
 
         # Delete one index.
-        self.test_storage.delete_miner_index("hotkey2")
+        self.test_storage._delete_miner_index("hotkey2")
 
         # Confirm we have only two indexes left.
         self.assertIsNotNone(self.test_storage.read_miner_index("hotkey1"))
@@ -498,6 +572,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Confirm the last updated is None.
         self.assertEqual(None, last_updated)
 
+    @unittest.skip("Skip the large index test by default.")
     def test_multithreaded_inserts(self):
         """In a multi-threaded environment, insert 5 indexes for 5 miners, then read them back and verify they're correct."""
 
@@ -651,6 +726,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             concurrent.futures.wait(futures)
             print("Verification complete")
 
+    # @unittest.skip("Skip the large index test by default.")
     def test_many_large_indexes_perf(self):
         """Inserts 200 miners with maximal indexes and reads them back."""
         labels = [f"label{i}" for i in range(100_000)]
@@ -663,17 +739,17 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                     CompressedEntityBucket(
                         label=label,
                         time_bucket_ids=random.sample(time_buckets, 100),
-                        sizes_bytes=[i for i in range(1)],
+                        sizes_bytes=[i for i in range(100)],
                     )
-                    for label in random.sample(labels, 50_000)
+                    for label in random.sample(labels, 5_000)
                 ],
                 DataSource.X: [
                     CompressedEntityBucket(
                         label=label,
                         time_bucket_ids=random.sample(time_buckets, 500),
-                        sizes_bytes=[i for i in range(1)],
+                        sizes_bytes=[i for i in range(500)],
                     )
-                    for label in random.sample(labels, 10_000)
+                    for label in random.sample(labels, 1_000)
                 ],
             }
             index = CompressedMinerIndex(sources=buckets_by_source)

@@ -84,12 +84,11 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     """Sqlite in-memory backed Validator Storage"""
 
     # Integer Primary Key = ROWID alias which is auto-increment when assigning NULL on insert.
-    # TODO Confirm DECIMAL works over a float here.
     MINER_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Miner (
                             minerId     INTEGER         PRIMARY KEY,
                             hotkey      VARCHAR(64)     NOT NULL,
                             lastUpdated TIMESTAMP(6)    NOT NULL,
-                            credibility DECIMAL(5,2)    NOT NULL    DEFAULT 0.00,
+                            credibility FLOAT           NOT NULL    DEFAULT 0.00,
                             UNIQUE(hotkey)
                             )"""
 
@@ -142,7 +141,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         )
         # Allow this connection to parse results from returned rows by column name.
         connection.row_factory = sqlite3.Row
-
+        connection.isolation_level = None
         return connection
 
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
@@ -220,11 +219,12 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     ):
         """Stores the index for all of the data that a specific miner promises to provide."""
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
+        print("Upserting miner")
 
         # Upsert this Validator's minerId for the specified hotkey.
         miner_id = self._upsert_miner(hotkey, now_str, credibility)
 
-        print("Constructing values for miner index")
+        print("Parsing the data entity buckets from compressed index")
 
         # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []
@@ -251,7 +251,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
-            print("Deleting for miner index")
+            print("Deleting previous index")
+
             self._delete_miner_index(hotkey)
 
             print(f"Inserting miner index of size {len(values)}")
@@ -260,76 +261,80 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
                 # Batch in groups of 1m if necessary to avoid congestion issues.
                 value_subsets = [
-                    values[x : x + 1000000] for x in range(0, len(values), 1000000)
+                    values[x : x + 1_000_000] for x in range(0, len(values), 1_000_000)
                 ]
                 for value_subset in value_subsets:
                     cursor.executemany(
                         """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
                         value_subset,
                     )
+                print("Commiting insert of index")
                 self.connection.commit()
+                print("Done committing")
 
+    # TODO consider moving the adj content size bytes calc off the hot path to a background thread.
     def read_miner_index(
-        self, miner_hotkey: str, valid_miners: Set[str]
+        self,
+        miner_hotkey: str,
     ) -> Optional[ScorableMinerIndex]:
         """Gets a scored index for all of the data that a specific miner promises to provide."""
 
-        last_updated = None
-
-        # TODO consider removing the m1 join and just getting the id and lastUpdated in a separate sql query
-
-        # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
-        sql_string = """SELECT mi1.*, mi1.contentSizeBytes * m1.credibility/100 as adjContentSizeBytes,
-                               m1.hotkey, m1.lastUpdated, agg.totalAdjContentSizeBytes 
-                        FROM MinerIndex mi1
-                        JOIN Miner m1 ON mi1.minerId = m1.minerId
-                        LEFT JOIN (
-                            SELECT mi2.source, mi2.labelId, mi2.timeBucketId
-                                   SUM(mi2.contentSizeBytes * m2.credibility/100) as totalAdjContentSizeBytes
-                            FROM MinerIndex mi2
-                            JOIN Miner m2 ON mi2.minerId = m2.minerId
-                            GROUP BY mi2.source, mi2.labelId, mi2.timeBucketId
-                        ) agg ON mi1.timeBucketId = agg.timeBucketId
-                            AND mi1.source = agg.source
-                            AND mi1.labelId = agg.labelId
-                        WHERE m1.hotkey = ?"""
-
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
-            cursor.execute(sql_string, [miner_hotkey])
+            cursor.execute(
+                "SELECT minerId, lastUpdated, credibility from Miner WHERE hotkey = ?",
+                [miner_hotkey],
+            )
+            result = cursor.fetchone()
+            if result is None:
+                return None
+
+            last_updated = result["lastUpdated"]
+            miner_id = result["minerId"]
+            miner_credibility = result["credibility"]
+
+            # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
+            sql_string = """WITH TempAgg AS (
+                                SELECT mi2.source, mi2.labelId, mi2.timeBucketId,
+                                SUM(mi2.contentSizeBytes * m2.credibility) as totalAdjContentSizeBytes
+                                FROM MinerIndex mi2
+                                JOIN Miner m2 USING (minerId)
+                                GROUP BY mi2.source, mi2.labelId, mi2.timeBucketId
+                            )
+                            SELECT mi1.source, mi1.labelId, mi1.timeBucketId, mi1.contentSizeBytes,
+                                (mi1.contentSizeBytes * (mi1.contentSizeBytes * ?) / TempAgg.totalAdjContentSizeBytes) as scorableBytes
+                            FROM MinerIndex mi1
+                            LEFT JOIN TempAgg USING (source, labelId, timeBucketId)
+                            WHERE mi1.minerId = ?"""
+
+            print("Executing read query")
+            cursor.execute(sql_string, [miner_credibility, miner_id])
 
             # Create to a list to hold each of the ScorableDataEntityBuckets we generate for this miner.
             scored_data_entity_buckets = []
 
+            print("Calculating scored buckets")
             # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
             for row in cursor:
-                # Set last_updated to the first value since they are all the same for a given miner.
-                if last_updated == None:
-                    last_updated = row["lastUpdated"]
-
-                scored_data_entity_bucket = ScorableDataEntityBucket(
-                    time_bucket_id=int(row["timeBucketId"]),
-                    source=int(row["source"]),
-                    label=self.label_dict.get_or_insert(row["labelId"]),
-                    size_bytes=int(row["contentSizeBytes"]),
-                    scorable_bytes=float(
-                        row["contentSizeBytes"]
-                        * row["adjContentSizeBytes"]
-                        / row["totalAdjContentSizeBytes"]
-                    ),
-                )
+                label_value = self.label_dict.get_by_id(row["labelId"])
 
                 # Add the bucket to the list of scored buckets on the overall index.
-                scored_data_entity_buckets.append(scored_data_entity_bucket)
-
-                # If we do not get any rows back then do not return an empty ScorableMinerIndex.
-                if last_updated == None:
-                    return None
-
-                scored_index = ScorableMinerIndex(
-                    scorable_data_entity_buckets=scored_data_entity_buckets,
-                    last_updated=last_updated,
+                scored_data_entity_buckets.append(
+                    ScorableDataEntityBucket(
+                        time_bucket_id=int(row["timeBucketId"]),
+                        source=int(row["source"]),
+                        label=label_value if label_value != "NULL" else None,
+                        size_bytes=int(row["contentSizeBytes"]),
+                        scorable_bytes=int(row["scorableBytes"]),
+                    )
                 )
+
+            print("Creating scorable miner index")
+
+            scored_index = ScorableMinerIndex(
+                scorable_data_entity_buckets=scored_data_entity_buckets,
+                last_updated=last_updated,
+            )
 
             return scored_index
 

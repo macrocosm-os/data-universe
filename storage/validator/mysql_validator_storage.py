@@ -423,3 +423,9 @@ class MysqlValidatorStorage(ValidatorStorage):
             return cursor.fetchone()[0]
         else:
             return None
+
+    def read_scorable_miner_index(
+        self,
+        miner_hotkey: str,
+    ) -> Optional[ScorableMinerIndex]:
+        raise NotImplemented
