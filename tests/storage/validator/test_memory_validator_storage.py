@@ -3,6 +3,8 @@ import random
 import time
 import unittest
 import os
+
+from pytz import NonExistentTimeError
 from common import constants, utils
 from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
 from common.data import (
@@ -90,7 +92,7 @@ class TestMemoryValidatorStorage(unittest.TestCase):
         self.assertEqual(8, len(bucket_ids))
 
     def test_upsert_miner_index_insert_index(self):
-        """Tests that we can insert a miner index"""
+        """Tests that we can insert a miner index, including a label with a special character."""
         # Create two DataEntityBuckets for the index.
         now = dt.datetime.utcnow()
         time_bucket = TimeBucket.from_datetime(now)
@@ -98,7 +100,7 @@ class TestMemoryValidatorStorage(unittest.TestCase):
             id=DataEntityBucketId(
                 time_bucket=time_bucket,
                 source=DataSource.REDDIT,
-                label=DataLabel(value="label_1"),
+                label=DataLabel(value="#𝙅𝙚𝙬𝙚𝙡𝙧𝙮"),
             ),
             size_bytes=10,
         )
@@ -122,7 +124,7 @@ class TestMemoryValidatorStorage(unittest.TestCase):
                 ScorableDataEntityBucket(
                     time_bucket_id=time_bucket.id,
                     source=DataSource.REDDIT,
-                    label="label_1",
+                    label="#𝙅𝙚𝙬𝙚𝙡𝙧𝙮",
                     size_bytes=10,
                     scorable_bytes=10,
                 ),
@@ -145,243 +147,298 @@ class TestMemoryValidatorStorage(unittest.TestCase):
             < dt.timedelta(seconds=5)
         )
 
-    # def test_upsert_miner_index_insert_index_with_special_character(self):
-    #     """Tests that we can insert a miner index with an unhandled special character"""
-    #     # Create two DataEntityBuckets for the index.
-    #     now = dt.datetime.utcnow()
-    #     bucket_1 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="#𝙅𝙚𝙬𝙚𝙡𝙧𝙮"),
-    #         ),
-    #         size_bytes=10,
-    #     )
+    # TODO: Add a test that inserts 1 miner index, then inserts a bunch of random indexes, deletes some, and verifies the final index is correct.
 
-    #     bucket_2 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
-    #         ),
-    #         size_bytes=50,
-    #     )
+    # TODO: Add a test to insert millions of rows across many miners and check the total memory size.
 
-    #     # Create the index containing the buckets.
-    #     index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
+    def test_upsert_miner_index_insert_index_with_duplicates(self):
+        """Tests that we can insert a miner index with duplicates, taking the last one."""
+        # Create two identical DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        time_bucket = TimeBucket.from_datetime(now)
+        bucket_1 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=time_bucket,
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
-    #     # Store the index.
-    #     self.test_storage.upsert_miner_index(index)
+        # Create the index containing the buckets.
+        index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_1])
 
-    #     # Confirm we have one row in the index.
-    #     cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)
-    #     cursor.execute("SELECT * FROM MinerIndex")
-    #     self.assertEqual(cursor.rowcount, 2)
+        # Store the index.
+        self.test_storage.upsert_miner_index(index, credibility=1.0)
 
-    # def test_upsert_miner_index_insert_index_with_duplicates(self):
-    #     """Tests that we can insert a miner index with duplicates, taking the last one."""
-    #     # Create two identical DataEntityBuckets for the index.
-    #     now = dt.datetime.utcnow()
-    #     bucket_1 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="label_1"),
-    #         ),
-    #         size_bytes=10,
-    #     )
+        # Confirm we have one row in the index.
+        index = self.test_storage.read_miner_index("hotkey1")
+        expected_buckets = [
+            ScorableDataEntityBucket(
+                time_bucket_id=time_bucket.id,
+                source=DataSource.REDDIT,
+                label="label_1",
+                size_bytes=10,
+                scorable_bytes=10,
+            ),
+        ]
+        self.assertEqual(
+            index.scorable_data_entity_buckets,
+            expected_buckets,
+        )
 
-    #     # Create the index containing the buckets.
-    #     index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_1])
+    def test_upsert_miner_index_update_index(self):
+        """Tests that we can update a miner index"""
+        # Create three DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        time_bucket = TimeBucket.from_datetime(now)
+        time_bucket2 = TimeBucket.from_datetime(now + dt.timedelta(days=1))
+        bucket_1 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=time_bucket,
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
 
-    #     # Store the index.
-    #     self.test_storage.upsert_miner_index(index)
+        bucket_2 = DataEntityBucket(
+            id=DataEntityBucketId(time_bucket=time_bucket, source=DataSource.X),
+            size_bytes=50,
+        )
 
-    #     # Confirm we have one row in the index.
-    #     cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)
-    #     cursor.execute("SELECT * FROM MinerIndex")
-    #     self.assertEqual(cursor.rowcount, 1)
+        bucket_3 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=time_bucket2,
+                source=DataSource.X,
+                label=DataLabel(value="label_2"),
+            ),
+            size_bytes=100,
+        )
 
-    # def test_upsert_miner_index_update_index(self):
-    #     """Tests that we can update a miner index"""
-    #     # Create three DataEntityBuckets for the index.
-    #     now = dt.datetime.utcnow()
-    #     bucket_1 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="label_1"),
-    #         ),
-    #         size_bytes=10,
-    #     )
+        # Create an index containing the first two buckets.
+        index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
 
-    #     bucket_2 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
-    #         ),
-    #         size_bytes=50,
-    #     )
+        # Create an index containing the last two buckets.
+        index_2 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_2, bucket_3])
 
-    #     bucket_3 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.X,
-    #             label=DataLabel(value="label_2"),
-    #         ),
-    #         size_bytes=100,
-    #     )
+        # Store the first index.
+        self.test_storage.upsert_miner_index(index_1, credibility=1.0)
 
-    #     # Create an index containing the first two buckets.
-    #     index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
+        # Store the second index.
+        self.test_storage.upsert_miner_index(index_2, credibility=1.0)
 
-    #     # Create an index containing the last two buckets.
-    #     index_2 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_2, bucket_3])
+        # Confirm we have only the last two buckets in the index.
+        index = self.test_storage.read_miner_index("hotkey1")
+        expected_buckets = [
+            ScorableDataEntityBucket(
+                time_bucket_id=time_bucket.id,
+                source=DataSource.X,
+                label=None,
+                size_bytes=50,
+                scorable_bytes=50,
+            ),
+            ScorableDataEntityBucket(
+                time_bucket_id=time_bucket2.id,
+                source=DataSource.X,
+                label="label_2",
+                size_bytes=100,
+                scorable_bytes=100,
+            ),
+        ]
+        self.assertEqual(
+            index.scorable_data_entity_buckets,
+            expected_buckets,
+        )
 
-    #     # Store the first index.
-    #     self.test_storage.upsert_miner_index(index_1)
+    def test_upsert_compressed_miner_index_update_index(self):
+        """Tests that we can update a compressed miner index"""
+        # Create three DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        time_bucket = TimeBucket.from_datetime(now)
+        time_bucket2 = TimeBucket.from_datetime(now + dt.timedelta(days=1))
+        compressed_index_1 = CompressedMinerIndex(
+            sources={
+                int(DataSource.REDDIT): [
+                    CompressedEntityBucket(
+                        label="label_1",
+                        time_bucket_ids=[time_bucket.id],
+                        sizes_bytes=[10],
+                    )
+                ],
+                int(DataSource.X): [
+                    CompressedEntityBucket(
+                        label=None,
+                        time_bucket_ids=[time_bucket.id, time_bucket2.id],
+                        sizes_bytes=[50, 100],
+                    )
+                ],
+            }
+        )
+        compressed_index_2 = CompressedMinerIndex(
+            sources={
+                int(DataSource.X): [
+                    CompressedEntityBucket(
+                        label=None,
+                        time_bucket_ids=[time_bucket.id, time_bucket2.id],
+                        sizes_bytes=[50, 100],
+                    )
+                ],
+            }
+        )
 
-    #     # Store the second index.
-    #     self.test_storage.upsert_miner_index(index_2)
+        # Store the first index.
+        self.test_storage.upsert_compressed_miner_index(
+            compressed_index_1, "hotkey1", credibility=1.0
+        )
 
-    #     # Confirm we have only the last two buckets in the index.
-    #     cursor = self.test_storage.connection.cursor(dictionary=True)
-    #     cursor.execute("SELECT source FROM MinerIndex")
-    #     for row in cursor:
-    #         self.assertEqual(DataSource.X, DataSource(row["source"]))
+        # Store the second index.
+        self.test_storage.upsert_compressed_miner_index(
+            compressed_index_2, "hotkey1", credibility=1.0
+        )
 
-    # def test_roundtrip_large_miner_index(self):
-    #     """Tests that we can roundtrip a large index via a compressed index."""
+        # Confirm we have only the last two buckets in the index.
+        index = self.test_storage.read_miner_index("hotkey1")
+        expected_buckets = [
+            ScorableDataEntityBucket(
+                time_bucket_id=time_bucket.id,
+                source=DataSource.X,
+                label=None,
+                size_bytes=50,
+                scorable_bytes=50,
+            ),
+            ScorableDataEntityBucket(
+                time_bucket_id=time_bucket2.id,
+                source=DataSource.X,
+                label=None,
+                size_bytes=100,
+                scorable_bytes=100,
+            ),
+        ]
+        self.assertEqual(
+            index.scorable_data_entity_buckets,
+            expected_buckets,
+        )
 
-    #     labels = ["label1", "label2", "label3", "label4", None]
+    def test_roundtrip_large_miner_index(self):
+        """Tests that we can roundtrip a large index via a compressed index."""
 
-    #     # Create the DataEntityBuckets for the index.
-    #     sources = [int(DataSource.REDDIT), int(DataSource.X.value)]
-    #     num_time_buckets = (
-    #         constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
-    #         // len(sources)
-    #         // len(labels)
-    #     )
-    #     time_bucket_ids = list(range(1, num_time_buckets + 1))
+        labels = ["label1", "label2", "label3", "label4", None]
 
-    #     start = time.time()
-    #     buckets_by_source = defaultdict(list)
-    #     for source in sources:
-    #         for label in labels:
-    #             buckets_by_source[source].append(
-    #                 CompressedEntityBucket(
-    #                     label=label,
-    #                     time_bucket_ids=time_bucket_ids[:],
-    #                     sizes_bytes=[100 for i in range(len(time_bucket_ids))],
-    #                 )
-    #             )
+        # Create the DataEntityBuckets for the index.
+        sources = [int(DataSource.REDDIT), int(DataSource.X.value)]
+        num_time_buckets = (
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+            // len(sources)
+            // len(labels)
+        )
+        time_bucket_ids = list(range(1, num_time_buckets + 1))
 
-    #     # Create the index containing the buckets.
-    #     index = CompressedMinerIndex(sources=buckets_by_source)
-    #     print(f"Created index in {time.time() - start} seconds")
+        start = time.time()
+        buckets_by_source = defaultdict(list)
+        for source in sources:
+            for label in labels:
+                buckets_by_source[source].append(
+                    CompressedEntityBucket(
+                        label=label,
+                        time_bucket_ids=time_bucket_ids[:],
+                        sizes_bytes=[100 for i in range(len(time_bucket_ids))],
+                    )
+                )
 
-    #     # Store the index.
-    #     start = time.time()
-    #     self.test_storage.upsert_compressed_miner_index(index, "hotkey1")
-    #     print(f"Stored index in {time.time() - start} seconds")
+        # Create the index containing the buckets.
+        index = CompressedMinerIndex(sources=buckets_by_source)
+        print(f"Created index in {time.time() - start} seconds")
 
-    #     # Confirm we can read the index.
-    #     start = time.time()
-    #     scorable_index = self.test_storage.read_miner_index(
-    #         "hotkey1", valid_miners=set()
-    #     )
-    #     print(f"Read index in {time.time() - start} seconds")
+        # Store the index.
+        start = time.time()
+        self.test_storage.upsert_compressed_miner_index(
+            index, "hotkey1", credibility=1.0
+        )
+        print(f"Stored index in {time.time() - start} seconds")
 
-    #     self.assertIsNotNone(scorable_index)
+        # Confirm we can read the index.
+        start = time.time()
+        scorable_index = self.test_storage.read_miner_index("hotkey1")
+        print(f"Read index in {time.time() - start} seconds")
 
-    #     expected_index = ScorableMinerIndex.construct(
-    #         scorable_data_entity_buckets=[
-    #             ScorableDataEntityBucket(
-    #                 time_bucket_id=time_bucket_id,
-    #                 source=source,
-    #                 label=label,
-    #                 size_bytes=100,
-    #                 scorable_bytes=100,
-    #             )
-    #             for source in sources
-    #             for label in labels
-    #             for time_bucket_id in time_bucket_ids
-    #         ],
-    #         last_updated=dt.datetime.utcnow(),
-    #     )
+        self.assertIsNotNone(scorable_index)
 
-    #     # We can't assert equality because of the last_updated time.
-    #     # Verify piece-wise equality instead.
-    #     def sort_key(entity):
-    #         return (
-    #             entity.source,
-    #             entity.label if entity.label else "NULL",
-    #             entity.time_bucket_id,
-    #         )
+        expected_index = ScorableMinerIndex.construct(
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    time_bucket_id=time_bucket_id,
+                    source=source,
+                    label=label,
+                    size_bytes=100,
+                    scorable_bytes=100,
+                )
+                for source in sources
+                for label in labels
+                for time_bucket_id in time_bucket_ids
+            ],
+            last_updated=dt.datetime.utcnow(),
+        )
 
-    #     sorted_got = sorted(scorable_index.scorable_data_entity_buckets, key=sort_key)
-    #     sorted_expected = sorted(
-    #         expected_index.scorable_data_entity_buckets, key=sort_key
-    #     )
+        # We can't assert equality because of the last_updated time.
+        # Verify piece-wise equality instead.
+        def sort_key(entity):
+            return (
+                entity.source,
+                entity.label if entity.label else "NULL",
+                entity.time_bucket_id,
+            )
 
-    #     # Using assertListEqual is very slow, so we perform our own element-wise comparison.
-    #     for got, expected in zip(sorted_got, sorted_expected):
-    #         self.assertEqual(got, expected)
+        sorted_got = sorted(scorable_index.scorable_data_entity_buckets, key=sort_key)
+        sorted_expected = sorted(
+            expected_index.scorable_data_entity_buckets, key=sort_key
+        )
 
-    #     self.assertTrue(
-    #         scorable_index.last_updated
-    #         > (dt.datetime.utcnow() - dt.timedelta(minutes=1))
-    #     )
+        # Using assertListEqual is very slow, so we perform our own element-wise comparison.
+        for got, expected in zip(sorted_got, sorted_expected):
+            self.assertEqual(got, expected)
 
-    # def test_read_miner_index(self):
-    #     """Tests that we can read (and score) a miner index."""
-    #     # Create two DataEntityBuckets for the index.
-    #     now = dt.datetime.utcnow()
-    #     bucket_1 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="label_1"),
-    #         ),
-    #         size_bytes=10,
-    #     )
+        self.assertTrue(
+            scorable_index.last_updated
+            > (dt.datetime.utcnow() - dt.timedelta(minutes=1))
+        )
 
-    #     bucket_2 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now), source=DataSource.X
-    #         ),
-    #         size_bytes=50,
-    #     )
+    def test_many_large_indexes_perf(self):
+        labels = [f"label{i}" for i in range(100000)]
+        time_buckets = [i for i in range(1000, 10000)]
+        miners = [f"hotkey{i}" for i in range(200)]
 
-    #     expected_bucket_1 = ScorableDataEntityBucket(
-    #         time_bucket_id=utils.time_bucket_id_from_datetime(now),
-    #         source=DataSource.REDDIT,
-    #         label="label_1",
-    #         size_bytes=10,
-    #         scorable_bytes=10,
-    #     )
+        for miner in miners:
+            buckets_by_source = {
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label=label,
+                        time_bucket_ids=random.sample(time_buckets, 500),
+                        sizes_bytes=[i for i in range(500)],
+                    )
+                    for label in random.sample(labels, 1000)
+                ],
+                DataSource.X: [
+                    CompressedEntityBucket(
+                        label=label,
+                        time_bucket_ids=random.sample(time_buckets, 500),
+                        sizes_bytes=[i for i in range(500)],
+                    )
+                    for label in random.sample(labels, 1000)
+                ],
+            }
+            index = CompressedMinerIndex(sources=buckets_by_source)
+            start = time.time()
+            self.test_storage.upsert_compressed_miner_index(
+                index, miner, credibility=random.random()
+            )
+            print(f"Inserted index for miner {miner} in {time.time() - start}")
 
-    #     expected_bucket_2 = ScorableDataEntityBucket(
-    #         time_bucket_id=utils.time_bucket_id_from_datetime(now),
-    #         source=DataSource.X,
-    #         label=None,
-    #         size_bytes=50,
-    #         scorable_bytes=50,
-    #     )
-
-    #     # Create the index containing the buckets.
-    #     index = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1, bucket_2])
-
-    #     # Store the index.
-    #     self.test_storage.upsert_miner_index(index)
-
-    #     # Read the index.
-    #     scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
-
-    #     # Confirm the scored index matches expectations.
-    #     self.assertEqual(
-    #         scored_index.scorable_data_entity_buckets[0], expected_bucket_1
-    #     )
-    #     self.assertEqual(
-    #         scored_index.scorable_data_entity_buckets[1], expected_bucket_2
-    #     )
+        for i in range(10):
+            start = time.time()
+            miner = random.choice(miners)
+            index = self.test_storage.read_miner_index(miner)
+            print(f"Read index for miner {miner} in {time.time() - start}")
 
     # def test_read_miner_index_with_duplicate_data_entity_buckets(self):
     #     """Tests that we can read (and score) a miner index when other miners have duplicate buckets."""
@@ -425,98 +482,6 @@ class TestMemoryValidatorStorage(unittest.TestCase):
     #     scored_index = self.test_storage.read_miner_index(
     #         "hotkey1", set(["hotkey1", "hotkey2"])
     #     )
-
-    #     # Confirm the scored index matches expectations.
-    #     self.assertEqual(
-    #         scored_index.scorable_data_entity_buckets[0], expected_bucket_1
-    #     )
-
-    # def test_read_miner_index_with_invalid_miners(self):
-    #     """Tests that we can read (and score) a miner index when other invalid miners have duplicate buckets."""
-    #     # Create two DataEntityBuckets for the index.
-    #     now = dt.datetime.utcnow()
-    #     bucket_1_miner_1 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="label_1"),
-    #         ),
-    #         size_bytes=10,
-    #     )
-
-    #     bucket_1_miner_2 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="label_1"),
-    #         ),
-    #         size_bytes=40,
-    #     )
-
-    #     expected_bucket_1 = ScorableDataEntityBucket(
-    #         time_bucket_id=utils.time_bucket_id_from_datetime(now),
-    #         source=DataSource.REDDIT,
-    #         label="label_1",
-    #         size_bytes=10,
-    #         scorable_bytes=10,
-    #     )
-
-    #     # Create the indexes containing the buckets.
-    #     index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1_miner_1])
-    #     index_2 = MinerIndex(hotkey="hotkey2", data_entity_buckets=[bucket_1_miner_2])
-
-    #     # Store the indexes.
-    #     self.test_storage.upsert_miner_index(index_1)
-    #     self.test_storage.upsert_miner_index(index_2)
-
-    #     # Read the index. Do not pass in hotkey2 as a valid miner.
-    #     scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
-
-    #     # Confirm the scored index matches expectations.
-    #     self.assertEqual(
-    #         scored_index.scorable_data_entity_buckets[0], expected_bucket_1
-    #     )
-
-    # def test_read_invalid_miner_index(self):
-    #     """Tests that we can read (and score) an invalid miner index when other miners have duplicate buckets."""
-    #     # Create two DataEntityBuckets for the index.
-    #     now = dt.datetime.utcnow()
-    #     bucket_1_miner_1 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="label_1"),
-    #         ),
-    #         size_bytes=10,
-    #     )
-
-    #     bucket_1_miner_2 = DataEntityBucket(
-    #         id=DataEntityBucketId(
-    #             time_bucket=TimeBucket.from_datetime(now),
-    #             source=DataSource.REDDIT,
-    #             label=DataLabel(value="label_1"),
-    #         ),
-    #         size_bytes=40,
-    #     )
-
-    #     expected_bucket_1 = ScorableDataEntityBucket(
-    #         time_bucket_id=utils.time_bucket_id_from_datetime(now),
-    #         source=DataSource.REDDIT,
-    #         label="label_1",
-    #         size_bytes=10,
-    #         scorable_bytes=2,
-    #     )
-
-    #     # Create the indexes containing the bucket.
-    #     index_1 = MinerIndex(hotkey="hotkey1", data_entity_buckets=[bucket_1_miner_1])
-    #     index_2 = MinerIndex(hotkey="hotkey2", data_entity_buckets=[bucket_1_miner_2])
-
-    #     # Store the indexes.
-    #     self.test_storage.upsert_miner_index(index_1)
-    #     self.test_storage.upsert_miner_index(index_2)
-
-    #     # Read the index. Do not pass in hotkey1 as a valid miner.
-    #     scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey2"]))
 
     #     # Confirm the scored index matches expectations.
     #     self.assertEqual(
