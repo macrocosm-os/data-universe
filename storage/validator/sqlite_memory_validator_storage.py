@@ -5,7 +5,7 @@ import sqlite3
 import threading
 from typing import Any, Dict, Optional, Set, Tuple
 from common.data import CompressedMinerIndex, DataLabel, MinerIndex
-from common.data_v2 import ScorableMinerIndex
+from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from storage.validator.validator_storage import ValidatorStorage
 
 
@@ -273,7 +273,65 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         self, miner_hotkey: str, valid_miners: Set[str]
     ) -> Optional[ScorableMinerIndex]:
         """Gets a scored index for all of the data that a specific miner promises to provide."""
-        raise NotImplemented
+
+        last_updated = None
+
+        # TODO consider removing the m1 join and just getting the id and lastUpdated in a separate sql query
+
+        # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
+        sql_string = """SELECT mi1.*, mi1.contentSizeBytes * m1.credibility/100 as adjContentSizeBytes,
+                               m1.hotkey, m1.lastUpdated, agg.totalAdjContentSizeBytes 
+                        FROM MinerIndex mi1
+                        JOIN Miner m1 ON mi1.minerId = m1.minerId
+                        LEFT JOIN (
+                            SELECT mi2.source, mi2.labelId, mi2.timeBucketId
+                                   SUM(mi2.contentSizeBytes * m2.credibility/100) as totalAdjContentSizeBytes
+                            FROM MinerIndex mi2
+                            JOIN Miner m2 ON mi2.minerId = m2.minerId
+                            GROUP BY mi2.source, mi2.labelId, mi2.timeBucketId
+                        ) agg ON mi1.timeBucketId = agg.timeBucketId
+                            AND mi1.source = agg.source
+                            AND mi1.labelId = agg.labelId
+                        WHERE m1.hotkey = ?"""
+
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(sql_string, [miner_hotkey])
+
+            # Create to a list to hold each of the ScorableDataEntityBuckets we generate for this miner.
+            scored_data_entity_buckets = []
+
+            # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
+            for row in cursor:
+                # Set last_updated to the first value since they are all the same for a given miner.
+                if last_updated == None:
+                    last_updated = row["lastUpdated"]
+
+                scored_data_entity_bucket = ScorableDataEntityBucket(
+                    time_bucket_id=int(row["timeBucketId"]),
+                    source=int(row["source"]),
+                    label=self.label_dict.get_or_insert(row["labelId"]),
+                    size_bytes=int(row["contentSizeBytes"]),
+                    scorable_bytes=float(
+                        row["contentSizeBytes"]
+                        * row["adjContentSizeBytes"]
+                        / row["totalAdjContentSizeBytes"]
+                    ),
+                )
+
+                # Add the bucket to the list of scored buckets on the overall index.
+                scored_data_entity_buckets.append(scored_data_entity_bucket)
+
+                # If we do not get any rows back then do not return an empty ScorableMinerIndex.
+                if last_updated == None:
+                    return None
+
+                scored_index = ScorableMinerIndex(
+                    scorable_data_entity_buckets=scored_data_entity_buckets,
+                    last_updated=last_updated,
+                )
+
+            return scored_index
 
     def delete_miner_index(self, miner_hotkey: str):
         """Removes the index for the specified miner."""
