@@ -199,7 +199,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
-            self.delete_miner_index(index.hotkey)
+            self._delete_miner_index(index.hotkey)
 
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
@@ -252,7 +252,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
             print("Deleting for miner index")
-            self.delete_miner_index(hotkey)
+            self._delete_miner_index(hotkey)
 
             print(f"Inserting miner index of size {len(values)}")
             with contextlib.closing(self._create_connection()) as connection:
@@ -333,7 +333,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
             return scored_index
 
-    def delete_miner_index(self, miner_hotkey: str):
+    def _delete_miner_index(self, miner_hotkey: str):
         """Removes the index for the specified miner."""
 
         bt.logging.trace(f"{miner_hotkey}: Deleting miner index")
@@ -348,6 +348,15 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             if miner_id is not None:
                 cursor.execute("DELETE FROM MinerIndex WHERE minerId = ?", [miner_id])
                 self.connection.commit()
+
+    def delete_miner(self, hotkey: str):
+        """Removes the index and miner details for the specified miner."""
+        with self.upsert_miner_index_lock:
+            self._delete_miner_index(hotkey)
+
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+                cursor.execute("DELETE FROM Miner WHERE hotkey = ?", [hotkey])
 
     def read_miner_last_updated(self, miner_hotkey: str) -> Optional[dt.datetime]:
         """Gets when a specific miner was last updated."""

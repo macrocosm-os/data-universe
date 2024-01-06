@@ -604,7 +604,7 @@ class Validator(BaseNeuron):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scorer.reset(uid)  # hotkey has been replaced
                 try:
-                    self.storage.delete_miner_index(hotkey)
+                    self.storage.delete_miner(hotkey)
                 except Exception:
                     bt.logging.error(
                         f"{hotkey} Failed to delete miner index.",

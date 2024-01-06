@@ -209,7 +209,7 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
-            self.delete_miner_index(index.hotkey)
+            self._delete_miner_index(index.hotkey)
 
             # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
             # Batch in groups of 1m if necessary to avoid congestion issues.
@@ -281,7 +281,7 @@ class MysqlValidatorStorage(ValidatorStorage):
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
-            self.delete_miner_index(hotkey)
+            self._delete_miner_index(hotkey)
 
             # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
             # Batch in groups of 1m if necessary to avoid congestion issues.
@@ -380,7 +380,7 @@ class MysqlValidatorStorage(ValidatorStorage):
         )
         return scored_index
 
-    def delete_miner_index(self, hotkey: str):
+    def _delete_miner_index(self, hotkey: str):
         """Removes the index for the specified miner.
 
         Args:
@@ -398,6 +398,13 @@ class MysqlValidatorStorage(ValidatorStorage):
             miner_id = cursor.fetchone()[0]
             cursor.execute("DELETE FROM MinerIndex WHERE minerId = %s", [miner_id])
             self.connection.commit()
+
+    def delete_miner(self, hotkey: str):
+        """Removes the index and miner details for the specified miner."""
+        with self.upsert_miner_index_lock:
+            self._delete_miner_index(hotkey)
+            cursor = self.connection.cursor
+            cursor.execute("DELETE FROM Miner WHERE hotkey = %s", [hotkey])
 
     def read_miner_last_updated(self, hotkey: str) -> Optional[dt.datetime]:
         """Gets when a specific miner was last updated. Or none.

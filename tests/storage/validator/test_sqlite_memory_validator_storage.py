@@ -527,7 +527,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     #     self.test_storage.upsert_miner_index(index_3)
 
     #     # Delete one index.
-    #     self.test_storage.delete_miner_index("hotkey2")
+    #     self.test_storage._delete_miner_index("hotkey2")
 
     #     # Confirm we have four rows in the index.
     #     cursor = self.test_storage.connection.cursor(dictionary=True, buffered=True)

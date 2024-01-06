@@ -29,8 +29,8 @@ class ValidatorStorage(ABC):
         raise NotImplemented
 
     @abstractmethod
-    def delete_miner_index(self, miner_hotkey: str):
-        """Removes the index for the specified miner."""
+    def delete_miner(self, miner_hotkey: str):
+        """Removes the index and miner information for the specified miner."""
         raise NotImplemented
 
     @abstractmethod
