@@ -487,13 +487,11 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         index_2 = MinerIndex(hotkey="hotkey2", data_entity_buckets=[bucket_1_miner_2])
 
         # Store the indexes.
-        self.test_storage.upsert_miner_index(index_1)
-        self.test_storage.upsert_miner_index(index_2)
+        self.test_storage.upsert_miner_index(index_1, 1)
+        self.test_storage.upsert_miner_index(index_2, 1)
 
         # Read the index.
-        scored_index = self.test_storage.read_miner_index(
-            "hotkey1", set(["hotkey1", "hotkey2"])
-        )
+        scored_index = self.test_storage.read_miner_index("hotkey1")
 
         # Confirm the scored index matches expectations.
         self.assertEqual(
@@ -503,13 +501,13 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_read_non_existing_miner_index(self):
         """Tests that we correctly return none for a non existing miner index."""
         # Read the index.
-        scored_index = self.test_storage.read_miner_index("hotkey1", set(["hotkey1"]))
+        scored_index = self.test_storage.read_miner_index("hotkey1")
 
         # Confirm the scored_index is None.
         self.assertEqual(scored_index, None)
 
-    def test_delete_miner_index(self):
-        """Tests that we can delete a miner index."""
+    def test_delete_miner(self):
+        """Tests that we can delete a miner."""
         # Create two DataEntityBuckets for the indexes.
         now = dt.datetime.utcnow()
         bucket_1 = DataEntityBucket(
@@ -534,12 +532,12 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         index_3 = MinerIndex(hotkey="hotkey3", data_entity_buckets=[bucket_1, bucket_2])
 
         # Store the indexes.
-        self.test_storage.upsert_miner_index(index_1)
-        self.test_storage.upsert_miner_index(index_2)
-        self.test_storage.upsert_miner_index(index_3)
+        self.test_storage.upsert_miner_index(index_1, 1)
+        self.test_storage.upsert_miner_index(index_2, 1)
+        self.test_storage.upsert_miner_index(index_3, 1)
 
-        # Delete one index.
-        self.test_storage._delete_miner_index("hotkey2")
+        # Delete one miner.
+        self.test_storage.delete_miner("hotkey2")
 
         # Confirm we have only two indexes left.
         self.assertIsNotNone(self.test_storage.read_miner_index("hotkey1"))
@@ -551,7 +549,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Insert a miner
         now = dt.datetime.utcnow()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")
-        self.test_storage._upsert_miner("test_hotkey", now_str)
+        self.test_storage._upsert_miner("test_hotkey", now_str, 1)
 
         # Get the last updated
         last_updated = self.test_storage.read_miner_last_updated("test_hotkey")
@@ -564,7 +562,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Insert a miner
         now = dt.datetime.utcnow()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")
-        self.test_storage._upsert_miner("test_hotkey", now_str)
+        self.test_storage._upsert_miner("test_hotkey", now_str, 1)
 
         # Get the last updated
         last_updated = self.test_storage.read_miner_last_updated("test_hotkey2")
@@ -572,41 +570,43 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Confirm the last updated is None.
         self.assertEqual(None, last_updated)
 
-    @unittest.skip("Skip the large index test by default.")
+    # @unittest.skip("Skip the multi threaded test by default.")
     def test_multithreaded_inserts(self):
         """In a multi-threaded environment, insert 5 indexes for 5 miners, then read them back and verify they're correct."""
 
         def _create_index(
             labels: List[str], time_buckets: List[int]
-        ) -> Dict[DataSource, List[CompressedEntityBucket]]:
+        ) -> CompressedMinerIndex:
             """Creates a MinerIndex with the given labels and time buckets."""
-            return {
-                DataSource.REDDIT: [
-                    CompressedEntityBucket(
-                        label=label,
-                        time_bucket_ids=time_buckets1,
-                        sizes_bytes=[100 for i in range(len(time_buckets1))],
-                    )
-                    for label in labels1
-                ],
-                DataSource.X: [
-                    CompressedEntityBucket(
-                        label=label,
-                        time_bucket_ids=time_buckets1,
-                        sizes_bytes=[50 for i in range(len(time_buckets1))],
-                    )
-                    for label in labels1
-                ],
-            }
+            return CompressedMinerIndex(
+                sources={
+                    DataSource.REDDIT: [
+                        CompressedEntityBucket(
+                            label=label,
+                            time_bucket_ids=time_buckets,
+                            sizes_bytes=[100 for i in range(len(time_buckets))],
+                        )
+                        for label in labels
+                    ],
+                    DataSource.X: [
+                        CompressedEntityBucket(
+                            label=label,
+                            time_bucket_ids=time_buckets,
+                            sizes_bytes=[50 for i in range(len(time_buckets))],
+                        )
+                        for label in labels
+                    ],
+                }
+            )
 
         # Create a large index to be shared by 2 miners.
-        labels1 = [None] + [f"label{i}" for i in range(49_999)]
-        time_buckets1 = [i for i in range(1, 501)]
+        labels1 = [None] + [f"label{i}" for i in range(4_999)]
+        time_buckets1 = [i for i in range(1, 101)]
         index1 = _create_index(labels1, time_buckets1)
 
         # Create a second large index to be shared by 3 miners.
-        labels2 = [None] + [f"label{i}" for i in range(49_999)]
-        time_buckets2 = [i for i in range(1, 501)]
+        labels2 = [f"label{i}" for i in range(5_000, 10_000)]
+        time_buckets2 = [i for i in range(1, 101)]
         index2 = _create_index(labels2, time_buckets2)
 
         index1_miners = [f"hotkey{i}" for i in range(2)]
@@ -629,9 +629,13 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
             print("Waiting for inserts to complete...")
             concurrent.futures.wait(futures)
+            for future in futures:
+                if future.exception() is not None:
+                    raise future.exception()
             print("Insert completed")
 
         # Construct the expected indexes. The first index is shared by 2 miners, the second by 3.
+        print("Constructing the expected scorable indexes.")
         expected_index1 = [
             ScorableDataEntityBucket(
                 time_bucket_id=time_bucket_id,
@@ -640,8 +644,8 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 size_bytes=100,
                 scorable_bytes=50,
             )
-            for label in labels1
             for time_bucket_id in time_buckets1
+            for label in labels1
         ] + [
             ScorableDataEntityBucket(
                 time_bucket_id=time_bucket_id,
@@ -650,8 +654,8 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 size_bytes=50,
                 scorable_bytes=25,
             )
-            for label in labels1
             for time_bucket_id in time_buckets1
+            for label in labels1
         ]
         expected_index2 = [
             ScorableDataEntityBucket(
@@ -661,8 +665,8 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 size_bytes=100,
                 scorable_bytes=33,
             )
-            for label in labels2
             for time_bucket_id in time_buckets2
+            for label in labels2
         ] + [
             ScorableDataEntityBucket(
                 time_bucket_id=time_bucket_id,
@@ -671,9 +675,10 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 size_bytes=50,
                 scorable_bytes=16,
             )
-            for label in labels2
             for time_bucket_id in time_buckets2
+            for label in labels2
         ]
+        print("Finished constructing the expected scorable indexes.")
 
         def _is_index_as_expected(
             index: ScorableMinerIndex, expected_index: List[ScorableDataEntityBucket]

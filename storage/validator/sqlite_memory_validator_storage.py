@@ -111,7 +111,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
 
-        self.connection = self._create_connection()
+        self.continuous_connection_do_not_reuse = self._create_connection()
         self.label_dict = AutoIncrementDict()
 
         with contextlib.closing(self._create_connection()) as connection:
@@ -127,7 +127,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_BUCKET_SIZE_INDEX
             )
 
-            # Lock to avoid concurrency issues on clearing and inserting an index.
+            # Lock to avoid concurrency issues on interacting with the database.
             self.upsert_miner_index_lock = threading.Lock()
 
     def _create_connection(self):
@@ -139,7 +139,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=60.0,
         )
-        # Allow this connection to parse results from returned rows by column name.
+        # Avoid using a row_factory that would allow parsing results by column name for performance.
         # connection.row_factory = sqlite3.Row
         connection.isolation_level = None
         return connection
@@ -170,7 +170,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         """Same as _label_value_parse but with a string as input"""
         return "NULL" if (label is None) else label.casefold()
 
-    def upsert_miner_index(self, index: MinerIndex, credibility: float = 0):
+    def upsert_miner_index(self, index: MinerIndex, credibility: float):
         """Stores the index for all of the data that a specific miner promises to provide."""
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
@@ -212,10 +212,10 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
                         value_subset,
                     )
-                self.connection.commit()
+                connection.commit()
 
     def upsert_compressed_miner_index(
-        self, index: CompressedMinerIndex, hotkey: str, credibility: float = 0
+        self, index: CompressedMinerIndex, hotkey: str, credibility: float
     ):
         """Stores the index for all of the data that a specific miner promises to provide."""
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
@@ -269,7 +269,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         value_subset,
                     )
                 print("Commiting insert of index")
-                self.connection.commit()
+                connection.commit()
                 print("Done committing")
 
     # TODO consider moving the adj content size bytes calc off the hot path to a background thread.
@@ -324,8 +324,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         time_bucket_id=int(row[2]),
                         source=int(row[0]),
                         label=label_value if label_value != "NULL" else None,
-                        size_bytes=int(row[3]),
-                        scorable_bytes=int(row[4]),
+                        size_bytes=int(row[3] if row[3] else 0),
+                        scorable_bytes=int(row[4] if row[4] else 0),
                     )
                 )
 
@@ -349,10 +349,10 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [miner_hotkey])
 
             # Delete the rows for the specified miner.
-            miner_id = cursor.fetchone()[0]
-            if miner_id is not None:
-                cursor.execute("DELETE FROM MinerIndex WHERE minerId = ?", [miner_id])
-                self.connection.commit()
+            result = cursor.fetchone()
+            if result is not None:
+                cursor.execute("DELETE FROM MinerIndex WHERE minerId = ?", [result[0]])
+                connection.commit()
 
     def delete_miner(self, hotkey: str):
         """Removes the index and miner details for the specified miner."""
@@ -371,8 +371,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor.execute(
                 "SELECT lastUpdated FROM Miner WHERE hotkey = ?", [miner_hotkey]
             )
-            last_updated = cursor.fetchone()[0]
-            if last_updated is not None:
-                return last_updated
+            result = cursor.fetchone()
+            if result is not None:
+                return result[0]
             else:
                 return None
