@@ -113,34 +113,6 @@ def add_args(neuron_type: NeuronType, parser):
             default=False,
         )
 
-        parser.add_argument(
-            "--neuron.database_host",
-            type=str,
-            help="The host of the database.",
-            default="127.0.0.1",
-        )
-
-        parser.add_argument(
-            "--neuron.database_name",
-            type=str,
-            help="The name of the database.",
-            default="ValidatorStorage",
-        )
-
-        parser.add_argument(
-            "--neuron.database_user",
-            type=str,
-            help="Name of the database user.",
-            default="data-universe-user",
-        )
-
-        parser.add_argument(
-            "--neuron.database_password",
-            type=str,
-            help="The password for the database user.",
-            default=os.getenv("DATABASE_USER_PASSWORD"),
-        )
-
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(
             "--neuron.database_name",

@@ -41,7 +41,9 @@ from neurons.config import NeuronType
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
-from storage.validator.mysql_validator_storage import MysqlValidatorStorage
+from storage.validator.sqlite_memory_validator_storage import (
+    SqliteMemoryValidatorStorage,
+)
 from storage.validator.validator_storage import ValidatorStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
@@ -137,7 +139,7 @@ class Validator(BaseNeuron):
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
             # Miner failed to update the index. Use the latest index, if present.
-            return self._get_miner_index(hotkey)
+            return self.storage.read_miner_index(hotkey)
 
         # Validate the index.
         miner_index = None
@@ -146,7 +148,7 @@ class Validator(BaseNeuron):
         except ValueError as e:
             bt.logging.debug(f"{hotkey}: Miner returned an invalid index. Reason: {e}")
             # Miner returned an invalid index. Use the latest index, if present.
-            return self._get_miner_index(hotkey)
+            return self.storage.read_miner_index(hotkey)
 
         assert miner_index is not None, "Miner index should not be None"
 
@@ -168,14 +170,7 @@ class Validator(BaseNeuron):
                 miner_index, hotkey, miner_credibility
             )
 
-        return self._get_miner_index(hotkey)
-
-    def _get_miner_index(self, hotkey: str) -> Optional[ScorableMinerIndex]:
-        """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
-        valid_miners = self.scorer.get_credible_miners()
-        return self.storage.read_miner_index(
-            hotkey=hotkey, valid_miners=set(valid_miners)
-        )
+        return self.storage.read_miner_index(hotkey)
 
     def _on_start_miner_eval(self):
         with self.lock:
@@ -374,7 +369,7 @@ class Validator(BaseNeuron):
         assert uids_to_eval, "Expected at least 1 miner to evaluate"
 
         tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
-        done, pending = await asyncio.wait(tasks, timeout=300)
+        done, pending = await asyncio.wait(tasks, timeout=600)
 
         for future in pending:
             future.cancel()  # Cancel unfinished tasks.
@@ -394,12 +389,7 @@ class Validator(BaseNeuron):
         bt.logging.info("Setting up validator.")
 
         # Setup the DB.
-        self.storage = MysqlValidatorStorage(
-            host=self.config.neuron.database_host,
-            user=self.config.neuron.database_user,
-            password=self.config.neuron.database_password,
-            database=self.config.neuron.database_name,
-        )
+        self.storage = SqliteMemoryValidatorStorage()
 
         # Load any state from previous runs.
         self.load_state()
@@ -604,7 +594,7 @@ class Validator(BaseNeuron):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scorer.reset(uid)  # hotkey has been replaced
                 try:
-                    self.storage.delete_miner_index(hotkey)
+                    self.storage.delete_miner(hotkey)
                 except Exception:
                     bt.logging.error(
                         f"{hotkey} Failed to delete miner index.",
