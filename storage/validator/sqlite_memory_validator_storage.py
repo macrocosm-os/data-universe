@@ -172,6 +172,11 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
     def upsert_miner_index(self, index: MinerIndex, credibility: float):
         """Stores the index for all of the data that a specific miner promises to provide."""
+
+        bt.logging.trace(
+            f"{index.hotkey}: Upserting miner index with {len(index.data_entity_buckets)} buckets"
+        )
+
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
         # Upsert this Validator's minerId for the specified hotkey.
@@ -218,13 +223,15 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         self, index: CompressedMinerIndex, hotkey: str, credibility: float
     ):
         """Stores the index for all of the data that a specific miner promises to provide."""
+
+        bt.logging.trace(
+            f"{hotkey}: Upserting miner index with {CompressedMinerIndex.size(index)} buckets"
+        )
+
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
-        print("Upserting miner")
 
         # Upsert this Validator's minerId for the specified hotkey.
         miner_id = self._upsert_miner(hotkey, now_str, credibility)
-
-        print("Parsing the data entity buckets from compressed index")
 
         # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []
@@ -251,11 +258,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
         with self.upsert_miner_index_lock:
             # Clear the previous keys for this miner.
-            print("Deleting previous index")
-
             self._delete_miner_index(hotkey)
 
-            print(f"Inserting miner index of size {len(values)}")
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
                 # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
@@ -268,9 +272,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
                         value_subset,
                     )
-                print("Commiting insert of index")
                 connection.commit()
-                print("Done committing")
 
     def read_miner_index(
         self,
@@ -313,13 +315,11 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                             LEFT JOIN TempAgg USING (source, labelId, timeBucketId)
                             WHERE minerId = ?"""
 
-            print("Executing read query")
             cursor.execute(sql_string, [miner_id, miner_credibility, miner_id])
 
             # Create to a list to hold each of the ScorableDataEntityBuckets we generate for this miner.
             scored_data_entity_buckets = []
 
-            print("Calculating scored buckets")
             # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
             for row in cursor:
                 label_value = self.label_dict.get_by_id(row[1])
@@ -334,8 +334,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         scorable_bytes=int(row[4] if row[4] else 0),
                     )
                 )
-
-            print("Creating scorable miner index")
 
             scored_index = ScorableMinerIndex(
                 scorable_data_entity_buckets=scored_data_entity_buckets,
