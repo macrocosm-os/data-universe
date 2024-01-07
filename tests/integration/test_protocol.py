@@ -15,7 +15,9 @@ from common.data import (
 )
 
 from common.protocol import GetDataEntityBucket, GetMinerIndex
-from storage.validator.mysql_validator_storage import MysqlValidatorStorage
+from storage.validator.sqlite_memory_validator_storage import (
+    SqliteMemoryValidatorStorage,
+)
 from vali_utils import utils as vali_utils
 from tests import utils as test_utils
 
@@ -59,17 +61,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         )
 
         # Make a test database for the test to operate against.
-        self.vali_storage = MysqlValidatorStorage(
-            "localhost", "test-user", "test-pw", "test_db"
-        )
-
-    def tearDown(self):
-        # Clean up the test database.
-        cursor = self.vali_storage.connection.cursor()
-        cursor.execute("DROP TABLE MinerIndex")
-        cursor.execute("DROP TABLE Miner")
-        cursor.execute("DROP TABLE Label")
-        self.vali_storage.connection.commit()
+        self.vali_storage = SqliteMemoryValidatorStorage()
 
     def _test_round_trip(self, forward_fn: Callable, request: bt.Synapse) -> bt.Synapse:
         """Base test for verifying a protocol message between dendrite and axon.
@@ -233,12 +225,12 @@ class IntegrationTestProtocol(unittest.TestCase):
 
         # Store in the vali DB.
         self.vali_storage.upsert_compressed_miner_index(
-            got_compressed_index, self.wallet.hotkey.ss58_address
+            got_compressed_index, self.wallet.hotkey.ss58_address, 1
         )
 
         # Finally, read it out and verify it's as expected.
         scorable_index = self.vali_storage.read_miner_index(
-            self.wallet.hotkey.ss58_address, valid_miners=set()
+            self.wallet.hotkey.ss58_address
         )
         expected_scorable_index = test_utils.convert_to_scorable_miner_index(
             index, scorable_index.last_updated

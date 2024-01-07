@@ -22,15 +22,13 @@ class ValidatorStorage(ABC):
         raise NotImplemented
 
     @abstractmethod
-    def read_miner_index(
-        self, miner_hotkey: str, valid_miners: Set[str]
-    ) -> Optional[ScorableMinerIndex]:
+    def read_miner_index(self, miner_hotkey: str) -> Optional[ScorableMinerIndex]:
         """Gets a scored index for all of the data that a specific miner promises to provide."""
         raise NotImplemented
 
     @abstractmethod
-    def delete_miner_index(self, miner_hotkey: str):
-        """Removes the index for the specified miner."""
+    def delete_miner(self, miner_hotkey: str):
+        """Removes the index and miner information for the specified miner."""
         raise NotImplemented
 
     @abstractmethod
