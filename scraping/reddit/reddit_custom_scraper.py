@@ -98,11 +98,9 @@ class RedditCustomScraper(Scraper):
                             # Parse the response.
                             return self._best_effort_parse_comment(comment)
 
-                bt.logging.trace(f"XXX: Getting content from reddit for: {entity.uri}")
                 content = await utils.async_run_with_retry(
                     _get_content, max_retries=3, delay_seconds=5
                 )
-                bt.logging.trace(f"XXX: Got content from reddit for: {entity.uri}")
             except Exception as e:
                 bt.logging.error(
                     f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}"
