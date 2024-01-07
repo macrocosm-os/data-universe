@@ -60,6 +60,7 @@ class TestDataValueCalculator(unittest.TestCase):
             (TestCaseInput(DataSource.REDDIT, "unscoredlabel"), 0),
             (TestCaseInput(DataSource.REDDIT, "PenAlizedLABEL"), -75.0),
             (TestCaseInput(DataSource.REDDIT, "other-label"), 37.5),
+            (TestCaseInput(DataSource.REDDIT, None), 37.5),
             (TestCaseInput(DataSource.X, "#testlabel"), 25.0),
             (TestCaseInput(DataSource.X, "#unscoredLabel"), 0),
             (TestCaseInput(DataSource.X, "#penalizedLABEL"), -25.0),

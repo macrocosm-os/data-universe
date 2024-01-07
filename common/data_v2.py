@@ -100,7 +100,7 @@ class ScorableDataEntityBucket:
             id=DataEntityBucketId(
                 time_bucket=TimeBucket(id=self.time_bucket_id),
                 source=self.source,
-                label=DataLabel(value=self.label),
+                label=DataLabel(value=self.label) if self.label else None,
             ),
             size_bytes=self.size_bytes,
         )
