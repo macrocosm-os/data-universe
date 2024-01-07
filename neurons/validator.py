@@ -26,21 +26,24 @@ import threading
 import time
 import datetime as dt
 import os
+from common.data_v2 import ScorableMinerIndex
 import common.utils as utils
 import bittensor as bt
 from common.data import (
+    CompressedMinerIndex,
     DataEntityBucket,
     DataEntity,
     DataSource,
     MinerIndex,
-    ScorableMinerIndex,
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 from neurons.config import NeuronType
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
-from storage.validator.mysql_validator_storage import MysqlValidatorStorage
+from storage.validator.sqlite_memory_validator_storage import (
+    SqliteMemoryValidatorStorage,
+)
 from storage.validator.validator_storage import ValidatorStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
@@ -83,10 +86,6 @@ class Validator(BaseNeuron):
         self.miner_iterator = MinerIterator(self.get_miner_uids(self.metagraph))
         self.scraper_provider = ScraperProvider()
 
-        # Setup the database.
-        if not self.config.neuron.database_password:
-            raise ValueError("Database password not set.")
-
         # Setup storage in setup()
         self.storage: ValidatorStorage = None
 
@@ -118,7 +117,7 @@ class Validator(BaseNeuron):
             sys.exit(1)
 
     async def _update_and_get_miner_index(
-        self, hotkey: str, miner_axon: bt.AxonInfo
+        self, hotkey: str, uid: int, miner_axon: bt.AxonInfo
     ) -> Optional[ScorableMinerIndex]:
         """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
 
@@ -130,31 +129,44 @@ class Validator(BaseNeuron):
             timeout=300,
         )
 
-        miner_index = vali_utils.get_single_successul_response(responses, GetMinerIndex)
-        if not miner_index:
+        response = vali_utils.get_single_successful_response(responses, GetMinerIndex)
+        if not response:
             bt.logging.trace(
                 f"{hotkey}: Miner returned an invalid/failed response for the index."
             )
             # Miner failed to update the index. Use the latest index, if present.
-            return self._get_miner_index(hotkey)
+            return self.storage.read_miner_index(hotkey)
 
-        # Miner successfully updated the index. Store it and return it.
-        bt.logging.trace(
-            f"{hotkey}: Got new miner index. Size={len(miner_index.data_entity_buckets)}"
-        )
-        self.storage.upsert_miner_index(
-            MinerIndex(
-                hotkey=hotkey, data_entity_buckets=miner_index.data_entity_buckets
+        # Validate the index.
+        miner_index = None
+        try:
+            miner_index = vali_utils.get_miner_index_from_response(response, hotkey)
+        except ValueError as e:
+            bt.logging.debug(f"{hotkey}: Miner returned an invalid index. Reason: {e}")
+            # Miner returned an invalid index. Use the latest index, if present.
+            return self.storage.read_miner_index(hotkey)
+
+        assert miner_index is not None, "Miner index should not be None"
+
+        # Miner replied with a valid index. Store it and return it.
+        miner_credibility = self.scorer.get_miner_credibility(uid)
+        if isinstance(miner_index, MinerIndex):
+            bt.logging.trace(
+                f"{hotkey}: Got new uncompressed miner index. Size={len(miner_index.data_entity_buckets)}"
             )
-        )
-        return self._get_miner_index(hotkey)
+            self.storage.upsert_miner_index(miner_index, miner_credibility)
+        else:
+            assert isinstance(
+                miner_index, CompressedMinerIndex
+            ), f"Expected either a MinerIndex or CompressedMinerIndex but got {type(miner_index)}"
+            bt.logging.trace(
+                f"{hotkey}: Got new compressed miner index. Size={CompressedMinerIndex.size(miner_index)}"
+            )
+            self.storage.upsert_compressed_miner_index(
+                miner_index, hotkey, miner_credibility
+            )
 
-    def _get_miner_index(self, hotkey: str) -> Optional[ScorableMinerIndex]:
-        """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
-        valid_miners = self.scorer.get_credible_miners()
-        return self.storage.read_miner_index(
-            hotkey=hotkey, valid_miners=set(valid_miners)
-        )
+        return self.storage.read_miner_index(hotkey)
 
     def _on_start_miner_eval(self):
         with self.lock:
@@ -186,13 +198,23 @@ class Validator(BaseNeuron):
         bt.logging.trace(f"{hotkey}: Evaluating miner")
 
         # Query the miner for the latest index.
-        index = await self._update_and_get_miner_index(hotkey, axon_info)
+        index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
         if not index:
-            # The miner hasn't provided an index yet, so we can't validate them. Set their score to 0 and move on.
+            # The miner hasn't provided an index yet, so we can't validate them. Count as a failed validation.
             bt.logging.trace(
-                f"{hotkey}: Failed to get an index for miner. Setting score to 0."
+                f"{hotkey}: Failed to get an index for miner. Counting as a failed validation."
             )
-            self.scorer.reset(uid)
+            self.scorer.on_miner_evaluated(
+                uid,
+                None,
+                [
+                    ValidationResult(
+                        is_valid=False,
+                        reason="No available miner index.",
+                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
+                    )
+                ],
+            )
             return
 
         # From that index, find a data entity bucket to sample and get it from the miner.
@@ -211,7 +233,7 @@ class Validator(BaseNeuron):
             timeout=180,
         )
 
-        data_entity_bucket = vali_utils.get_single_successul_response(
+        data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
         )
         # Treat a failed response the same way we treat a failed validation.
@@ -301,33 +323,46 @@ class Validator(BaseNeuron):
         Args:
             block (int): The block at which we started this evaluation.
         """
-        seconds_until_next_batch = 0
 
         # Run in batches of 10.
         # TODO: Maybe make this configurable and run evaluations based on expected throughput
         miners_to_eval = 10
+
+        # Check if the next miner is due an update.
+        next_uid = self.miner_iterator.peek()
+        hotkey = self.metagraph.hotkeys[next_uid]
+        last_evaluated = self.storage.read_miner_last_updated(hotkey)
+        now = datetime.datetime.utcnow()
+        due_update = (
+            last_evaluated is None
+            or (now - last_evaluated) >= Validator.MIN_EVALUATION_PERIOD
+        )
+
+        # If the next miner is not due an update, then all subsequent miners are also not due an update.
+        # So we wait until this miner is due an update.
+        if not due_update:
+            return (
+                last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
+            ).total_seconds()
+
+        # Otherwise, execute the next batch of evaluations and skip any miners who were evaluated recently.
         # Use a set in case the network has fewer than 10 miners.
         uids_to_check = {next(self.miner_iterator) for _ in range(miners_to_eval)}
         uids_to_eval = set()
 
-        # If any of the miners have been seen recently then it means we have looped through our iterator and should wait.
+        # Evaluate all miners in the batch who are due an update.
         for uid in uids_to_check:
             hotkey = self.metagraph.hotkeys[uid]
             last_evaluated = self.storage.read_miner_last_updated(hotkey)
-            now = datetime.datetime.utcnow()
 
             # If we have aleady evaluated this miner recently then do not evaluate it.
             if (
-                last_evaluated
-                and (now - last_evaluated) < Validator.MIN_EVALUATION_PERIOD
+                not last_evaluated
+                or (now - last_evaluated) >= Validator.MIN_EVALUATION_PERIOD
             ):
-                # Set the number of seconds until we expect to be able to run the next evaluation batch.
-                # If multiple miners in this batch had already been seen just use the last one for reference.
-                seconds_until_next_batch = (
-                    last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
-                ).total_seconds()
-            else:
                 uids_to_eval.add(uid)
+
+        assert uids_to_eval, "Expected at least 1 miner to evaluate"
 
         tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
         done, pending = await asyncio.wait(tasks, timeout=300)
@@ -340,8 +375,8 @@ class Validator(BaseNeuron):
                 f"Validator run next eval batch timed out on the following calls: {pending}"
             )
 
-        # Run the next evaluation batch after waiting the appropriate amount of time.
-        return seconds_until_next_batch
+        # Run the next evaluation batch immediately.
+        return 0
 
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
@@ -350,12 +385,7 @@ class Validator(BaseNeuron):
         bt.logging.info("Setting up validator.")
 
         # Setup the DB.
-        self.storage = MysqlValidatorStorage(
-            host=self.config.neuron.database_host,
-            user=self.config.neuron.database_user,
-            password=self.config.neuron.database_password,
-            database=self.config.neuron.database_name,
-        )
+        self.storage = SqliteMemoryValidatorStorage()
 
         # Load any state from previous runs.
         self.load_state()
@@ -399,16 +429,27 @@ class Validator(BaseNeuron):
                     self.run_next_eval_batch()
                 )
 
+                next_batch_start_time = datetime.datetime.utcnow() + datetime.timedelta(
+                    seconds=next_batch_delay_secs
+                )
+
                 # Maybe sync the metagraph and potentially set weights.
                 self.sync()
 
                 self.step += 1
 
-                if next_batch_delay_secs > 0:
+                wait_time = max(
+                    0,
+                    (
+                        next_batch_start_time - datetime.datetime.utcnow()
+                    ).total_seconds(),
+                )
+
+                if wait_time > 0:
                     bt.logging.debug(
-                        f"Waiting {next_batch_delay_secs} seconds until running next evaluation loop."
+                        f"Waiting {wait_time} seconds until running next evaluation loop."
                     )
-                    time.sleep(next_batch_delay_secs)
+                    time.sleep(wait_time)
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
@@ -549,7 +590,7 @@ class Validator(BaseNeuron):
             if hotkey != self.metagraph.hotkeys[uid]:
                 self.scorer.reset(uid)  # hotkey has been replaced
                 try:
-                    self.storage.delete_miner_index(hotkey)
+                    self.storage.delete_miner(hotkey)
                 except Exception:
                     bt.logging.error(
                         f"{hotkey} Failed to delete miner index.",

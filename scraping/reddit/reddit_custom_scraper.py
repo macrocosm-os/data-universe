@@ -1,7 +1,10 @@
+import time
+from common import utils
+from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 import bittensor as bt
-from common.data import DataEntity, DataLabel, DataSource, DateRange
+from common.data import DataEntity, DataLabel, DataSource
 from typing import List
 import asyncpraw
 from scraping.reddit.utils import (
@@ -10,6 +13,7 @@ from scraping.reddit.utils import (
     get_time_input,
     get_custom_sort_input,
     normalize_label,
+    normalize_permalink,
 )
 from scraping.reddit.model import RedditContent, RedditDataType
 import traceback
@@ -71,24 +75,32 @@ class RedditCustomScraper(Scraper):
             content = None
 
             try:
-                async with asyncpraw.Reddit(
-                    client_id=os.getenv("REDDIT_CLIENT_ID"),
-                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                    username=os.getenv("REDDIT_USERNAME"),
-                    password=os.getenv("REDDIT_PASSWORD"),
-                    user_agent=RedditCustomScraper.USER_AGENT
-                    + os.getenv("REDDIT_USERNAME"),
-                ) as reddit:
-                    if reddit_content_to_verify.data_type == RedditDataType.POST:
-                        submission = await reddit.submission(
-                            url=reddit_content_to_verify.url
-                        )
-                        # Parse the response.
-                        content = self._best_effort_parse_submission(submission)
-                    else:
-                        comment = await reddit.comment(url=reddit_content_to_verify.url)
-                        # Parse the response.
-                        content = self._best_effort_parse_comment(comment)
+
+                async def _get_content():
+                    async with asyncpraw.Reddit(
+                        client_id=os.getenv("REDDIT_CLIENT_ID"),
+                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                        username=os.getenv("REDDIT_USERNAME"),
+                        password=os.getenv("REDDIT_PASSWORD"),
+                        user_agent=RedditCustomScraper.USER_AGENT
+                        + os.getenv("REDDIT_USERNAME"),
+                    ) as reddit:
+                        if reddit_content_to_verify.data_type == RedditDataType.POST:
+                            submission = await reddit.submission(
+                                url=reddit_content_to_verify.url
+                            )
+                            # Parse the response.
+                            return self._best_effort_parse_submission(submission)
+                        else:
+                            comment = await reddit.comment(
+                                url=reddit_content_to_verify.url
+                            )
+                            # Parse the response.
+                            return self._best_effort_parse_comment(comment)
+
+                content = await utils.async_run_with_retry(
+                    _get_content, max_retries=3, delay_seconds=5
+                )
             except Exception as e:
                 bt.logging.error(
                     f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}"
@@ -213,7 +225,8 @@ class RedditCustomScraper(Scraper):
             user = submission.author.name if submission.author else model.DELETED_USER
             content = RedditContent(
                 id=submission.name,
-                url=submission.url,
+                url="https://www.reddit.com"
+                + normalize_permalink(submission.permalink),
                 username=user,
                 communityName=submission.subreddit_name_prefixed,
                 body=submission.selftext,
@@ -245,7 +258,7 @@ class RedditCustomScraper(Scraper):
             user = comment.author.name if comment.author else model.DELETED_USER
             content = RedditContent(
                 id=comment.name,
-                url="https://www.reddit.com" + comment.permalink,
+                url="https://www.reddit.com" + normalize_permalink(comment.permalink),
                 username=user,
                 communityName=comment.subreddit_name_prefixed,
                 body=comment.body,

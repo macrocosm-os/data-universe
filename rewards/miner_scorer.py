@@ -1,9 +1,10 @@
 import threading
-from typing import List
+from typing import List, Optional
 import torch
 import bittensor as bt
+from common import constants
 
-from common.data import ScorableMinerIndex
+from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult
 
@@ -66,10 +67,8 @@ class MinerScorer:
             self.scores[uid] = 0.0
             self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
 
-    def get_miner_credibility_for_test(self, uid: int) -> float:
-        """Returns the credibility of miner 'uid'.
-
-        Should only be used in tests."""
+    def get_miner_credibility(self, uid: int) -> float:
+        """Returns the credibility of miner 'uid'."""
         with self.lock:
             return self.miner_credibility[uid].item()
 
@@ -114,7 +113,7 @@ class MinerScorer:
     def on_miner_evaluated(
         self,
         uid: int,
-        index: ScorableMinerIndex,
+        index: Optional[ScorableMinerIndex],
         validation_results: List[ValidationResult],
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
@@ -125,17 +124,23 @@ class MinerScorer:
             validation_results (List[ValidationResult]): The results of data validation performed on the data provided by the miner.
         """
         with self.lock:
-            # First, update the miner's credibilty
-            self._update_credibility(uid, validation_results)
-
-            # Now score the miner based on the amount of data it has, scaled based on
-            # the reward distribution.
             score = 0.0
-            for bucket in index.scorable_data_entity_buckets:
-                score += self.value_calculator.get_score_for_data_entity_bucket(bucket)
 
-            # Scale the miner's score by its credibility, squared.
-            score *= self.miner_credibility[uid] ** 2
+            # If the miner has an index, update it's credibility based on the validation result and score the current index.
+            # Otherwise, score the miner 0 for this round, but don't touch its credibility.
+            if index:
+                # First, update the miner's credibilty
+                self._update_credibility(uid, validation_results)
+
+                # Now score the miner based on the amount of data it has, scaled based on
+                # the reward distribution.
+                for bucket in index.scorable_data_entity_buckets:
+                    score += self.value_calculator.get_score_for_data_entity_bucket(
+                        bucket
+                    )
+
+                # Scale the miner's score by its credibility, squared.
+                score *= self.miner_credibility[uid] ** 2
 
             self._update_score(uid, score)
 
@@ -175,4 +180,14 @@ class MinerScorer:
 
         Requires: self.lock is held.
         """
-        self.scores[uid] = self.alpha * reward + (1 - self.alpha) * self.scores[uid]
+        new_score = self.alpha * reward + (1 - self.alpha) * self.scores[uid]
+
+        # If the score is over the growth limit threshold then ensure it isn't growing faster than the percent limit.
+        if new_score > constants.SCORE_GROWTH_LIMIT_THRESHOLD:
+            new_score = min(
+                new_score, self.scores[uid] * constants.SCORE_GROWTH_LIMIT_PERCENT
+            )
+            # Still allow a score to go from 0 to the SCORE_GROWTH_LIMIT_THRESHOLD in one go.
+            new_score = max(new_score, constants.SCORE_GROWTH_LIMIT_THRESHOLD)
+
+        self.scores[uid] = new_score

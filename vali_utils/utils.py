@@ -1,16 +1,19 @@
 import bittensor as bt
 import hashlib
 import random
-from typing import List, Optional, Tuple, Type
+from typing import List, Optional, Tuple, Type, Union
 import datetime as dt
 from common import constants
 from common.data import (
+    CompressedMinerIndex,
     DataEntity,
     DataEntityBucket,
-    DateRange,
-    ScorableMinerIndex,
+    MinerIndex,
     TimeBucket,
 )
+from common.data_v2 import ScorableMinerIndex
+from common.date_range import DateRange
+from common.protocol import GetMinerIndex
 
 
 def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
@@ -20,18 +23,15 @@ def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityB
     that DataEntityBucket
     """
     total_size = sum(
-        scorable_bucket.data_entity_bucket.size_bytes
+        scorable_bucket.size_bytes
         for scorable_bucket in index.scorable_data_entity_buckets
     )
     chosen_byte = random.uniform(0, total_size)
     iterated_bytes = 0
     for scorable_bucket in index.scorable_data_entity_buckets:
-        if (
-            iterated_bytes + scorable_bucket.data_entity_bucket.size_bytes
-            >= chosen_byte
-        ):
-            return scorable_bucket.data_entity_bucket
-        iterated_bytes += scorable_bucket.data_entity_bucket.size_bytes
+        if iterated_bytes + scorable_bucket.size_bytes >= chosen_byte:
+            return scorable_bucket.to_data_entity_bucket()
+        iterated_bytes += scorable_bucket.size_bytes
     assert (
         False
     ), "Failed to choose a DataEntityBucket to query... which should never happen"
@@ -140,7 +140,7 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
     return True
 
 
-def get_single_successul_response(
+def get_single_successful_response(
     responses: List[bt.Synapse], expected_class: Type
 ) -> Optional[bt.Synapse]:
     """Helper function to extract the single response from a list of responses, if the response is valid.
@@ -156,3 +156,22 @@ def get_single_successul_response(
     ):
         return responses[0]
     return None
+
+
+def get_miner_index_from_response(
+    response: GetMinerIndex, hotkey: str
+) -> Union[MinerIndex, CompressedMinerIndex]:
+    """Gets a MinerIndex from a GetMinerIndex response."""
+    assert response.is_success
+
+    # If the uncompressed index is available, use it.
+    if response.data_entity_buckets:
+        return MinerIndex(
+            hotkey=hotkey,
+            data_entity_buckets=response.data_entity_buckets,
+        )
+    elif response.compressed_index_serialized:
+        # Otherwise, decompress the compressed index.
+        return CompressedMinerIndex.parse_raw(response.compressed_index_serialized)
+
+    raise ValueError("GetMinerIndex response has no index.")

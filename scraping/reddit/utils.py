@@ -125,3 +125,11 @@ def get_custom_sort_input(datetime: dt.datetime) -> str:
 def normalize_label(label: DataLabel) -> str:
     """Returns the datalabel value without the 'r/' prefix."""
     return label.value.removeprefix("r/")
+
+
+def normalize_permalink(permalink: str) -> str:
+    "Ensures that the reddit permalink always starts with '/r/' prefix (including a leading /)"
+    if permalink.startswith("/"):
+        return permalink
+    else:
+        return "/" + permalink

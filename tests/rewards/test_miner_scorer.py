@@ -3,6 +3,7 @@ import unittest
 from unittest.mock import MagicMock, Mock, patch
 from typing import List
 import torch
+from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from scraping.scraper import ValidationResult
 from common import constants
@@ -12,12 +13,11 @@ from common.data import (
     DataLabel,
     DataSource,
     TimeBucket,
-    ScorableDataEntityBucket,
-    ScorableMinerIndex,
 )
 from rewards.miner_scorer import MinerScorer
 import datetime as dt
 import rewards.data_value_calculator
+from common import utils
 
 
 @patch.object(rewards.data_value_calculator.dt, "datetime", Mock(wraps=dt.datetime))
@@ -45,26 +45,18 @@ class TestMinerScorer(unittest.TestCase):
             hotkey="abc123",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="otherlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
                 ),
@@ -87,12 +79,12 @@ class TestMinerScorer(unittest.TestCase):
         self._add_score_to_uid(uid)
         scores = self.scorer.get_scores()
         self.assertGreater(scores[uid], 0.0)
-        self.assertGreater(self.scorer.get_miner_credibility_for_test(uid), 0)
+        self.assertGreater(self.scorer.get_miner_credibility(uid), 0)
 
         self.scorer.reset(uid)
         scores = self.scorer.get_scores()
         self.assertEqual(scores[uid], 0.0)
-        self.assertEqual(self.scorer.get_miner_credibility_for_test(uid), 0)
+        self.assertEqual(self.scorer.get_miner_credibility(uid), 0)
 
     def test_resize(self):
         """Test resize retains scores after the resize."""
@@ -147,6 +139,26 @@ class TestMinerScorer(unittest.TestCase):
 
         # Now verify the honest miner is credible
         self.assertEqual([honest_miner], self.scorer.get_credible_miners())
+
+    def test_on_miner_evaluated_no_index(self):
+        """Tests that on_miner_evaluated correctly updates the score if the miner has no index."""
+        uid = 5
+
+        # Give the miner a bunch of score.
+        for _ in range(10):
+            self._add_score_to_uid(uid)
+
+        score = self.scorer.get_scores()[uid]
+
+        # Now run an eval with no index.
+        validation_results = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=100)
+        ]
+        self.scorer.on_miner_evaluated(uid, None, validation_results)
+
+        new_score = self.scorer.get_scores()[uid]
+        self.assertGreater(new_score, 0)
+        self.assertLess(new_score, score)
 
     def test_on_miner_evaluated_credibilty_normalized_by_size(self):
         """Compares miners with varying levels of "honesty" by validation bytes as measured by the validation results,
@@ -258,26 +270,18 @@ class TestMinerScorer(unittest.TestCase):
             hotkey="honest",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=100,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel"),
-                        ),
-                        size_bytes=200,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="otherlabel",
+                    size_bytes=200,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=50,
                 ),
@@ -289,26 +293,18 @@ class TestMinerScorer(unittest.TestCase):
             hotkey="shady",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="testlabel"),
-                        ),
-                        size_bytes=400,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=400,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=200,
                 ),
                 ScorableDataEntityBucket(
-                    data_entity_bucket=DataEntityBucket(
-                        id=DataEntityBucketId(
-                            time_bucket=TimeBucket.from_datetime(self.now),
-                            source=DataSource.REDDIT,
-                            label=DataLabel(value="otherlabel"),
-                        ),
-                        size_bytes=400,
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="otherlabel",
+                    size_bytes=400,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                     scorable_bytes=10,
                 ),
@@ -340,6 +336,32 @@ class TestMinerScorer(unittest.TestCase):
                     scores[honest_miner].item(),
                     scores[shady_miner].item(),
                 )
+
+    def test_update_score_respects_growth_limit_threshhold(self):
+        """Verifies that a score can only increase up to the threshold in one cycle."""
+        uid = 0
+        self.scorer.scores[uid] = 0
+
+        # Update by an amount big enough to account for alpha.
+        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_THRESHOLD * 1000)
+
+        self.assertEqual(
+            self.scorer.scores[uid], constants.SCORE_GROWTH_LIMIT_THRESHOLD
+        )
+
+    def test_update_score_respects_percent_limit(self):
+        """Verifies that a score can only increase by a percent amount in one cycle."""
+        uid = 0
+        # Start with an amount big enough to account for alpha and beat out the flat increase.
+        self.scorer.scores[uid] = constants.SCORE_GROWTH_LIMIT_THRESHOLD
+
+        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_THRESHOLD * 1000)
+
+        self.assertEqual(
+            self.scorer.scores[uid],
+            constants.SCORE_GROWTH_LIMIT_THRESHOLD
+            * constants.SCORE_GROWTH_LIMIT_PERCENT,
+        )
 
 
 if __name__ == "__main__":
