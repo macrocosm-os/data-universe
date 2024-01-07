@@ -41,7 +41,9 @@ from neurons.config import NeuronType
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
-from storage.validator.mysql_validator_storage import MysqlValidatorStorage
+from storage.validator.sqlite_memory_validator_storage import (
+    SqliteMemoryValidatorStorage,
+)
 from storage.validator.validator_storage import ValidatorStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
@@ -172,10 +174,7 @@ class Validator(BaseNeuron):
 
     def _get_miner_index(self, hotkey: str) -> Optional[ScorableMinerIndex]:
         """Gets the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
-        valid_miners = self.scorer.get_credible_miners()
-        return self.storage.read_miner_index(
-            hotkey=hotkey, valid_miners=set(valid_miners)
-        )
+        return self.storage.read_miner_index(hotkey=hotkey)
 
     def _on_start_miner_eval(self):
         with self.lock:
@@ -394,12 +393,7 @@ class Validator(BaseNeuron):
         bt.logging.info("Setting up validator.")
 
         # Setup the DB.
-        self.storage = MysqlValidatorStorage(
-            host=self.config.neuron.database_host,
-            user=self.config.neuron.database_user,
-            password=self.config.neuron.database_password,
-            database=self.config.neuron.database_name,
-        )
+        self.storage = SqliteMemoryValidatorStorage()
 
         # Load any state from previous runs.
         self.load_state()

@@ -1,7 +1,7 @@
 # Validator
 
 The Validator is responsible for validating the Miners and scoring them according to the [incentive mechanism](../README.md#incentive-mechanism). It runs a loop to enumerate all Miners in the network, and for each, it performs the following sequence:
-1. It requests the latest [MinerIndex](../README.md#terminology) from the miner, which it stores in a local database.
+1. It requests the latest [MinerIndex](../README.md#terminology) from the miner, which it stores in a in-memory database.
 2. It chooses a random (sampled by size) DataEntityBucket from the MinerIndex to sample.
 3. It gets that DataEntityBucket from the Miner.
 4. It chooses N DataEntities from the DataEntityBucket to validate. It then scrapes the content from the apprioriate DataSource to get those DataEntities.
@@ -14,7 +14,7 @@ As of Dec 11th 2023, the expected cost number of DataItems queried via Apify is 
 
 # System Requirements
 
-Validators do not require a GPU and should be able to run on a relatively low-tier machine, as long as it has sufficient network bandwidth and disk space.
+Validators require at least 32 GB of RAM but do not require a GPU and should be able to run on a relatively low-tier machine otherwise, as long as it has sufficient network bandwidth and disk space.
 
 # Getting Started
 
@@ -36,26 +36,6 @@ python -m pip install -e .
 ```
 
 1. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
-
-1. Install mySQL and configure your database and user.
-```shell
-sudo apt install mysql-server
-sudo systemctl start mysql.service
-sudo mysql
-
-CREATE DATABASE ValidatorStorage;
-CREATE USER 'data-universe-user'@'localhost' IDENTIFIED BY 'MyStrongPassword';
-GRANT ALL PRIVILEGES ON ValidatorStorage.* TO 'data-universe-user'@'localhost';
-```
-
-1. Setup the Validator to have access to your created user.
-The Validator will automatically create the mysql tables within the database for you. However, you'll need to choose a password and add it to the `.env` file:
-
-```py
-DATABASE_USER_PASSWORD="MyStrongPassword"
-```
-
-Alternatively, you can provide it via the `--neuron.database_password` flag.
 
 ## Running the Validator
 
@@ -89,7 +69,7 @@ pm2 start python -- ./neurons/validator.py --wallet.name your-wallet --wallet.ho
 
 ## Flags
 
-The Validator offers some flags to customize properties, such as the database name and the maximum amount of data to store.
+The Validator offers some flags to customize properties.
 
 You can view the full set of flags by running
 ```shell

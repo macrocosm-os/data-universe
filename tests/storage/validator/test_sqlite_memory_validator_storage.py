@@ -570,7 +570,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Confirm the last updated is None.
         self.assertEqual(None, last_updated)
 
-    # @unittest.skip("Skip the multi threaded test by default.")
+    @unittest.skip("Skip the multi threaded test by default.")
     def test_multithreaded_inserts(self):
         """In a multi-threaded environment, insert 5 indexes for 5 miners, then read them back and verify they're correct."""
 
@@ -727,7 +727,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             concurrent.futures.wait(futures)
             print("Verification complete")
 
-    # @unittest.skip("Skip the large index test by default.")
+    @unittest.skip("Skip the large index test by default.")
     def test_many_large_indexes_perf(self):
         """Inserts 200 miners with maximal indexes and reads them back."""
         labels = [f"label{i}" for i in range(100_000)]

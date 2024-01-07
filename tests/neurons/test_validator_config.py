@@ -14,20 +14,13 @@ class TestValidatorConfig(unittest.TestCase):
                 "validator.py",
                 "--subtensor.network",
                 "test",
-                "--neuron.database_user",
-                "foobar",
-                "--neuron.database_password",
-                "P@ssw0rd",
             ],
         ):
             validator = Validator()
             config = validator.get_config_for_test()
 
-            self.assertEqual(config.neuron.database_user, "foobar")
-            self.assertEqual(config.neuron.database_password, "P@ssw0rd")
-
             # Check the default values are still there.
-            self.assertEqual(config.neuron.database_name, "ValidatorStorage")
+            self.assertEqual(config.neuron.axon_off, False)
 
 
 if __name__ == "__main__":

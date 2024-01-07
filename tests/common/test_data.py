@@ -44,12 +44,12 @@ class TestData(unittest.TestCase):
         target_buckets = constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
 
         # Figure out how many time buckets and labels we need to fill the index.
-        buckets_per_source = target_buckets // len(DataSource)
+        buckets_per_source = target_buckets // 2  # Twitter/Reddit
         num_time_buckets = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 7 * 24
         num_labels = buckets_per_source // num_time_buckets
 
         # Double check the math
-        total_buckets = len(DataSource) * num_time_buckets * num_labels
+        total_buckets = 2 * num_time_buckets * num_labels
         self.assertAlmostEqual(
             target_buckets,
             total_buckets,
@@ -64,7 +64,7 @@ class TestData(unittest.TestCase):
             characters = string.ascii_letters + string.digits
             return "".join(random.choice(characters) for _ in range(length))
 
-        for source in list(DataSource):
+        for source in [DataSource.REDDIT, DataSource.X]:
             compressed_buckets = [None] * num_labels
             for label_i in range(0, num_labels):
                 label = generate_random_string(random.randint(4, 32))
