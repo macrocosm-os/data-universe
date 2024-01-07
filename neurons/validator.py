@@ -86,10 +86,6 @@ class Validator(BaseNeuron):
         self.miner_iterator = MinerIterator(self.get_miner_uids(self.metagraph))
         self.scraper_provider = ScraperProvider()
 
-        # Setup the database.
-        if not self.config.neuron.database_password:
-            raise ValueError("Database password not set.")
-
         # Setup storage in setup()
         self.storage: ValidatorStorage = None
 
@@ -210,7 +206,7 @@ class Validator(BaseNeuron):
             )
             self.scorer.on_miner_evaluated(
                 uid,
-                index,
+                None,
                 [
                     ValidationResult(
                         is_valid=False,

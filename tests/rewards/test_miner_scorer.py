@@ -140,6 +140,26 @@ class TestMinerScorer(unittest.TestCase):
         # Now verify the honest miner is credible
         self.assertEqual([honest_miner], self.scorer.get_credible_miners())
 
+    def test_on_miner_evaluated_no_index(self):
+        """Tests that on_miner_evaluated correctly updates the score if the miner has no index."""
+        uid = 5
+
+        # Give the miner a bunch of score.
+        for _ in range(10):
+            self._add_score_to_uid(uid)
+
+        score = self.scorer.get_scores()[uid]
+
+        # Now run an eval with no index.
+        validation_results = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=100)
+        ]
+        self.scorer.on_miner_evaluated(uid, None, validation_results)
+
+        new_score = self.scorer.get_scores()[uid]
+        self.assertGreater(new_score, 0)
+        self.assertLess(new_score, score)
+
     def test_on_miner_evaluated_credibilty_normalized_by_size(self):
         """Compares miners with varying levels of "honesty" by validation bytes as measured by the validation results,
         to ensure the relative scores are as expected."""
