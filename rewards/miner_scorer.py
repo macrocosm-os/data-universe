@@ -1,5 +1,5 @@
 import threading
-from typing import List
+from typing import List, Optional
 import torch
 import bittensor as bt
 from common import constants
@@ -113,7 +113,7 @@ class MinerScorer:
     def on_miner_evaluated(
         self,
         uid: int,
-        index: ScorableMinerIndex,
+        index: Optional[ScorableMinerIndex],
         validation_results: List[ValidationResult],
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
@@ -124,17 +124,23 @@ class MinerScorer:
             validation_results (List[ValidationResult]): The results of data validation performed on the data provided by the miner.
         """
         with self.lock:
-            # First, update the miner's credibilty
-            self._update_credibility(uid, validation_results)
-
-            # Now score the miner based on the amount of data it has, scaled based on
-            # the reward distribution.
             score = 0.0
-            for bucket in index.scorable_data_entity_buckets:
-                score += self.value_calculator.get_score_for_data_entity_bucket(bucket)
 
-            # Scale the miner's score by its credibility, squared.
-            score *= self.miner_credibility[uid] ** 2
+            # If the miner has an index, update it's credibility based on the validation result and score the current index.
+            # Otherwise, score the miner 0 for this round, but don't touch its credibility.
+            if index:
+                # First, update the miner's credibilty
+                self._update_credibility(uid, validation_results)
+
+                # Now score the miner based on the amount of data it has, scaled based on
+                # the reward distribution.
+                for bucket in index.scorable_data_entity_buckets:
+                    score += self.value_calculator.get_score_for_data_entity_bucket(
+                        bucket
+                    )
+
+                # Scale the miner's score by its credibility, squared.
+                score *= self.miner_credibility[uid] ** 2
 
             self._update_score(uid, score)
 
