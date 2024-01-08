@@ -44,7 +44,10 @@ from scraping.scraper import ScraperId, ValidationResult
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
-from storage.validator.validator_storage import ValidatorStorage
+from storage.validator.validator_storage import (
+    ValidatorStorage,
+)
+from storage.validator.mysql_databox_storage import MysqlDataboxStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
 
@@ -88,11 +91,13 @@ class Validator(BaseNeuron):
 
         # Setup storage in setup()
         self.storage: ValidatorStorage = None
+        self.databox_storage: MysqlDataboxStorage = None
 
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
+        self.databox_thread: threading.Thread = None
         self.lock = threading.RLock()
         self.last_eval_time = dt.datetime.utcnow()
         self.is_setup = False
@@ -386,6 +391,12 @@ class Validator(BaseNeuron):
 
         # Setup the DB.
         self.storage = SqliteMemoryValidatorStorage()
+        self.databox_storage = MysqlDataboxStorage(
+            host=os.getenv("MYSQL_DATABOX_HOST"),
+            user=os.getenv("MYSQL_DATABOX_USER"),
+            password=os.getenv("MYSQL_DATABOX_PW"),
+            database=os.getenv("MYSQL_DATABOX_DB"),
+        )
 
         # Load any state from previous runs.
         self.load_state()
@@ -462,6 +473,64 @@ class Validator(BaseNeuron):
             bt.logging.error("Error during validation", str(err))
             bt.logging.debug(print_exception(type(err), err, err.__traceback__))
 
+    def run_databox(self):
+        """
+        Initiates and manages the databox loop for the validator, which
+
+        1. Periodically updates the mysql databox tables with current information.
+        """
+
+        # Sleep on startup to avoid wiping the tables on restart.
+        time.sleep(datetime.timedelta(minutes=90).total_seconds())
+
+        # This loop maintains the validator's databox table updates until intentionally stopped.
+        try:
+            while not self.should_exit:
+                bt.logging.trace("Updating databox tables.")
+
+                next_databox_update = datetime.datetime.utcnow() + datetime.timedelta(
+                    minutes=45
+                )
+
+                # Get Databox Miners from SqliteMemory and write to mysql.
+                self.databox_storage.insert_miners(self.storage.read_databox_miners())
+
+                # Get Databox Age Sizes from SqliteMemory and write to mysql.
+                self.databox_storage.insert_age_sizes(
+                    self.storage.read_databox_age_sizes()
+                )
+
+                # Get Databox Label Sizes from SqliteMemory and write to mysql.
+                self.databox_storage.insert_label_sizes(
+                    self.storage.read_databox_label_sizes()
+                )
+
+                wait_time = max(
+                    0,
+                    (next_databox_update - datetime.datetime.utcnow()).total_seconds(),
+                )
+
+                bt.logging.trace(
+                    f"Finished updating databox tables. Waiting {wait_time} seconds until next update."
+                )
+
+                if wait_time > 0:
+                    time.sleep(wait_time)
+
+        # TODO: Confirm but I think this needs to be in both threads in case one or the other is running.
+        # If someone intentionally stops the validator, it'll safely terminate operations.
+        except KeyboardInterrupt:
+            self.axon.stop()
+            bt.logging.success(
+                "Validator killed by keyboard interrupt while in databox run."
+            )
+            sys.exit()
+
+        # In case of unforeseen errors, the validator will log the error and continue operations.
+        except Exception as err:
+            bt.logging.error("Error during databox run", str(err))
+            bt.logging.debug(print_exception(type(err), err, err.__traceback__))
+
     def run_in_background_thread(self):
         """
         Starts the validator's operations in a background thread upon entering the context.
@@ -476,6 +545,8 @@ class Validator(BaseNeuron):
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+            self.databox_thread = threading.Thread(target=self.run_databox, daemon=True)
+            self.databox_thread.start()
             self.is_running = True
             bt.logging.debug("Started")
 
@@ -511,6 +582,7 @@ class Validator(BaseNeuron):
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
+            self.databox_thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped")
 
@@ -568,7 +640,7 @@ class Validator(BaseNeuron):
             version_key=self.spec_version,
         )
 
-        bt.logging.info(f"Set weights: {processed_weights}")
+        # bt.logging.info(f"Set weights: {processed_weights}")
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
