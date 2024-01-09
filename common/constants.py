@@ -12,8 +12,8 @@ DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS = 30
 # The maximum number of characters a label can have.
 MAX_LABEL_LENGTH = 32
 
-# The current protocol version.
-PROTOCOL_VERSION = 1
+# The current protocol version (int)
+PROTOCOL_VERSION = 2
 
 # Baseline threshold under which score increase limits are not applied.
 SCORE_GROWTH_LIMIT_THRESHOLD = utils.mb_to_bytes(1000)
