@@ -24,5 +24,5 @@ class MinerStorage(ABC):
 
     @abstractmethod
     def get_compressed_index(self) -> CompressedMinerIndex:
-        """Lists all DataEntityBuckets for all the DataEntities that this MinerStorage is currently serving."""
+        """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
         raise NotImplemented
