@@ -69,7 +69,7 @@ class SqliteMinerStorage(MinerStorage):
     DELETE_OLD_INDEX = """DROP INDEX IF EXISTS data_entity_bucket_index"""
 
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index2
-                                ON DataEntity (timeBucketId, source, label, contentSizeBytes DESC)"""
+                                ON DataEntity (timeBucketId, source, label, contentSizeBytes)"""
 
     def __init__(
         self,
