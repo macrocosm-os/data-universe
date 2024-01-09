@@ -68,8 +68,10 @@ class SqliteMinerStorage(MinerStorage):
                                 contentSizeBytes    INTEGER         NOT NULL
                                 ) WITHOUT ROWID"""
 
-    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
-                                ON DataEntity (timeBucketId, source, label)"""
+    DELETE_OLD_INDEX = """DROP INDEX IF EXISTS data_entity_bucket_index"""
+
+    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index2
+                                ON DataEntity (timeBucketId, source, label, contentSizeBytes)"""
 
     def __init__(
         self,
@@ -89,6 +91,9 @@ class SqliteMinerStorage(MinerStorage):
 
             # Create the DataEntity table (if it does not already exist).
             cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_CREATE)
+
+            # Delete the old index (if it exists).
+            cursor.execute(SqliteMinerStorage.DELETE_OLD_INDEX)
 
             # Create the Index (if it does not already exist).
             cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_INDEX)
