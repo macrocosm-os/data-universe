@@ -1,9 +1,11 @@
 import contextlib
 import unittest
 import os
+
 from common import constants
 from common.data import (
-    DataEntityBucket,
+    CompressedEntityBucket,
+    CompressedMinerIndex,
     DataEntity,
     DataEntityBucketId,
     DataLabel,
@@ -12,6 +14,8 @@ from common.data import (
 )
 import datetime as dt
 import pytz
+
+from tests import utils
 
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 
@@ -161,8 +165,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
             self.assertEqual(uris, ["test_entity_2", "test_entity_3"])
 
-    def test_list_data_entity_buckets(self):
-        """Tests that we can list the data entity buckets from storage."""
+    def test_get_compressed_index(self):
+        """Tests that we can get the compressed miner index from storage."""
         now = dt.datetime.now()
         # Create an entity for bucket 1.
         bucket1_datetime = now
@@ -201,31 +205,32 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the index.
-        data_entity_buckets = self.test_storage.list_data_entity_buckets()
+        index = self.test_storage.get_compressed_index()
 
-        expected_bucket_1 = DataEntityBucket(
-            id=DataEntityBucketId(
-                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
-                source=DataSource.REDDIT,
-                label=DataLabel(value="label_1"),
-            ),
-            size_bytes=10,
+        expected_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label="label_1",
+                        time_bucket_ids=[TimeBucket.from_datetime(bucket1_datetime).id],
+                        sizes_bytes=[10],
+                    )
+                ],
+                DataSource.X: [
+                    CompressedEntityBucket(
+                        label="label_2",
+                        time_bucket_ids=[TimeBucket.from_datetime(bucket2_datetime).id],
+                        sizes_bytes=[50],
+                    )
+                ],
+            }
         )
 
-        expected_bucket_2 = DataEntityBucket(
-            id=DataEntityBucketId(
-                time_bucket=TimeBucket.from_datetime(bucket2_datetime),
-                source=DataSource.X,
-                label=DataLabel(value="label_2"),
-            ),
-            size_bytes=50,
-        )
+        # Confirm we get back the expected summary.
+        self.assertTrue(utils.are_compressed_indexes_equal(index, expected_index))
 
-        # Confirm we get back the expected summaries in order of size.
-        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
-
-    def test_list_data_entity_buckets_no_labels(self):
-        """Tests that we can list the data entity buckets with no labels from storage."""
+    def test_get_compressed_index_no_labels(self):
+        """Tests that we can get a compressed index with no labels from storage."""
         now = dt.datetime.now()
         # Create an entity for bucket 1.
         bucket1_datetime = now
@@ -261,29 +266,90 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the index.
-        data_entity_buckets = self.test_storage.list_data_entity_buckets()
+        index = self.test_storage.get_compressed_index()
 
-        expected_bucket_1 = DataEntityBucket(
-            id=DataEntityBucketId(
-                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
-                source=DataSource.REDDIT,
-            ),
-            size_bytes=10,
+        expected_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label=None,
+                        time_bucket_ids=[TimeBucket.from_datetime(bucket1_datetime).id],
+                        sizes_bytes=[10],
+                    )
+                ],
+                DataSource.X: [
+                    CompressedEntityBucket(
+                        label=None,
+                        time_bucket_ids=[TimeBucket.from_datetime(bucket2_datetime).id],
+                        sizes_bytes=[50],
+                    )
+                ],
+            }
         )
 
-        expected_bucket_2 = DataEntityBucket(
-            id=DataEntityBucketId(
-                time_bucket=TimeBucket.from_datetime(bucket2_datetime),
-                source=DataSource.X,
-            ),
-            size_bytes=50,
+        # Confirm we get back the expected summary.
+        self.assertTrue(utils.are_compressed_indexes_equal(index, expected_index))
+
+    def test_get_compressed_index_multiple_bucket_per_label(self):
+        """Tests that we can get the compressed miner index when there are multiple buckets for a single label."""
+
+        datetime = dt.datetime.now()
+
+        # Store the entities, that share the same label across 3 different timeBucketIds
+        self.test_storage.store_data_entities(
+            [
+                DataEntity(
+                    uri="test_entity_1",
+                    datetime=datetime,
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="label_1"),
+                    content=bytes(10),
+                    content_size_bytes=10,
+                ),
+                DataEntity(
+                    uri="test_entity_2",
+                    datetime=(datetime + dt.timedelta(minutes=61)),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="label_1"),
+                    content=bytes(20),
+                    content_size_bytes=20,
+                ),
+                DataEntity(
+                    uri="test_entity_3",
+                    datetime=(datetime + dt.timedelta(minutes=122)),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="label_1"),
+                    content=bytes(30),
+                    content_size_bytes=30,
+                ),
+            ]
         )
 
-        # Confirm we get back the expected summaries in order of size.
-        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
+        # Get the index and check it's as expected.
+        index = self.test_storage.get_compressed_index()
+        expected_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label="label_1",
+                        time_bucket_ids=[
+                            TimeBucket.from_datetime(
+                                datetime + dt.timedelta(hours=i)
+                            ).id
+                            # Expect the buckets in size order descending.
+                            for i in range(2, -1, -1)
+                        ],
+                        sizes_bytes=[30, 20, 10],
+                    )
+                ],
+            }
+        )
 
-    def test_list_data_entity_buckets_too_old(self):
-        """Tests that we can list the data entity buckets from storage, discarding out of date ones."""
+        # Confirm we get back the expected summary.
+        self.assertTrue(utils.are_compressed_indexes_equal(index, expected_index))
+
+    def test_get_compressed_index_buckets_too_old(self):
+        """Tests that we can list the compressed index from storage, discarding out of date ones."""
         now = dt.datetime.now()
         # Create an entity for bucket 1.
         bucket1_datetime = now
@@ -324,19 +390,27 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the index.
-        data_entity_buckets = self.test_storage.list_data_entity_buckets()
+        index = self.test_storage.get_compressed_index()
 
-        expected_bucket_1 = DataEntityBucket(
-            id=DataEntityBucketId(
-                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
-                source=DataSource.REDDIT,
-                label=DataLabel(value="label_1"),
-            ),
-            size_bytes=10,
+        expected_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label="label_1",
+                        time_bucket_ids=[TimeBucket.from_datetime(bucket1_datetime).id],
+                        sizes_bytes=[10],
+                    )
+                ],
+            }
         )
 
-        # Confirm we get back the expected summaries.
-        self.assertEqual(data_entity_buckets, [expected_bucket_1])
+        # Confirm we get back the expected summary.
+        self.assertTrue(utils.are_compressed_indexes_equal(index, expected_index))
+
+    def test_get_compressed_index_empty_storage(self):
+        """Tests that we can get a compressed index, when storage is empty."""
+        index = self.test_storage.get_compressed_index()
+        self.assertEqual(index, CompressedMinerIndex(sources={}))
 
     def test_list_entities_in_data_entity_bucket(self):
         """Tests that we can get all the enities in a data entity bucket"""
