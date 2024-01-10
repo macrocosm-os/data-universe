@@ -484,8 +484,8 @@ class Validator(BaseNeuron):
         time.sleep(datetime.timedelta(minutes=90).total_seconds())
 
         # This loop maintains the validator's databox table updates until intentionally stopped.
-        try:
-            while not self.should_exit:
+        while not self.should_exit:
+            try:
                 bt.logging.trace("Updating databox tables.")
 
                 next_databox_update = datetime.datetime.utcnow() + datetime.timedelta(
@@ -517,19 +517,19 @@ class Validator(BaseNeuron):
                 if wait_time > 0:
                     time.sleep(wait_time)
 
-        # TODO: Confirm but I think this needs to be in both threads in case one or the other is running.
-        # If someone intentionally stops the validator, it'll safely terminate operations.
-        except KeyboardInterrupt:
-            self.axon.stop()
-            bt.logging.success(
-                "Validator killed by keyboard interrupt while in databox run."
-            )
-            sys.exit()
+            # TODO: Confirm but I think this needs to be in both threads in case one or the other is running.
+            # If someone intentionally stops the validator, it'll safely terminate operations.
+            except KeyboardInterrupt:
+                self.axon.stop()
+                bt.logging.success(
+                    "Validator killed by keyboard interrupt while in databox run."
+                )
+                sys.exit()
 
-        # In case of unforeseen errors, the validator will log the error and continue operations.
-        except Exception as err:
-            bt.logging.error("Error during databox run", str(err))
-            bt.logging.debug(print_exception(type(err), err, err.__traceback__))
+            # In case of unforeseen errors, the validator will log the error and continue operations.
+            except Exception as err:
+                bt.logging.error("Error during databox run", str(err))
+                bt.logging.debug(print_exception(type(err), err, err.__traceback__))
 
     def run_in_background_thread(self):
         """
