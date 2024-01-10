@@ -13,8 +13,8 @@ class MysqlDataboxStorage:
                             hotkey                      VARCHAR(64) NOT NULL    PRIMARY KEY,
                             credibility                 FLOAT       NOT NULL,
                             bucketCount                 INTEGER     NOT NULL,
-                            contentSizeBytesReddit      INTEGER     NOT NULL,
-                            contentSizeBytesTwitter     INTEGER     NOT NULL,
+                            contentSizeBytesReddit      BIGINT      NOT NULL,
+                            contentSizeBytesTwitter     BIGINT      NOT NULL,
                             lastUpdated                 DATETIME(6) NOT NULL
                             )"""
 
@@ -23,8 +23,8 @@ class MysqlDataboxStorage:
     LABEL_SIZE_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS LabelSize (
                                     source              TINYINT         NOT NULL,
                                     labelValue          VARCHAR(32)     NOT NULL,
-                                    contentSizeBytes    INTEGER         NOT NULL,
-                                    adjContentSizeBytes INTEGER         NOT NULL,
+                                    contentSizeBytes    BIGINT          NOT NULL,
+                                    adjContentSizeBytes BIGINT          NOT NULL,
                                     PRIMARY KEY(source, labelValue)
                                 )"""
 
@@ -33,8 +33,8 @@ class MysqlDataboxStorage:
     AGE_SIZE_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS AgeSize (
                                     source              TINYINT         NOT NULL,
                                     timeBucketId        INTEGER         NOT NULL,
-                                    contentSizeBytes    INTEGER         NOT NULL,
-                                    adjContentSizeBytes INTEGER         NOT NULL,
+                                    contentSizeBytes    BIGINT          NOT NULL,
+                                    adjContentSizeBytes BIGINT          NOT NULL,
                                     PRIMARY KEY(source, timeBucketId)
                                 )"""
 
