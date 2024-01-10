@@ -126,8 +126,8 @@ class BaseNeuron(ABC):
         if self.should_sync_metagraph():
             self.resync_metagraph()
 
-        if self.should_set_weights():
-            self.set_weights()
+        # if self.should_set_weights():
+        #     self.set_weights()
 
         # Always save state.
         self.save_state()
