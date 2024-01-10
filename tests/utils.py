@@ -47,6 +47,30 @@ def convert_to_scorable_miner_index(
     )
 
 
+def convert_compressed_index_to_scorable_miner_index(
+    index: CompressedMinerIndex, last_updated: dt.datetime
+) -> ScorableMinerIndex:
+    """Converts a CompressedMinerIndex to a ScorableMinerIndex, assuming size_bytes are fully scorable."""
+
+    return ScorableMinerIndex(
+        scorable_data_entity_buckets=[
+            ScorableDataEntityBucket(
+                time_bucket_id=time_bucket_id,
+                source=source,
+                label=bucket.label,
+                size_bytes=size_bytes,
+                scorable_bytes=size_bytes,
+            )
+            for source in index.sources
+            for bucket in index.sources[source]
+            for time_bucket_id, size_bytes in zip(
+                bucket.time_bucket_ids, bucket.sizes_bytes
+            )
+        ],
+        last_updated=last_updated,
+    )
+
+
 def are_scorable_indexes_equal(
     index1: ScorableMinerIndex, index2: ScorableMinerIndex
 ) -> Tuple[bool, str]:

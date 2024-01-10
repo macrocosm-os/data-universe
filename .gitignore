@@ -12,6 +12,7 @@ __pycache__/
 
 # Test created DB
 myDb
+*.sqlite
 
 # C extensions
 *.so
