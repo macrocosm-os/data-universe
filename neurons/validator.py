@@ -414,7 +414,7 @@ class Validator(BaseNeuron):
         self.sync()
 
         bt.logging.info(
-            f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
+            f"Running validator on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
         )
 
         bt.logging.info(f"Validator starting at block: {self.block}")
