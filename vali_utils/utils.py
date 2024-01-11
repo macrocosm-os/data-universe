@@ -22,30 +22,19 @@ def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityB
     The random selection is done based on choosing a random byte in the total index to query, and then selecting
     that DataEntityBucket
     """
-    # total_size = sum(
-    #     scorable_bucket.size_bytes
-    #     for scorable_bucket in index.scorable_data_entity_buckets
-    # )
-    # chosen_byte = random.uniform(0, total_size)
-    # iterated_bytes = 0
-    # for scorable_bucket in index.scorable_data_entity_buckets:
-    #     if iterated_bytes + scorable_bucket.size_bytes >= chosen_byte:
-    #         return scorable_bucket.to_data_entity_bucket()
-    #     iterated_bytes += scorable_bucket.size_bytes
-    # assert (
-    #     False
-    # ), "Failed to choose a DataEntityBucket to query... which should never happen"
-    for scorable_bucket in index.scorable_data_entity_buckets:
-        if (
-            scorable_bucket.time_bucket_id == 473454
-            and scorable_bucket.source == 1
-            and scorable_bucket.label == "r/shingekinokyojin"
-        ):
-            return scorable_bucket.to_data_entity_bucket()
-    assert (
-        False,
-        "Failed to choose a DataEntityBucket to query... which should never happen",
+    total_size = sum(
+        scorable_bucket.size_bytes
+        for scorable_bucket in index.scorable_data_entity_buckets
     )
+    chosen_byte = random.uniform(0, total_size)
+    iterated_bytes = 0
+    for scorable_bucket in index.scorable_data_entity_buckets:
+        if iterated_bytes + scorable_bucket.size_bytes >= chosen_byte:
+            return scorable_bucket.to_data_entity_bucket()
+        iterated_bytes += scorable_bucket.size_bytes
+    assert (
+        False
+    ), "Failed to choose a DataEntityBucket to query... which should never happen"
 
 
 def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
