@@ -92,7 +92,7 @@ Let's walk through an example to explain how all these properties fit together.
                     "max_data_entities": 50
                 }
             ]
-        },
+        }
     ]
 }
 ```

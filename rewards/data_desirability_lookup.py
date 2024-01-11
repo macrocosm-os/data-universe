@@ -12,7 +12,7 @@ from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 LOOKUP = DataDesirabilityLookup(
     distribution={
         DataSource.REDDIT: DataSourceDesirability(
-            weight=0.2,  # Weight Reddit data less heavily due to the ease of mining it using a personal reddit account.
+            weight=0.25,  # Weight Reddit data less heavily due to the ease of mining it using a personal reddit account.
             default_scale_factor=0.5,
             label_scale_factors={
                 DataLabel(value="Bitcoin"): 1.0,
@@ -31,7 +31,7 @@ LOOKUP = DataDesirabilityLookup(
             },
         ),
         DataSource.X: DataSourceDesirability(
-            weight=0.8,
+            weight=0.75,
             default_scale_factor=0.5,
             label_scale_factors={
                 DataLabel(value="#bitcoin"): 1.0,
