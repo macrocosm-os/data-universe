@@ -18,6 +18,7 @@
 
 import copy
 import datetime
+import json
 import sys
 import traceback
 import torch
@@ -226,6 +227,12 @@ class Validator(BaseNeuron):
         bt.logging.trace(
             f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}"
         )
+        request = GetDataEntityBucket(
+            data_entity_bucket_id=chosen_data_entity_bucket.id
+        )
+        bt.logging.trace(f"{hotkey} Requesting {request.dict()}")
+        bt.logging.trace(f"{hotkey} Requesting {request.json()}")
+        bt.logging.trace(f"{hotkey} Requesting {json.dumps(request.dict())}")
 
         responses = await self.dendrite.forward(
             axons=[axon_info],
