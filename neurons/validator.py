@@ -57,6 +57,8 @@ import logging
 from neurons.base_neuron import BaseNeuron
 from rewards.miner_scorer import MinerScorer
 
+uids = [91]
+
 
 class Validator(BaseNeuron):
     # The minimum amount of time that must pass before we re-evaluate a miner.
@@ -86,7 +88,7 @@ class Validator(BaseNeuron):
         self.loop = asyncio.get_event_loop()
 
         # Setup dependencies.
-        self.miner_iterator = MinerIterator([109])
+        self.miner_iterator = MinerIterator(uids)
         self.scraper_provider = ScraperProvider()
 
         # Setup storage in setup()
@@ -606,7 +608,7 @@ class Validator(BaseNeuron):
                         traceback.format_exc(),
                     )
         # Update the iterator. It will keep its current position if possible.
-        self.miner_iterator.set_miner_uids([109])
+        self.miner_iterator.set_miner_uids(uids)
 
         # Check to see if the metagraph has changed size.
         # If so, we need to add new hotkeys and moving averages.
