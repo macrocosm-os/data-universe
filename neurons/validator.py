@@ -649,7 +649,6 @@ class Validator(BaseNeuron):
 
 # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
-    logging.basicConfig(level=logging.DEBUG)
     with Validator() as validator:
         while True:
             if not validator.is_healthy():
