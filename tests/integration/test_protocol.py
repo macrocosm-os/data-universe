@@ -47,9 +47,7 @@ class FakeMiner:
             return request
         return self.index
 
-    def get_data_bucket(
-        self, request: old_protocol.GetDataEntityBucket
-    ) -> old_protocol.GetDataEntityBucket:
+    def get_data_bucket(self, request: GetDataEntityBucket) -> GetDataEntityBucket:
         return self.entities
 
 
@@ -145,7 +143,6 @@ class IntegrationTestProtocol(unittest.TestCase):
 
             dendrite = bt.dendrite(wallet=self.wallet)
 
-            request = GetMinerIndex()
             response = dendrite.query(
                 axons=bt.AxonInfo(
                     version=1,
@@ -349,6 +346,21 @@ class IntegrationTestProtocol(unittest.TestCase):
             scorable_index.last_updated - dt.datetime.utcnow()
             < dt.timedelta(seconds=30)
         )
+
+    def test_get_entity_bucket(self):
+        """Tests a round trip of an entity bucket."""
+
+        # Send a request to the fake miner to get the miner index.
+        request = GetDataEntityBucket(
+            data_entity_bucket_id=DataEntityBucketId(
+                time_bucket=TimeBucket(id=473102),
+                source=1,
+                label=DataLabel(value="r/atheism"),
+            )
+        )
+        miner = FakeMiner(entities=request)
+        response = self._test_round_trip(miner.get_data_bucket, request)
+        self.assertTrue(True)
 
 
 if __name__ == "__main__":
