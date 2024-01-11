@@ -51,13 +51,15 @@ from vali_utils import utils as vali_utils
 from typing import List, Optional, Type
 from traceback import print_exception
 
+import logging
+
 from neurons.base_neuron import BaseNeuron
 from rewards.miner_scorer import MinerScorer
 
 
 class Validator(BaseNeuron):
     # The minimum amount of time that must pass before we re-evaluate a miner.
-    MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=30)
+    MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=1)
 
     SCORER_FILENAME = "scorer.pickle"
 
@@ -637,6 +639,7 @@ class Validator(BaseNeuron):
 
 # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
+    logging.basicConfig(level=logging.DEBUG)
     with Validator() as validator:
         while True:
             if not validator.is_healthy():
