@@ -31,8 +31,8 @@ class BaseProtocol(bt.Synapse):
         arbitrary_types_allowed = True
         validate_assignment = True
 
-    version: int = pydantic.Field(
-        description="Protocol version", default=constants.PROTOCOL_VERSION
+    version: Optional[int] = pydantic.Field(
+        description="Protocol version", default=None
     )
 
 
