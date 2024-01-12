@@ -1,15 +1,17 @@
+from collections import defaultdict
 import threading
 from common import constants, utils
 from common.data import (
+    CompressedEntityBucket,
+    CompressedMinerIndex,
     DataEntity,
-    DataEntityBucket,
     DataEntityBucketId,
     DataLabel,
     DataSource,
     TimeBucket,
 )
 from storage.miner.miner_storage import MinerStorage
-from typing import List
+from typing import Dict, List
 import datetime as dt
 import sqlite3
 import contextlib
@@ -66,8 +68,10 @@ class SqliteMinerStorage(MinerStorage):
                                 contentSizeBytes    INTEGER         NOT NULL
                                 ) WITHOUT ROWID"""
 
-    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index
-                                ON DataEntity (timeBucketId, source, label)"""
+    DELETE_OLD_INDEX = """DROP INDEX IF EXISTS data_entity_bucket_index"""
+
+    DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index2
+                                ON DataEntity (timeBucketId, source, label, contentSizeBytes)"""
 
     def __init__(
         self,
@@ -87,6 +91,9 @@ class SqliteMinerStorage(MinerStorage):
 
             # Create the DataEntity table (if it does not already exist).
             cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_CREATE)
+
+            # Delete the old index (if it exists).
+            cursor.execute(SqliteMinerStorage.DELETE_OLD_INDEX)
 
             # Create the Index (if it does not already exist).
             cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_INDEX)
@@ -228,8 +235,8 @@ class SqliteMinerStorage(MinerStorage):
             )
             return data_entities
 
-    def list_data_entity_buckets(self) -> List[DataEntityBucket]:
-        """Lists all DataEntityBuckets for all the DataEntities that this MinerStorage is currently serving."""
+    def get_compressed_index(self) -> CompressedMinerIndex:
+        """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
@@ -253,7 +260,7 @@ class SqliteMinerStorage(MinerStorage):
                 ],
             )
 
-            data_entity_buckets = []
+            buckets_by_source_by_label = defaultdict(dict)
 
             for row in cursor:
                 # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
@@ -264,24 +271,22 @@ class SqliteMinerStorage(MinerStorage):
                     else row["bucketSize"]
                 )
 
-                # Construct the new DataEntityBucket with all non null columns.
-                data_entity_bucket_id = DataEntityBucketId(
-                    time_bucket=TimeBucket(id=row["timeBucketId"]),
-                    source=DataSource(row["source"]),
+                label = row["label"] if row["label"] != "NULL" else None
+
+                bucket = buckets_by_source_by_label[DataSource(row["source"])].get(
+                    label, CompressedEntityBucket(label=label)
                 )
+                bucket.sizes_bytes.append(size)
+                bucket.time_bucket_ids.append(row["timeBucketId"])
+                buckets_by_source_by_label[DataSource(row["source"])][label] = bucket
 
-                # Add the optional Label field if not null.
-                if row["label"] != "NULL":
-                    data_entity_bucket_id.label = DataLabel(value=row["label"])
-
-                data_entity_bucket = DataEntityBucket(
-                    id=data_entity_bucket_id, size_bytes=size
-                )
-
-                data_entity_buckets.append(data_entity_bucket)
-
-            # If we reach the end of the cursor then return all of the data entity buckets.
-            return data_entity_buckets
+            # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
+            return CompressedMinerIndex(
+                sources={
+                    source: list(labels_to_buckets.values())
+                    for source, labels_to_buckets in buckets_by_source_by_label.items()
+                }
+            )
 
     def clear_content_from_oldest(self, content_bytes_to_clear: int):
         """Deletes entries starting from the oldest until we have cleared the specified amount of content."""

@@ -73,9 +73,6 @@ class Validator(BaseNeuron):
         # Save a copy of the hotkeys to local memory.
         self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
 
-        # Dendrite lets us send messages to other nodes (axons) in the network.
-        self.dendrite = bt.dendrite(wallet=self.wallet)
-
         # Set up initial scoring weights for validation
         self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
 
@@ -123,11 +120,13 @@ class Validator(BaseNeuron):
 
         bt.logging.trace(f"{hotkey}: Getting MinerIndex from miner.")
 
-        responses: List[GetMinerIndex] = await self.dendrite.forward(
-            axons=[miner_axon],
-            synapse=GetMinerIndex(),
-            timeout=300,
-        )
+        responses: List[GetMinerIndex] = None
+        async with bt.dendrite(wallet=self.wallet) as dendrite:
+            responses = await dendrite.forward(
+                axons=[miner_axon],
+                synapse=GetMinerIndex(),
+                timeout=300,
+            )
 
         response = vali_utils.get_single_successful_response(responses, GetMinerIndex)
         if not response:
@@ -225,13 +224,15 @@ class Validator(BaseNeuron):
             f"{hotkey} Querying miner for chunk {chosen_data_entity_bucket}"
         )
 
-        responses = await self.dendrite.forward(
-            axons=[axon_info],
-            synapse=GetDataEntityBucket(
-                data_entity_bucket_id=chosen_data_entity_bucket.id
-            ),
-            timeout=180,
-        )
+        responses = None
+        async with bt.dendrite(wallet=self.wallet) as dendrite:
+            responses = await dendrite.forward(
+                axons=[axon_info],
+                synapse=GetDataEntityBucket(
+                    data_entity_bucket_id=chosen_data_entity_bucket.id
+                ),
+                timeout=180,
+            )
 
         data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
@@ -578,7 +579,9 @@ class Validator(BaseNeuron):
         previous_metagraph = copy.deepcopy(self.metagraph)
 
         # Sync the metagraph.
-        self.metagraph.sync(subtensor=self.subtensor)
+        new_metagraph = self.subtensor.metagraph(netuid=self.config.netuid)
+        with self.lock:
+            self.metagraph = new_metagraph
 
         # Check if the metagraph axon info has changed.
         if previous_metagraph.axons == self.metagraph.axons:

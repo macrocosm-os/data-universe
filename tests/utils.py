@@ -2,7 +2,7 @@ from typing import Any, Callable, Iterable, Tuple
 import time
 import datetime as dt
 
-from common.data import MinerIndex
+from common.data import CompressedMinerIndex, MinerIndex
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 
 
@@ -47,6 +47,30 @@ def convert_to_scorable_miner_index(
     )
 
 
+def convert_compressed_index_to_scorable_miner_index(
+    index: CompressedMinerIndex, last_updated: dt.datetime
+) -> ScorableMinerIndex:
+    """Converts a CompressedMinerIndex to a ScorableMinerIndex, assuming size_bytes are fully scorable."""
+
+    return ScorableMinerIndex(
+        scorable_data_entity_buckets=[
+            ScorableDataEntityBucket(
+                time_bucket_id=time_bucket_id,
+                source=source,
+                label=bucket.label,
+                size_bytes=size_bytes,
+                scorable_bytes=size_bytes,
+            )
+            for source in index.sources
+            for bucket in index.sources[source]
+            for time_bucket_id, size_bytes in zip(
+                bucket.time_bucket_ids, bucket.sizes_bytes
+            )
+        ],
+        last_updated=last_updated,
+    )
+
+
 def are_scorable_indexes_equal(
     index1: ScorableMinerIndex, index2: ScorableMinerIndex
 ) -> Tuple[bool, str]:
@@ -76,3 +100,28 @@ def are_scorable_indexes_equal(
             )
 
     return True, None
+
+
+def are_compressed_indexes_equal(
+    index1: CompressedMinerIndex, index2: CompressedMinerIndex
+) -> bool:
+    """Compares two CompressedMinerIndex instances for equality."""
+
+    # Iterate both indexes, in order of sources.
+    for source1, source2 in zip(sorted(index1.sources), sorted(index2.sources)):
+        if source1 != source2:
+            print(f"Sources do not match. {source1} != {source2}")
+            return False
+
+        # For a given source, compare the buckets.
+        buckets1 = sorted(
+            index1.sources[source1], key=lambda b: b.label if b.label else "NULL"
+        )
+        buckets2 = sorted(
+            index2.sources[source2], key=lambda b: b.label if b.label else "NULL"
+        )
+        if buckets1 != buckets2:
+            print(f"Buckets do not match. {buckets1} != {buckets2}")
+            return False
+
+    return True
