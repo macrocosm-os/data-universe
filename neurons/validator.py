@@ -71,7 +71,7 @@ class Validator(BaseNeuron):
         super().__init__(config=config)
 
         # Save a copy of the hotkeys to local memory.
-        self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+        self.hotkeys = set(copy.deepcopy(self.metagraph.hotkeys))
 
         # Set up initial scoring weights for validation
         self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
@@ -589,16 +589,20 @@ class Validator(BaseNeuron):
 
         bt.logging.info("Metagraph updated, re-syncing hotkeys, and moving averages")
         # Zero out all hotkeys that have been replaced.
-        for uid, hotkey in enumerate(self.hotkeys):
-            if hotkey != self.metagraph.hotkeys[uid]:
-                self.scorer.reset(uid)  # hotkey has been replaced
-                try:
-                    self.storage.delete_miner(hotkey)
-                except Exception:
-                    bt.logging.error(
-                        f"{hotkey} Failed to delete miner index.",
-                        traceback.format_exc(),
-                    )
+        new_hotkeys = set(self.metagraph.hotkeys)
+        for unregistered_hotkey in self.hotkeys.difference(new_hotkeys):
+            bt.logging.debug(
+                f"{unregistered_hotkey} has been unregistered. Resetting score to 0."
+            )
+            uid = self.metagraph.hotkeys.index(unregistered_hotkey)
+            self.scorer.reset(uid)  # hotkey has been replaced
+            try:
+                self.storage.delete_miner(unregistered_hotkey)
+            except Exception:
+                bt.logging.error(
+                    f"{unregistered_hotkey} Failed to delete miner index.",
+                    traceback.format_exc(),
+                )
         # Update the iterator. It will keep its current position if possible.
         self.miner_iterator.set_miner_uids(self.get_miner_uids(self.metagraph))
 
