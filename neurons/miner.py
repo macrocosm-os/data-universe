@@ -60,7 +60,7 @@ class Miner(BaseNeuron):
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
-        self.lock = asyncio.Lock()
+        self.lock = threading.RLock()
 
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
