@@ -60,7 +60,7 @@ class Miner(BaseNeuron):
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
-        self.lock = asyncio.Lock()
+        self.lock = threading.RLock()
 
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
@@ -213,7 +213,9 @@ class Miner(BaseNeuron):
         bt.logging.debug("resync_metagraph()")
 
         # Sync the metagraph.
-        self.metagraph.sync(subtensor=self.subtensor)
+        new_metagraph = self.subtensor.metagraph(netuid=self.config.netuid)
+        with self.lock:
+            self.metagraph = new_metagraph
 
     def _log_status(self, step: int):
         """Logs a summary of the miner status in the subnet."""
