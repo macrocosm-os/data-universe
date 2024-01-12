@@ -213,7 +213,7 @@ class Miner(BaseNeuron):
         bt.logging.debug("resync_metagraph()")
 
         # Sync the metagraph.
-        new_metagraph = self.subtensor.metagraph(netuid=self.metagraph.netuid)
+        new_metagraph = self.subtensor.metagraph(netuid=self.config.netuid)
         with self.lock:
             self.metagraph = new_metagraph
 
