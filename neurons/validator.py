@@ -651,7 +651,9 @@ class Validator(BaseNeuron):
         previous_metagraph = copy.deepcopy(self.metagraph)
 
         # Sync the metagraph.
-        self.metagraph.sync(subtensor=self.subtensor)
+        new_metagraph = self.subtensor.metagraph(netuid=self.config.netuid)
+        with self.lock:
+            self.metagraph = new_metagraph
 
         # Check if the metagraph axon info has changed.
         if previous_metagraph.axons == self.metagraph.axons:
