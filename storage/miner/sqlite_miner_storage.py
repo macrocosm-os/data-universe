@@ -5,6 +5,7 @@ from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
     DataEntity,
+    DataEntityBucket,
     DataEntityBucketId,
     DataLabel,
     DataSource,
@@ -315,3 +316,56 @@ class SqliteMinerStorage(MinerStorage):
                         [earliest_datetime_to_clear],
                     )
                     connection.commit()
+
+    def list_data_entity_buckets(self) -> List[DataEntityBucket]:
+        """Lists all DataEntityBuckets for all the DataEntities that this MinerStorage is currently serving."""
+
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            oldest_time_bucket_id = TimeBucket.from_datetime(
+                dt.datetime.now()
+                - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
+            ).id
+            # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
+            cursor.execute(
+                """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
+                        WHERE timeBucketId >= ?
+                        GROUP BY timeBucketId, source, label
+                        ORDER BY bucketSize DESC
+                        LIMIT ?
+                        """,
+                [
+                    oldest_time_bucket_id,
+                    constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+                ],
+            )
+
+            data_entity_buckets = []
+
+            for row in cursor:
+                # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
+                size = (
+                    constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    if row["bucketSize"]
+                    >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    else row["bucketSize"]
+                )
+
+                # Construct the new DataEntityBucket with all non null columns.
+                data_entity_bucket_id = DataEntityBucketId(
+                    time_bucket=TimeBucket(id=row["timeBucketId"]),
+                    source=DataSource(row["source"]),
+                )
+
+                # Add the optional Label field if not null.
+                if row["label"] != "NULL":
+                    data_entity_bucket_id.label = DataLabel(value=row["label"])
+
+                data_entity_bucket = DataEntityBucket(
+                    id=data_entity_bucket_id, size_bytes=size
+                )
+
+                data_entity_buckets.append(data_entity_bucket)
+
+            # If we reach the end of the cursor then return all of the data entity buckets.
+            return data_entity_buckets

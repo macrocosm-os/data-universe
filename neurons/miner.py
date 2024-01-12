@@ -244,14 +244,21 @@ class Miner(BaseNeuron):
             f"Got to a GetMinerIndex request from {synapse.dendrite.hotkey}."
         )
 
-        # List all the data entity buckets that this miner currently has.
-        compressed_index = self.storage.get_compressed_index()
-        synapse.compressed_index_serialized = compressed_index.json()
-        synapse.version = constants.PROTOCOL_VERSION
+        if synapse.version and synapse.version >= 2:
+            # List all the data entity buckets that this miner currently has.
+            compressed_index = self.storage.get_compressed_index()
+            synapse.compressed_index_serialized = compressed_index.json()
 
-        bt.logging.debug(
-            f"Returning miner index with size: {CompressedMinerIndex.size(compressed_index)}"
-        )
+            bt.logging.debug(
+                f"Returning compressed miner index with size: {CompressedMinerIndex.size(compressed_index)}"
+            )
+        else:
+            synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
+            bt.logging.debug(
+                f"Returning uncompressed miner index with size: {len(synapse.data_entity_buckets)}"
+            )
+
+        synapse.version = constants.PROTOCOL_VERSION
 
         return synapse
 
