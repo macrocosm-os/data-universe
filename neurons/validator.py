@@ -26,6 +26,7 @@ import threading
 import time
 import datetime as dt
 import os
+from common import constants
 from common.data_v2 import ScorableMinerIndex
 import common.utils as utils
 import bittensor as bt
@@ -124,7 +125,7 @@ class Validator(BaseNeuron):
         async with bt.dendrite(wallet=self.wallet) as dendrite:
             responses = await dendrite.forward(
                 axons=[miner_axon],
-                synapse=GetMinerIndex(),
+                synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
                 timeout=300,
             )
 
@@ -229,7 +230,8 @@ class Validator(BaseNeuron):
             responses = await dendrite.forward(
                 axons=[axon_info],
                 synapse=GetDataEntityBucket(
-                    data_entity_bucket_id=chosen_data_entity_bucket.id
+                    data_entity_bucket_id=chosen_data_entity_bucket.id,
+                    version=constants.PROTOCOL_VERSION,
                 ),
                 timeout=180,
             )
@@ -591,6 +593,7 @@ class Validator(BaseNeuron):
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
+                bt.logging.trace(f"Hotkey {hotkey} w/ UID {uid} has been unregistered.")
                 self.scorer.reset(uid)  # hotkey has been replaced
                 try:
                     self.storage.delete_miner(hotkey)

@@ -7,6 +7,7 @@ from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
     DataEntity,
+    DataEntityBucket,
     DataEntityBucketId,
     DataLabel,
     DataSource,
@@ -475,6 +476,174 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
         # Confirm we get back the expected data entities.
         self.assertEqual(data_entities, [bucket2_entity1, bucket2_entity2])
+
+    def test_list_data_entity_buckets(self):
+        """Tests that we can list the data entity buckets from storage."""
+        now = dt.datetime.now()
+        # Create an entity for bucket 1.
+        bucket1_datetime = now
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+        # Create two entities for bucket 2.
+        bucket2_datetime = now + dt.timedelta(hours=1)
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
+        )
+
+        # Get the index.
+        data_entity_buckets = self.test_storage.list_data_entity_buckets()
+
+        expected_bucket_1 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
+
+        expected_bucket_2 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+                source=DataSource.X,
+                label=DataLabel(value="label_2"),
+            ),
+            size_bytes=50,
+        )
+
+        # Confirm we get back the expected summaries in order of size.
+        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
+
+    def test_list_data_entity_buckets_no_labels(self):
+        """Tests that we can list the data entity buckets with no labels from storage."""
+        now = dt.datetime.now()
+        # Create an entity for bucket 1.
+        bucket1_datetime = now
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+        # Create two entities for bucket 2.
+        bucket2_datetime = now + dt.timedelta(hours=1)
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
+        )
+
+        # Get the index.
+        data_entity_buckets = self.test_storage.list_data_entity_buckets()
+
+        expected_bucket_1 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+                source=DataSource.REDDIT,
+            ),
+            size_bytes=10,
+        )
+
+        expected_bucket_2 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+                source=DataSource.X,
+            ),
+            size_bytes=50,
+        )
+
+        # Confirm we get back the expected summaries in order of size.
+        self.assertEqual(data_entity_buckets, [expected_bucket_2, expected_bucket_1])
+
+    def test_list_data_entity_buckets_too_old(self):
+        """Tests that we can list the data entity buckets from storage, discarding out of date ones."""
+        now = dt.datetime.now()
+        # Create an entity for bucket 1.
+        bucket1_datetime = now
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+        # Create two entities for bucket 2.
+        bucket2_datetime = now - dt.timedelta(
+            days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS + 1
+        )
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
+        )
+
+        # Get the index.
+        data_entity_buckets = self.test_storage.list_data_entity_buckets()
+
+        expected_bucket_1 = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+                source=DataSource.REDDIT,
+                label=DataLabel(value="label_1"),
+            ),
+            size_bytes=10,
+        )
+
+        # Confirm we get back the expected summaries.
+        self.assertEqual(data_entity_buckets, [expected_bucket_1])
 
 
 if __name__ == "__main__":
