@@ -22,7 +22,7 @@ import time
 import traceback
 import typing
 import bittensor as bt
-from common import utils
+from common import constants, utils
 from common.data import CompressedMinerIndex
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 from neurons.config import NeuronType
@@ -247,6 +247,7 @@ class Miner(BaseNeuron):
         # List all the data entity buckets that this miner currently has.
         compressed_index = self.storage.get_compressed_index()
         synapse.compressed_index_serialized = compressed_index.json()
+        synapse.version = constants.PROTOCOL_VERSION
 
         bt.logging.debug(
             f"Returning miner index with size: {CompressedMinerIndex.size(compressed_index)}"
@@ -274,6 +275,7 @@ class Miner(BaseNeuron):
         synapse.data_entities = self.storage.list_data_entities_in_data_entity_bucket(
             synapse.data_entity_bucket_id
         )
+        synapse.version = constants.PROTOCOL_VERSION
 
         bt.logging.debug(
             f"Responding to a GetDataEntityBucket request for Bucket ID: {str(synapse.data_entity_bucket_id)} with # entities={len(synapse.data_entities)}"
