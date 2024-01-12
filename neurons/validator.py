@@ -593,6 +593,7 @@ class Validator(BaseNeuron):
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
+                bt.logging.trace(f"Hotkey {hotkey} w/ UID {uid} has been unregistered.")
                 self.scorer.reset(uid)  # hotkey has been replaced
                 try:
                     self.storage.delete_miner(hotkey)
