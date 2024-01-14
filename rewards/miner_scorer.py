@@ -144,8 +144,8 @@ class MinerScorer:
 
             self._update_score(uid, score)
 
-            bt.logging.trace(
-                f"Evaluated Miner {uid}. Score={self.scores[uid]}. Credibility={self.miner_credibility[uid]}"
+            bt.logging.success(
+                f"Evaluated Miner {uid}. Score={self.scores[uid]}. Credibility={self.miner_credibility[uid]}."
             )
 
     def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
@@ -170,9 +170,17 @@ class MinerScorer:
                 for result in validation_results
             ) / float(total_bytes_validated)
 
+        previous_credibility = self.miner_credibility[uid]
+
         # Use EMA to update the miner's credibility.
         self.miner_credibility[uid] = (
             self.alpha * credibility + (1 - self.alpha) * self.miner_credibility[uid]
+        )
+
+        bt.logging.trace(
+            f"""Evaluated Miner {uid}. Percent of bytes validated succesfully this attempt={credibility * 100}. 
+                Previous Credibility={previous_credibility}. 
+                Validation Success Percent: New Credibility={self.miner_credibility[uid]}."""
         )
 
     def _update_score(self, uid: int, reward: float):
