@@ -160,7 +160,7 @@ class Validator(BaseNeuron):
                 miner_index, CompressedMinerIndex
             ), f"Expected either a MinerIndex or CompressedMinerIndex but got {type(miner_index)}"
             bt.logging.trace(
-                f"{hotkey}: Got new compressed miner index. Size={CompressedMinerIndex.size(miner_index)}"
+                f"{hotkey}: Got new compressed miner index. Size={CompressedMinerIndex.bucket_count(miner_index)}"
             )
             self.storage.upsert_compressed_miner_index(
                 miner_index, hotkey, miner_credibility
@@ -575,7 +575,7 @@ class Validator(BaseNeuron):
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
-        bt.logging.info("resync_metagraph()")
+        bt.logging.info("Attempting to resync the metagraph.")
 
         # Copies state of metagraph before syncing.
         previous_metagraph = copy.deepcopy(self.metagraph)
@@ -585,6 +585,8 @@ class Validator(BaseNeuron):
         with self.lock:
             self.metagraph = new_metagraph
 
+        bt.logging.success("Successfuly resynced the metagraph.")
+
         # Check if the metagraph axon info has changed.
         if previous_metagraph.axons == self.metagraph.axons:
             return
@@ -593,7 +595,7 @@ class Validator(BaseNeuron):
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
             if hotkey != self.metagraph.hotkeys[uid]:
-                bt.logging.trace(f"Hotkey {hotkey} w/ UID {uid} has been unregistered.")
+                bt.logging.info(f"Hotkey {hotkey} w/ UID {uid} has been unregistered.")
                 self.scorer.reset(uid)  # hotkey has been replaced
                 try:
                     self.storage.delete_miner(hotkey)

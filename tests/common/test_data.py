@@ -38,6 +38,44 @@ class TestData(unittest.TestCase):
         source = 1
         self.assertEqual(DataSource.REDDIT, DataSource(source))
 
+    def test_compressed_index_bucket_count(self):
+        """Tests that the compressed version of Miner index can get bucket count."""
+        # Make 5 compressed buckets per source, each containing 5 unique time bucket ids of size 10.
+        sources = {}
+        for source in [DataSource.REDDIT, DataSource.X]:
+            compressed_buckets = [None] * 5
+            for label_i in range(0, 5):
+                label = "label" + str(label_i)
+                compressed_buckets[label_i] = CompressedEntityBucket(
+                    label=label,
+                    time_bucket_ids=[i for i in range(1, 6)],
+                    sizes_bytes=[10 for i in range(1, 6)],
+                )
+            sources[int(source)] = compressed_buckets
+
+        index = CompressedMinerIndex(sources=sources)
+
+        self.assertEqual(CompressedMinerIndex.bucket_count(index), 50)
+
+    def test_compressed_index_size_bytes(self):
+        """Tests that the compressed version of Miner index can get size in bytes."""
+        # Make 5 compressed buckets per source, each containing 5 unique time bucket ids of size 10.
+        sources = {}
+        for source in [DataSource.REDDIT, DataSource.X]:
+            compressed_buckets = [None] * 5
+            for label_i in range(0, 5):
+                label = "label" + str(label_i)
+                compressed_buckets[label_i] = CompressedEntityBucket(
+                    label=label,
+                    time_bucket_ids=[i for i in range(1, 6)],
+                    sizes_bytes=[10 for i in range(1, 6)],
+                )
+            sources[int(source)] = compressed_buckets
+
+        index = CompressedMinerIndex(sources=sources)
+
+        self.assertEqual(CompressedMinerIndex.bucket_count(index), 500)
+
     def test_compressed_index_supports_max_index(self):
         """Tests that the compressed version of the maximal Miner index is under our response size limit."""
 
