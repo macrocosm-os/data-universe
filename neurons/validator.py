@@ -104,10 +104,6 @@ class Validator(BaseNeuron):
     def serve_axon(self):
         """Serve axon to enable external connections."""
 
-        bt.logging.info(
-            f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
-        )
-
         try:
             # TODO: Expose a query endpoint on this axon
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
@@ -115,6 +111,10 @@ class Validator(BaseNeuron):
             self.subtensor.serve_axon(
                 netuid=self.config.netuid,
                 axon=self.axon,
+            )
+
+            bt.logging.info(
+                f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
             )
         except Exception as e:
             bt.logging.error(f"Failed to setup Axon: {e}.")
