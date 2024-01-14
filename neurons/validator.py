@@ -516,7 +516,7 @@ class Validator(BaseNeuron):
                             "Current wandb run is more than 1 day old. Starting a new run."
                         )
                         self.wandb_run.finish()
-                        self.new_wandb_run
+                        self.new_wandb_run()
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
