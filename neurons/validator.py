@@ -323,8 +323,10 @@ class Validator(BaseNeuron):
             data_entities
         )
 
+        entity_uris = [entity.uri for entity in entities_to_validate]
+
         bt.logging.info(
-            f"{hotkey}: Basic validation on Bucket ID: {chosen_data_entity_bucket.id} passed. Validating {entities_to_validate}."
+            f"{hotkey}: Basic validation on Bucket ID: {chosen_data_entity_bucket.id} passed. Validating uris: {entity_uris}."
         )
 
         scraper = self.scraper_provider.get(
