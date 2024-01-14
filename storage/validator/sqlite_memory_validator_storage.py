@@ -225,7 +225,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
         bt.logging.trace(
-            f"{hotkey}: Upserting miner index with {CompressedMinerIndex.size(index)} buckets"
+            f"{hotkey}: Upserting miner index with {CompressedMinerIndex.bucket_count(index)} buckets"
         )
 
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
