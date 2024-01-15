@@ -16,12 +16,14 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+from collections import defaultdict
 import sys
 import threading
 import time
 import traceback
 import typing
 import bittensor as bt
+import datetime as dt
 from common import constants, utils
 from common.data import CompressedMinerIndex
 from common.protocol import GetDataEntityBucket, GetMinerIndex
@@ -69,7 +71,7 @@ class Miner(BaseNeuron):
         )
 
         bt.logging.success(
-            f"Successfully connected to miner storage: {self.self.config.neuron.database_name}."
+            f"Successfully connected to miner storage: {self.config.neuron.database_name}."
         )
 
         # Configure the ScraperCoordinator
@@ -86,6 +88,11 @@ class Miner(BaseNeuron):
             miner_storage=self.storage,
             config=scraping_config,
         )
+
+        # Configure per hotkey request limits.
+        self.request_lock = threading.RLock()
+        self.last_cleared_request_limits = dt.datetime.now()
+        self.requests_by_hotkey = defaultdict(lambda: 0)
 
     def neuron_type(self) -> NeuronType:
         return NeuronType.MINER
@@ -315,6 +322,11 @@ class Miner(BaseNeuron):
 
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
         """The default blacklist that only allows requests from validators."""
+        if synapse.dendrite.hotkey in [
+            "5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"
+        ]:
+            return True, "Explictly blacklisted hotkey"
+
         if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
             bt.logging.trace(
@@ -325,6 +337,30 @@ class Miner(BaseNeuron):
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if not utils.is_validator(uid, self.metagraph):
             return True, "Not a validator"
+
+        # TODO: Break out limit per API.
+        with self.request_lock:
+            # Check if we need to clear the request limit counter.
+            if (
+                dt.datetime.now() - self.last_cleared_request_limits
+            ) >= constants.MIN_EVALUATION_PERIOD:
+                bt.logging.trace(
+                    f"Clearing request limit counter by hotkey after an eval period: {constants.MIN_EVALUATION_PERIOD}."
+                )
+                self.requests_by_hotkey = defaultdict(lambda: 0)
+                self.last_cleared_request_limits = dt.datetime.now()
+
+            # Record request.
+            self.requests_by_hotkey[synapse.dendrite.hotkey] += 1
+
+            # Blacklist if over request limit.
+            # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
+            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
+                bt.logging.trace(
+                    f"Blacklisting hotkey {synapse.dendrite.hotkey} over eval period request limit."
+                )
+                return True, "Hotkey over limit"
+
         return False, ""
 
     def default_priority(self, synapse: bt.Synapse) -> float:
