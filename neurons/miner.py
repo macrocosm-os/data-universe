@@ -344,6 +344,9 @@ class Miner(BaseNeuron):
             if (
                 dt.datetime.now() - self.last_cleared_request_limits
             ) >= constants.MIN_EVALUATION_PERIOD:
+                bt.logging.trace(
+                    f"Clearing request limit counter by hotkey after an eval period: {constants.MIN_EVALUATION_PERIOD}."
+                )
                 self.requests_by_hotkey = defaultdict(lambda: 0)
                 self.last_cleared_request_limits = dt.datetime.now()
 
