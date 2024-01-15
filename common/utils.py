@@ -46,7 +46,7 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
 
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a validator."""
-    return metagraph.validator_permit[uid] and metagraph.S[uid] >= 512
+    return metagraph.validator_permit[uid] and metagraph.S[uid] >= 10_000
 
 
 def time_bucket_id_from_datetime(datetime: dt.datetime) -> int:
