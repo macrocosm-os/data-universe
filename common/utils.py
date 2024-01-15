@@ -44,6 +44,9 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
     # Explicitly blacklist known bad coldkeys.
     if metagraph.coldkeys[uid] in [
         "5DF9jPcH8hvEoiV217zXD9C2Uad9GVwAM7jbmsM5SMwUFzaS",
+        "5CMfxqSmWPyjWy16MPHw117y2VE7MvZ93rf3U6A77xf1trBA",
+        "5GbWdBLCzXFd4ZSh8CGPYDRkxy8vcmULbfHE5gZgowxjgzHp",
+        "5Di443BWvJKLHnLAkxvzSZUcu4jSE6Ka9UStjEMduwzRsy5b",
     ]:
         bt.logging.trace(f"Ignoring known bad coldkey {metagraph.coldkeys[uid]}.")
         return False
