@@ -9,3 +9,4 @@ python-dotenv==1.0.0
 pytz==2023.3.post1
 rich==13.7.0
 torch==2.1.2
+wandb==0.16.2

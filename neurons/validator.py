@@ -26,6 +26,7 @@ import threading
 import time
 import datetime as dt
 import os
+import wandb
 from common import constants
 from common.data_v2 import ScorableMinerIndex
 import common.utils as utils
@@ -423,7 +424,35 @@ class Validator(BaseNeuron):
         else:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
+        if not self.config.wandb.off:
+            self.new_wandb_run()
+        else:
+            bt.logging.warning("Not logging to wandb.")
+
         self.is_setup = True
+
+    def new_wandb_run(self):
+        """Creates a new wandb run to save information to."""
+        # Create a unique run id for this run.
+        now = dt.datetime.now()
+        self.wandb_run_start = now
+        run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
+        name = "validator-" + str(self.uid) + "-" + run_id
+        self.wandb_run = wandb.init(
+            name=name,
+            project="logging",
+            entity="bt-subnet13",
+            config={
+                "uid": self.uid,
+                "hotkey": self.wallet.hotkey.ss58_address,
+                "run_name": run_id,
+                "type": "validator",
+            },
+            allow_val_change=True,
+            anonymous="allow",
+        )
+
+        bt.logging.debug(f"Started a new wandb run: {name}")
 
     def run(self):
         """
@@ -478,6 +507,17 @@ class Validator(BaseNeuron):
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
                     )
                     time.sleep(wait_time)
+
+                # Check if we should start a new wandb run.
+                if not self.config.wandb.off:
+                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
+                        days=1
+                    ):
+                        bt.logging.info(
+                            "Current wandb run is more than 1 day old. Starting a new run."
+                        )
+                        self.wandb_run.finish()
+                        self.new_wandb_run()
 
         # If someone intentionally stops the validator, it'll safely terminate operations.
         except KeyboardInterrupt:
@@ -540,6 +580,8 @@ class Validator(BaseNeuron):
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
+            if self.wandb_run:
+                self.wandb_run.finish()
             bt.logging.debug("Stopped.")
 
     def get_miner_uids(self, metagraph: bt.metagraph) -> List[int]:
@@ -582,13 +624,14 @@ class Validator(BaseNeuron):
             metagraph=self.metagraph,
         )
 
-        weights, uids = processed_weights.topk(len(self.processed_weights))
         table = Table(title="All Weights")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("weight", style="magenta")
         table.add_column("score", style="magenta")
-        for uid, weight in list(zip(uids.tolist(), weights.tolist())):
-            table.add_row(str(uid), str(round(weight, 4), scores[uid]))
+        for uid, weight in list(
+            zip(processed_weight_uids.tolist(), processed_weights.tolist())
+        ):
+            table.add_row(str(uid), str(round(weight, 4)), str(int(scores[uid].item())))
         console = Console()
         console.print(table)
 
