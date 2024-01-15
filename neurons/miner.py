@@ -322,6 +322,11 @@ class Miner(BaseNeuron):
 
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
         """The default blacklist that only allows requests from validators."""
+        if synapse.dendrite.hotkey in [
+            "5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"
+        ]:
+            return True, "Explictly blacklisted hotkey"
+
         if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
             bt.logging.trace(
@@ -347,7 +352,7 @@ class Miner(BaseNeuron):
 
             # Blacklist if over request limit.
             # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
-            if self.requests_by_hotkey[synapse.dendrite.hotkey] >= 4:
+            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
                 bt.logging.trace(
                     f"Blacklisting hotkey {synapse.dendrite.hotkey} over eval period request limit."
                 )
