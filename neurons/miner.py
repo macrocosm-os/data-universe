@@ -71,7 +71,7 @@ class Miner(BaseNeuron):
         )
 
         bt.logging.success(
-            f"Successfully connected to miner storage: {self.self.config.neuron.database_name}."
+            f"Successfully connected to miner storage: {self.config.neuron.database_name}."
         )
 
         # Configure the ScraperCoordinator
