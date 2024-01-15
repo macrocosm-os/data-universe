@@ -424,7 +424,7 @@ class Validator(BaseNeuron):
         else:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
-        if self.config.wandb.on:
+        if not self.config.wandb.off:
             self.new_wandb_run()
         else:
             bt.logging.warning("Not logging to wandb.")
@@ -449,6 +449,7 @@ class Validator(BaseNeuron):
                 "type": "validator",
             },
             allow_val_change=True,
+            anonymous="allow",
         )
 
         bt.logging.debug(f"Started a new wandb run: {name}")
@@ -508,7 +509,7 @@ class Validator(BaseNeuron):
                     time.sleep(wait_time)
 
                 # Check if we should start a new wandb run.
-                if self.config.wandb.on:
+                if not self.config.wandb.off:
                     if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
                         days=1
                     ):

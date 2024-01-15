@@ -113,9 +113,9 @@ def add_args(neuron_type: NeuronType, parser):
             default=False,
         )
         parser.add_argument(
-            "--wandb.on",
+            "--wandb.off",
             action="store_true",
-            help="Set this flag to enable logging to wandb.",
+            help="Set this flag to disable logging to wandb.",
             default=False,
         )
 
