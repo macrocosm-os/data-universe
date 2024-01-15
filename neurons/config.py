@@ -112,6 +112,12 @@ def add_args(neuron_type: NeuronType, parser):
             help="Set this flag to not attempt to serve an Axon.",
             default=False,
         )
+        parser.add_argument(
+            "--wandb.off",
+            action="store_true",
+            help="Set this flag to disable logging to wandb.",
+            default=False,
+        )
 
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(

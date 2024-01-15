@@ -41,12 +41,22 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a miner."""
     # Assume everyone who isn't a validator is a miner.
     # This explicilty disallows validator/miner hybrids.
+    # Explicitly blacklist known bad coldkeys.
+    if metagraph.coldkeys[uid] in [
+        "5DF9jPcH8hvEoiV217zXD9C2Uad9GVwAM7jbmsM5SMwUFzaS",
+        "5CMfxqSmWPyjWy16MPHw117y2VE7MvZ93rf3U6A77xf1trBA",
+        "5GbWdBLCzXFd4ZSh8CGPYDRkxy8vcmULbfHE5gZgowxjgzHp",
+        "5Di443BWvJKLHnLAkxvzSZUcu4jSE6Ka9UStjEMduwzRsy5b",
+    ]:
+        bt.logging.trace(f"Ignoring known bad coldkey {metagraph.coldkeys[uid]}.")
+        return False
+
     return metagraph.Tv[uid] == 0
 
 
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a validator."""
-    return metagraph.validator_permit[uid] and metagraph.S[uid] >= 512
+    return metagraph.validator_permit[uid] and metagraph.S[uid] >= 10_000
 
 
 def time_bucket_id_from_datetime(datetime: dt.datetime) -> int:

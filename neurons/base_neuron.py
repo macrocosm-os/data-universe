@@ -55,22 +55,22 @@ class BaseNeuron(ABC):
 
         # The wallet holds the cryptographic key pairs for the miner.
         self.wallet = bt.wallet(config=self.config)
-        bt.logging.info(f"Wallet: {self.wallet}")
+        bt.logging.info(f"Wallet: {self.wallet}.")
 
         # The subtensor is our connection to the Bittensor blockchain.
         self.subtensor = bt.subtensor(config=self.config)
-        bt.logging.info(f"Subtensor: {self.subtensor}")
+        bt.logging.info(f"Subtensor: {self.subtensor}.")
 
         # The metagraph holds the state of the network, letting us know about other validators and miners.
         self.metagraph = self.subtensor.metagraph(self.config.netuid)
-        bt.logging.info(f"Metagraph: {self.metagraph}")
+        bt.logging.info(f"Metagraph: {self.metagraph}.")
 
         # Each miner gets a unique identity (UID) in the network for differentiation.
         # TODO: Stop doing meaningful work in the constructor to make neurons more testable.
         if self.wallet.hotkey.ss58_address in self.metagraph.hotkeys:
             self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
             bt.logging.info(
-                f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}"
+                f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}."
             )
         else:
             self.uid = 0
@@ -140,7 +140,7 @@ class BaseNeuron(ABC):
         ):
             bt.logging.error(
                 f"Wallet: {self.wallet} is not registered on netuid {self.config.netuid}."
-                f" Please register the hotkey using `btcli subnets register` before trying again"
+                f" Please register the hotkey using `btcli subnets register` before trying again."
             )
             sys.exit(1)
 

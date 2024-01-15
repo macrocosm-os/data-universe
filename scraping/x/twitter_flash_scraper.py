@@ -56,7 +56,7 @@ class TwitterFlashScraper(Scraper):
             # First check the URI is a valid Twitter URL.
             if not is_valid_twitter_url(entity.uri):
                 results.append(
-                    ValidationResult(is_valid=False, reason="Invalid URI"),
+                    ValidationResult(is_valid=False, reason="Invalid URI."),
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
                 continue
@@ -77,7 +77,7 @@ class TwitterFlashScraper(Scraper):
                 dataset: List[dict] = await self.runner.run(run_config, run_input)
             except ActorRunError as e:
                 bt.logging.error(
-                    f"Failed to validate entities: {traceback.format_exc()}"
+                    f"Failed to validate entities: {traceback.format_exc()}."
                 )
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
                 # one caused by malicious input. In my own testing I was able to make the Actor timeout by
@@ -98,7 +98,7 @@ class TwitterFlashScraper(Scraper):
                 results.append(
                     ValidationResult(
                         is_valid=False,
-                        reason="Tweet not found or is invalid",
+                        reason="Tweet not found or is invalid.",
                         content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
@@ -139,7 +139,7 @@ class TwitterFlashScraper(Scraper):
             timeout_secs=TwitterFlashScraper.SCRAPE_TIMEOUT_SECS,
         )
 
-        bt.logging.trace(f"Performing Twitter scrape for query: {query}")
+        bt.logging.trace(f"Performing Twitter scrape for query: {query}.")
 
         # Run the Actor and retrieve the scraped data.
         dataset: List[dict] = None
@@ -147,15 +147,15 @@ class TwitterFlashScraper(Scraper):
             dataset: List[dict] = await self.runner.run(run_config, run_input)
         except ActorRunError:
             bt.logging.error(
-                f"Failed to scrape tweets using query {query}: {traceback.format_exc()}"
+                f"Failed to scrape tweets using query {query}: {traceback.format_exc()}."
             )
             # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
         x_contents = self._best_effort_parse_dataset(dataset)
-        bt.logging.info(
-            f"Completed scrape for {query}. Scraped {len(x_contents)} items"
+        bt.logging.success(
+            f"Completed scrape for {query}. Scraped {len(x_contents)} items."
         )
 
         return [XContent.to_data_entity(x_content) for x_content in x_contents]
@@ -170,7 +170,7 @@ class TwitterFlashScraper(Scraper):
                 results.append(XContent(**data))
             except Exception:
                 bt.logging.warning(
-                    f"Failed to decode XContent from Apify response: {traceback.format_exc()}"
+                    f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
         return results
 
@@ -182,7 +182,7 @@ class TwitterFlashScraper(Scraper):
             tweet_to_verify = XContent.from_data_entity(entity)
         except Exception:
             bt.logging.error(
-                f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}"
+                f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}."
             )
             return ValidationResult(
                 is_valid=False,
@@ -191,7 +191,7 @@ class TwitterFlashScraper(Scraper):
             )
 
         if tweet_to_verify != tweet:
-            bt.logging.trace(f"Tweets do not match: {tweet_to_verify} != {tweet}")
+            bt.logging.trace(f"Tweets do not match: {tweet_to_verify} != {tweet}.")
             return ValidationResult(
                 is_valid=False,
                 reason="Tweet does not match",
@@ -205,7 +205,7 @@ class TwitterFlashScraper(Scraper):
             if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
                 return ValidationResult(
                     is_valid=False,
-                    reason="The DataEntity fields are incorrect based on the tweet",
+                    reason="The DataEntity fields are incorrect based on the tweet.",
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
         except Exception:
@@ -216,7 +216,7 @@ class TwitterFlashScraper(Scraper):
             )
             return ValidationResult(
                 is_valid=False,
-                reason="Failed to convert XContent to DataEntity",
+                reason="Failed to convert XContent to DataEntity.",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 

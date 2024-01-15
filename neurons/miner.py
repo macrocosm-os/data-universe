@@ -16,12 +16,14 @@
 # DEALINGS IN THE SOFTWARE.
 
 import asyncio
+from collections import defaultdict
 import sys
 import threading
 import time
 import traceback
 import typing
 import bittensor as bt
+import datetime as dt
 from common import constants, utils
 from common.data import CompressedMinerIndex
 from common.protocol import GetDataEntityBucket, GetMinerIndex
@@ -54,7 +56,7 @@ class Miner(BaseNeuron):
             blacklist_fn=self.get_data_entity_bucket_blacklist,
             priority_fn=self.get_data_entity_bucket_priority,
         )
-        bt.logging.info(f"Axon created: {self.axon}")
+        bt.logging.success(f"Axon created: {self.axon}.")
 
         # Instantiate runners.
         self.should_exit: bool = False
@@ -68,20 +70,29 @@ class Miner(BaseNeuron):
             self.config.neuron.max_database_size_gb_hint,
         )
 
+        bt.logging.success(
+            f"Successfully connected to miner storage: {self.config.neuron.database_name}."
+        )
+
         # Configure the ScraperCoordinator
         bt.logging.info(
-            f"Loading scraping config from {self.config.neuron.scraping_config_file}"
+            f"Loading scraping config from {self.config.neuron.scraping_config_file}."
         )
         scraping_config = ConfigReader.load_config(
             self.config.neuron.scraping_config_file
         )
-        bt.logging.info(f"Loaded scraping config: {scraping_config}")
+        bt.logging.success(f"Loaded scraping config: {scraping_config}.")
 
         self.scraping_coordinator = ScraperCoordinator(
             scraper_provider=ScraperProvider(),
             miner_storage=self.storage,
             config=scraping_config,
         )
+
+        # Configure per hotkey request limits.
+        self.request_lock = threading.RLock()
+        self.last_cleared_request_limits = dt.datetime.now()
+        self.requests_by_hotkey = defaultdict(lambda: 0)
 
     def neuron_type(self) -> NeuronType:
         return NeuronType.MINER
@@ -97,14 +108,14 @@ class Miner(BaseNeuron):
         # Serve passes the axon information to the network + netuid we are hosting on.
         # This will auto-update if the axon port of external ip have changed.
         bt.logging.info(
-            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}"
+            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
         )
         self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
 
         # Start  starts the miner's axon, making it active on the network.
         self.axon.start()
 
-        bt.logging.info(f"Miner starting at block: {self.block}")
+        bt.logging.success(f"Miner starting at block: {self.block}.")
 
         self.scraping_coordinator.run_in_background_thread()
 
@@ -210,12 +221,14 @@ class Miner(BaseNeuron):
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
-        bt.logging.debug("resync_metagraph()")
+        bt.logging.info("Attempting to resync the metagraph.")
 
         # Sync the metagraph.
         new_metagraph = self.subtensor.metagraph(netuid=self.config.netuid)
         with self.lock:
             self.metagraph = new_metagraph
+
+        bt.logging.success("Successfuly resynced the metagraph.")
 
     def _log_status(self, step: int):
         """Logs a summary of the miner status in the subnet."""
@@ -240,7 +253,7 @@ class Miner(BaseNeuron):
 
     async def get_index(self, synapse: GetMinerIndex) -> GetMinerIndex:
         """Runs after the GetMinerIndex synapse has been deserialized (i.e. after synapse.data is available)."""
-        bt.logging.trace(
+        bt.logging.info(
             f"Got to a GetMinerIndex request from {synapse.dendrite.hotkey}."
         )
 
@@ -248,14 +261,21 @@ class Miner(BaseNeuron):
             # List all the data entity buckets that this miner currently has.
             compressed_index = self.storage.get_compressed_index()
             synapse.compressed_index_serialized = compressed_index.json()
-
-            bt.logging.debug(
-                f"Returning compressed miner index with size: {CompressedMinerIndex.size(compressed_index)}"
+            bt.logging.success(
+                f"""Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes 
+                    across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."""
             )
         else:
             synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
-            bt.logging.debug(
-                f"Returning uncompressed miner index with size: {len(synapse.data_entity_buckets)}"
+
+            # Calculate total size of returned index for logging.
+            size = 0
+            for bucket in synapse.data_entity_buckets:
+                size += bucket.size_bytes
+
+            bt.logging.success(
+                f"""Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets 
+                to {synapse.dendrite.hotkey}."""
             )
 
         synapse.version = constants.PROTOCOL_VERSION
@@ -274,8 +294,8 @@ class Miner(BaseNeuron):
         self, synapse: GetDataEntityBucket
     ) -> GetDataEntityBucket:
         """Runs after the GetDataEntityBucket synapse has been deserialized (i.e. after synapse.data is available)."""
-        bt.logging.trace(
-            f"Got to a GetDataEntityBucket request from {synapse.dendrite.hotkey}."
+        bt.logging.info(
+            f"Got to a GetDataEntityBucket request from {synapse.dendrite.hotkey} for Bucket ID: {str(synapse.data_entity_bucket_id)}."
         )
 
         # List all the data entities that this miner has for the requested DataEntityBucket.
@@ -284,8 +304,8 @@ class Miner(BaseNeuron):
         )
         synapse.version = constants.PROTOCOL_VERSION
 
-        bt.logging.debug(
-            f"Responding to a GetDataEntityBucket request for Bucket ID: {str(synapse.data_entity_bucket_id)} with # entities={len(synapse.data_entities)}"
+        bt.logging.success(
+            f"Returning Bucket ID: {str(synapse.data_entity_bucket_id)} with {len(synapse.data_entities)} entities to {synapse.dendrite.hotkey}."
         )
 
         return synapse
@@ -302,16 +322,45 @@ class Miner(BaseNeuron):
 
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
         """The default blacklist that only allows requests from validators."""
+        if synapse.dendrite.hotkey in [
+            "5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"
+        ]:
+            return True, "Explictly blacklisted hotkey"
+
         if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
             bt.logging.trace(
-                f"Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}"
+                f"Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}."
             )
             return True, "Unrecognized hotkey"
 
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if not utils.is_validator(uid, self.metagraph):
             return True, "Not a validator"
+
+        # TODO: Break out limit per API.
+        with self.request_lock:
+            # Check if we need to clear the request limit counter.
+            if (
+                dt.datetime.now() - self.last_cleared_request_limits
+            ) >= constants.MIN_EVALUATION_PERIOD:
+                bt.logging.trace(
+                    f"Clearing request limit counter by hotkey after an eval period: {constants.MIN_EVALUATION_PERIOD}."
+                )
+                self.requests_by_hotkey = defaultdict(lambda: 0)
+                self.last_cleared_request_limits = dt.datetime.now()
+
+            # Record request.
+            self.requests_by_hotkey[synapse.dendrite.hotkey] += 1
+
+            # Blacklist if over request limit.
+            # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
+            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
+                bt.logging.trace(
+                    f"Blacklisting hotkey {synapse.dendrite.hotkey} over eval period request limit."
+                )
+                return True, "Hotkey over limit"
+
         return False, ""
 
     def default_priority(self, synapse: bt.Synapse) -> float:
@@ -319,7 +368,7 @@ class Miner(BaseNeuron):
         caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         priority = float(self.metagraph.S[caller_uid])
         bt.logging.trace(
-            f"Prioritizing {synapse.dendrite.hotkey} with value: ",
+            f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}.",
         )
         return priority
 

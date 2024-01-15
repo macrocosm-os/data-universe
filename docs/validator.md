@@ -10,7 +10,7 @@ The Validator is responsible for validating the Miners and scoring them accordin
 
 Once this sequence has been performed for all Miners, the Validator waits a period of time before starting the next loop to ensure it does not evaluate a Miner more often than once per N minutes. This helps ensure the cost of running a Validator is not too high, and also protects the network against high amounts of traffic.
 
-As of Dec 11th 2023, the expected cost number of DataItems queried via Apify is roughly: `225 Miners * 2 evals per hour * 1 sample per period * 24 hours = 10800`. Assuming this is ~50% Reddit ($3.50 per 1000) and ~50% per X ($1 per 1000), the total cost is roughly $24.30 per day.
+As of Jan 13th 2024, the expected cost number of DataItems queried via Apify is roughly: `225 Miners * 1 evals per hour * 2 sample per period * 24 hours = 10800`. Assuming this is ~50% Reddit (Free with Custom Scraper) and ~50% per X ($1 per 1000), the total cost is roughly $5.40 per day.
 
 # System Requirements
 
@@ -19,23 +19,30 @@ Validators require at least 32 GB of RAM but do not require a GPU. We recommend 
 # Getting Started
 
 ## Prerequisites
-1. As of Dec 17th 2023, we support Twitter and Reddit scraping via Apify so you'll need to [setup your Apify API token](apify.md). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. Validators will default to using the personal reddit account for reliability but this can be changed editing the PREFERRED_SCRAPERS map in validator.py locally.
+1. As of Jan 13th 2024, we support Twitter and Reddit scraping via Apify so you'll need to [setup your Apify API token](apify.md). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. Validators will default to using the personal reddit account for reliability but this can be changed editing the PREFERRED_SCRAPERS map in validator.py locally.
 
-1. Clone the repo
+2. Clone the repo
 
 ```shell
 git clone https://github.com/RusticLuftig/data-universe.git
 ```
 
-1. Setup your python [virtual environment](https://docs.python.org/3/library/venv.html) or [Conda environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands).
+3. Setup your python [virtual environment](https://docs.python.org/3/library/venv.html) or [Conda environment](https://conda.io/projects/conda/en/latest/user-guide/tasks/manage-environments.html#creating-an-environment-with-commands).
 
-1. Install the requirements. From your virtual environment, run
+4. Install the requirements. From your virtual environment, run
 ```shell
 cd data-universe
 python -m pip install -e .
 ```
 
-1. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
+5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
+
+6. (Optional) Setup a wandb account and login so your validator can store logs beyond 7 days. From your virtual environment, run
+```shell
+wandb login
+```
+
+This will prompt you to navigate to https://wandb.ai/authorize and copy your api key back into the terminal.
 
 ## Running the Validator
 

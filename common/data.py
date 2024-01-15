@@ -203,10 +203,20 @@ class CompressedMinerIndex(BaseModel):
         return sources
 
     @classmethod
-    def size(cls, index: "CompressedMinerIndex") -> int:
+    def bucket_count(cls, index: "CompressedMinerIndex") -> int:
         """Returns the number of buckets in a compressed index."""
         return sum(
             len(compressed_bucket.time_bucket_ids)
             for compressed_buckets in index.sources.values()
             for compressed_bucket in compressed_buckets
+        )
+
+    @classmethod
+    def size_bytes(cls, index: "CompressedMinerIndex") -> int:
+        """Returns the total size in bytes in a compressed index."""
+        return sum(
+            size_byte
+            for compressed_buckets in index.sources.values()
+            for compressed_bucket in compressed_buckets
+            for size_byte in compressed_bucket.sizes_bytes
         )
