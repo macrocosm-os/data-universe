@@ -60,9 +60,6 @@ from rich.console import Console
 
 
 class Validator(BaseNeuron):
-    # The minimum amount of time that must pass before we re-evaluate a miner.
-    MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=30)
-
     SCORER_FILENAME = "scorer.pickle"
 
     # Mapping of scrapers to use based on the data source to validate.
@@ -358,14 +355,14 @@ class Validator(BaseNeuron):
         now = datetime.datetime.utcnow()
         due_update = (
             last_evaluated is None
-            or (now - last_evaluated) >= Validator.MIN_EVALUATION_PERIOD
+            or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
         )
 
         # If the next miner is not due an update, then all subsequent miners are also not due an update.
         # So we wait until this miner is due an update.
         if not due_update:
             return (
-                last_evaluated + Validator.MIN_EVALUATION_PERIOD - now
+                last_evaluated + constants.MIN_EVALUATION_PERIOD - now
             ).total_seconds()
 
         # Otherwise, execute the next batch of evaluations and skip any miners who were evaluated recently.
@@ -381,7 +378,7 @@ class Validator(BaseNeuron):
             # If we have aleady evaluated this miner recently then do not evaluate it.
             if (
                 not last_evaluated
-                or (now - last_evaluated) >= Validator.MIN_EVALUATION_PERIOD
+                or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
             ):
                 uids_to_eval.add(uid)
 
