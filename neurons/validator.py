@@ -630,8 +630,10 @@ class Validator(BaseNeuron):
         uids_and_weights = list(
             zip(processed_weight_uids.tolist(), processed_weights.tolist())
         )
-        # Sort by weights
-        sorted_uids_and_weights = sorted(uids_and_weights, key=lambda x: x[1])
+        # Sort by weights descending.
+        sorted_uids_and_weights = sorted(
+            uids_and_weights, key=lambda x: x[1], reverse=True
+        )
         for uid, weight in sorted_uids_and_weights:
             table.add_row(
                 str(uid),
