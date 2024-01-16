@@ -598,6 +598,7 @@ class Validator(BaseNeuron):
         bt.logging.info("Attempting to set weights.")
 
         scores = self.scorer.get_scores()
+        credibilities = self.scorer.get_credibilities()
 
         # Check if scores contains any NaN values and log a warning if it does.
         if torch.isnan(scores).any():
@@ -625,10 +626,16 @@ class Validator(BaseNeuron):
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("weight", style="magenta")
         table.add_column("score", style="magenta")
+        table.add_column("credibility", style="magenta")
         for uid, weight in list(
             zip(processed_weight_uids.tolist(), processed_weights.tolist())
         ):
-            table.add_row(str(uid), str(round(weight, 4)), str(int(scores[uid].item())))
+            table.add_row(
+                str(uid),
+                str(round(weight, 4)),
+                str(int(scores[uid].item())),
+                str(round(credibilities[uid].item(), 4)),
+            )
         console = Console()
         console.print(table)
 
