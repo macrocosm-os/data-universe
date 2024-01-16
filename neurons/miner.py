@@ -271,8 +271,8 @@ class Miner(BaseNeuron):
                 )
             synapse.compressed_index_serialized = compressed_index.json()
             bt.logging.success(
-                f"""Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes 
-                    across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."""
+                f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
+                + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
             )
         else:
             synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
@@ -283,8 +283,8 @@ class Miner(BaseNeuron):
                 size += bucket.size_bytes
 
             bt.logging.success(
-                f"""Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets 
-                to {synapse.dendrite.hotkey}."""
+                f"Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets "
+                + f"to {synapse.dendrite.hotkey}."
             )
 
         synapse.version = constants.PROTOCOL_VERSION
