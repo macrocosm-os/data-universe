@@ -118,6 +118,6 @@ class ScorableMinerIndex(BaseModel):
 
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
         description="DataEntityBuckets the miner is serving, scored on uniqueness.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3,
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")

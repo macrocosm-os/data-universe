@@ -6,7 +6,7 @@ import unittest
 import concurrent
 
 from common import constants, utils
-from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
@@ -377,7 +377,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Create the DataEntityBuckets for the index.
         sources = [int(DataSource.REDDIT), int(DataSource.X.value)]
         num_time_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
             // len(sources)
             // len(labels)
         )
