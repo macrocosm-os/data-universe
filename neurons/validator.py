@@ -665,8 +665,9 @@ class Validator(BaseNeuron):
         bt.logging.info("Metagraph updated, re-syncing hotkeys, and moving averages.")
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
-            if hotkey != self.metagraph.hotkeys[uid] or not utils.is_miner(
-                uid, self.metagraph
+            if hotkey != self.metagraph.hotkeys[uid] or (
+                not utils.is_miner(uid, self.metagraph)
+                and not utils.is_validator(uid, self.metagraph)
             ):
                 bt.logging.info(f"Hotkey {hotkey} w/ UID {uid} has been unregistered.")
                 self.scorer.reset(uid)  # hotkey has been replaced
