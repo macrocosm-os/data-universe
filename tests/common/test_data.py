@@ -79,7 +79,9 @@ class TestData(unittest.TestCase):
     def test_compressed_index_supports_max_index(self):
         """Tests that the compressed version of the maximal Miner index is under our response size limit."""
 
-        target_buckets = constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+        target_buckets = (
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
+        )
 
         # Figure out how many time buckets and labels we need to fill the index.
         buckets_per_source = target_buckets // 2  # Twitter/Reddit
