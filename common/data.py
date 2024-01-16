@@ -6,23 +6,13 @@ from . import utils
 import datetime as dt
 from enum import IntEnum
 from typing import Any, Dict, List, Type, Optional
-from pydantic import (
-    BaseModel,
-    ConfigDict,
-    Field,
-    PositiveInt,
-    validator,
-)
+from pydantic import field_validator, BaseModel, ConfigDict, Field, PositiveInt
 
 
 class StrictBaseModel(BaseModel):
     """A BaseModel that enforces stricter validation constraints"""
 
-    class Config:
-        # JSON serialization doesn't seem to work correctly without
-        # enabling `use_enum_values`. It's possible this isn't an
-        # issue with newer version of pydantic, which we can't use.
-        use_enum_values = True
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class TimeBucket(StrictBaseModel):
@@ -77,15 +67,14 @@ class DataLabel(StrictBaseModel):
     For example, in Reddit a label is the subreddit. For a stock price, it'll be the ticker symbol.
     """
 
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
     value: str = Field(
         max_length=32,
         description="The label. E.g. a subreddit for Reddit data.",
     )
 
-    @validator("value")
+    @field_validator("value")
     @classmethod
     def lower_case_value(cls, value: str) -> str:
         """Converts the value to lower case to consistent casing throughout the system."""
@@ -155,7 +144,7 @@ class MinerIndex(StrictBaseModel):
     hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
     data_entity_buckets: List[DataEntityBucket] = Field(
         description="Buckets the miner is serving.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+        max_length=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
     )
 
 
@@ -185,7 +174,7 @@ class CompressedMinerIndex(BaseModel):
     # A map from source to a list of compressed buckets.
     sources: Dict[int, List[CompressedEntityBucket]]
 
-    @validator("sources")
+    @field_validator("sources")
     @classmethod
     def validate_index_size(
         cls, sources: Dict[int, List[CompressedEntityBucket]]

@@ -1,4 +1,6 @@
 import json
+import os
+from pathlib import Path
 from typing import Type
 import unittest
 import datetime as dt
@@ -14,13 +16,18 @@ from common.data import (
     TimeBucket,
 )
 from common import old_protocol
+from scraping.reddit.model import RedditContent, RedditDataType
+from scraping.x.model import XContent
+from tests import utils
 
 from common.protocol import GetDataEntityBucket, GetMinerIndex
+
+DATA_DIR = os.path.join(Path(__file__).parent, "data")
 
 
 def serialize_like_dendrite(synapse: bt.Synapse) -> str:
     """Serializes a synapse like a Dendrite would."""
-    d = synapse.dict()
+    d = synapse.model_dump()
     return json.dumps(d)
 
 
@@ -36,12 +43,15 @@ def deserialize(json_str: str, cls: Type) -> bt.Synapse:
 
 
 class TestGetMinerIndex(unittest.TestCase):
+    # Don't truncate diffs.
+    maxDiff = None
+
     def test_get_miner_index_old_format_round_trip(self):
         """Tests that the old miner index format can be serialized/deserialized for transport."""
         request = GetMinerIndex()
-        json = request.json()
+        json = request.model_dump_json()
         print(json)
-        deserialized = GetMinerIndex.parse_raw(json)
+        deserialized = GetMinerIndex.model_validate_json(json)
         self.assertEqual(request, deserialized)
 
         # Also check that the headers can be constructed.
@@ -104,7 +114,7 @@ class TestGetMinerIndex(unittest.TestCase):
                         ),
                     ],
                 }
-            ).json()
+            ).model_dump_json()
         )
 
         serialized = serialize_like_axon(response)
@@ -219,8 +229,44 @@ class TestGetMinerIndex(unittest.TestCase):
             deserialized.data_entity_buckets[1],
         )
 
+    def test_parse_miner_index_from_v1_pydantic(self):
+        """Tests that deserializing a GetMinerIndex response from V1 pydantic works
+        with pydanitc V2."""
+        expected_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT.value: [
+                    CompressedEntityBucket(
+                        label="r/bittensor_",
+                        time_bucket_ids=[1, 2, 3],
+                        sizes_bytes=[100, 200, 300],
+                    )
+                ],
+                DataSource.X.value: [
+                    CompressedEntityBucket(
+                        time_bucket_ids=[3, 4],
+                        sizes_bytes=[123, 234],
+                    ),
+                    CompressedEntityBucket(
+                        label="#bittensor",
+                        time_bucket_ids=[5, 4],
+                        sizes_bytes=[321, 99],
+                    ),
+                ],
+            }
+        )
+
+        with open(os.path.join(DATA_DIR, "miner_index.json"), "r") as f:
+            raw_str = f.read()
+            proto = GetMinerIndex.model_validate_json(raw_str)
+            index = CompressedMinerIndex.model_validate_json(
+                proto.compressed_index_serialized
+            )
+            self.assertTrue(utils.are_compressed_indexes_equal(index, expected_index))
+
 
 class TestGetDataEntityBucket(unittest.TestCase):
+    maxDiff = None
+
     def test_synapse_serialization(self):
         """Tests that the protocol messages can be serialized/deserialized for transport."""
         request = GetDataEntityBucket(
@@ -230,9 +276,9 @@ class TestGetDataEntityBucket(unittest.TestCase):
                 source=DataSource.REDDIT,
             )
         )
-        json = request.json()
+        json = request.model_dump_json()
         print(json)
-        deserialized = GetDataEntityBucket.parse_raw(json)
+        deserialized = GetDataEntityBucket.model_validate_json(json)
         self.assertEqual(request, deserialized)
 
         # Check that the enum is deserialized correctly
@@ -242,6 +288,119 @@ class TestGetDataEntityBucket(unittest.TestCase):
         request.to_headers()
 
         # TODO: Add a test for the response.
+
+    def test_parse_reddit_entity_buckets(self):
+        """Tests that deserializing a GetDataEntityBucket response from V1 pydantic works
+        with pydanitc V2."""
+        t = dt.datetime(2024, 1, 15, 17, 8, 29, 651126)
+
+        expected = GetDataEntityBucket(
+            data_entity_bucket_id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(t),
+                label=DataLabel(value="r/bittensor_"),
+                source=DataSource.REDDIT,
+            ),
+            data_entities=[
+                RedditContent.to_data_entity(
+                    RedditContent(
+                        id="entity1",
+                        url="http://www.reddit.com/entityt1",
+                        username="username",
+                        communityName="r/bittensor_",
+                        body="Some insightful text should be here. But it is not...",
+                        createdAt=t,
+                        dataType=RedditDataType.POST,
+                        title="Bittensor is wow.",
+                    )
+                ),
+                RedditContent.to_data_entity(
+                    RedditContent(
+                        id="commentId",
+                        url="http://www.reddit.com/entityt1/commentId",
+                        username="other-username",
+                        communityName="r/bittensor_",
+                        body="Much wow",
+                        createdAt=t,
+                        dataType=RedditDataType.COMMENT,
+                        parentId="entity1",
+                    )
+                ),
+            ],
+        )
+
+        with open(os.path.join(DATA_DIR, "reddit_data_entities.json"), "r") as f:
+            raw_str = f.read()
+            response = GetDataEntityBucket.model_validate_json(raw_str)
+            self.assertEqual(
+                expected.data_entity_bucket_id, response.data_entity_bucket_id
+            )
+            self.assertEqual(expected.data_entities, response.data_entities)
+            self.assertEqual(response, expected)
+
+    def test_parse_x_entity_buckets(self):
+        """Tests that deserializing a GetDataEntityBucket response from V1 pydantic works
+        with pydanitc V2."""
+        t = dt.datetime(2024, 1, 15, 17, 8, 31, 246220)
+
+        expected = GetDataEntityBucket(
+            data_entity_bucket_id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(t),
+                label=DataLabel(value="#bittensor"),
+                source=DataSource.X,
+            ),
+            data_entities=[
+                XContent.to_data_entity(
+                    XContent(
+                        url="http://www.reddit.com/entityt1",
+                        username="username",
+                        text="Some insightful text should be here. But it is not...",
+                        timestamp=t,
+                        tweet_hashtags=["#bittensor", "#tao"],
+                    )
+                ),
+            ],
+        )
+
+        with open(os.path.join(DATA_DIR, "x_data_entities.json"), "r") as f:
+            raw_str = f.read()
+            response = GetDataEntityBucket.model_validate_json(raw_str)
+            self.assertEqual(
+                expected.data_entity_bucket_id, response.data_entity_bucket_id
+            )
+            self.assertEqual(expected.data_entities, response.data_entities)
+            self.assertEqual(expected, response)
+
+    def test_parse_x_no_label_entity_buckets(self):
+        """Tests that deserializing a GetDataEntityBucket response from V1 pydantic works
+        with pydanitc V2."""
+        t = dt.datetime(2024, 1, 15, 17, 8, 31, 643653)
+
+        expected = GetDataEntityBucket(
+            data_entity_bucket_id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(t),
+                label=None,
+                source=DataSource.X,
+            ),
+            data_entities=[
+                XContent.to_data_entity(
+                    XContent(
+                        url="http://www.reddit.com/entityt1",
+                        username="username",
+                        text="Some insightful text should be here. But it is not...",
+                        timestamp=t,
+                    )
+                ),
+            ],
+        )
+
+        with open(os.path.join(DATA_DIR, "x_no_label_data_entities.json"), "r") as f:
+            raw_str = f.read()
+            response = GetDataEntityBucket.model_validate_json(raw_str)
+            self.assertEqual(
+                expected.data_entity_bucket_id, response.data_entity_bucket_id
+            )
+            self.assertEqual(expected.data_entities, response.data_entities)
+            self.assertEqual(response, expected)
 
 
 if __name__ == "__main__":

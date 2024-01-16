@@ -42,7 +42,7 @@ class FakeMiner:
         # If we have storage, use it. Otherwise fallback to the provided index
         if self.storage:
             request.compressed_index_serialized = (
-                self.storage.get_compressed_index().json()
+                self.storage.get_compressed_index().model_dump_json()
             )
             return request
         return self.index
@@ -262,7 +262,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         index, compressed_index = self._create_test_indexes()
 
         expected_response = GetMinerIndex(
-            compressed_index_serialized=compressed_index.json(),
+            compressed_index_serialized=compressed_index.model_dump_json(),
         )
 
         # Send a request to the fake miner to get the miner index.

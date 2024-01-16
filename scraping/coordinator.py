@@ -19,11 +19,12 @@ class LabelScrapingConfig(StrictBaseModel):
     """Describes what labels to scrape."""
 
     label_choices: Optional[List[DataLabel]] = Field(
+        default=None,
         description="""The collection of labels to choose from when performing a scrape.
         On a given scrape, 1 label will be chosen at random from this list.
         
         If the list is None, the scraper will scrape "all".
-        """
+        """,
     )
 
     max_age_hint_minutes: int = Field(
@@ -91,8 +92,12 @@ def _choose_scrape_configs(
         if oldest_bucket.id < current_bucket.id:
             # Use a triangular distribution to choose a bucket in this range. We choose a triangular distribution because
             # this roughly aligns with the linear depreciation scoring that the validators use for data freshness.
-            chosen_id = numpy.random.default_rng().triangular(
-                left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
+            chosen_id = int(
+                numpy.random.default_rng().triangular(
+                    left=oldest_bucket.id,
+                    mode=current_bucket.id,
+                    right=current_bucket.id,
+                )
             )
             chosen_bucket = TimeBucket(id=chosen_id)
 

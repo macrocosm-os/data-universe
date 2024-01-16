@@ -504,7 +504,7 @@ class TestValiUtils(unittest.TestCase):
         )
 
         response = GetMinerIndex(
-            compressed_index_serialized=compressed_index.json(),
+            compressed_index_serialized=compressed_index.model_dump_json(),
             dendrite=bt.TerminalInfo(status_code=200),
         )
 

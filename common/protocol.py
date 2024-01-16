@@ -24,12 +24,11 @@ from common.data import (
     DataEntityBucketId,
 )
 from typing import Dict, List, Optional
+from pydantic import ConfigDict
 
 
 class BaseProtocol(bt.Synapse):
-    class Config:
-        arbitrary_types_allowed = True
-        validate_assignment = True
+    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
     version: Optional[int] = pydantic.Field(
         description="Protocol version", default=None

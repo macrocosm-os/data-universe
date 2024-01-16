@@ -420,7 +420,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         self.assertIsNotNone(scorable_index)
 
-        expected_index = ScorableMinerIndex.construct(
+        expected_index = ScorableMinerIndex.model_construct(
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
                     time_bucket_id=time_bucket_id,

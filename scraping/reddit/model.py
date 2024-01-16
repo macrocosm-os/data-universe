@@ -1,7 +1,10 @@
 import datetime as dt
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+
+# Use v1 for these models to keep serialization consistent.
+# Pydantic v2 doesn't include spaces in its serialization.
+from pydantic.v1 import BaseModel, Field
 
 from common.data import DataEntity, DataLabel, DataSource
 
@@ -50,6 +53,8 @@ class RedditContent(BaseModel):
     def to_data_entity(cls, content: "RedditContent") -> DataEntity:
         """Converts the RedditContent to a DataEntity."""
 
+        # JSON serialize the content, using the same serialization used by pydantic V1,
+        # which uses an indent of 1.
         content_bytes = content.json(by_alias=True).encode("utf-8")
         return DataEntity(
             uri=content.url,

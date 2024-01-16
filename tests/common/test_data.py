@@ -124,7 +124,7 @@ class TestData(unittest.TestCase):
         )
 
         start = time.time()
-        serialized_compressed_index = maximal_index.json()
+        serialized_compressed_index = maximal_index.model_dump_json()
         print(f"Time to serialize index: {time.time() - start}")
 
         start = time.time()
@@ -134,14 +134,14 @@ class TestData(unittest.TestCase):
         print(f"Time to create synapse: {time.time() - start}")
 
         start = time.time()
-        compressed_json = get_miner_index.json()
+        compressed_json = get_miner_index.model_dump_json()
         print(f"Time to serialize synapse: {time.time() - start}")
         print(f"Compressed index size: {len(compressed_json)}")
         self.assertLess(len(compressed_json), utils.mb_to_bytes(mb=128))
 
         start = time.time()
-        deserialized_index = GetMinerIndex.parse_raw(compressed_json)
-        deserialized_compressed_index = CompressedMinerIndex.parse_raw(
+        deserialized_index = GetMinerIndex.model_validate_json(compressed_json)
+        deserialized_compressed_index = CompressedMinerIndex.model_validate_json(
             deserialized_index.compressed_index_serialized
         )
         print(f"Time to deserialize synapse: {time.time() - start}")

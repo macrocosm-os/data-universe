@@ -43,11 +43,11 @@ class TestScrapingConfig(unittest.TestCase):
         )
 
         # Serialize the object to JSON
-        json_data = config.json()
+        json_data = config.model_dump_json()
         print(json_data)
 
         # Deserialize the JSON back to an object
-        deserialized_config = ScrapingConfig.parse_raw(json_data)
+        deserialized_config = ScrapingConfig.model_validate_json(json_data)
 
         # Verify the deserialized object is equal to the starting object
         self.assertEqual(config, deserialized_config)

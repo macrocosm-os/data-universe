@@ -24,11 +24,12 @@ class LabelScrapingConfig(StrictBaseModel):
     """Describes what labels to scrape."""
 
     label_choices: Optional[List[str]] = Field(
+        default=None,
         description="""The collection of labels to choose from when performing a scrape.
         On a given scrape, 1 label will be chosen at random from this list.
         
         An empty list is treated as a non-existant label. In that case, no filter is applied when scraping data from this source.
-        """
+        """,
     )
 
     max_age_hint_minutes: int = Field(

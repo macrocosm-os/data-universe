@@ -93,13 +93,15 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.test_storage.store_data_entities([entity1, entity2])
 
         # Update the contents
-        entity1.content = bytes(50)
-        entity1.content_size_bytes = 50
-        entity2.content = bytes(100)
-        entity2.content_size_bytes = 100
+        entity1_copy = entity1.model_copy(
+            update={"content": bytes(50), "content_size_bytes": 50}, deep=True
+        )
+        entity2_copy = entity2.model_copy(
+            update={"content": bytes(100), "content_size_bytes": 100}, deep=True
+        )
 
         # Store the entities again.
-        self.test_storage.store_data_entities([entity1, entity2])
+        self.test_storage.store_data_entities([entity1_copy, entity2_copy])
 
         # Confirm that only one set of entities were stored and the content matches the latest.
         with contextlib.closing(self.test_storage._create_connection()) as connection:
@@ -118,7 +120,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             datetime=now,
             source=DataSource.REDDIT,
             content=bytes(1000),
-            content_size_bytes=1.1 * 1024 * 1024 * 1024,
+            content_size_bytes=int(1.1 * 1024 * 1024 * 1024),
         )
 
         # Attempt to store the entity.

@@ -5,7 +5,7 @@ import asyncio
 import traceback
 from typing import Dict, List, Optional
 
-from pydantic import BaseModel, Field, PositiveInt
+from pydantic import ConfigDict, BaseModel, Field, PositiveInt
 
 from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
 from common.date_range import DateRange
@@ -22,9 +22,7 @@ class ScraperId(str, Enum):
 
 class ValidationResult(StrictBaseModel):
     """Data class to contain the result of a scraping validation."""
-
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
     # For now, let's just indicate a pass/fail, but in future we may want to extend this to
     # include more information about the validation.
@@ -42,9 +40,7 @@ class ValidationResult(StrictBaseModel):
 
 class ScrapeConfig(StrictBaseModel):
     """Data class to contain the configuration to be used for scraping."""
-
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
     # Number of entities (based on source) to get per scrape attempt.
     # TODO: Update the scrapers to respect this as an Optional.
@@ -62,9 +58,7 @@ class ScrapeConfig(StrictBaseModel):
 
 class LabelScrapingFrequency(StrictBaseModel):
     """Data class to contain the frequency distribution for a set of labels."""
-
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
     # The collection of labels that share this total frequency.
     labels: List[DataLabel]
@@ -74,9 +68,7 @@ class LabelScrapingFrequency(StrictBaseModel):
 
 class SourceScrapingFrequency(StrictBaseModel):
     """Data class to contain the frequency distribution for a source across labels."""
-
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
     # The source being scraped.
     source: DataSource
@@ -89,9 +81,7 @@ class SourceScrapingFrequency(StrictBaseModel):
 
 class ScrapingDistribution(StrictBaseModel):
     """A relative distribution across sources and labels."""
-
-    class Config:
-        frozen = True
+    model_config = ConfigDict(frozen=True)
 
     # TODO A validator to ensure that the sum of all source frequencies is 1.
     distribution: List[SourceScrapingFrequency]

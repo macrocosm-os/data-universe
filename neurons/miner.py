@@ -269,7 +269,7 @@ class Miner(BaseNeuron):
                 compressed_index = self.storage.get_compressed_index(
                     bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
                 )
-            synapse.compressed_index_serialized = compressed_index.json()
+            synapse.compressed_index_serialized = compressed_index.model_dump_json()
             bt.logging.success(
                 f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
                 + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."

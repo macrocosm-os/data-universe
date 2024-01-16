@@ -1,5 +1,5 @@
 from typing import Dict
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
+from pydantic import field_validator, BaseModel, ConfigDict, Field, PositiveInt
 
 from common.data import DataLabel, DataSource, StrictBaseModel
 
@@ -28,7 +28,7 @@ class DataSourceDesirability(StrictBaseModel):
         default_factory=lambda: {},
     )
 
-    @validator("label_scale_factors")
+    @field_validator("label_scale_factors")
     @classmethod
     def validate_label_scale_factors(
         cls, value: Dict[DataLabel, float]
@@ -56,7 +56,7 @@ class DataDesirabilityLookup(StrictBaseModel):
         description="The maximum age of data that will receive rewards. Data older than this will score 0",
     )
 
-    @validator("distribution")
+    @field_validator("distribution")
     @classmethod
     def validate_distribution(
         cls, distribution: Dict[DataSource, DataSourceDesirability]

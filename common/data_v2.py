@@ -18,7 +18,7 @@ As a rule of thumb:
 
 
 import datetime as dt
-from pydantic import BaseModel, Field
+from pydantic import ConfigDict, BaseModel, Field
 from typing import List, Optional
 
 from common import constants
@@ -112,12 +112,10 @@ class ScorableMinerIndex(BaseModel):
     Use a pydantic model for this class, because we only create 1 per miner, so the additional overhead is acceptable.
     """
 
-    class Config:
-        arbitrary_types_allowed = True
-        frozen = True
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
         description="DataEntityBuckets the miner is serving, scored on uniqueness.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3,
+        max_length=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3,
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")

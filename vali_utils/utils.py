@@ -172,6 +172,8 @@ def get_miner_index_from_response(
         )
     elif response.compressed_index_serialized:
         # Otherwise, decompress the compressed index.
-        return CompressedMinerIndex.parse_raw(response.compressed_index_serialized)
+        return CompressedMinerIndex.model_validate_json(
+            response.compressed_index_serialized
+        )
 
     raise ValueError("GetMinerIndex response has no index.")

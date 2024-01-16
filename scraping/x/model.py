@@ -1,8 +1,6 @@
 import datetime as dt
-import json
-from re import X
 from typing import List
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic.v1 import BaseModel, ConfigDict, Field
 
 from common.data import DataEntity, DataLabel, DataSource
 
