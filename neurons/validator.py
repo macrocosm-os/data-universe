@@ -170,8 +170,8 @@ class Validator(BaseNeuron):
                 miner_index, CompressedMinerIndex
             ), f"Expected either a MinerIndex or CompressedMinerIndex but got {type(miner_index)}."
             bt.logging.success(
-                f"""{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes 
-                    across {CompressedMinerIndex.bucket_count(miner_index)}."""
+                f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
+                + f"across {CompressedMinerIndex.bucket_count(miner_index)}."
             )
             self.storage.upsert_compressed_miner_index(
                 miner_index, hotkey, miner_credibility
@@ -271,8 +271,8 @@ class Validator(BaseNeuron):
 
         # Perform basic validation on the entities.
         bt.logging.info(
-            f"""{hotkey}: Performing basic validation on Bucket ID: {chosen_data_entity_bucket.id} containing 
-                {len(data_entity_bucket.data_entities)} entities."""
+            f"{hotkey}: Performing basic validation on Bucket ID: {chosen_data_entity_bucket.id} containing "
+            + f"{len(data_entity_bucket.data_entities)} entities."
         )
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
