@@ -74,7 +74,7 @@ class TestData(unittest.TestCase):
 
         index = CompressedMinerIndex(sources=sources)
 
-        self.assertEqual(CompressedMinerIndex.bucket_count(index), 500)
+        self.assertEqual(CompressedMinerIndex.bucket_count(index), 50)
 
     def test_compressed_index_supports_max_index(self):
         """Tests that the compressed version of the maximal Miner index is under our response size limit."""
