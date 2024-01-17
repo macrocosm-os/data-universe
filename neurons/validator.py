@@ -170,8 +170,8 @@ class Validator(BaseNeuron):
                 miner_index, CompressedMinerIndex
             ), f"Expected either a MinerIndex or CompressedMinerIndex but got {type(miner_index)}."
             bt.logging.success(
-                f"""{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes 
-                    across {CompressedMinerIndex.bucket_count(miner_index)}."""
+                f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
+                + f"across {CompressedMinerIndex.bucket_count(miner_index)}."
             )
             self.storage.upsert_compressed_miner_index(
                 miner_index, hotkey, miner_credibility
@@ -271,8 +271,8 @@ class Validator(BaseNeuron):
 
         # Perform basic validation on the entities.
         bt.logging.info(
-            f"""{hotkey}: Performing basic validation on Bucket ID: {chosen_data_entity_bucket.id} containing 
-                {len(data_entity_bucket.data_entities)} entities."""
+            f"{hotkey}: Performing basic validation on Bucket ID: {chosen_data_entity_bucket.id} containing "
+            + f"{len(data_entity_bucket.data_entities)} entities."
         )
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
@@ -406,6 +406,11 @@ class Validator(BaseNeuron):
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
 
+        if not self.config.wandb.off:
+            self.new_wandb_run()
+        else:
+            bt.logging.warning("Not logging to wandb.")
+
         bt.logging.info("Setting up validator.")
 
         # Setup the DB.
@@ -420,11 +425,6 @@ class Validator(BaseNeuron):
             self.serve_axon()
         else:
             bt.logging.warning("Axon off, not serving ip to chain.")
-
-        if not self.config.wandb.off:
-            self.new_wandb_run()
-        else:
-            bt.logging.warning("Not logging to wandb.")
 
         self.is_setup = True
 
@@ -598,6 +598,7 @@ class Validator(BaseNeuron):
         bt.logging.info("Attempting to set weights.")
 
         scores = self.scorer.get_scores()
+        credibilities = self.scorer.get_credibilities()
 
         # Check if scores contains any NaN values and log a warning if it does.
         if torch.isnan(scores).any():
@@ -625,10 +626,21 @@ class Validator(BaseNeuron):
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("weight", style="magenta")
         table.add_column("score", style="magenta")
-        for uid, weight in list(
+        table.add_column("credibility", style="magenta")
+        uids_and_weights = list(
             zip(processed_weight_uids.tolist(), processed_weights.tolist())
-        ):
-            table.add_row(str(uid), str(round(weight, 4)), str(int(scores[uid].item())))
+        )
+        # Sort by weights descending.
+        sorted_uids_and_weights = sorted(
+            uids_and_weights, key=lambda x: x[1], reverse=True
+        )
+        for uid, weight in sorted_uids_and_weights:
+            table.add_row(
+                str(uid),
+                str(round(weight, 4)),
+                str(int(scores[uid].item())),
+                str(round(credibilities[uid].item(), 4)),
+            )
         console = Console()
         console.print(table)
 
@@ -665,7 +677,10 @@ class Validator(BaseNeuron):
         bt.logging.info("Metagraph updated, re-syncing hotkeys, and moving averages.")
         # Zero out all hotkeys that have been replaced.
         for uid, hotkey in enumerate(self.hotkeys):
-            if hotkey != self.metagraph.hotkeys[uid]:
+            if hotkey != self.metagraph.hotkeys[uid] or (
+                not utils.is_miner(uid, self.metagraph)
+                and not utils.is_validator(uid, self.metagraph)
+            ):
                 bt.logging.info(f"Hotkey {hotkey} w/ UID {uid} has been unregistered.")
                 self.scorer.reset(uid)  # hotkey has been replaced
                 try:

@@ -236,7 +236,10 @@ class SqliteMinerStorage(MinerStorage):
             )
             return data_entities
 
-    def get_compressed_index(self) -> CompressedMinerIndex:
+    def get_compressed_index(
+        self,
+        bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+    ) -> CompressedMinerIndex:
         """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
 
         with contextlib.closing(self._create_connection()) as connection:
@@ -257,7 +260,7 @@ class SqliteMinerStorage(MinerStorage):
                         """,
                 [
                     oldest_time_bucket_id,
-                    constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+                    bucket_count_limit,
                 ],
             )
 

@@ -151,8 +151,9 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor = connection.cursor()
 
             cursor.execute(
-                "INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)",
-                [hotkey, now_str, credibility],
+                """INSERT INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)
+                   ON CONFLICT DO UPDATE SET lastUpdated=?, credibility=?""",
+                [hotkey, now_str, credibility, now_str, credibility],
             )
             connection.commit()
 

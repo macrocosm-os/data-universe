@@ -38,7 +38,7 @@ class TestMinerScorer(unittest.TestCase):
         self.scorer = MinerScorer(self.num_neurons, self.value_calculator, alpha=0.2)
 
         # Mock the current time
-        self.now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
+        self.now = dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(hours=3)
 
         # Construct a ScorableMinerIndex with 2 chunks that should score 150 in total (without considering EMA)
         self.scorable_index = ScorableMinerIndex(

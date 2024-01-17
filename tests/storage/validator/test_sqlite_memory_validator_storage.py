@@ -1,4 +1,5 @@
 from collections import defaultdict
+import contextlib
 import random
 import time
 from typing import Dict, List
@@ -6,7 +7,7 @@ import unittest
 import concurrent
 
 from common import constants, utils
-from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
@@ -43,6 +44,12 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             "test_hotkey", dt.datetime.utcnow(), credibility=0.5
         )
         self.assertEqual(next_id, miner_id)
+
+        with contextlib.closing(self.test_storage._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute("SELECT credibility FROM MINER WHERE hotkey='test_hotkey'")
+            credibility = cursor.fetchone()[0]
+            self.assertEqual(credibility, 0.5)
 
         # Finally, insert a new miner and make sure it has a new id.
         other_id = self.test_storage._upsert_miner(
@@ -377,7 +384,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Create the DataEntityBuckets for the index.
         sources = [int(DataSource.REDDIT), int(DataSource.X.value)]
         num_time_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
             // len(sources)
             // len(labels)
         )

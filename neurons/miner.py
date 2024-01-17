@@ -259,11 +259,20 @@ class Miner(BaseNeuron):
 
         if synapse.version and synapse.version >= 2:
             # List all the data entity buckets that this miner currently has.
-            compressed_index = self.storage.get_compressed_index()
+            compressed_index = None
+            # Return the appropriate amount of max buckets based on protocol of the requesting validator.
+            if synapse.version == 3:
+                compressed_index = self.storage.get_compressed_index(
+                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
+                )
+            else:
+                compressed_index = self.storage.get_compressed_index(
+                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
+                )
             synapse.compressed_index_serialized = compressed_index.json()
             bt.logging.success(
-                f"""Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes 
-                    across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."""
+                f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
+                + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
             )
         else:
             synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
@@ -274,8 +283,8 @@ class Miner(BaseNeuron):
                 size += bucket.size_bytes
 
             bt.logging.success(
-                f"""Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets 
-                to {synapse.dendrite.hotkey}."""
+                f"Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets "
+                + f"to {synapse.dendrite.hotkey}."
             )
 
         synapse.version = constants.PROTOCOL_VERSION

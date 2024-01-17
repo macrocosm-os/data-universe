@@ -191,7 +191,7 @@ class TwitterFlashScraper(Scraper):
             )
 
         if tweet_to_verify != tweet:
-            bt.logging.trace(f"Tweets do not match: {tweet_to_verify} != {tweet}.")
+            bt.logging.info(f"Tweets do not match: {tweet_to_verify} != {tweet}.")
             return ValidationResult(
                 is_valid=False,
                 reason="Tweet does not match",

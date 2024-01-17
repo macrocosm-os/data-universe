@@ -61,6 +61,12 @@ class MinerScorer:
         with self.lock:
             return self.scores.clone()
 
+    def get_credibilities(self) -> torch.Tensor:
+        """Returns the raw credibilities of all miners."""
+        # Return a copy to ensure outside code can't modify the scores.
+        with self.lock:
+            return self.miner_credibility.clone()
+
     def reset(self, uid: int) -> None:
         """Resets the score and credibility of miner 'uid'."""
         with self.lock:
