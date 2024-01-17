@@ -14,7 +14,7 @@ As of Jan 13th 2024, the expected cost number of DataItems queried via Apify is 
 
 # System Requirements
 
-Validators require at least 32 GB of RAM but do not require a GPU. We recommend a decent CPU (4+ cores) and sufficient network bandwidth to handle protocol traffic.
+Validators require at least 32 GB of RAM but do not require a GPU. We recommend a decent CPU (4+ cores) and sufficient network bandwidth to handle protocol traffic. Must have python >= 3.10.
 
 # Getting Started
 
