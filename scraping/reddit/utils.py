@@ -38,22 +38,28 @@ def validate_reddit_content(
         )
 
     # Ignore exact parent id here until all scraped data has been scraped with correct parent id (~30 days):
-    # Since the mistake was to assign the submission id which is always earlier and therefore smaller we can check size
-    # is within 1 byte of the entry we are validating.
-    if actual_content.parent_id is not None and len(actual_content.parent_id) + 1 < len(
-        content_to_validate.parent_id
+    # Since the mistake was to assign the submission id which is always earlier and therefore smaller we can check that
+    # length of the claimed is always less than or equal to that of the real entity.
+    if (
+        actual_content.parent_id is not None
+        and content_to_validate.parent_id is not None
     ):
-        bt.logging.info(
-            f"RedditContent parent id does not match size: {actual_content.parent_id} vs {content_to_validate.parent_id}"
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Parent id size does not match",
-            content_size_bytes_validated=entity_to_validate.content_size_bytes,
-        )
-
-    actual_content.parent_id = None
-    content_to_validate.parent_id = None
+        if len(content_to_validate.parent_id) > len(actual_content.parent_id):
+            bt.logging.info(
+                f"RedditContent parent id size too large: claimed {content_to_validate.parent_id} vs actual {actual_content.parent_id}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Parent id size too large",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
+            )
+        elif content_to_validate.parent_id != actual_content.parent_id:
+            # Only None out for posts that had non-matching but otherwise valid parent ids.
+            bt.logging.trace(
+                f"RedditContent had non-matching but otherwise valid parent id: claimed {content_to_validate.parent_id} vs actual {actual_content.parent_id}."
+            )
+            actual_content.parent_id = None
+            content_to_validate.parent_id = None
 
     if actual_content != content_to_validate:
         bt.logging.info(
