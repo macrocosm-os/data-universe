@@ -151,9 +151,12 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor = connection.cursor()
 
             cursor.execute(
-                """INSERT INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)
-                   ON CONFLICT DO UPDATE SET lastUpdated=?, credibility=?""",
-                [hotkey, now_str, credibility, now_str, credibility],
+                "UPDATE OR IGNORE Miner SET lastUpdated=?, credibility=? WHERE hotkey=?",
+                [now_str, credibility, hotkey],
+            )
+            cursor.execute(
+                """INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)""",
+                [hotkey, now_str, credibility],
             )
             connection.commit()
 
@@ -181,7 +184,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
         # Upsert this Validator's minerId for the specified hotkey.
-        miner_id = self._upsert_miner(index.hotkey, now_str, credibility)
+        with self.upsert_miner_index_lock:
+            miner_id = self._upsert_miner(index.hotkey, now_str, credibility)
 
         # Parse every DataEntityBucket from the index into a list of values to insert.
         values = []

@@ -6,7 +6,7 @@ The Miner stores all scraped data in a local database.
 
 # System Requirements
 
-Miners do not require a GPU and should be able to run on a low-tier machine, as long as it has sufficient network bandwidth and disk space.
+Miners do not require a GPU and should be able to run on a low-tier machine, as long as it has sufficient network bandwidth and disk space. Must have python >= 3.10.
 
 # Getting Started
 
