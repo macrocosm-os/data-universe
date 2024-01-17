@@ -304,6 +304,7 @@ async def test_validate():
 
     # Now modify the entities to make them invalid and check validation fails.
     good_entity = true_entities[1]
+    good_comment_entity = true_entities[2]
     bad_entities = [
         good_entity.copy(
             update={
@@ -319,6 +320,11 @@ async def test_validate():
             update={"datetime": good_entity.datetime + dt.timedelta(seconds=1)}
         ),
         good_entity.copy(update={"label": DataLabel(value="bittensor_")}),
+        good_comment_entity.copy(
+            update={
+                "content": b'{"id": "t1_kc3w8lk", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?", "createdAt": "2023-12-05T16:35:16+00:00", "dataType": "comment", "parentId": "extra-long-parent-id"}'
+            }
+        ),
     ]
 
     for entity in bad_entities:
