@@ -73,7 +73,7 @@ setup(
     include_package_data=True,
     author_email="sid.data.universe@gmail.com",
     license="MIT",
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=requirements,
     classifiers=[
         "Development Status :: 3 - Alpha",
@@ -81,8 +81,6 @@ setup(
         "Topic :: Software Development :: Build Tools",
         "License :: OSI Approved :: MIT License",
         "Programming Language :: Python :: 3 :: Only",
-        "Programming Language :: Python :: 3.8",
-        "Programming Language :: Python :: 3.9",
         "Programming Language :: Python :: 3.10",
         "Topic :: Scientific/Engineering",
         "Topic :: Scientific/Engineering :: Mathematics",
