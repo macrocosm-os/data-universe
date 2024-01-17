@@ -315,6 +315,8 @@ async def test_scrape():
 async def test_validate():
     scraper = RedditCustomScraper()
 
+    # This test covers a top level comment, a submission, and a nested comment with both the correct parent id and the submission id in order.
+    # Previous versions of the custom scraper incorrectly got the submission id as the parent id for nested comments.
     true_entities = [
         DataEntity(
             uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3vd3n/",
