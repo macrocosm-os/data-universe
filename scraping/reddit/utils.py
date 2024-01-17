@@ -38,7 +38,7 @@ def validate_reddit_content(
         )
 
     if actual_content != content_to_validate:
-        bt.logging.trace(
+        bt.logging.info(
             f"RedditContent does not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
