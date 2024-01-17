@@ -73,7 +73,7 @@ setup(
     include_package_data=True,
     author_email="sid.data.universe@gmail.com",
     license="MIT",
-    python_requires=">=3.8",
+    python_requires=">=3.10",
     install_requires=requirements,
     classifiers=[
         "Development Status :: 3 - Alpha",
