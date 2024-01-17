@@ -406,6 +406,11 @@ class Validator(BaseNeuron):
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
 
+        if not self.config.wandb.off:
+            self.new_wandb_run()
+        else:
+            bt.logging.warning("Not logging to wandb.")
+
         bt.logging.info("Setting up validator.")
 
         # Setup the DB.
@@ -420,11 +425,6 @@ class Validator(BaseNeuron):
             self.serve_axon()
         else:
             bt.logging.warning("Axon off, not serving ip to chain.")
-
-        if not self.config.wandb.off:
-            self.new_wandb_run()
-        else:
-            bt.logging.warning("Not logging to wandb.")
 
         self.is_setup = True
 
