@@ -37,6 +37,12 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
+    # Ignore exact parent id here until all scraped data has been scraped with correct parent id (~30 days):
+    # Since the mistake was to assign the submission id which is always earlier and therefore smaller there is no need
+    # to check size and the basic validation will not find a smaller entity either.
+    actual_content.parent_id = None
+    content_to_validate.parent_id = None
+
     if actual_content != content_to_validate:
         bt.logging.info(
             f"RedditContent does not match: {actual_content} != {content_to_validate}"
