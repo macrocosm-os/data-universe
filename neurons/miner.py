@@ -24,7 +24,7 @@ import traceback
 import typing
 import bittensor as bt
 import datetime as dt
-from common import constants, utils
+from common import monitoring, constants, utils
 from common.data import CompressedMinerIndex
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 from neurons.config import NeuronType
@@ -32,6 +32,7 @@ from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
+from datadog import statsd
 
 from neurons.base_neuron import BaseNeuron
 
@@ -88,6 +89,9 @@ class Miner(BaseNeuron):
             miner_storage=self.storage,
             config=scraping_config,
         )
+
+        # Configure monitoring
+        monitoring.initialize(self.config)
 
         # Configure per hotkey request limits.
         self.request_lock = threading.RLock()
@@ -251,6 +255,9 @@ class Miner(BaseNeuron):
         )
         bt.logging.info(log)
 
+        statsd.gauge("position", position)
+
+    @statsd.timed("get_index")
     async def get_index(self, synapse: GetMinerIndex) -> GetMinerIndex:
         """Runs after the GetMinerIndex synapse has been deserialized (i.e. after synapse.data is available)."""
         bt.logging.info(
@@ -270,10 +277,15 @@ class Miner(BaseNeuron):
                     bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
                 )
             synapse.compressed_index_serialized = compressed_index.json()
+            buckets = CompressedMinerIndex.bucket_count(compressed_index)
+            size = CompressedMinerIndex.size_bytes(compressed_index)
             bt.logging.success(
-                f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
-                + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
+                f"Returning compressed miner index of {size} bytes "
+                + f"across {buckets} buckets to {synapse.dendrite.hotkey}."
             )
+
+            statsd.gauge("index.buckets", buckets)
+            statsd.gauge("index.size", size)
         else:
             synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
 
@@ -286,6 +298,11 @@ class Miner(BaseNeuron):
                 f"Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets "
                 + f"to {synapse.dendrite.hotkey}."
             )
+
+            statsd.gauge("index.buckets", len(synapse.data_entity_buckets))
+            statsd.gauge("index.size", size)
+
+        statsd.increment("index.version", tags=[f"version:{synapse.version}"])
 
         synapse.version = constants.PROTOCOL_VERSION
 
@@ -306,6 +323,8 @@ class Miner(BaseNeuron):
         bt.logging.info(
             f"Got to a GetDataEntityBucket request from {synapse.dendrite.hotkey} for Bucket ID: {str(synapse.data_entity_bucket_id)}."
         )
+
+        statsd.increment("qps.get_data_entity_bucket")
 
         # List all the data entities that this miner has for the requested DataEntityBucket.
         synapse.data_entities = self.storage.list_data_entities_in_data_entity_bucket(

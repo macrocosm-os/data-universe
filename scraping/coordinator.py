@@ -1,15 +1,17 @@
 import asyncio
+import dataclasses
 import functools
 import random
 import threading
 import traceback
 import bittensor as bt
 import datetime as dt
-from typing import Dict, List, Optional
+from typing import Any, Awaitable, Coroutine, Dict, List, Optional
 import numpy
 from pydantic import Field, PositiveInt
+from datadog import statsd
 
-from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
+from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel, TimeBucket
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScrapeConfig, ScraperId
 from storage.miner.miner_storage import MinerStorage
@@ -139,6 +141,11 @@ class ScraperCoordinator:
             """Notifies the tracker that a scrape has been scheduled."""
             self.last_scrape_time_per_scraper_id[scraper_id] = now
 
+    @dataclasses.dataclass(frozen=True)
+    class WorkItem:
+        scrape_fn: Awaitable[List[DataEntity]]
+        scraper_id: ScraperId
+
     def __init__(
         self,
         scraper_provider: ScraperProvider,
@@ -204,7 +211,11 @@ class ScraperCoordinator:
                     # now rather than being lazily evaluated (if a lambda was used).
                     # https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/cell-var-from-loop.html#cell-var-from-loop-w0640
                     bt.logging.trace(f"Adding scrape task for {scraper_id}: {config}.")
-                    self.queue.put_nowait(functools.partial(scraper.scrape, config))
+                    item = ScraperCoordinator.WorkItem(
+                        scrape_fn=functools.partial(scraper.scrape, config),
+                        scraper_id=scraper_id,
+                    )
+                    self.queue.put_nowait(item)
 
                 self.tracker.on_scrape_scheduled(scraper_id, now)
 
@@ -217,11 +228,19 @@ class ScraperCoordinator:
         while self.is_running:
             try:
                 # Wait for a scraping task to be added to the queue.
-                scrape_fn = await self.queue.get()
+                work_item = await self.queue.get()
+                scrape_fn = work_item.scrape_fn
 
                 # Perform the scrape
                 data_entities = await scrape_fn()
                 self.storage.store_data_entities(data_entities)
                 self.queue.task_done()
+
+                statsd.increment(
+                    "scrape", tags=["status:success", f"scraper:{work_item.scraper_id}"]
+                )
             except Exception as e:
+                statsd.increment(
+                    "scrape", tags=["status:failure", f"scraper:{work_item.scraper_id}"]
+                )
                 bt.logging.error("Worker " + name + ": " + traceback.format_exc())
