@@ -645,6 +645,74 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Confirm we get back the expected summaries.
         self.assertEqual(data_entity_buckets, [expected_bucket_1])
 
+    def test_list_data_entity_buckets_ordered_with_time(self):
+        """Tests that we can list the data entity buckets from storage, returning the most valuable buckets."""
+        now = dt.datetime.now()
+
+        old_bucket = DataEntity(
+            uri="test_entity_1",
+            datetime=now
+            - dt.timedelta(days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS + 1),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+
+        # Create two entities for bucket 2.
+        bucket2_datetime = now
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+
+        # Store the biggest bucket, but make it old enough that it's less valuable than the
+        # smaller, more recent bucket.
+        bucket3_entity1 = DataEntity(
+            uri="test_entity_4",
+            datetime=now
+            - dt.timedelta(days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS - 1),
+            source=DataSource.X,
+            label=DataLabel(value="label_3"),
+            content=bytes(70),
+            content_size_bytes=70,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [old_bucket, bucket2_entity1, bucket2_entity2, bucket3_entity1]
+        )
+
+        # Get the index.
+        index = self.test_storage.get_compressed_index(bucket_count_limit=1)
+
+        self.assertEqual(1, len(index.sources))
+        self.assertTrue(DataSource.X in index.sources)
+        self.assertEqual(1, len(index.sources[DataSource.X]))
+
+        compressed_bucket = index.sources[DataSource.X][0]
+
+        self.assertEqual(
+            compressed_bucket,
+            CompressedEntityBucket(
+                label="label_2",
+                time_bucket_ids=[TimeBucket.from_datetime(bucket2_datetime).id],
+                sizes_bytes=[50],
+            ),
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

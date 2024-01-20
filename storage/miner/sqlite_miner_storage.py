@@ -250,15 +250,20 @@ class SqliteMinerStorage(MinerStorage):
                 - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
             ).id
 
+            current_bucket_id = TimeBucket.from_datetime(dt.datetime.now()).id
+
             # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
             cursor.execute(
-                """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
+                """SELECT SUM(contentSizeBytes) AS bucketSize, SUM(contentSizeBytes * (((timeBucketId - ?) * 0.5) / (? - ?)  + 0.5)) AS timeAdjustedSize, timeBucketId, source, label FROM DataEntity
                         WHERE timeBucketId >= ?
                         GROUP BY timeBucketId, source, label
-                        ORDER BY bucketSize DESC
+                        ORDER BY timeAdjustedSize DESC
                         LIMIT ?
                         """,
                 [
+                    oldest_time_bucket_id,
+                    current_bucket_id,
+                    oldest_time_bucket_id,
                     oldest_time_bucket_id,
                     bucket_count_limit,
                 ],
@@ -329,15 +334,19 @@ class SqliteMinerStorage(MinerStorage):
                 dt.datetime.now()
                 - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
             ).id
+            current_bucket_id = TimeBucket.from_datetime(dt.datetime.now()).id
             # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
             cursor.execute(
-                """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
+                """SELECT SUM(contentSizeBytes) AS bucketSize, SUM(contentSizeBytes * (((timeBucketId - ?) * 0.5) / (? - ?)  + 0.5)) AS timeAdjustedSize, timeBucketId, source, label FROM DataEntity
                         WHERE timeBucketId >= ?
                         GROUP BY timeBucketId, source, label
-                        ORDER BY bucketSize DESC
+                        ORDER BY timeAdjustedSize DESC
                         LIMIT ?
                         """,
                 [
+                    oldest_time_bucket_id,
+                    current_bucket_id,
+                    oldest_time_bucket_id,
                     oldest_time_bucket_id,
                     constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
                 ],
