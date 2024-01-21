@@ -737,11 +737,14 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     @unittest.skip("Skip the large index test by default.")
     def test_many_large_indexes_perf(self):
         """Inserts 200 miners with maximal indexes and reads them back."""
+        max_buckets = DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+
         labels = [f"label{i}" for i in range(100_000)]
         time_buckets = [i for i in range(1000, 10_000)]
-        miners = [f"hotkey{i}" for i in range(50)]
+        miners = [f"hotkey{i}" for i in range(200)]
 
         for miner in miners:
+            # Split max buckets equaly between sources with reddit having 100 time buckets and x having 500.
             buckets_by_source = {
                 DataSource.REDDIT: [
                     CompressedEntityBucket(
@@ -749,7 +752,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                         time_bucket_ids=random.sample(time_buckets, 100),
                         sizes_bytes=[i for i in range(100)],
                     )
-                    for label in random.sample(labels, 5_000)
+                    for label in random.sample(labels, int(max_buckets/2/100))
                 ],
                 DataSource.X: [
                     CompressedEntityBucket(
@@ -757,7 +760,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                         time_bucket_ids=random.sample(time_buckets, 500),
                         sizes_bytes=[i for i in range(500)],
                     )
-                    for label in random.sample(labels, 1_000)
+                    for label in random.sample(labels, int(max_buckets/2/500))
                 ],
             }
             index = CompressedMinerIndex(sources=buckets_by_source)
@@ -765,7 +768,9 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             self.test_storage.upsert_compressed_miner_index(
                 index, miner, credibility=random.random()
             )
-            print(f"Inserted index for miner {miner} in {time.time() - start}")
+            print(
+                f"Inserted index of {CompressedMinerIndex.bucket_count(index)} buckets for miner {miner} in {time.time() - start}"
+            )
 
         for i in range(10):
             start = time.time()
