@@ -196,9 +196,9 @@ class CompressedMinerIndex(BaseModel):
             for compressed_buckets in sources.values()
             for compressed_bucket in compressed_buckets
         )
-        if size > constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3:
+        if size > constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4:
             raise ValueError(
-                f"Compressed index is too large. {size} buckets > {constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3}"
+                f"Compressed index is too large. {size} buckets > {constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4}"
             )
         return sources
 

@@ -261,7 +261,11 @@ class Miner(BaseNeuron):
             # List all the data entity buckets that this miner currently has.
             compressed_index = None
             # Return the appropriate amount of max buckets based on protocol of the requesting validator.
-            if synapse.version == 3:
+            if synapse.version == 4:
+                compressed_index = self.storage.get_compressed_index(
+                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+                )
+            elif synapse.version == 3:
                 compressed_index = self.storage.get_compressed_index(
                     bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
                 )
