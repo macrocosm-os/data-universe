@@ -26,4 +26,4 @@ SCORE_GROWTH_LIMIT_THRESHOLD = utils.mb_to_bytes(1000)
 SCORE_GROWTH_LIMIT_PERCENT = 1.05
 
 # Min evaluation period that must pass before a validator re-evaluates a miner.
-MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=30)
+MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)

@@ -130,7 +130,7 @@ class Validator(BaseNeuron):
             responses = await dendrite.forward(
                 axons=[miner_axon],
                 synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
-                timeout=300,
+                timeout=120,
             )
 
         response = vali_utils.get_single_successful_response(responses, GetMinerIndex)
@@ -244,7 +244,7 @@ class Validator(BaseNeuron):
                     data_entity_bucket_id=chosen_data_entity_bucket.id,
                     version=constants.PROTOCOL_VERSION,
                 ),
-                timeout=180,
+                timeout=120,
             )
 
         data_entity_bucket = vali_utils.get_single_successful_response(
@@ -389,7 +389,7 @@ class Validator(BaseNeuron):
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
         tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
-        done, pending = await asyncio.wait(tasks, timeout=300)
+        done, pending = await asyncio.wait(tasks, timeout=180)
 
         for future in pending:
             future.cancel()  # Cancel unfinished tasks.
