@@ -34,7 +34,7 @@ class MetagraphSyncer:
         self.is_running = False
         self.done_initial_sync = False
         self.lock = threading.RLock()
-        self.notify_listener_thrad_pool = ThreadPoolExecutor(max_workers=1)
+        self.notify_listener_thread_pool = ThreadPoolExecutor(max_workers=1)
 
     def do_initial_sync(self):
         """Performs an initial sync of all metagraphs.
@@ -45,8 +45,8 @@ class MetagraphSyncer:
 
         for netuid in self.config.keys():
             fn = functools.partial(self.subtensor.metagraph, netuid)
+            metagraph = utils.run_in_subprocess(fn, ttl=120)
             with self.lock:
-                metagraph = utils.run_in_subprocess(fn, ttl=120)
                 state = self.metagraph_map[netuid]
                 state.metagraph = metagraph
                 state.last_synced_time = datetime.now()
@@ -91,14 +91,18 @@ class MetagraphSyncer:
                 )
                 await asyncio.sleep(60)
 
-    def _run(self):
+    async def _run_async(self):
         # For each netuid we should sync metagraphs for, spawn a Task to sync it.
-        asyncio.gather(
+        await asyncio.wait(
             [
                 self._sync_metagraph_loop(netuid, cadence)
                 for netuid, cadence in self.config.items()
-            ]
+            ],
+            return_when=asyncio.ALL_COMPLETED,
         )
+
+    def _run(self):
+        asyncio.run(self._run_async())
         bt.logging.info("MetagraphSyncer _run complete.")
 
     def register_listener(
@@ -136,7 +140,7 @@ class MetagraphSyncer:
 
         for listener in state.listeners:
             try:
-                await self.notify_listener_thrad_pool.submit(
+                await self.notify_listener_thread_pool.submit(
                     listener(state.metagraph, netuid)
                 )
             except Exception:
