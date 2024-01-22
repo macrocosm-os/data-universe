@@ -272,7 +272,7 @@ class Validator(BaseNeuron):
         # Perform basic validation on the entities.
         bt.logging.info(
             f"{hotkey}: Performing basic validation on Bucket ID: {chosen_data_entity_bucket.id} containing "
-            + f"{len(data_entity_bucket.data_entities)} entities."
+            + f" {chosen_data_entity_bucket.size_bytes} bytes across {len(data_entity_bucket.data_entities)} entities."
         )
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
