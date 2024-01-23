@@ -17,7 +17,7 @@
 
 
 import copy
-import datetime
+import datetime as dt
 import sys
 import traceback
 import torch
@@ -27,66 +27,67 @@ import time
 import datetime as dt
 import os
 import wandb
-from common import constants
-from common.data_v2 import ScorableMinerIndex
+from common.metagraph_syncer import MetagraphSyncer
 import common.utils as utils
 import bittensor as bt
-from common.data import (
-    CompressedMinerIndex,
-    DataEntityBucket,
-    DataEntity,
-    DataSource,
-    MinerIndex,
-)
-from common.protocol import GetDataEntityBucket, GetMinerIndex
-from neurons.config import NeuronType
-from rewards.data_value_calculator import DataValueCalculator
-from scraping.provider import ScraperProvider
-from scraping.scraper import ScraperId, ValidationResult
-from storage.validator.sqlite_memory_validator_storage import (
-    SqliteMemoryValidatorStorage,
-)
-from storage.validator.validator_storage import ValidatorStorage
-from vali_utils.miner_iterator import MinerIterator
-from vali_utils import utils as vali_utils
-
-from typing import List, Optional, Type
+from neurons.config import NeuronType, check_config, create_config
+from vali_utils.miner_evaluator import MinerEvaluator
 from traceback import print_exception
 
-from neurons.base_neuron import BaseNeuron
-from rewards.miner_scorer import MinerScorer
+from neurons import __spec_version__ as spec_version
 
 from rich.table import Table
 from rich.console import Console
 
 
-class Validator(BaseNeuron):
-    SCORER_FILENAME = "scorer.pickle"
+class Validator:
+    def __init__(
+        self,
+        metagraph_syncer: MetagraphSyncer,
+        evaluator: MinerEvaluator,
+        uid: int,
+        config=None,
+        subtensor: bt.subtensor = None,
+    ):
+        """
 
-    # Mapping of scrapers to use based on the data source to validate.
-    PREFERRED_SCRAPERS = {
-        DataSource.X: ScraperId.X_FLASH,
-        DataSource.REDDIT: ScraperId.REDDIT_CUSTOM,
-    }
+        Args:
+            metagraph_syncer (MetagraphSyncer): The syncer must already be initialized, with the initial metagraphs synced.
+            evaluator (MinerEvaluator): The evaluator to evaluate miners.
+            uid (int): The uid of the validator.
+            config (_type_, optional): _description_. Defaults to None.
+            subtensor (bt.subtensor, optional): _description_. Defaults to None.
+        """
+        self.metagraph_syncer = metagraph_syncer
+        self.evaluator = evaluator
+        self.uid = uid
 
-    def __init__(self, config=None):
-        super().__init__(config=config)
+        self.config = copy.deepcopy(config or create_config(NeuronType.VALIDATOR))
+        check_config(self.config)
 
-        # Save a copy of the hotkeys to local memory.
-        self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+        bt.logging.info(self.config)
 
-        # Set up initial scoring weights for validation
-        self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
+        # The wallet holds the cryptographic key pairs for the miner.
+        self.wallet = bt.wallet(config=self.config)
+        bt.logging.info(f"Wallet: {self.wallet}.")
+
+        # The subtensor is our connection to the Bittensor blockchain.
+        self.subtensor = subtensor or bt.subtensor(config=self.config)
+        bt.logging.info(f"Subtensor: {self.subtensor}.")
+
+        # The metagraph holds the state of the network, letting us know about other validators and miners.
+        self.metagraph = self.metagraph_syncer.get_metagraph(self.config.netuid)
+        self.metagraph_syncer.register_listener(
+            self._on_metagraph_updated, netuids=[self.config.netuid]
+        )
+        bt.logging.info(f"Metagraph: {self.metagraph}.")
 
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
-
-        # Setup dependencies.
-        self.miner_iterator = MinerIterator(self.get_miner_uids(self.metagraph))
-        self.scraper_provider = ScraperProvider()
-
-        # Setup storage in setup()
-        self.storage: ValidatorStorage = None
+        self.axon = None
+        self.step = 0
+        self.wandb_run_start = None
+        self.wandb_run = None
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -95,312 +96,6 @@ class Validator(BaseNeuron):
         self.lock = threading.RLock()
         self.last_eval_time = dt.datetime.utcnow()
         self.is_setup = False
-
-    def neuron_type(self) -> NeuronType:
-        return NeuronType.VALIDATOR
-
-    def serve_axon(self):
-        """Serve axon to enable external connections."""
-
-        try:
-            # TODO: Expose a query endpoint on this axon
-            self.axon = bt.axon(wallet=self.wallet, config=self.config)
-
-            self.subtensor.serve_axon(
-                netuid=self.config.netuid,
-                axon=self.axon,
-            )
-
-            bt.logging.info(
-                f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
-            )
-        except Exception as e:
-            bt.logging.error(f"Failed to setup Axon: {e}.")
-            sys.exit(1)
-
-    async def _update_and_get_miner_index(
-        self, hotkey: str, uid: int, miner_axon: bt.AxonInfo
-    ) -> Optional[ScorableMinerIndex]:
-        """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
-
-        bt.logging.info(f"{hotkey}: Getting MinerIndex from miner.")
-
-        responses: List[GetMinerIndex] = None
-        async with bt.dendrite(wallet=self.wallet) as dendrite:
-            responses = await dendrite.forward(
-                axons=[miner_axon],
-                synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
-                timeout=120,
-            )
-
-        response = vali_utils.get_single_successful_response(responses, GetMinerIndex)
-        if not response:
-            bt.logging.info(
-                f"{hotkey}: Miner failed to responsd with an index. Using last known index if present."
-            )
-            # Miner failed to update the index. Use the latest index, if present.
-            return self.storage.read_miner_index(hotkey)
-
-        # Validate the index.
-        miner_index = None
-        try:
-            miner_index = vali_utils.get_miner_index_from_response(response, hotkey)
-        except ValueError as e:
-            bt.logging.info(
-                f"{hotkey}: Miner returned an invalid index. Reason: {e}. Using last known index if present."
-            )
-            # Miner returned an invalid index. Use the latest index, if present.
-            return self.storage.read_miner_index(hotkey)
-
-        assert miner_index is not None, "Miner index should not be None."
-
-        # Miner replied with a valid index. Store it and return it.
-        miner_credibility = self.scorer.get_miner_credibility(uid)
-        if isinstance(miner_index, MinerIndex):
-            # Calculate total size of received index for logging.
-            size = 0
-            for bucket in miner_index.data_entity_buckets:
-                size += bucket.size_bytes
-            bt.logging.success(
-                f"{hotkey}: Got new uncompressed miner index of {size} bytes across {len(miner_index.data_entity_buckets)} buckets."
-            )
-            self.storage.upsert_miner_index(miner_index, miner_credibility)
-        else:
-            assert isinstance(
-                miner_index, CompressedMinerIndex
-            ), f"Expected either a MinerIndex or CompressedMinerIndex but got {type(miner_index)}."
-            bt.logging.success(
-                f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
-                + f"across {CompressedMinerIndex.bucket_count(miner_index)}."
-            )
-            self.storage.upsert_compressed_miner_index(
-                miner_index, hotkey, miner_credibility
-            )
-
-        return self.storage.read_miner_index(hotkey)
-
-    def _on_start_miner_eval(self):
-        with self.lock:
-            self.last_eval_time = dt.datetime.utcnow()
-
-    def is_healthy(self) -> bool:
-        """Returns true if the validator is healthy and is evaluating Miners."""
-        with self.lock:
-            return dt.datetime.utcnow() - self.last_eval_time < datetime.timedelta(
-                minutes=35
-            )
-
-    # TODO: Pull this out into a separate MinerEvaluator to make this more testable.
-    async def eval_miner(self, uid: int) -> None:
-        """Evaluates a miner and updates their score.
-
-        Specifically:
-            1. Gets the latest index from the miner
-            2. Chooses a random data entity bucket to query
-            3. Performs basic validation on the data entity bucket (right labels, matching size, etc.)
-            4. Samples data from the data entity bucket and verifies the data is correct
-            5. Passes the validation result to the scorer to update the miner's score.
-        """
-        axon_info = self.metagraph.axons[uid]
-        hotkey = self.metagraph.hotkeys[uid]
-
-        self._on_start_miner_eval()
-
-        bt.logging.info(f"{hotkey}: Evaluating miner.")
-
-        # Query the miner for the latest index.
-        index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
-        if not index:
-            # The miner hasn't provided an index yet, so we can't validate them. Count as a failed validation.
-            bt.logging.info(
-                f"{hotkey}: Failed to get an index for miner. Counting as a failed validation."
-            )
-            self.scorer.on_miner_evaluated(
-                uid,
-                None,
-                [
-                    ValidationResult(
-                        is_valid=False,
-                        reason="No available miner index.",
-                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
-                    )
-                ],
-            )
-            return
-
-        # From that index, find a data entity bucket to sample and get it from the miner.
-        chosen_data_entity_bucket: DataEntityBucket = (
-            vali_utils.choose_data_entity_bucket_to_query(index)
-        )
-        bt.logging.info(
-            f"{hotkey} Querying miner for Bucket ID: {chosen_data_entity_bucket.id}."
-        )
-
-        responses = None
-        async with bt.dendrite(wallet=self.wallet) as dendrite:
-            responses = await dendrite.forward(
-                axons=[axon_info],
-                synapse=GetDataEntityBucket(
-                    data_entity_bucket_id=chosen_data_entity_bucket.id,
-                    version=constants.PROTOCOL_VERSION,
-                ),
-                timeout=120,
-            )
-
-        data_entity_bucket = vali_utils.get_single_successful_response(
-            responses, GetDataEntityBucket
-        )
-        # Treat a failed response the same way we treat a failed validation.
-        # If we didn't, the miner could just not respond to queries for data entity buckets it doesn't have.
-        if data_entity_bucket is None:
-            bt.logging.info(
-                f"{hotkey}: Miner returned an invalid/failed response for Bucket ID: {chosen_data_entity_bucket.id}."
-            )
-            self.scorer.on_miner_evaluated(
-                uid,
-                index,
-                [
-                    ValidationResult(
-                        is_valid=False,
-                        reason="Response failed or is invalid.",
-                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
-                    )
-                ],
-            )
-            return
-
-        # Perform basic validation on the entities.
-        bt.logging.info(
-            f"{hotkey}: Performing basic validation on Bucket ID: {chosen_data_entity_bucket.id} containing "
-            + f" {chosen_data_entity_bucket.size_bytes} bytes across {len(data_entity_bucket.data_entities)} entities."
-        )
-
-        data_entities: List[DataEntity] = data_entity_bucket.data_entities
-        (valid, reason) = vali_utils.are_entities_valid(
-            data_entities, chosen_data_entity_bucket
-        )
-        if not valid:
-            bt.logging.info(
-                f"{hotkey}: Failed basic entity validation on Bucket ID: {chosen_data_entity_bucket.id} with reason: {reason}"
-            )
-            self.scorer.on_miner_evaluated(
-                uid,
-                index,
-                [
-                    ValidationResult(
-                        is_valid=False,
-                        reason=reason,
-                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
-                    )
-                ],
-            )
-            return
-
-        # Perform uniqueness validation on the entity contents.
-        # If we didn't, the miner could just return the same data over and over again.
-        unique = vali_utils.are_entities_unique(data_entities)
-        if not unique:
-            bt.logging.info(
-                f"{hotkey}: Failed enitity uniqueness checks on Bucket ID: {chosen_data_entity_bucket.id}."
-            )
-            self.scorer.on_miner_evaluated(
-                uid,
-                index,
-                [
-                    ValidationResult(
-                        is_valid=False,
-                        reason="Duplicate entities found.",
-                        content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
-                    )
-                ],
-            )
-            return
-
-        # Basic validation and uniqueness passed. Now sample some entities for data correctness.
-        entities_to_validate: List[DataEntity] = vali_utils.choose_entities_to_verify(
-            data_entities
-        )
-
-        entity_uris = [entity.uri for entity in entities_to_validate]
-
-        bt.logging.info(
-            f"{hotkey}: Basic validation on Bucket ID: {chosen_data_entity_bucket.id} passed. Validating uris: {entity_uris}."
-        )
-
-        scraper = self.scraper_provider.get(
-            Validator.PREFERRED_SCRAPERS[chosen_data_entity_bucket.id.source]
-        )
-        validation_results = await scraper.validate(entities_to_validate)
-
-        bt.logging.success(
-            f"{hotkey}: Data validation on selected entities finished with results: {validation_results}"
-        )
-
-        self.scorer.on_miner_evaluated(uid, index, validation_results)
-
-    async def run_next_eval_batch(self) -> int:
-        """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
-
-        Args:
-            block (int): The block at which we started this evaluation.
-        """
-
-        # Run in batches of 10.
-        # TODO: Maybe make this configurable and run evaluations based on expected throughput
-        miners_to_eval = 10
-
-        # Check if the next miner is due an update.
-        next_uid = self.miner_iterator.peek()
-        hotkey = self.metagraph.hotkeys[next_uid]
-        last_evaluated = self.storage.read_miner_last_updated(hotkey)
-        now = datetime.datetime.utcnow()
-        due_update = (
-            last_evaluated is None
-            or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
-        )
-
-        # If the next miner is not due an update, then all subsequent miners are also not due an update.
-        # So we wait until this miner is due an update.
-        if not due_update:
-            return (
-                last_evaluated + constants.MIN_EVALUATION_PERIOD - now
-            ).total_seconds()
-
-        # Otherwise, execute the next batch of evaluations and skip any miners who were evaluated recently.
-        # Use a set in case the network has fewer than 10 miners.
-        uids_to_check = {next(self.miner_iterator) for _ in range(miners_to_eval)}
-        uids_to_eval = set()
-
-        # Evaluate all miners in the batch who are due an update.
-        for uid in uids_to_check:
-            hotkey = self.metagraph.hotkeys[uid]
-            last_evaluated = self.storage.read_miner_last_updated(hotkey)
-
-            # If we have aleady evaluated this miner recently then do not evaluate it.
-            if (
-                not last_evaluated
-                or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
-            ):
-                uids_to_eval.add(uid)
-
-        assert uids_to_eval, "Expected at least 1 miner to evaluate."
-
-        bt.logging.info(
-            f"Running validation on the following batch of uids: {uids_to_eval}."
-        )
-        tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
-        done, pending = await asyncio.wait(tasks, timeout=180)
-
-        for future in pending:
-            future.cancel()  # Cancel unfinished tasks.
-
-        if pending:
-            bt.logging.info(
-                f"Validator run next eval batch timed out on the following calls: {pending}."
-            )
-
-        # Run the next evaluation batch immediately.
-        return 0
 
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
@@ -412,9 +107,6 @@ class Validator(BaseNeuron):
             bt.logging.warning("Not logging to wandb.")
 
         bt.logging.info("Setting up validator.")
-
-        # Setup the DB.
-        self.storage = SqliteMemoryValidatorStorage()
 
         # Load any state from previous runs.
         self.load_state()
@@ -455,15 +147,14 @@ class Validator(BaseNeuron):
         """
         Initiates and manages the main loop for the validator, which
 
-        1. Periodically updates the metagraph
+        1. Evaluates miners
         2. Periodically writes the latest scores to the chain
-        3. Evaluates miners
-        4. Saves state
+        3. Saves state
         """
         assert self.is_setup, "Validator must be setup before running."
 
         # Check that validator is registered on the network.
-        self.sync()
+        utils.assert_registered(self.wallet, self.metagraph)
 
         bt.logging.info(
             f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
@@ -478,27 +169,35 @@ class Validator(BaseNeuron):
                     f"Validator running on step({self.step}) block({self.block})."
                 )
 
-                # Run multiple forwards concurrently.
-                next_batch_delay_secs = self.loop.run_until_complete(
-                    self.run_next_eval_batch()
-                )
+                # Ensure validator hotkey is still registered on the network.
+                utils.assert_registered(self.wallet, self.metagraph)
 
-                next_batch_start_time = datetime.datetime.utcnow() + datetime.timedelta(
+                # Evaluate the next batch of miners.
+                next_batch_delay_secs = self.loop.run_until_complete(
+                    self.evaluator.run_next_eval_batch()
+                )
+                self._on_eval_batch_complete()
+
+                # Set the next batch start time.
+                next_batch_start_time = dt.datetime.utcnow() + dt.timedelta(
                     seconds=next_batch_delay_secs
                 )
 
-                # Maybe sync the metagraph and potentially set weights.
-                self.sync()
+                # Maybe set weights.
+                if self.should_set_weights():
+                    self.set_weights()
+
+                # Always save state.
+                self.save_state()
 
                 self.step += 1
 
+                # Now that we've finished a full evaluation loop, compute how long we should
+                # wait until the next evaluation loop.
                 wait_time = max(
                     0,
-                    (
-                        next_batch_start_time - datetime.datetime.utcnow()
-                    ).total_seconds(),
+                    (next_batch_start_time - dt.datetime.utcnow()).total_seconds(),
                 )
-
                 if wait_time > 0:
                     bt.logging.info(
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
@@ -581,15 +280,53 @@ class Validator(BaseNeuron):
                 self.wandb_run.finish()
             bt.logging.debug("Stopped.")
 
-    def get_miner_uids(self, metagraph: bt.metagraph) -> List[int]:
-        """Gets the uids of all miners in the metagraph."""
-        return sorted(
-            [
-                uid.item()
-                for uid in metagraph.uids
-                if utils.is_miner(uid.item(), metagraph) and uid.item() != self.uid
-            ]
-        )
+    def serve_axon(self):
+        """Serve axon to enable external connections."""
+
+        try:
+            # TODO: Expose a query endpoint on this axon
+            self.axon = bt.axon(wallet=self.wallet, config=self.config)
+
+            self.subtensor.serve_axon(
+                netuid=self.config.netuid,
+                axon=self.axon,
+            )
+
+            bt.logging.info(
+                f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
+            )
+        except Exception as e:
+            bt.logging.error(f"Failed to setup Axon: {e}.")
+            sys.exit(1)
+
+    def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
+        """Processes an update to the metagraph"""
+        with self.lock:
+            assert netuid == self.config.netuid
+            self.metagraph = copy.deepcopy(metagraph)
+
+    def _on_eval_batch_complete(self):
+        with self.lock:
+            self.last_eval_time = dt.datetime.utcnow()
+
+    def is_healthy(self) -> bool:
+        """Returns true if the validator is healthy and is evaluating Miners."""
+        with self.lock:
+            return dt.datetime.utcnow() - self.last_eval_time < dt.timedelta(minutes=35)
+
+    def should_set_weights(self) -> bool:
+        # Don't set weights on initialization.
+        if self.step == 0:
+            return False
+
+        # Check if enough epoch blocks have elapsed since the last epoch.
+        if self.config.neuron.disable_set_weights:
+            return False
+
+        # Define appropriate logic for when set weights.
+        return (
+            self.block - self.metagraph.last_update[self.uid]
+        ) > self.config.neuron.epoch_length
 
     def set_weights(self):
         """
@@ -597,8 +334,9 @@ class Validator(BaseNeuron):
         """
         bt.logging.info("Attempting to set weights.")
 
-        scores = self.scorer.get_scores()
-        credibilities = self.scorer.get_credibilities()
+        scorer = self.evaluator.get_scorer()
+        scores = scorer.get_scores()
+        credibilities = scorer.get_credibilities()
 
         # Check if scores contains any NaN values and log a warning if it does.
         if torch.isnan(scores).any():
@@ -651,88 +389,70 @@ class Validator(BaseNeuron):
             uids=processed_weight_uids,
             weights=processed_weights,
             wait_for_finalization=False,
-            version_key=self.spec_version,
+            version_key=spec_version,
         )
 
         bt.logging.success("Finished setting weights.")
 
-    def resync_metagraph(self):
-        """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
-        bt.logging.info("Attempting to resync the metagraph.")
-
-        # Copies state of metagraph before syncing.
-        previous_metagraph = copy.deepcopy(self.metagraph)
-
-        # Sync the metagraph.
-        new_metagraph = self.subtensor.metagraph(netuid=self.config.netuid)
-        with self.lock:
-            self.metagraph = new_metagraph
-
-        bt.logging.success("Successfuly resynced the metagraph.")
-
-        # Check if the metagraph axon info has changed.
-        if previous_metagraph.axons == self.metagraph.axons:
-            return
-
-        bt.logging.info("Metagraph updated, re-syncing hotkeys, and moving averages.")
-        # Zero out all hotkeys that have been replaced.
-        for uid, hotkey in enumerate(self.hotkeys):
-            if hotkey != self.metagraph.hotkeys[uid] or (
-                not utils.is_miner(uid, self.metagraph)
-                and not utils.is_validator(uid, self.metagraph)
-            ):
-                bt.logging.info(f"Hotkey {hotkey} w/ UID {uid} has been unregistered.")
-                self.scorer.reset(uid)  # hotkey has been replaced
-                try:
-                    self.storage.delete_miner(hotkey)
-                except Exception:
-                    bt.logging.error(
-                        f"{hotkey} Failed to delete miner index.",
-                        traceback.format_exc(),
-                    )
-        # Update the iterator. It will keep its current position if possible.
-        self.miner_iterator.set_miner_uids(self.get_miner_uids(self.metagraph))
-
-        # Check to see if the metagraph has changed size.
-        # If so, we need to add new hotkeys and moving averages.
-        if len(self.hotkeys) < len(self.metagraph.hotkeys):
-            self.scorer.resize(self.metagraph.n)
-
-        # Update the hotkeys.
-        self.hotkeys = copy.deepcopy(self.metagraph.hotkeys)
+    @property
+    def block(self):
+        return utils.ttl_get_block(self)
 
     def save_state(self):
         """Saves the state of the validator to a file."""
         bt.logging.trace("Saving validator state.")
 
-        if not os.path.exists(self.config.neuron.full_path):
-            os.makedirs(self.config.neuron.full_path)
-
-        # Save the state of the validator to file.
-        self.scorer.save_state(
-            os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME)
-        )
+        self.evaluator.save_state()
 
     def load_state(self):
         """Loads the state of the validator from a file."""
         bt.logging.info("Loading validator state.")
 
-        # Load the state of the validator from file.
-        filepath = os.path.join(self.config.neuron.full_path, Validator.SCORER_FILENAME)
-        if not os.path.exists(filepath):
-            bt.logging.warning("No scorer state file found. Starting from scratch.")
-            return
-
-        self.scorer.load_state(filepath)
-        bt.logging.success(f"Loaded scorer state from: {filepath}.")
-
-        # Resize the scorer in case the loaded state is old and missing newly added neurons.
-        self.scorer.resize(self.metagraph.n)
+        self.evaluator.load_state()
 
 
-# The main function parses the configuration and runs the validator.
-if __name__ == "__main__":
-    with Validator() as validator:
+def main():
+    """Main constructs the validator with its dependencies."""
+
+    config = create_config(NeuronType.VALIDATOR)
+
+    bt.logging(config=config, logging_dir=config.full_path)
+
+    subtensor = bt.subtensor(config=config)
+    metagraph = subtensor.metagraph(netuid=config.netuid)
+    wallet = bt.wallet(config=config)
+
+    # Get the wallet's UID, if registered.
+    uid = utils.get_uid(wallet, metagraph)
+    if uid:
+        bt.logging.info(
+            f"Running neuron on subnet: {config.netuid} with uid {uid} using network: {subtensor.chain_endpoint}."
+        )
+    else:
+        bt.logging.warning(
+            f"Hotkey {wallet.hotkey.ss58_address} not found in metagraph. Assuming this is a test."
+        )
+        uid = 0
+
+    # Create the metagraph syncer and perform the initial sync.
+    metagraph_syncer = MetagraphSyncer(
+        subtensor, config={config.netuid: config.neuron.epoch_length * 12}
+    )
+    # Perform an initial sync of all tracked metagraphs.
+    metagraph_syncer.do_initial_sync()
+    metagraph_syncer.start()
+
+    evaluator = MinerEvaluator(
+        config=config, uid=uid, metagraph_syncer=metagraph_syncer
+    )
+
+    with Validator(
+        metagraph_syncer=metagraph_syncer,
+        evaluator=evaluator,
+        uid=uid,
+        config=config,
+        subtensor=subtensor,
+    ) as validator:
         while True:
             if not validator.is_healthy():
                 bt.logging.error("Validator is unhealthy. Restarting.")
@@ -741,3 +461,8 @@ if __name__ == "__main__":
                 os._exit(1)
             bt.logging.trace("Validator running...", time.time())
             time.sleep(60)
+
+
+# The main function parses the configuration and runs the validator.
+if __name__ == "__main__":
+    main()

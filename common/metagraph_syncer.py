@@ -1,5 +1,4 @@
 import asyncio
-from concurrent.futures import ThreadPoolExecutor
 import dataclasses
 from dataclasses import field
 from datetime import datetime
@@ -34,7 +33,8 @@ class MetagraphSyncer:
         self.is_running = False
         self.done_initial_sync = False
         self.lock = threading.RLock()
-        self.notify_listener_thread_pool = ThreadPoolExecutor(max_workers=1)
+
+        bt.logging.info(f"MetagraphSyncer created with config: {config}")
 
     def do_initial_sync(self):
         """Performs an initial sync of all metagraphs.
@@ -45,7 +45,7 @@ class MetagraphSyncer:
 
         for netuid in self.config.keys():
             fn = functools.partial(self.subtensor.metagraph, netuid)
-            metagraph = utils.run_in_subprocess(fn, ttl=120)
+            metagraph = utils.run_in_thread(fn, ttl=120, name=f"InitalSync-{netuid}")
             with self.lock:
                 state = self.metagraph_map[netuid]
                 state.metagraph = metagraph
@@ -67,14 +67,19 @@ class MetagraphSyncer:
     async def _sync_metagraph_loop(self, netuid: int, cadence: int):
         while self.is_running:
             # On start, wait cadence before the first sync.
+            bt.logging.trace(f"Syncing metagraph for {netuid} in {cadence} seconds.")
             await asyncio.sleep(cadence)
 
             try:
                 # Intentionally block the shared thread so that we only
                 # sync 1 metagraph at a time.
-                metagraph = utils.run_in_subprocess(
-                    functools.partial(self.subtensor.metagraph, netuid), ttl=120
+                bt.logging.trace(f"Syncing metagraph for {netuid}.")
+                metagraph = utils.run_in_thread(
+                    functools.partial(self.subtensor.metagraph, netuid),
+                    ttl=120,
+                    name=f"Sync-{netuid}",
                 )
+                bt.logging.trace(f"Successfully synced metagraph for {netuid}.")
                 state = None
                 with self.lock:
                     # Store metagraph and sync time
@@ -82,9 +87,7 @@ class MetagraphSyncer:
                     state.metagraph = metagraph
                     state.last_synced_time = datetime.now()
 
-                await self._notify_listeners(state, netuid)
-
-                await asyncio.sleep(cadence)
+                self._notify_listeners(state, netuid)
             except (BaseException, Exception) as e:
                 bt.logging.error(
                     f"Error when syncing metagraph for {netuid}: {e}. Retrying in 60 seconds."
@@ -95,15 +98,17 @@ class MetagraphSyncer:
         # For each netuid we should sync metagraphs for, spawn a Task to sync it.
         await asyncio.wait(
             [
-                self._sync_metagraph_loop(netuid, cadence)
+                asyncio.create_task(self._sync_metagraph_loop(netuid, cadence))
                 for netuid, cadence in self.config.items()
             ],
             return_when=asyncio.ALL_COMPLETED,
         )
 
     def _run(self):
-        asyncio.run(self._run_async())
-        bt.logging.info("MetagraphSyncer _run complete.")
+        try:
+            asyncio.run(self._run_async())
+        finally:
+            bt.logging.info("MetagraphSyncer _run complete.")
 
     def register_listener(
         self, listener: Callable[[bt.metagraph, int], None], netuids: List[int]
@@ -135,14 +140,13 @@ class MetagraphSyncer:
                 raise ValueError(f"Metagraph for {netuid} has not been synced yet.")
             return metagraph
 
-    async def _notify_listeners(self, state: _State, netuid: int):
+    def _notify_listeners(self, state: _State, netuid: int):
         """Notifies listeners of a new metagraph for netuid."""
+        bt.logging.debug(f"Notifying listeners of update to metagraph for {netuid}.")
 
         for listener in state.listeners:
             try:
-                await self.notify_listener_thread_pool.submit(
-                    listener(state.metagraph, netuid)
-                )
+                listener(state.metagraph, netuid)
             except Exception:
                 bt.logging.error(
                     f"Exception caught notifying {netuid} listener of metagraph update.\n{traceback.format_exc()}"
