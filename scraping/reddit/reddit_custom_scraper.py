@@ -32,7 +32,7 @@ class RedditCustomScraper(Scraper):
     Scrapes Reddit data using a personal reddit account.
     """
 
-    USER_AGENT = "User-Agent: python: "
+    USER_AGENT = f"User-Agent: python: {os.getenv('REDDIT_USERNAME')}"
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
@@ -82,8 +82,7 @@ class RedditCustomScraper(Scraper):
                         client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
                         username=os.getenv("REDDIT_USERNAME"),
                         password=os.getenv("REDDIT_PASSWORD"),
-                        user_agent=RedditCustomScraper.USER_AGENT
-                        + os.getenv("REDDIT_USERNAME"),
+                        user_agent=RedditCustomScraper.USER_AGENT,
                     ) as reddit:
                         if reddit_content_to_verify.data_type == RedditDataType.POST:
                             submission = await reddit.submission(
