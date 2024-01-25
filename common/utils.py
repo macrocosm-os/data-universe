@@ -253,10 +253,14 @@ def run_in_subprocess(func: functools.partial, ttl: int, name: str) -> Any:
 
     def wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
         try:
+            print("In subprocess")
             result = func()
+            print(f"Got result {result}")
             queue.put(result)
+            print(f"Put into queue")
         except (Exception, BaseException) as e:
             # Catch exceptions here to add them to the queue.
+            print(f"Got exception {e}")
             queue.put(e)
 
     # Use "fork" (the default on all POSIX except macOS), because pickling doesn't seem

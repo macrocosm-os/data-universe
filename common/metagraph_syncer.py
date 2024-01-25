@@ -36,6 +36,9 @@ class MetagraphSyncer:
 
         bt.logging.info(f"MetagraphSyncer created with config: {config}")
 
+    def get_basic_obj(self):
+        return 5
+
     def do_initial_sync(self):
         """Performs an initial sync of all metagraphs.
 
@@ -44,10 +47,12 @@ class MetagraphSyncer:
         bt.logging.debug("Metagraph syncer do_initial_sync called")
 
         for netuid in self.config.keys():
-            fn = functools.partial(self.subtensor.metagraph, netuid)
+            # fn = functools.partial(self.subtensor.metagraph, netuid)
+            fn = functools.partial(self.get_basic_obj)
             metagraph = utils.run_in_subprocess(
                 fn, ttl=120, name=f"InitalSync-{netuid}"
             )
+            bt.logging.success(f"Got metagraph for {netuid}")
             with self.lock:
                 state = self.metagraph_map[netuid]
                 state.metagraph = metagraph
