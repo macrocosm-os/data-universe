@@ -264,18 +264,17 @@ def run_in_subprocess(func: functools.partial, ttl: int, name: str) -> Any:
     ctx = multiprocessing.get_context("fork")
     queue = ctx.Queue()
     process = ctx.Process(target=wrapped_func, args=[func, queue], name=name)
-
     process.start()
 
-    process.join(timeout=ttl)
+    result = queue.get(block=True, timeout=ttl)
+
+    # Wait for the process to finish gracefully.
+    process.join(ttl=0.5)
 
     if process.is_alive():
         process.terminate()
         process.join()
         raise TimeoutError(f"Failed to {func.func.__name__} after {ttl} seconds")
-
-    # Raises an error if the queue is empty. This is fine. It means our subprocess timed out.
-    result = queue.get(block=False)
 
     # If we put an exception on the queue then raise instead of returning.
     if isinstance(result, Exception):
