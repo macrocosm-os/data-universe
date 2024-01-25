@@ -3,6 +3,7 @@ asyncpraw==7.7.1
 bittensor==6.5.0
 jupyter==1.0.0
 numpy==1.26.2
+psutil
 # Bittensor require pydantic < 2.0.0
 pydantic==1.10.0
 python-dotenv==1.0.0

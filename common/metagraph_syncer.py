@@ -45,7 +45,9 @@ class MetagraphSyncer:
 
         for netuid in self.config.keys():
             fn = functools.partial(self.subtensor.metagraph, netuid)
-            metagraph = utils.run_in_thread(fn, ttl=120, name=f"InitalSync-{netuid}")
+            metagraph = utils.run_in_subprocess(
+                fn, ttl=120, name=f"InitalSync-{netuid}"
+            )
             with self.lock:
                 state = self.metagraph_map[netuid]
                 state.metagraph = metagraph
@@ -61,11 +63,13 @@ class MetagraphSyncer:
         assert self.done_initial_sync, "Must call do_initial_sync before starting"
 
         self.is_running = True
-        thread = threading.Thread(target=self._run, daemon=True)
+        thread = threading.Thread(target=self._run, daemon=False)
         thread.start()
 
     async def _sync_metagraph_loop(self, netuid: int, cadence: int):
-        while self.is_running:
+        # Since this is a non-daemon thread, we need to shut it down when the main thread
+        # exits.
+        while self.is_running and threading.main_thread().is_alive():
             # On start, wait cadence before the first sync.
             bt.logging.trace(f"Syncing metagraph for {netuid} in {cadence} seconds.")
             await asyncio.sleep(cadence)
@@ -74,7 +78,7 @@ class MetagraphSyncer:
                 # Intentionally block the shared thread so that we only
                 # sync 1 metagraph at a time.
                 bt.logging.trace(f"Syncing metagraph for {netuid}.")
-                metagraph = utils.run_in_thread(
+                metagraph = utils.run_in_subprocess(
                     functools.partial(self.subtensor.metagraph, netuid),
                     ttl=120,
                     name=f"Sync-{netuid}",

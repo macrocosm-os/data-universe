@@ -3,6 +3,7 @@
 import datetime as dt
 import functools
 import concurrent
+import multiprocessing
 import pickle
 import sys
 import time
@@ -239,8 +240,8 @@ async def async_run_with_retry(
     raise Exception("Unexpected state: Ran with retry but didn't hit a terminal state")
 
 
-def run_in_thread(func: functools.partial, ttl: int, name=None) -> Any:
-    """Runs the provided function on a thread with 'ttl' seconds to complete.
+def run_in_subprocess(func: functools.partial, ttl: int) -> Any:
+    """Runs the provided function on a subprocess with 'ttl' seconds to complete.
 
     Args:
         func (functools.partial): Function to be run.
@@ -250,15 +251,36 @@ def run_in_thread(func: functools.partial, ttl: int, name=None) -> Any:
         Any: The value returned by 'func'
     """
 
-    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+    def wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
+        try:
+            result = func()
+            queue.put(result)
+        except (Exception, BaseException) as e:
+            # Catch exceptions here to add them to the queue.
+            queue.put(e)
 
-    try:
-        future = executor.submit(func)
-        return future.result(timeout=ttl)
-    except concurrent.futures.TimeoutError as e:
-        bt.logging.error(f"Failed to complete '{name}' within {ttl} seconds.")
-        raise TimeoutError(f"Failed to complete '{name}' within {ttl} seconds.") from e
-    finally:
-        bt.logging.trace(f"Completed {name}")
-        executor.shutdown(wait=False)
-        bt.logging.trace(f"{name} cleaned up successfully")
+    # Use "fork" (the default on all POSIX except macOS), because pickling doesn't seem
+    # to work on "spawn".
+    ctx = multiprocessing.get_context("fork")
+    queue = ctx.Queue()
+    process = ctx.Process(target=wrapped_func, args=[func, queue])
+
+    process.start()
+
+    process.join(timeout=ttl)
+
+    if process.is_alive():
+        process.terminate()
+        process.join()
+        raise TimeoutError(f"Failed to {func.func.__name__} after {ttl} seconds")
+
+    # Raises an error if the queue is empty. This is fine. It means our subprocess timed out.
+    result = queue.get(block=False)
+
+    # If we put an exception on the queue then raise instead of returning.
+    if isinstance(result, Exception):
+        raise result
+    if isinstance(result, BaseException):
+        raise Exception(f"BaseException raised in subprocess: {str(result)}")
+
+    return result
