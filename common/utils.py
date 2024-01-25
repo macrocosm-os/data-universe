@@ -240,7 +240,7 @@ async def async_run_with_retry(
     raise Exception("Unexpected state: Ran with retry but didn't hit a terminal state")
 
 
-def run_in_subprocess(func: functools.partial, ttl: int) -> Any:
+def run_in_subprocess(func: functools.partial, ttl: int, name: str) -> Any:
     """Runs the provided function on a subprocess with 'ttl' seconds to complete.
 
     Args:
@@ -263,7 +263,7 @@ def run_in_subprocess(func: functools.partial, ttl: int) -> Any:
     # to work on "spawn".
     ctx = multiprocessing.get_context("fork")
     queue = ctx.Queue()
-    process = ctx.Process(target=wrapped_func, args=[func, queue])
+    process = ctx.Process(target=wrapped_func, args=[func, queue], name=name)
 
     process.start()
 
