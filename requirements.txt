@@ -1,6 +1,8 @@
+aiohttp==3.9.0
 apify-client==1.6.1
 asyncpraw==7.7.1
 bittensor==6.5.0
+beautifulsoup4==4.12.2
 jupyter==1.0.0
 numpy==1.26.2
 # Bittensor require pydantic < 2.0.0
@@ -8,5 +10,7 @@ pydantic==1.10.0
 python-dotenv==1.0.0
 pytz==2023.3.post1
 rich==13.7.0
+selenium==4.17.2
 torch==2.1.2
 wandb==0.16.2
+webdriver-manager==4.0.1

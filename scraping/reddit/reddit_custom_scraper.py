@@ -1,4 +1,6 @@
 import time
+
+import pytz
 from common import utils
 from common.date_range import DateRange
 from scraping.reddit import model
@@ -21,8 +23,15 @@ import datetime as dt
 import asyncio
 import random
 import os
-
+from bs4 import BeautifulSoup
+import aiohttp
 from dotenv import load_dotenv
+from selenium import webdriver
+from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.support.wait import WebDriverWait
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support import expected_conditions as EC
+from webdriver_manager.chrome import ChromeDriverManager
 
 load_dotenv()
 
@@ -33,6 +42,7 @@ class RedditCustomScraper(Scraper):
     """
 
     USER_AGENT = f"User-Agent: python: {os.getenv('REDDIT_USERNAME')}"
+    CHROME_USER_AGENT = f"python: {os.getenv('REDDIT_USERNAME')}"
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
@@ -71,31 +81,47 @@ class RedditCustomScraper(Scraper):
                 )
                 continue
 
-            # Retrieve the Reddit Post/Comment from PRAW.
             content = None
 
             try:
 
                 async def _get_content():
-                    async with asyncpraw.Reddit(
-                        client_id=os.getenv("REDDIT_CLIENT_ID"),
-                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                        username=os.getenv("REDDIT_USERNAME"),
-                        password=os.getenv("REDDIT_PASSWORD"),
-                        user_agent=RedditCustomScraper.USER_AGENT,
-                    ) as reddit:
-                        if reddit_content_to_verify.data_type == RedditDataType.POST:
-                            submission = await reddit.submission(
-                                url=reddit_content_to_verify.url
-                            )
-                            # Parse the response.
-                            return self._best_effort_parse_submission(submission)
-                        else:
-                            comment = await reddit.comment(
-                                url=reddit_content_to_verify.url
-                            )
-                            # Parse the response.
-                            return self._best_effort_parse_comment(comment)
+                    # Configure webdriver options to run headless on linux.
+                    options = webdriver.ChromeOptions()
+                    options.add_argument("--headless=new")
+                    options.add_argument("--disable-gpu")
+                    options.add_argument("--no-sandbox")
+                    options.add_argument(f"user-agent={RedditCustomScraper.USER_AGENT}")
+
+                    # Create the driver, installing if necessary.
+                    driver = webdriver.Chrome(
+                        service=ChromeService(ChromeDriverManager().install()),
+                        options=options,
+                    )
+
+                    # Get the page using the headless driver.
+                    driver.get(reddit_content_to_verify.url)
+
+                    # Actually can we just use the element?
+                    # innerHTML = driver.execute_script("return document.body.innerHTML")
+
+                    # Wait for the specific comment tree element load.
+                    # Probably a different xpath for posts or deleted things.
+                    xpath = f"//shreddit-comment-tree[@thingid='{reddit_content_to_verify.id}']"
+                    element = WebDriverWait(driver, 5).until(
+                        EC.presence_of_element_located((By.XPATH, xpath))
+                    )
+
+                    if reddit_content_to_verify.data_type == RedditDataType.POST:
+                        return self._best_effort_parse_submission_html(
+                            element.get_attribute("outerHTML"),
+                            reddit_content_to_verify.id,
+                        )
+                    else:
+                        return self._best_effort_parse_comment_html(
+                            element.get_attribute("outerHTML"),
+                            reddit_content_to_verify.id,
+                        )
 
                 content = await utils.async_run_with_retry(
                     _get_content, max_retries=3, delay_seconds=5
@@ -279,6 +305,97 @@ class RedditCustomScraper(Scraper):
 
         return content
 
+    def _best_effort_parse_submission_html(
+        self, submission_html: str, submission_id: str
+    ) -> RedditContent:
+        """Performs a best effort parsing of a Reddit submission html into a RedditContent
+
+        Any errors are logged and ignored."""
+        content = None
+
+        try:
+            submission_soup = BeautifulSoup(submission_html, features="html.parser")
+            pass
+            # user = submission.author.name if submission.author else model.DELETED_USER
+            # content = RedditContent(
+            #     id=submission.name,
+            #     url="https://www.reddit.com"
+            #     + normalize_permalink(submission.permalink),
+            #     username=user,
+            #     communityName=submission.subreddit_name_prefixed,
+            #     body=submission.selftext,
+            #     createdAt=dt.datetime.utcfromtimestamp(submission.created_utc).replace(
+            #         tzinfo=dt.timezone.utc
+            #     ),
+            #     dataType=RedditDataType.POST,
+            #     # Post only fields
+            #     title=submission.title,
+            #     # Comment only fields
+            #     parentId=None,
+            # )
+        except Exception:
+            bt.logging.trace(
+                f"Failed to decode RedditContent from Reddit Submission: {traceback.format_exc()}."
+            )
+
+        return content
+
+    def _best_effort_parse_comment_html(
+        self, comment_html: str, comment_id: str
+    ) -> RedditContent:
+        """Performs a best effort parsing of a Reddit comment html into a RedditContent
+
+        Any errors are logged and ignored."""
+        content = None
+
+        try:
+            comment_soup = BeautifulSoup(comment_html, features="html.parser")
+            comment_tree_element = comment_soup.find("shreddit-comment-tree")
+            comment_element = comment_soup.find(
+                "shreddit-comment", {"thingid": comment_id}
+            )
+
+            # Top level comments do not have a parent id field should use post id instead.
+            parentId = None
+            if "parentid" in comment_element.attrs:
+                parentId = comment_element.attrs["parentid"]
+            else:
+                parentId = comment_element.attrs["postid"]
+
+            # Multiple paragraphs would be different elements. Has extra newlines? How is bold text / links handled?
+            body = comment_element.find("p").text
+            # Drop the microseconds and convert to UTC to match.
+            createdAt = (
+                dt.datetime.strptime(
+                    comment_element.find("time").attrs["datetime"],
+                    "%Y-%m-%dT%H:%M:%S.%fZ",
+                )
+                .replace(microsecond=0)
+                .replace(tzinfo=pytz.utc)
+            )
+
+            # deleted user check
+            content = RedditContent(
+                id=comment_id,
+                url="https://www.reddit.com"
+                + normalize_permalink(comment_element.attrs["permalink"]),
+                username=comment_element.attrs["author"],
+                communityName=comment_tree_element.attrs["subreddit-prefixed-name"],
+                body=body,
+                createdAt=createdAt,
+                dataType=RedditDataType.COMMENT,
+                # Post only fields
+                title=None,
+                # Comment only fields
+                parentId=parentId,
+            )
+        except Exception:
+            bt.logging.trace(
+                f"Failed to decode RedditContent from Reddit Submission: {traceback.format_exc()}."
+            )
+
+        return content
+
 
 async def test_scrape():
     scraper = RedditCustomScraper()
@@ -405,6 +522,6 @@ async def test_u_deleted():
 
 
 if __name__ == "__main__":
-    asyncio.run(test_scrape())
+    # asyncio.run(test_scrape())
     asyncio.run(test_validate())
-    asyncio.run(test_u_deleted())
+    # asyncio.run(test_u_deleted())
