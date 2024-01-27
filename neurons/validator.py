@@ -423,16 +423,8 @@ def main():
     wallet = bt.wallet(config=config)
 
     # Get the wallet's UID, if registered.
+    utils.assert_registered(wallet, metagraph)
     uid = utils.get_uid(wallet, metagraph)
-    if uid:
-        bt.logging.info(
-            f"Running neuron on subnet: {config.netuid} with uid {uid} using network: {subtensor.chain_endpoint}."
-        )
-    else:
-        bt.logging.warning(
-            f"Hotkey {wallet.hotkey.ss58_address} not found in metagraph. Assuming this is a test."
-        )
-        uid = 0
 
     # Create the metagraph syncer and perform the initial sync.
     metagraph_syncer = MetagraphSyncer(
