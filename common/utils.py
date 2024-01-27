@@ -1,14 +1,13 @@
 """General utility functions."""
 
-import asyncio
 import datetime as dt
 import functools
-import multiprocessing
+import concurrent
 import pickle
-from socket import timeout
+import sys
 import time
 from math import floor
-from typing import Any, Callable
+from typing import Any, Callable, List, Optional
 import bittensor as bt
 from functools import lru_cache, update_wrapper
 
@@ -59,6 +58,35 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a validator."""
     return metagraph.validator_permit[uid] and metagraph.S[uid] >= 10_000
+
+
+def get_miner_uids(metagraph: bt.metagraph, my_uid: int) -> List[int]:
+    """Gets the uids of all miners in the metagraph."""
+    return sorted(
+        [
+            uid.item()
+            for uid in metagraph.uids
+            if is_miner(uid.item(), metagraph) and uid.item() != my_uid
+        ]
+    )
+
+
+def get_uid(wallet: bt.wallet, metagraph: bt.metagraph) -> Optional[int]:
+    """Gets the uid of the wallet in the metagraph or None if not registered."""
+    if wallet.hotkey.ss58_address in metagraph.hotkeys:
+        return metagraph.hotkeys.index(wallet.hotkey.ss58_address)
+    return None
+
+
+def assert_registered(wallet: bt.wallet, metagraph: bt.metagraph):
+    """Exits the process if wallet isn't registered in metagraph"""
+    # --- Check for registration.
+    if wallet.hotkey.ss58_address not in metagraph.hotkeys:
+        bt.logging.error(
+            f"Wallet: {wallet} is not registered on netuid {metagraph.netuid}."
+            f" Please register the hotkey using `btcli subnets register` before trying again."
+        )
+        sys.exit(1)
 
 
 def time_bucket_id_from_datetime(datetime: dt.datetime) -> int:
@@ -211,8 +239,8 @@ async def async_run_with_retry(
     raise Exception("Unexpected state: Ran with retry but didn't hit a terminal state")
 
 
-def run_in_subprocess(func: functools.partial, ttl: int) -> Any:
-    """Runs the provided function on a subprocess with 'ttl' seconds to complete.
+def run_in_thread(func: functools.partial, ttl: int, name=None) -> Any:
+    """Runs the provided function on a thread with 'ttl' seconds to complete.
 
     Args:
         func (functools.partial): Function to be run.
@@ -222,40 +250,15 @@ def run_in_subprocess(func: functools.partial, ttl: int) -> Any:
         Any: The value returned by 'func'
     """
 
-    def wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
-        try:
-            print(f"In subprocess")
-            result = func()
-            print("Putting result into queue")
-            queue.put(result)
-            print("Put thingy into the queue")
-        except (Exception, BaseException) as e:
-            # Catch exceptions here to add them to the queue.
-            queue.put(e)
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
 
-    # Use "fork" (the default on all POSIX except macOS), because pickling doesn't seem
-    # to work on "spawn".
-    ctx = multiprocessing.get_context("fork")
-    queue = ctx.Queue()
-    process = ctx.Process(target=wrapped_func, args=[func, queue])
-
-    process.start()
-
-    process.join(timeout=ttl)
-
-    if process.is_alive():
-        process.terminate()
-        process.join()
-        raise TimeoutError(f"Failed to {func.func.__name__} after {ttl} seconds")
-
-    # Raises an error if the queue is empty. This is fine. It means our subprocess timed out.
-    print("Pulling from the queue")
-    result = queue.get(block=False)
-
-    # If we put an exception on the queue then raise instead of returning.
-    if isinstance(result, Exception):
-        raise result
-    if isinstance(result, BaseException):
-        raise Exception(f"BaseException raised in subprocess: {str(result)}")
-
-    return result
+    try:
+        future = executor.submit(func)
+        return future.result(timeout=ttl)
+    except concurrent.futures.TimeoutError as e:
+        bt.logging.error(f"Failed to complete '{name}' within {ttl} seconds.")
+        raise TimeoutError(f"Failed to complete '{name}' within {ttl} seconds.") from e
+    finally:
+        bt.logging.trace(f"Completed {name}")
+        executor.shutdown(wait=False)
+        bt.logging.trace(f"{name} cleaned up successfully")
