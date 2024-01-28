@@ -16,7 +16,7 @@ class TwitterFlashScraper(Scraper):
     Scrapes tweets using the Tweet Flash Actor.
     """
 
-    ACTOR_ID = "wHMoznVs94gOcxcZl"
+    ACTOR_ID = "3ZnxsHgu9XSzTgDcu"
 
     SCRAPE_TIMEOUT_SECS = 120
 
