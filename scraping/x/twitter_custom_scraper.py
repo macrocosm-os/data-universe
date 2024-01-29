@@ -136,12 +136,9 @@ class TwitterCustomScraper(Scraper):
             time_element = soup.find("time")
             # Get the datetime attribute from the element and convert to the appropriate format.
             # It is already in utc but we need to add the utc timezone to match exactly.
-            timestamp = (
-                dt.datetime.strptime(time_element["datetime"], "%Y-%m-%dT%H:%M:%S.%fZ")
-                .replace(second=0)
-                .replace(microsecond=0)
-                .replace(tzinfo=dt.timezone.utc)
-            )
+            timestamp = dt.datetime.strptime(
+                time_element["datetime"], "%Y-%m-%dT%H:%M:%S.%fZ"
+            ).replace(tzinfo=dt.timezone.utc)
 
             # TODO: Check for other kinds of tags?
             # Get Hashtags + Cashtags together to keep them in order.
@@ -154,13 +151,14 @@ class TwitterCustomScraper(Scraper):
 
             # Cashtags use $ instead of # so ensure first character is #.
             corrected_hashtags = ["#" + hashtag[1:] for hashtag in hashtags]
+            unique_corrected_hashtags = list(dict.fromkeys(corrected_hashtags))
 
             tweet = XContent(
                 username=username,
                 text=tweet_text,
                 url=url,
                 timestamp=timestamp,
-                tweet_hashtags=corrected_hashtags,
+                tweet_hashtags=unique_corrected_hashtags,
             )
         except Exception:
             bt.logging.warning(
@@ -185,6 +183,9 @@ class TwitterCustomScraper(Scraper):
                 reason="Failed to decode data entity",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
+
+        # Previous scrapers would only get to the minute granularity.
+        tweet.timestamp = tweet.timestamp.replace(second=0).replace(microsecond=0)
 
         # Previous scrapers would not get the end of longer tweets, replacing with ellipses.
         if (
