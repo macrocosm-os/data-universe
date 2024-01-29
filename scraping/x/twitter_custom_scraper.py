@@ -185,7 +185,13 @@ class TwitterCustomScraper(Scraper):
             )
 
         # Previous scrapers would only get to the minute granularity.
-        tweet.timestamp = tweet.timestamp.replace(second=0).replace(microsecond=0)
+        if tweet.timestamp != tweet_to_verify.timestamp:
+            tweet.timestamp = tweet.timestamp.replace(second=0).replace(microsecond=0)
+            tweet_to_verify.timestamp = tweet_to_verify.timestamp.replace(
+                second=0
+            ).replace(microsecond=0)
+            # Also reduce entity granularity for the check below.
+            entity.datetime = entity.datetime.replace(second=0).replace(microsecond=0)
 
         # Previous scrapers would not get the end of longer tweets, replacing with ellipses.
         if (
@@ -266,6 +272,14 @@ async def test_validate():
         DataEntity(
             uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
             datetime=dt.datetime(2023, 12, 9, 10, 52, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#bittensor"),
+            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
+            content_size_bytes=484,
+        ),
+        DataEntity(
+            uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
+            datetime=dt.datetime(2023, 12, 9, 10, 52, 10, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bittensor"),
             content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
