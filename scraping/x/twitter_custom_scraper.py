@@ -36,16 +36,27 @@ class TwitterCustomScraper(Scraper):
 
             html = None
             browser = None
+            page = None
             try:
                 async with async_playwright() as playwright:
                     chromium = playwright.chromium
                     browser = await chromium.launch()
+                    bt.logging.trace("vali-debug: launched chromium")
                     # Consider a user agent.
                     page = await browser.new_page()
                     await page.goto(entity.uri)
+                    bt.logging.trace(
+                        f"vali-debug: launched page and navigated to {entity.uri}"
+                    )
                     await page.get_by_test_id("tweet").click(timeout=15000)
+                    bt.logging.trace("vali-debug: tweet loaded within 15 seconds")
                     html = await page.get_by_test_id("tweet").first.inner_html()
             except Exception as e:
+                if page is not None:
+                    bt.logging.trace(
+                        f"vali-debug: page timed out looking like {await page.content()}"
+                    )
+
                 bt.logging.error(
                     f"Failed to validate entity: {traceback.format_exc()}."
                 )
