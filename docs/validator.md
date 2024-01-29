@@ -33,7 +33,7 @@ git clone https://github.com/RusticLuftig/data-universe.git
 ```shell
 cd data-universe
 python -m pip install -e .
-playwright install
+playwright install --with-deps chromium
 ```
 
 5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
