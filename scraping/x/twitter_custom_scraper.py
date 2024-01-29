@@ -35,6 +35,7 @@ class TwitterCustomScraper(Scraper):
                 continue
 
             html = None
+            browser = None
             try:
                 async with async_playwright() as playwright:
                     chromium = playwright.chromium
@@ -42,9 +43,8 @@ class TwitterCustomScraper(Scraper):
                     # Consider a user agent.
                     page = await browser.new_page()
                     await page.goto(entity.uri)
-                    await page.get_by_test_id("tweet").click(timeout=5000)
+                    await page.get_by_test_id("tweet").click(timeout=15000)
                     html = await page.get_by_test_id("tweet").first.inner_html()
-                    await browser.close()
             except Exception as e:
                 bt.logging.error(
                     f"Failed to validate entity: {traceback.format_exc()}."
@@ -61,6 +61,15 @@ class TwitterCustomScraper(Scraper):
                     )
                 )
                 continue
+            finally:
+                # Try to close the browser but swallow exceptions here.
+                if browser:
+                    try:
+                        await browser.close()
+                    except Exception as be:
+                        bt.logging.trace(
+                            f"Failed to close playwright browser: {traceback.format_exc()}."
+                        )
 
             # Parse the response
             tweet = self._best_effort_parse_tweet_from_html(html, entity.uri)
