@@ -30,7 +30,7 @@ def extract_hashtags(text: str) -> List[str]:
         if word.startswith("#"):
             hashtags.append(word)
         if word.startswith("$"):
-            # For backwards compatibility, we also extract $BTC as a hashtag.
+            # For backwards compatibility, we also extract "cashtags" as a hashtag.
             hashtags.append(f"#{word[1:]}")
     # As of python 3.7 dictionary key order is maintained, so we can use this to remove duplicates.
     return list(dict.fromkeys(hashtags))
