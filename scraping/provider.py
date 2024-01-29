@@ -5,11 +5,14 @@ from scraping.reddit.reddit_lite_scraper import RedditLiteScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.scraper import Scraper, ScraperId
 from scraping.x.twitter_flash_scraper import TwitterFlashScraper
+from scraping.x.twitter_custom_scraper import TwitterCustomScraper
+
 
 DEFAULT_FACTORIES = {
     ScraperId.REDDIT_LITE: RedditLiteScraper,
     ScraperId.X_FLASH: TwitterFlashScraper,
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
+    ScraperId.X_CUSTOM: TwitterCustomScraper,
 }
 
 

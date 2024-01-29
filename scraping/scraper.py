@@ -18,6 +18,7 @@ class ScraperId(str, Enum):
     REDDIT_LITE = "Reddit.lite"
     X_FLASH = "X.flash"
     REDDIT_CUSTOM = "Reddit.custom"
+    X_CUSTOM = "X.custom"
 
 
 class ValidationResult(StrictBaseModel):
