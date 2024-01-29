@@ -1,4 +1,5 @@
 import asyncio
+import re
 import traceback
 import bittensor as bt
 from typing import List
@@ -11,33 +12,17 @@ from scraping.x.utils import is_valid_twitter_url
 import datetime as dt
 
 
-class TwitterFlashScraper(Scraper):
+class TwitterURLScraper(Scraper):
     """
-    Scrapes tweets using the Tweet Flash Actor.
+    Scrapes tweets using the Twitter URL Scraper: https://console.apify.com/actors/KVJr35xjTw2XyvMeK.
     """
 
-    ACTOR_ID = "3ZnxsHgu9XSzTgDcu"
+    ACTOR_ID = "KVJr35xjTw2XyvMeK"
 
     SCRAPE_TIMEOUT_SECS = 120
 
     BASE_RUN_INPUT = {
-        "filter:blue_verified": False,
-        "filter:has_engagement": False,
-        "filter:images": False,
-        "filter:media": False,
-        "filter:nativeretweets": False,
-        "filter:quote": False,
-        "filter:replies": False,
-        "filter:retweets": False,
-        "filter:safe": False,
-        "filter:twimg": False,
-        "filter:verified": False,
-        "filter:videos": False,
-        "only_tweets": False,
-        "use_experimental_scraper": False,
-        "language": "any",
-        "user_info": "only user info",
-        "max_attempts": 5,
+        "addUserInfo": False,
     }
 
     def __init__(self, runner: ActorRunner = ActorRunner()):
@@ -62,11 +47,14 @@ class TwitterFlashScraper(Scraper):
                 continue
 
             run_input = {
-                **TwitterFlashScraper.BASE_RUN_INPUT,
-                "tweet_urls": [entity.uri],
+                **TwitterURLScraper.BASE_RUN_INPUT,
+                "startUrls": [
+                    {"url": entity.uri},
+                ],
+                "tweetsDesired": 1,
             }
             run_config = RunConfig(
-                actor_id=TwitterFlashScraper.ACTOR_ID,
+                actor_id=TwitterURLScraper.ACTOR_ID,
                 debug_info=f"Validate {entity.uri}",
                 max_data_entities=1,
             )
@@ -106,59 +94,13 @@ class TwitterFlashScraper(Scraper):
 
             # We found the tweet. Validate it.
             actual_tweet = tweets[0]
-            results.append(TwitterFlashScraper._validate_tweet(actual_tweet, entity))
+            results.append(TwitterURLScraper._validate_tweet(actual_tweet, entity))
 
         return results
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
-
-        # Construct the query string.
-        date_format = "%Y-%m-%d_%H:%M:%S_UTC"
-        query = f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)} until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
-        if scrape_config.labels:
-            label_query = " OR ".join([label.value for label in scrape_config.labels])
-            query += f" ({label_query})"
-        else:
-            # HACK: The search query doesn't work if only a time range is provided.
-            # If no label is specified, just search for "e", the most common letter in the English alphabet.
-            # I attempted using "#" instead, but that still returned empty results ¯\_(ツ)_/¯
-            query += " e"
-
-        # Construct the input to the runner.
-        max_items = scrape_config.entity_limit or 150
-        run_input = {
-            **TwitterFlashScraper.BASE_RUN_INPUT,
-            "queries": [query],
-            "max_tweets": max_items,
-        }
-        run_config = RunConfig(
-            actor_id=TwitterFlashScraper.ACTOR_ID,
-            debug_info=f"Scrape {query}",
-            max_data_entities=scrape_config.entity_limit,
-            timeout_secs=TwitterFlashScraper.SCRAPE_TIMEOUT_SECS,
-        )
-
-        bt.logging.trace(f"Performing Twitter scrape for query: {query}.")
-
-        # Run the Actor and retrieve the scraped data.
-        dataset: List[dict] = None
-        try:
-            dataset: List[dict] = await self.runner.run(run_config, run_input)
-        except ActorRunError:
-            bt.logging.error(
-                f"Failed to scrape tweets using query {query}: {traceback.format_exc()}."
-            )
-            # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
-            return []
-
-        # Return the parsed results, ignoring data that can't be parsed.
-        x_contents = self._best_effort_parse_dataset(dataset)
-        bt.logging.success(
-            f"Completed scrape for {query}. Scraped {len(x_contents)} items."
-        )
-
-        return [XContent.to_data_entity(x_content) for x_content in x_contents]
+        raise NotImplementedError("Scraping is not supported on this scraper.")
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
@@ -167,12 +109,42 @@ class TwitterFlashScraper(Scraper):
         results: List[XContent] = []
         for data in dataset:
             try:
-                results.append(XContent(**data))
+                results.append(
+                    XContent(
+                        username=self.extract_user(data["url"]),
+                        text=self.sanitize_text(data["full_text"]),
+                        url=data["url"],
+                        timestamp=dt.datetime.strptime(
+                            data["created_at"], "%Y-%m-%dT%H:%M:%S.%fZ"
+                        ).replace(second=0, tzinfo=dt.timezone.utc),
+                        tweet_hashtags=self.extract_hashtags(data["full_text"]),
+                    )
+                )
             except Exception:
                 bt.logging.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
         return results
+
+    def extract_user(self, url: str) -> str:
+        """Extracts the twitter user from the URL and returns it in the expected format."""
+        pattern = r"https://twitter.com/(\w+)/status/.*"
+        if re.match(pattern, url):
+            return f"@{re.match(pattern, url).group(1)}"
+        return ValueError(f"Unable to extract user from {url}")
+
+    def extract_hashtags(self, text: str) -> List[str]:
+        """Given a tweet, extracts the hashtags in the order they appear in the tweet."""
+        hashtags = []
+        for word in text.split():
+            if word.startswith("#"):
+                hashtags.append(word)
+        return hashtags
+
+    def sanitize_text(self, text: str) -> str:
+        """Removes any image/media links from the tweet"""
+        pattern = r"\s*https://t.co/[^\s]+\s*"  # Matches any link to a twitter image
+        return re.sub(pattern, "", text)
 
     @classmethod
     def _validate_tweet(cls, tweet: XContent, entity: DataEntity) -> ValidationResult:
@@ -229,7 +201,7 @@ class TwitterFlashScraper(Scraper):
 
 
 async def test_scrape():
-    scraper = TwitterFlashScraper()
+    scraper = TwitterURLScraper()
 
     entities = await scraper.scrape(
         ScrapeConfig(
@@ -246,7 +218,7 @@ async def test_scrape():
 
 
 async def test_validate():
-    scraper = TwitterFlashScraper()
+    scraper = TwitterURLScraper()
 
     true_entities = [
         DataEntity(
@@ -293,5 +265,5 @@ async def test_validate():
 
 
 if __name__ == "__main__":
-    asyncio.run(test_scrape())
+    # asyncio.run(test_scrape())
     asyncio.run(test_validate())

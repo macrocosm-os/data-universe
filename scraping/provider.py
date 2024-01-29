@@ -4,11 +4,11 @@ from common.data import DataSource
 from scraping.reddit.reddit_lite_scraper import RedditLiteScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.scraper import Scraper, ScraperId
-from scraping.x.twitter_flash_scraper import TwitterFlashScraper
+from scraping.x.twitter_url_scraper import TwitterURLScraper
 
 DEFAULT_FACTORIES = {
     ScraperId.REDDIT_LITE: RedditLiteScraper,
-    ScraperId.X_FLASH: TwitterFlashScraper,
+    ScraperId.X_URL_SCRAPER: TwitterURLScraper,
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
 }
 

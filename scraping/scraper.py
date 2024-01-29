@@ -16,8 +16,10 @@ class ScraperId(str, Enum):
     """The id for each of the scrapers."""
 
     REDDIT_LITE = "Reddit.lite"
+    # Deprecated.
     X_FLASH = "X.flash"
     REDDIT_CUSTOM = "Reddit.custom"
+    X_URL_SCRAPER = "X.url_scraper"
 
 
 class ValidationResult(StrictBaseModel):
