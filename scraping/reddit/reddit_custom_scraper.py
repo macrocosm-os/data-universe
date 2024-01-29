@@ -22,6 +22,9 @@ import asyncio
 import random
 import os
 
+from scraping.global_counter import decrement_count, get_and_increment_count
+from datadog import statsd
+
 from dotenv import load_dotenv
 
 load_dotenv()
@@ -75,7 +78,11 @@ class RedditCustomScraper(Scraper):
             content = None
 
             try:
+                active_count = get_and_increment_count()
+                statsd.gauge("active_request_count", active_count)
+                statsd.gauge("Active tasks", len(asyncio.all_tasks()))
 
+                @statsd.timed("reddit_custom_scraper_latency")
                 async def _get_content():
                     async with asyncpraw.Reddit(
                         client_id=os.getenv("REDDIT_CLIENT_ID"),
@@ -84,6 +91,9 @@ class RedditCustomScraper(Scraper):
                         password=os.getenv("REDDIT_PASSWORD"),
                         user_agent=RedditCustomScraper.USER_AGENT,
                     ) as reddit:
+                        statsd.increment(
+                            "reddit_custom_scraper_requests", tags=["status:success"]
+                        )
                         if reddit_content_to_verify.data_type == RedditDataType.POST:
                             submission = await reddit.submission(
                                 url=reddit_content_to_verify.url
@@ -101,6 +111,9 @@ class RedditCustomScraper(Scraper):
                     _get_content, max_retries=3, delay_seconds=5
                 )
             except Exception as e:
+                statsd.increment(
+                    "reddit_custom_scraper_requests", tags=["status:failure"]
+                )
                 bt.logging.error(
                     f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}."
                 )
@@ -116,6 +129,8 @@ class RedditCustomScraper(Scraper):
                     )
                 )
                 continue
+            finally:
+                decrement_count()
 
             if not content:
                 results.append(
