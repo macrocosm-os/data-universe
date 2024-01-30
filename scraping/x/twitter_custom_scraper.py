@@ -46,6 +46,7 @@ class TwitterCustomScraper(Scraper):
             page = None
             try:
                 active_count = get_and_increment_count()
+                statsd.gauge("active_request_count", active_count)
                 bt.logging.trace(
                     f"Starting validation for {entity.uri}, w/ {active_count} concurrent requests active."
                 )
@@ -63,7 +64,7 @@ class TwitterCustomScraper(Scraper):
                         )
             except Exception as e:
                 bt.logging.error(
-                    f"Failed to validate entity: {traceback.format_exc()}."
+                    f"Failed to validate entity {entity.uri}: {traceback.format_exc()}."
                 )
                 statsd.increment("twitter_custom_scraper", tags=["status:failure"])
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from

@@ -78,6 +78,7 @@ class RedditCustomScraper(Scraper):
 
             try:
                 active_count = get_and_increment_count()
+                statsd.gauge("active_request_count", active_count)
                 bt.logging.trace(
                     f"Starting reddit validation for {entity.uri}. Active count: {active_count}"
                 )

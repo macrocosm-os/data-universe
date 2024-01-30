@@ -16,6 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 
+import concurrent
 import copy
 import datetime
 import sys
@@ -389,16 +390,21 @@ class Validator(BaseNeuron):
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
-        tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
-        done, pending = await asyncio.wait(tasks, timeout=300)
+        loop = asyncio.get_running_loop()
+        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
+            tasks = [
+                asyncio.create_task(loop.run_in_executor(pool, self.eval_miner(uid)))
+                for uid in uids_to_eval
+            ]
+            done, pending = await asyncio.wait(tasks, timeout=300)
 
-        for future in pending:
-            future.cancel()  # Cancel unfinished tasks.
+            for future in pending:
+                future.cancel()  # Cancel unfinished tasks.
 
-        if pending:
-            bt.logging.info(
-                f"Validator run next eval batch timed out on the following calls: {pending}."
-            )
+            if pending:
+                bt.logging.info(
+                    f"Validator run next eval batch timed out on the following calls: {pending}."
+                )
 
         # Run the next evaluation batch immediately.
         return 0
