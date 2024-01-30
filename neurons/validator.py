@@ -340,8 +340,7 @@ class Validator(BaseNeuron):
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
     def eval_miner_sync(self, uid: int):
-        loop = asyncio.new_event_loop()
-        loop.run_until_complete(self.eval_miner(uid))
+        asyncio.run(self.eval_miner(uid))
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
