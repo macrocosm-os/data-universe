@@ -47,6 +47,7 @@ class TwitterCustomScraper(Scraper):
             try:
                 active_count = get_and_increment_count()
                 statsd.gauge("active_request_count", active_count)
+                statsd.gauge("Active tasks", len(asyncio.all_tasks()))
                 bt.logging.trace(
                     f"Starting validation for {entity.uri}, w/ {active_count} concurrent requests active."
                 )
