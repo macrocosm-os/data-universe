@@ -394,7 +394,7 @@ class Validator(BaseNeuron):
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
         threads = [
-            threading.Thread(target=self.eval_miner, args=(uid,))
+            threading.Thread(target=self.eval_miner_sync, args=(uid,))
             for uid in uids_to_eval
         ]
         for t in threads:
