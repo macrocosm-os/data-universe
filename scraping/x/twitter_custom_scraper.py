@@ -36,6 +36,7 @@ class TwitterCustomScraper(Scraper):
 
             html = None
             browser = None
+            page = None
             try:
                 async with async_playwright() as playwright:
                     chromium = playwright.chromium
@@ -62,6 +63,9 @@ class TwitterCustomScraper(Scraper):
                 )
                 continue
             finally:
+                # DEBUG:
+                bt.logging.trace(f"DEBUG: {await page.content()}")
+
                 # Try to close the browser but swallow exceptions here.
                 if browser:
                     try:
