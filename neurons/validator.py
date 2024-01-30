@@ -390,7 +390,7 @@ class Validator(BaseNeuron):
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
-        futures = [asyncio.to_thread(self.eval_miner(uid)) for uid in uids_to_eval]
+        futures = [asyncio.to_thread(self.eval_miner, uid) for uid in uids_to_eval]
         try:
             results = await asyncio.wait_for(
                 asyncio.gather(*futures, return_exceptions=True), timeout=300
