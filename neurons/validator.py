@@ -339,6 +339,10 @@ class Validator(BaseNeuron):
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
+    def eval_miner_sync(self, uid: int):
+        loop = asyncio.new_event_loop()
+        loop.run_until_complete(self.eval_miner(uid))
+
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
 
@@ -389,16 +393,26 @@ class Validator(BaseNeuron):
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
-        tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
-        done, pending = await asyncio.wait(tasks, timeout=300)
+        threads = [
+            threading.Thread(target=self.eval_miner, args=(uid,))
+            for uid in uids_to_eval
+        ]
+        for t in threads:
+            t.start()
 
-        for future in pending:
-            future.cancel()  # Cancel unfinished tasks.
+        bt.logging.info("Waiting for all threads to finish.")
+        for i, t in enumerate(threads):
+            # Obviously, this doesn't mean our total timeout is 300 seconds, but it's a good enough for now.
+            t.join(timeout=300)
+            bt.logging.trace(f"Thread {i} finished.")
 
-        if pending:
-            bt.logging.info(
-                f"Validator run next eval batch timed out on the following calls: {pending}."
-            )
+        # for future in pending:
+        #     future.cancel()  # Cancel unfinished tasks.
+
+        # if pending:
+        #     bt.logging.info(
+        #         f"Validator run next eval batch timed out on the following calls: {pending}."
+        #     )
 
         # Run the next evaluation batch immediately.
         return 0
