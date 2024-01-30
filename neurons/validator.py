@@ -390,21 +390,22 @@ class Validator(BaseNeuron):
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
-        loop = asyncio.get_running_loop()
-        with concurrent.futures.ThreadPoolExecutor(max_workers=10) as pool:
-            tasks = [
-                asyncio.create_task(loop.run_in_executor(pool, self.eval_miner(uid)))
-                for uid in uids_to_eval
-            ]
-            done, pending = await asyncio.wait(tasks, timeout=300)
-
-            for future in pending:
-                future.cancel()  # Cancel unfinished tasks.
-
-            if pending:
-                bt.logging.info(
-                    f"Validator run next eval batch timed out on the following calls: {pending}."
-                )
+        futures = [asyncio.to_thread(self.eval_miner(uid)) for uid in uids_to_eval]
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*futures, return_exceptions=True), timeout=300
+            )
+        except asyncio.TimeoutError:
+            # Cancel incomplete futures
+            incomplete_count = 0
+            for future in futures:
+                if not future.done():
+                    incomplete_count += 1
+                    bt.logging.trace("Cancelling incomplete future.")
+                    future.cancel()
+            bt.logging.info(
+                f"Validator run next eval batch timed out on {incomplete_count} futures."
+            )
 
         # Run the next evaluation batch immediately.
         return 0
