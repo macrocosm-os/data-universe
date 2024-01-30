@@ -1,8 +1,7 @@
-from threading import active_count
 import time
 from common import utils
 from common.date_range import DateRange
-from scraping.provider import decrement_count, get_and_increment_count
+from scraping.global_counter import decrement_count, get_and_increment_count
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 import bittensor as bt

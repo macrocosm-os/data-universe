@@ -12,9 +12,7 @@ from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
 from datadog import statsd
 
-from scraping.provider import (
-    concurrent_lock,
-    concurrent_count,
+from scraping.global_counter import (
     decrement_count,
     get_and_increment_count,
 )
