@@ -128,7 +128,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             )
 
             # Lock to avoid concurrency issues on interacting with the database.
-            self.upsert_miner_index_lock = threading.Lock()
+            self.upsert_miner_index_lock = threading.RLock()
 
     def _create_connection(self):
         # Create the database if it doesn't exist, defaulting to the local directory.
@@ -147,22 +147,23 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
         miner_id = 0
 
-        with contextlib.closing(self._create_connection()) as connection:
-            cursor = connection.cursor()
+        with self.upsert_miner_index_lock:
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
 
-            cursor.execute(
-                "UPDATE OR IGNORE Miner SET lastUpdated=?, credibility=? WHERE hotkey=?",
-                [now_str, credibility, hotkey],
-            )
-            cursor.execute(
-                """INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)""",
-                [hotkey, now_str, credibility],
-            )
-            connection.commit()
+                cursor.execute(
+                    "UPDATE OR IGNORE Miner SET lastUpdated=?, credibility=? WHERE hotkey=?",
+                    [now_str, credibility, hotkey],
+                )
+                cursor.execute(
+                    """INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)""",
+                    [hotkey, now_str, credibility],
+                )
+                connection.commit()
 
-            # Then we get the existing or newly created minerId
-            cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
-            miner_id = cursor.fetchone()[0]
+                # Then we get the existing or newly created minerId
+                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
+                miner_id = cursor.fetchone()[0]
 
         return miner_id
 
