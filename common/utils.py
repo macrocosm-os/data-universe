@@ -10,6 +10,7 @@ from typing import Any, Callable
 import bittensor as bt
 from functools import lru_cache, update_wrapper
 
+from datadog import statsd
 from common.date_range import DateRange
 
 _KB = 1024
@@ -199,9 +200,14 @@ async def async_run_with_retry(
     """
     for attempt in range(1, max_retries + 1):
         try:
-            return await func()
+            val = await func()
+            if attempt > 1:
+                bt.logging.success(f"Retry helped. {attempt} succeeded.")
+            statsd.increment("async_retry", tags=[f"attempts:{attempt}", "success"])
+            return val
         except Exception as e:
             if attempt == max_retries:
+                statsd.increment("async_retry", tags=[f"attempts:{attempt}", "failure"])
                 # If it's the last attempt, raise the exception
                 raise e
             # Wait before the next retry.

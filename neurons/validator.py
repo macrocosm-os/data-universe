@@ -20,6 +20,7 @@ import copy
 import datetime
 import sys
 import traceback
+import datadog
 import torch
 import asyncio
 import threading
@@ -732,6 +733,12 @@ class Validator(BaseNeuron):
 
 # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
+    options = {
+        "statsd_host": "127.0.0.1",
+        "statsd_port": 8125,
+    }
+    datadog.initialize(**options)
+
     with Validator() as validator:
         while True:
             if not validator.is_healthy():

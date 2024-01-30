@@ -1,4 +1,5 @@
 import asyncio
+import stat
 import traceback
 import bittensor as bt
 from typing import List, Optional
@@ -9,6 +10,14 @@ from scraping.x.utils import is_valid_twitter_url, get_user_from_twitter_url
 import datetime as dt
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
+from datadog import statsd
+
+from scraping.provider import (
+    concurrent_lock,
+    concurrent_count,
+    decrement_count,
+    get_and_increment_count,
+)
 
 
 class TwitterCustomScraper(Scraper):
@@ -38,18 +47,27 @@ class TwitterCustomScraper(Scraper):
             browser = None
             page = None
             try:
-                async with async_playwright() as playwright:
-                    chromium = playwright.chromium
-                    browser = await chromium.launch()
-                    # Consider a user agent.
-                    page = await browser.new_page()
-                    await page.goto(entity.uri)
-                    await page.get_by_test_id("tweet").wait_for(timeout=15000)
-                    html = await page.get_by_test_id("tweet").first.inner_html()
+                active_count = get_and_increment_count()
+                bt.logging.trace(
+                    f"Starting validation for {entity.uri}, w/ {active_count} concurrent requests active."
+                )
+                with statsd.timed("twitter_custom_scraper_latency"):
+                    async with async_playwright() as playwright:
+                        chromium = playwright.chromium
+                        browser = await chromium.launch()
+                        # Consider a user agent.
+                        page = await browser.new_page()
+                        await page.goto(entity.uri)
+                        await page.get_by_test_id("tweet").wait_for(timeout=15000)
+                        html = await page.get_by_test_id("tweet").first.inner_html()
+                        statsd.increment(
+                            "twitter_custom_scraper", tags=["status:success"]
+                        )
             except Exception as e:
                 bt.logging.error(
                     f"Failed to validate entity: {traceback.format_exc()}."
                 )
+                statsd.increment("twitter_custom_scraper", tags=["status:failure"])
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
                 # one caused by malicious input. In my own testing I was able to make this timeout by
                 # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
@@ -65,6 +83,8 @@ class TwitterCustomScraper(Scraper):
             finally:
                 # DEBUG:
                 bt.logging.trace(f"DEBUG: {await page.content()}")
+
+                decrement_count()
 
                 # Try to close the browser but swallow exceptions here.
                 if browser:
