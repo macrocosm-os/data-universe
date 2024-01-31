@@ -1,4 +1,6 @@
 import asyncio
+from imp import lock_held
+from operator import index
 import threading
 import traceback
 import bittensor as bt
@@ -14,11 +16,37 @@ from playwright.async_api import async_playwright
 
 from datadog import statsd
 
+user_agents = [
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 10; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 10; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/91.0.4472.124 Mobile Safari/605.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/90.0.4430.212 Mobile Safari/605.1",
+    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36",
+    "Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 YaBrowser/21.6.1.80 Yowser/2.5 Safari/537.36",
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 YaBrowser/21.6.1.80 Yowser/2.5 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 YaBrowser/21.6.1.80 Yowser/2.5 Safari/537.36",
+    "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 YaBrowser/21.6.1.80 Yowser/2.5 Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 10; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 YaBrowser/21.6.1.80 Yowser/2.5 Mobile Safari/537.36",
+    "Mozilla/5.0 (Linux; Android 10; Pixel 4) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/90.0.4430.212 YaBrowser/21.6.1.80 Yowser/2.5 Mobile Safari/537.36",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/91.0.4472.124 YaBrowser/21.6.1.80 Yowser/2.5 Mobile Safari/605.1",
+    "Mozilla/5.0 (iPhone; CPU iPhone OS 14_6 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Chrome/90.0.4430.212 YaBrowser/21.6.1.80 Yowser/2.5 Mobile Safari/605.1",
+]
+
 
 class TwitterCustomScraper(Scraper):
     """
     Scrapes tweets using Playwright.
     """
+
+    index = 0
+    lock = threading.Lock()
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
@@ -46,11 +74,16 @@ class TwitterCustomScraper(Scraper):
                 statsd.gauge("Active tasks", len(asyncio.all_tasks()))
                 with statsd.timed("playwright_request_time"):
                     async with async_playwright() as playwright:
+                        i = 0
+                        with TwitterCustomScraper.lock:
+                            i = index
+                            TwitterCustomScraper.index = (
+                                TwitterCustomScraper.index + 1
+                            ) % len(user_agents)
+
                         chromium = playwright.chromium
                         browser = await chromium.launch()
-                        context = await browser.new_context(
-                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
-                        )
+                        context = await browser.new_context(user_agent=user_agents[i])
                         page = await context.new_page()
                         await page.goto(entity.uri)
                         await page.get_by_test_id("tweet").wait_for(timeout=15000)
@@ -60,7 +93,7 @@ class TwitterCustomScraper(Scraper):
                 statsd.increment("twitter_microworlds", tags=["status:failure"])
 
                 bt.logging.error(
-                    f"Failed to validate entity: {traceback.format_exc()}."
+                    f"Failed to validate entity {entity.uri}: {traceback.format_exc()}."
                 )
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
                 # one caused by malicious input. In my own testing I was able to make this timeout by
