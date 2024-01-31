@@ -289,7 +289,7 @@ class MinerEvaluator:
             thread.start()
 
         bt.logging.trace(f"Waiting for {len(threads)} miner evals to finish.")
-        end = datetime.datetime.now() + datetime.datetime.timedelta(seconds=300)
+        end = datetime.datetime.now() + datetime.timedelta(seconds=300)
         for t in threads:
             # Compute the timeout, so that all threads are waited for a total of 5 minutes.
             timeout = max(0, (end - datetime.datetime.now()).total_seconds())
