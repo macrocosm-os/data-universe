@@ -1,3 +1,4 @@
+from cgitb import text
 import bittensor as bt
 import re
 import traceback
@@ -81,6 +82,15 @@ def validate_tweet_content(
         )
         # Also reduce entity granularity for the check below.
         entity.datetime = entity.datetime.replace(second=0).replace(microsecond=0)
+
+    # Allow matching on truncated tweets, since the old actor used to return truncated
+    # tweets.
+    if (
+        tweet_to_verify.text[-1] == "…"
+        and len(tweet_to_verify.text) > 180
+        and actual_tweet.text.starts_with(tweet_to_verify.text[:-1])
+    ):
+        tweet_to_verify.text = actual_tweet.text
 
     if tweet_to_verify != actual_tweet:
         bt.logging.info(f"Tweets do not match: {tweet_to_verify} != {actual_tweet}.")

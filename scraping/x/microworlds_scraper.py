@@ -199,6 +199,8 @@ async def test_scrape():
 
     print(f"Scraped {len(entities)} entities: {entities}")
 
+    return entities
+
 
 async def test_validate():
     scraper = MicroworldsTwitterScraper()
