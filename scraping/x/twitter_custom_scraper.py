@@ -80,9 +80,9 @@ class TwitterCustomScraper(Scraper):
                                 TwitterCustomScraper.index + 1
                             ) % len(user_agents)
 
-                            # Ensure we don't send more than 1 request per second to respect the
+                            # Ensure we don't send more than 5 request per second to respect the
                             # robots.txt file.
-                            time.sleep(1)
+                            time.sleep(5)
 
                         chromium = playwright.chromium
                         browser = await chromium.launch()
