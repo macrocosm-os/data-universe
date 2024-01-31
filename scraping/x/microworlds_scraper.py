@@ -5,39 +5,24 @@ from typing import List
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
-from scraping.apify import ActorRunError, ActorRunner, RunConfig
+from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
-from scraping.x.utils import is_valid_twitter_url
+from scraping.x import utils
 import datetime as dt
 
 
-class TwitterFlashScraper(Scraper):
+class MicroworldsTwitterScraper(Scraper):
     """
-    Scrapes tweets using the Tweet Flash Actor.
+    Scrapes tweets using the Microworlds Twitter Scraper: https://console.apify.com/actors/heLL6fUofdPgRXZie.
     """
 
-    ACTOR_ID = "3ZnxsHgu9XSzTgDcu"
+    ACTOR_ID = "heLL6fUofdPgRXZie"
 
     SCRAPE_TIMEOUT_SECS = 120
 
     BASE_RUN_INPUT = {
-        "filter:blue_verified": False,
-        "filter:has_engagement": False,
-        "filter:images": False,
-        "filter:media": False,
-        "filter:nativeretweets": False,
-        "filter:quote": False,
-        "filter:replies": False,
-        "filter:retweets": False,
-        "filter:safe": False,
-        "filter:twimg": False,
-        "filter:verified": False,
-        "filter:videos": False,
-        "only_tweets": False,
-        "use_experimental_scraper": False,
-        "language": "any",
-        "user_info": "only user info",
-        "max_attempts": 5,
+        "maxRequestRetries": 5,
+        "searchMode": "live",
     }
 
     def __init__(self, runner: ActorRunner = ActorRunner()):
@@ -51,10 +36,10 @@ class TwitterFlashScraper(Scraper):
         # Treat the entities as guilty until proven innocent.
         results = []
 
-        # The Apify Actor does not support searching for multiple tweet_urls at once. So we must perform each run separately.
+        # The Apify Actor is not as consistent at multiple tweet_urls at once. So we must perform each run separately.
         for entity in entities:
             # First check the URI is a valid Twitter URL.
-            if not is_valid_twitter_url(entity.uri):
+            if not utils.is_valid_twitter_url(entity.uri):
                 results.append(
                     ValidationResult(is_valid=False, reason="Invalid URI."),
                     content_size_bytes_validated=entity.content_size_bytes,
@@ -62,11 +47,12 @@ class TwitterFlashScraper(Scraper):
                 continue
 
             run_input = {
-                **TwitterFlashScraper.BASE_RUN_INPUT,
-                "tweet_urls": [entity.uri],
+                **MicroworldsTwitterScraper.BASE_RUN_INPUT,
+                "urls": [entity.uri],
+                "maxTweets": 1,
             }
             run_config = RunConfig(
-                actor_id=TwitterFlashScraper.ACTOR_ID,
+                actor_id=MicroworldsTwitterScraper.ACTOR_ID,
                 debug_info=f"Validate {entity.uri}",
                 max_data_entities=1,
             )
@@ -75,7 +61,9 @@ class TwitterFlashScraper(Scraper):
             dataset: List[dict] = None
             try:
                 dataset: List[dict] = await self.runner.run(run_config, run_input)
-            except ActorRunError as e:
+            except (
+                Exception
+            ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
                 bt.logging.error(
                     f"Failed to validate entities: {traceback.format_exc()}."
                 )
@@ -106,13 +94,12 @@ class TwitterFlashScraper(Scraper):
 
             # We found the tweet. Validate it.
             actual_tweet = tweets[0]
-            results.append(TwitterFlashScraper._validate_tweet(actual_tweet, entity))
+            results.append(utils.validate_tweet_content(actual_tweet, entity))
 
         return results
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
-
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
         query = f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)} until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
@@ -128,26 +115,27 @@ class TwitterFlashScraper(Scraper):
         # Construct the input to the runner.
         max_items = scrape_config.entity_limit or 150
         run_input = {
-            **TwitterFlashScraper.BASE_RUN_INPUT,
-            "queries": [query],
-            "max_tweets": max_items,
+            **MicroworldsTwitterScraper.BASE_RUN_INPUT,
+            "searchTerms": [query],
+            "maxTweets": max_items,
         }
+
         run_config = RunConfig(
-            actor_id=TwitterFlashScraper.ACTOR_ID,
+            actor_id=MicroworldsTwitterScraper.ACTOR_ID,
             debug_info=f"Scrape {query}",
             max_data_entities=scrape_config.entity_limit,
-            timeout_secs=TwitterFlashScraper.SCRAPE_TIMEOUT_SECS,
+            timeout_secs=MicroworldsTwitterScraper.SCRAPE_TIMEOUT_SECS,
         )
 
-        bt.logging.trace(f"Performing Twitter scrape for query: {query}.")
+        bt.logging.trace(f"Performing Twitter scrape for search terms: {query}.")
 
         # Run the Actor and retrieve the scraped data.
         dataset: List[dict] = None
         try:
             dataset: List[dict] = await self.runner.run(run_config, run_input)
-        except ActorRunError:
+        except Exception:
             bt.logging.error(
-                f"Failed to scrape tweets using query {query}: {traceback.format_exc()}."
+                f"Failed to scrape tweets using search terms {query}: {traceback.format_exc()}."
             )
             # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
             return []
@@ -164,81 +152,48 @@ class TwitterFlashScraper(Scraper):
         """Performs a best effort parsing of Apify dataset into List[XContent]
 
         Any errors are logged and ignored."""
+        if dataset == [{"zero_result": True}]:
+            return []
+
         results: List[XContent] = []
         for data in dataset:
             try:
-                results.append(XContent(**data))
+                # Truncated_full_text is only populated if "full_text" is truncated.
+                text = (
+                    data["truncated_full_text"]
+                    if "truncated_full_text" in data and data["truncated_full_text"]
+                    else data["full_text"]
+                )
+                results.append(
+                    XContent(
+                        username=utils.extract_user(data["url"]),
+                        text=utils.sanitize_scraped_tweet(text),
+                        url=data["url"],
+                        timestamp=dt.datetime.strptime(
+                            data["created_at"], "%a %b %d %H:%M:%S %z %Y"
+                        ),
+                        tweet_hashtags=utils.extract_hashtags(data["full_text"]),
+                    )
+                )
             except Exception:
                 bt.logging.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
+
         return results
-
-    @classmethod
-    def _validate_tweet(cls, tweet: XContent, entity: DataEntity) -> ValidationResult:
-        """Validates the tweet is valid by the definition provided by entity."""
-        tweet_to_verify = None
-        try:
-            tweet_to_verify = XContent.from_data_entity(entity)
-        except Exception:
-            bt.logging.error(
-                f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Failed to decode data entity",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-
-        if tweet_to_verify != tweet:
-            bt.logging.info(f"Tweets do not match: {tweet_to_verify} != {tweet}.")
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-
-        # Wahey! A valid Tweet.
-        # One final check. Does the tweet content match the data entity information?
-        try:
-            tweet_entity = XContent.to_data_entity(tweet)
-            if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
-                return ValidationResult(
-                    is_valid=False,
-                    reason="The DataEntity fields are incorrect based on the tweet.",
-                    content_size_bytes_validated=entity.content_size_bytes,
-                )
-        except Exception:
-            # This shouldn't really happen, but let's safeguard against it anyway to avoid us somehow accepting
-            # corrupted or malformed data.
-            bt.logging.error(
-                f"Failed to convert XContent to DataEntity: {traceback.format_exc()}"
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Failed to convert XContent to DataEntity.",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-
-        # At last, all checks have passed. The DataEntity is indeed valid. Nice work!
-        return ValidationResult(
-            is_valid=True,
-            reason="Good job, you honest miner!",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
 
 
 async def test_scrape():
-    scraper = TwitterFlashScraper()
+    scraper = MicroworldsTwitterScraper()
 
     entities = await scraper.scrape(
         ScrapeConfig(
-            entity_limit=3,
+            entity_limit=5,
             date_range=DateRange(
-                start=dt.datetime(2023, 12, 9, 10, 0, 0, tzinfo=dt.timezone.utc),
-                end=dt.datetime(2023, 12, 9, 11, 0, 0, tzinfo=dt.timezone.utc),
+                start=dt.datetime(2024, 1, 30, 0, 0, 0, tzinfo=dt.timezone.utc),
+                end=dt.datetime(2024, 1, 30, 9, 0, 0, tzinfo=dt.timezone.utc),
             ),
-            labels=[DataLabel(value="#bittensor"), DataLabel(value="#TAO")],
+            labels=[DataLabel(value="#bittensor"), DataLabel(value="#btc")],
         )
     )
 
@@ -246,19 +201,52 @@ async def test_scrape():
 
 
 async def test_validate():
-    scraper = TwitterFlashScraper()
+    scraper = MicroworldsTwitterScraper()
 
     true_entities = [
+        DataEntity(
+            uri="https://twitter.com/HadsonNery/status/1752011223330124021",
+            datetime=dt.datetime(2024, 1, 29, 16, 50, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#faleitoleve"),
+            content='{"username":"@HadsonNery","text":"Se ele fosse brabo mesmo e eu estaria aqui defendendo ele, pq ele não foi direto no Davi já que a intenção dele era fazer o Davi comprar o barulho dela 🤷🏻\u200d♂️ MC fofoqueiro foi macetado pela CUNHÃ #faleitoleve","url":"https://twitter.com/HadsonNery/status/1752011223330124021","timestamp":"2024-01-29T16:50:00Z","tweet_hashtags":["#faleitoleve"]}',
+            content_size_bytes=492,
+        ),
         DataEntity(
             uri="https://twitter.com/TcMMTsTc/status/1733441357090545731",
             datetime=dt.datetime(2023, 12, 9, 10, 59, tzinfo=dt.timezone.utc),
             source=DataSource.X,
+            label=None,
             content=b'{"username":"@TcMMTsTc","text":"\xe3\x81\xbc\xe3\x81\x8f\xe7\x9c\xa0\xe3\x81\x84\xe3\x81\xa7\xe3\x81\x99","url":"https://twitter.com/TcMMTsTc/status/1733441357090545731","timestamp":"2023-12-09T10:59:00Z","tweet_hashtags":[]}',
             content_size_bytes=218,
         ),
         DataEntity(
+            uri="https://twitter.com/mdniy/status/1743249601925185642",
+            datetime=dt.datetime(2024, 1, 5, 12, 34, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=None,
+            content='{"username":"@mdniy","text":"🗓January 6, 2024\\n0️⃣8️⃣ Days to Makar Sankranti 2024\\n📍Sun Temple, Surya Pahar, Goalpura, Assam\\n \\nDepartment of Yogic Science and Naturopathy, Mahapurusha Srimanta Sankaradeva Viswavidyalaya, Assam in collaboration with MDNIY is organizing mass Surya Namaskar Demonstration…","url":"https://twitter.com/mdniy/status/1743249601925185642","timestamp":"2024-01-05T12:34:00Z","tweet_hashtags":[]}',
+            content_size_bytes=485,
+        ),
+        DataEntity(
+            uri="https://twitter.com/rEQjoewd6WfNFL3/status/1743187684422799519",
+            datetime=dt.datetime(2024, 1, 5, 8, 28, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=None,
+            content='{"username":"@rEQjoewd6WfNFL3","text":"ありがとうございます\\n\\nそうなんです\\nほんと偶然です\\n聞いたときはビックリしました\\n\\nいえいえ、私の記念日だなんて\\nもったいないです\\n妹の記念日にしてください\\nぷぷっ","url":"https://twitter.com/rEQjoewd6WfNFL3/status/1743187684422799519","timestamp":"2024-01-05T08:28:00Z","tweet_hashtags":[]}',
+            content_size_bytes=253,
+        ),
+        DataEntity(
             uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
             datetime=dt.datetime(2023, 12, 9, 10, 52, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#bittensor"),
+            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
+            content_size_bytes=484,
+        ),
+        DataEntity(
+            uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
+            datetime=dt.datetime(2023, 12, 9, 10, 52, 10, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bittensor"),
             content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
@@ -270,7 +258,7 @@ async def test_validate():
     print(f"Validation results: {results}")
 
     # Now modify the entities to make them invalid and check validation fails.
-    good_entity = true_entities[1]
+    good_entity = true_entities[4]
     bad_entities = [
         good_entity.copy(
             update={"uri": "https://twitter.com/nirmaljajra2/status/abc123"}
@@ -281,7 +269,7 @@ async def test_validate():
             }
         ),
         good_entity.copy(
-            update={"datetime": good_entity.datetime + dt.timedelta(seconds=1)}
+            update={"datetime": good_entity.datetime + dt.timedelta(minutes=1)}
         ),
         # Hashtag ordering needs to be deterministic. Verify changing the order of the hashtags makes the content non-equivalent.
         good_entity.copy(update={"label": DataLabel(value="#PAAl")}),
@@ -293,5 +281,6 @@ async def test_validate():
 
 
 if __name__ == "__main__":
+    bt.logging.set_trace(True)
     asyncio.run(test_scrape())
     asyncio.run(test_validate())

@@ -30,7 +30,7 @@ class TestScraperCoordinator(unittest.TestCase):
                     cadence_seconds=60,
                     labels_to_scrape=[],
                 ),
-                ScraperId.X_FLASH: ScraperConfig(
+                ScraperId.X_MICROWORLDS: ScraperConfig(
                     cadence_seconds=120,
                     labels_to_scrape=[],
                 ),
@@ -42,29 +42,28 @@ class TestScraperCoordinator(unittest.TestCase):
 
         # Create a Tracker with the config
         tracker = ScraperCoordinator.Tracker(config, now)
-        
+
         # Verify that the data sources aren't ready to scrape yet because the
         # tracker should wait until the cadence has passed.
-        self.assertEqual(
-            [], tracker.get_scraper_ids_ready_to_scrape(now)
-        )
+        self.assertEqual([], tracker.get_scraper_ids_ready_to_scrape(now))
 
         # Advance the clock by 60 seconds, and make sure only the first source is returned.
         now += dt.timedelta(seconds=60)
-        self.assertEqual([ScraperId.REDDIT_LITE], tracker.get_scraper_ids_ready_to_scrape(now))
+        self.assertEqual(
+            [ScraperId.REDDIT_LITE], tracker.get_scraper_ids_ready_to_scrape(now)
+        )
 
         tracker.on_scrape_scheduled(ScraperId.REDDIT_LITE, now)
-        
+
         # Advance the clock by 15 seconds, and make sure nothing is returned.
         now += dt.timedelta(seconds=15)
-        self.assertEqual(
-            [], tracker.get_scraper_ids_ready_to_scrape(now)
-        )
+        self.assertEqual([], tracker.get_scraper_ids_ready_to_scrape(now))
 
         # Advance the clock by 45 seconds, and make sure both sources are returned.
         now += dt.timedelta(seconds=45)
         self.assertEqual(
-            [ScraperId.REDDIT_LITE, ScraperId.X_FLASH], tracker.get_scraper_ids_ready_to_scrape(now)
+            [ScraperId.REDDIT_LITE, ScraperId.X_FLASH],
+            tracker.get_scraper_ids_ready_to_scrape(now),
         )
 
     def test_choose_scrape_configs(self):
@@ -126,7 +125,8 @@ class TestScraperCoordinator(unittest.TestCase):
                 TimeBucket.to_date_range(oldest_expected_time_bucket).start,
             )
             self.assertLessEqual(
-                labeled_config.date_range.end, TimeBucket.to_date_range(latest_time_bucket).end
+                labeled_config.date_range.end,
+                TimeBucket.to_date_range(latest_time_bucket).end,
             )
 
             label_counts[label] += 1
@@ -138,7 +138,8 @@ class TestScraperCoordinator(unittest.TestCase):
             )
             self.assertEqual(20, labelless_config.entity_limit)
             self.assertEqual(
-                TimeBucket.to_date_range(latest_time_bucket), labelless_config.date_range
+                TimeBucket.to_date_range(latest_time_bucket),
+                labelless_config.date_range,
             )
 
         # Check each label was chosen roughly half the time
@@ -182,7 +183,9 @@ class TestScraperCoordinator(unittest.TestCase):
         mock_storage = Mock(spec=MinerStorage)
 
         # Create a ScraperProvider that uses the Mock Scraper
-        provider = ScraperProvider(factories={ScraperId.REDDIT_LITE: lambda: mock_scraper})
+        provider = ScraperProvider(
+            factories={ScraperId.REDDIT_LITE: lambda: mock_scraper}
+        )
 
         config = CoordinatorConfig(
             scraper_configs={
@@ -194,7 +197,9 @@ class TestScraperCoordinator(unittest.TestCase):
                         LabelScrapingConfig(
                             label_choices=[DataLabel(value="label1")],
                             max_data_entities=10,
-                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
+                            max_age_hint_minutes=60
+                            * 24
+                            * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                         ),
                     ],
                 ),
@@ -222,7 +227,7 @@ class TestScraperCoordinator(unittest.TestCase):
         test_utils.wait_for_condition(lambda: mock_storage.store_data_entities.called)
         args, _ = mock_storage.store_data_entities.call_args
         self.assertEqual(expected_entities, args[0])
-        
+
         coordinator.stop()
 
 
