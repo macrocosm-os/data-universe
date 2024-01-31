@@ -9,6 +9,8 @@ from scraping.scraper import ValidationResult
 
 from scraping.x.model import XContent
 
+from datadog import statsd
+
 
 def is_valid_twitter_url(url: str) -> bool:
     """Verifies a URL is both a valid URL and is for twitter.com."""
@@ -82,6 +84,9 @@ def validate_tweet_content(
         )
         # Also reduce entity granularity for the check below.
         entity.datetime = entity.datetime.replace(second=0).replace(microsecond=0)
+
+    if tweet_to_verify.text[-1] == "…":
+        statsd.increment("scraping.x.validate_tweet_content.ellipsis")
 
     # Allow matching on truncated tweets, since the old actor used to return truncated
     # tweets.

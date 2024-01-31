@@ -4,11 +4,14 @@ import bittensor as bt
 from typing import List
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
+from scraping.global_counter import decrement_count, get_and_increment_count
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
 from scraping.x import utils
 import datetime as dt
+
+from datadog import statsd
 
 
 class MicroworldsTwitterScraper(Scraper):
@@ -60,10 +63,16 @@ class MicroworldsTwitterScraper(Scraper):
             # Retrieve the tweet from Apify.
             dataset: List[dict] = None
             try:
-                dataset: List[dict] = await self.runner.run(run_config, run_input)
+                active_count = get_and_increment_count()
+                statsd.gauge("active_request_count", active_count)
+                statsd.gauge("Active tasks", len(asyncio.all_tasks()))
+                with statsd.timed("twitter_microworlds_latency"):
+                    dataset: List[dict] = await self.runner.run(run_config, run_input)
+                    statsd.increment("twitter_microworlds", tags=["status:success"])
             except (
                 Exception
             ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
+                statsd.increment("twitter_microworlds", tags=["status:failure"])
                 bt.logging.error(
                     f"Failed to validate entities: {traceback.format_exc()}."
                 )
@@ -79,6 +88,8 @@ class MicroworldsTwitterScraper(Scraper):
                     )
                 )
                 continue
+            finally:
+                decrement_count()
 
             # Parse the response
             tweets = self._best_effort_parse_dataset(dataset)
