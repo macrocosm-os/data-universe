@@ -4,12 +4,15 @@ import traceback
 import bittensor as bt
 from typing import List, Optional
 from common.data import DataEntity, DataLabel, DataSource
+from scraping.global_counter import decrement_count, get_and_increment_count
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.x import utils
 from scraping.x.model import XContent
 import datetime as dt
 from bs4 import BeautifulSoup
 from playwright.async_api import async_playwright
+
+from datadog import statsd
 
 
 class TwitterCustomScraper(Scraper):
@@ -38,17 +41,24 @@ class TwitterCustomScraper(Scraper):
             html = None
             browser = None
             try:
-                async with async_playwright() as playwright:
-                    chromium = playwright.chromium
-                    browser = await chromium.launch()
-                    context = await browser.new_context(
-                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
-                    )
-                    page = await context.new_page()
-                    await page.goto(entity.uri)
-                    await page.get_by_test_id("tweet").wait_for(timeout=15000)
-                    html = await page.get_by_test_id("tweet").first.inner_html()
+                active_count = get_and_increment_count()
+                statsd.gauge("active_request_count", active_count)
+                statsd.gauge("Active tasks", len(asyncio.all_tasks()))
+                with statsd.timed("playwright_request_time"):
+                    async with async_playwright() as playwright:
+                        chromium = playwright.chromium
+                        browser = await chromium.launch()
+                        context = await browser.new_context(
+                            user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
+                        )
+                        page = await context.new_page()
+                        await page.goto(entity.uri)
+                        await page.get_by_test_id("tweet").wait_for(timeout=15000)
+                        html = await page.get_by_test_id("tweet").first.inner_html()
+                        statsd.increment("twitter_microworlds", tags=["status:success"])
             except Exception as e:
+                statsd.increment("twitter_microworlds", tags=["status:failure"])
+
                 bt.logging.error(
                     f"Failed to validate entity: {traceback.format_exc()}."
                 )
@@ -65,6 +75,7 @@ class TwitterCustomScraper(Scraper):
                 )
                 continue
             finally:
+                decrement_count()
                 # Try to close the browser but swallow exceptions here.
                 if browser:
                     try:
