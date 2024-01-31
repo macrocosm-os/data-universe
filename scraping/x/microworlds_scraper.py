@@ -7,6 +7,7 @@ from common.date_range import DateRange
 from scraping.global_counter import decrement_count, get_and_increment_count
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
+from scraping.x import utils
 from scraping.x.model import XContent
 from scraping.x import utils
 import datetime as dt
