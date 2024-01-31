@@ -1,5 +1,6 @@
 import asyncio
 import threading
+import time
 import traceback
 import bittensor as bt
 from typing import List, Optional
@@ -78,6 +79,10 @@ class TwitterCustomScraper(Scraper):
                             TwitterCustomScraper.index = (
                                 TwitterCustomScraper.index + 1
                             ) % len(user_agents)
+
+                            # Ensure we don't send more than 1 request per second to respect the
+                            # robots.txt file.
+                            time.sleep(1)
 
                         chromium = playwright.chromium
                         browser = await chromium.launch()
