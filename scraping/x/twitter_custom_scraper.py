@@ -1,9 +1,11 @@
 import asyncio
+import threading
 import traceback
 import bittensor as bt
 from typing import List, Optional
 from common.data import DataEntity, DataLabel, DataSource
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from scraping.x import utils
 from scraping.x.model import XContent
 from scraping.x.utils import is_valid_twitter_url, get_user_from_twitter_url
 import datetime as dt
@@ -84,7 +86,7 @@ class TwitterCustomScraper(Scraper):
                 continue
 
             # We found the tweet. Validate it.
-            results.append(TwitterCustomScraper._validate_tweet(tweet, entity))
+            results.append(utils.validate_tweet_content(tweet, entity))
 
         return results
 
@@ -165,80 +167,6 @@ class TwitterCustomScraper(Scraper):
             )
 
         return tweet
-
-    # TODO: break this out to utils, or just remove the other scraper.py?
-    @classmethod
-    def _validate_tweet(cls, tweet: XContent, entity: DataEntity) -> ValidationResult:
-        """Validates the tweet is valid by the definition provided by entity."""
-        tweet_to_verify = None
-        try:
-            tweet_to_verify = XContent.from_data_entity(entity)
-        except Exception:
-            bt.logging.error(
-                f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Failed to decode data entity",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-
-        # Previous scrapers would only get to the minute granularity.
-        if tweet.timestamp != tweet_to_verify.timestamp:
-            tweet.timestamp = tweet.timestamp.replace(second=0).replace(microsecond=0)
-            tweet_to_verify.timestamp = tweet_to_verify.timestamp.replace(
-                second=0
-            ).replace(microsecond=0)
-            # Also reduce entity granularity for the check below.
-            entity.datetime = entity.datetime.replace(second=0).replace(microsecond=0)
-
-        # Previous scrapers would not get the end of longer tweets, replacing with ellipses.
-        if (
-            tweet.text != tweet_to_verify.text
-            and tweet_to_verify.text.endswith("…")
-            and tweet_to_verify.text[:-1] in tweet.text
-        ):
-            bt.logging.trace(
-                "Tweet texts match except for one being elided. Using shorter text."
-            )
-            tweet.text = tweet_to_verify.text
-
-        if tweet_to_verify != tweet:
-            bt.logging.info(f"Tweets do not match: {tweet_to_verify} != {tweet}.")
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-
-        # Wahey! A valid Tweet.
-        # One final check. Does the tweet content match the data entity information?
-        try:
-            tweet_entity = XContent.to_data_entity(tweet)
-            if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
-                return ValidationResult(
-                    is_valid=False,
-                    reason="The DataEntity fields are incorrect based on the tweet.",
-                    content_size_bytes_validated=entity.content_size_bytes,
-                )
-        except Exception:
-            # This shouldn't really happen, but let's safeguard against it anyway to avoid us somehow accepting
-            # corrupted or malformed data.
-            bt.logging.error(
-                f"Failed to convert XContent to DataEntity: {traceback.format_exc()}"
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Failed to convert XContent to DataEntity.",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-
-        # At last, all checks have passed. The DataEntity is indeed valid. Nice work!
-        return ValidationResult(
-            is_valid=True,
-            reason="Good job, you honest miner!",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
 
 
 async def test_validate():
@@ -321,5 +249,44 @@ async def test_validate():
         print(f"Expecting a failed validation. Result={results}")
 
 
+async def test_multi_validate():
+    scraper = TwitterCustomScraper()
+
+    entities = [
+        DataEntity(
+            uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
+            datetime=dt.datetime(2023, 12, 9, 10, 52, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#bittensor"),
+            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
+            content_size_bytes=484,
+        ),
+        DataEntity(
+            uri="https://twitter.com/TcMMTsTc/status/1733441357090545731",
+            datetime=dt.datetime(2023, 12, 9, 10, 59, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=None,
+            content=b'{"username":"@TcMMTsTc","text":"\xe3\x81\xbc\xe3\x81\x8f\xe7\x9c\xa0\xe3\x81\x84\xe3\x81\xa7\xe3\x81\x99","url":"https://twitter.com/TcMMTsTc/status/1733441357090545731","timestamp":"2023-12-09T10:59:00Z","tweet_hashtags":[]}',
+            content_size_bytes=218,
+        ),
+    ]
+
+    def validate_sync(entities):
+        result = asyncio.run(scraper.validate(entities=entities))
+        print(result)
+
+    threads = [
+        threading.Thread(target=validate_sync, args=(entities,)) for i in range(10)
+    ]
+
+    for t in threads:
+        t.start()
+
+    for i, t in enumerate(threads):
+        t.join(timeout=300)
+        print(f"Thread {i} finished.")
+
+
 if __name__ == "__main__":
-    asyncio.run(test_validate())
+    # asyncio.run(test_validate())
+    asyncio.run(test_multi_validate())
