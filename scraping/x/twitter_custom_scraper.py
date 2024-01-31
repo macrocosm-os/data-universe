@@ -42,8 +42,10 @@ class TwitterCustomScraper(Scraper):
                 async with async_playwright() as playwright:
                     chromium = playwright.chromium
                     browser = await chromium.launch()
-                    # Consider a user agent.
-                    page = await browser.new_page()
+                    context = await browser.new_context(
+                        user_agent="Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/109.0.0.0 Safari/537.36"
+                    )
+                    page = await context.new_page()
                     await page.goto(entity.uri)
                     await page.get_by_test_id("tweet").wait_for(timeout=15000)
                     html = await page.get_by_test_id("tweet").first.inner_html()
