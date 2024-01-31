@@ -1,6 +1,4 @@
 import asyncio
-from imp import lock_held
-from operator import index
 import threading
 import traceback
 import bittensor as bt
@@ -76,7 +74,7 @@ class TwitterCustomScraper(Scraper):
                     async with async_playwright() as playwright:
                         i = 0
                         with TwitterCustomScraper.lock:
-                            i = index
+                            i = TwitterCustomScraper.index
                             TwitterCustomScraper.index = (
                                 TwitterCustomScraper.index + 1
                             ) % len(user_agents)
