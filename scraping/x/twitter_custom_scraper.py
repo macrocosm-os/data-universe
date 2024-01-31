@@ -89,7 +89,7 @@ class TwitterCustomScraper(Scraper):
                         context = await browser.new_context(user_agent=user_agents[i])
                         page = await context.new_page()
                         await page.goto(entity.uri)
-                        await page.get_by_test_id("tweet").wait_for(timeout=15000)
+                        await page.get_by_test_id("tweet").wait_for(timeout=50000)
                         html = await page.get_by_test_id("tweet").first.inner_html()
                         statsd.increment("twitter_microworlds", tags=["status:success"])
             except Exception as e:
