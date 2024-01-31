@@ -73,6 +73,10 @@ class MinerEvaluator:
         """Returns the scorer used by the evaluator."""
         return self.scorer
 
+    def eval_miner_sync(self, uid: int) -> None:
+        """Synchronous version of eval_miner."""
+        asyncio.run(self.eval_miner(uid))
+
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
 
@@ -277,16 +281,20 @@ class MinerEvaluator:
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
-        tasks = [asyncio.create_task(self.eval_miner(uid)) for uid in uids_to_eval]
-        done, pending = await asyncio.wait(tasks, timeout=180)
+        threads = [
+            threading.Thread(target=self.eval_miner_sync, args=(uid,))
+            for uid in uids_to_eval
+        ]
+        for thread in threads:
+            thread.start()
 
-        for future in pending:
-            future.cancel()  # Cancel unfinished tasks.
-
-        if pending:
-            bt.logging.info(
-                f"Validator run next eval batch timed out on the following calls: {pending}."
-            )
+        bt.logging.trace(f"Waiting for {len(threads)} miner evals to finish.")
+        end = datetime.datetime.now() + datetime.datetime.timedelta(seconds=300)
+        for t in threads:
+            # Compute the timeout, so that all threads are waited for a total of 5 minutes.
+            timeout = max(0, (end - datetime.datetime.now()).total_seconds())
+            t.join(timeout=timeout)
+        bt.logging.trace(f"Finished waiting for {len(threads)} miner eval.")
 
         # Run the next evaluation batch immediately.
         return 0
