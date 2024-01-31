@@ -196,8 +196,11 @@ async def test_scrape():
             labels=[DataLabel(value="#bittensor"), DataLabel(value="#btc")],
         )
     )
-
+    
     print(f"Scraped {len(entities)} entities: {entities}")
+
+    return entities
+
 
 
 async def test_validate():
