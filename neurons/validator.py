@@ -19,7 +19,6 @@
 import copy
 import datetime as dt
 import sys
-import traceback
 import torch
 import asyncio
 import threading
@@ -32,7 +31,6 @@ import common.utils as utils
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
-from traceback import print_exception
 
 from neurons import __spec_version__ as spec_version
 
@@ -164,8 +162,8 @@ class Validator:
         bt.logging.info(f"Validator starting at block: {self.block}.")
 
         # This loop maintains the validator's operations until intentionally stopped.
-        try:
-            while not self.should_exit:
+        while not self.should_exit:
+            try:
                 bt.logging.debug(
                     f"Validator running on step({self.step}) block({self.block})."
                 )
@@ -216,16 +214,15 @@ class Validator:
                         self.wandb_run.finish()
                         self.new_wandb_run()
 
-        # If someone intentionally stops the validator, it'll safely terminate operations.
-        except KeyboardInterrupt:
-            self.axon.stop()
-            bt.logging.success("Validator killed by keyboard interrupt.")
-            sys.exit()
+            # If someone intentionally stops the validator, it'll safely terminate operations.
+            except KeyboardInterrupt:
+                self.axon.stop()
+                bt.logging.success("Validator killed by keyboard interrupt.")
+                sys.exit()
 
-        # In case of unforeseen errors, the validator will log the error and continue operations.
-        except Exception as err:
-            bt.logging.error("Error during validation", str(err))
-            bt.logging.debug(print_exception(type(err), err, err.__traceback__))
+            # In case of unforeseen errors, the validator will log the error and continue operations.
+            except Exception as err:
+                bt.logging.error("Error during validation", str(err))
 
     def run_in_background_thread(self):
         """
