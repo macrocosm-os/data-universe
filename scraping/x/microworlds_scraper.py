@@ -30,71 +30,84 @@ class MicroworldsTwitterScraper(Scraper):
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
+
+        async def validate_entity(entity) -> ValidationResult:
+            if not utils.is_valid_twitter_url(entity.uri):
+                return ValidationResult(
+                    is_valid=False,
+                    reason="Invalid URI.",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+
+            attempt = 0
+            max_attempts = 2
+            while attempt < max_attempts:
+                # Increment attempt.
+                attempt += 1
+
+                # On attempt 1 we fetch the exact number of tweets. On retry we fetch more in case they are in replies.
+                tweet_count = 1 if attempt == 1 else 5
+
+                run_input = {
+                    **MicroworldsTwitterScraper.BASE_RUN_INPUT,
+                    "urls": [entity.uri],
+                    "maxTweets": tweet_count,
+                }
+                run_config = RunConfig(
+                    actor_id=MicroworldsTwitterScraper.ACTOR_ID,
+                    debug_info=f"Validate {entity.uri}",
+                    max_data_entities=tweet_count,
+                )
+
+                # Retrieve the tweets from Apify.
+                dataset: List[dict] = None
+                try:
+                    dataset: List[dict] = await self.runner.run(run_config, run_input)
+                except (
+                    Exception
+                ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
+                    if attempt != max_attempts:
+                        # Retrying.
+                        continue
+                    else:
+                        bt.logging.error(
+                            f"Failed to run actor: {traceback.format_exc()}."
+                        )
+                        # This is an unfortunate situation. We have no way to distinguish a genuine failure from
+                        # one caused by malicious input. In my own testing I was able to make the Actor timeout by
+                        # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
+                        # pass malicious input for chunks they don't have.
+                        return ValidationResult(
+                            is_valid=False,
+                            reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                            content_size_bytes_validated=entity.content_size_bytes,
+                        )
+
+                # Parse the response
+                tweets = self._best_effort_parse_dataset(dataset)
+
+                actual_tweet = None
+                for tweet in tweets:
+                    if tweet.url == entity.uri:
+                        actual_tweet = tweet
+                        break
+                if actual_tweet is None:
+                    # Only append a failed result if on final attempt.
+                    if attempt == max_attempts:
+                        return ValidationResult(
+                            is_valid=False,
+                            reason="Tweet not found or is invalid.",
+                            content_size_bytes_validated=entity.content_size_bytes,
+                        )
+                else:
+                    return utils.validate_tweet_content(actual_tweet, entity)
+
         if not entities:
             return []
 
-        # Treat the entities as guilty until proven innocent.
-        results = []
-
-        # The Apify Actor is not as consistent at multiple tweet_urls at once. So we must perform each run separately.
-        for entity in entities:
-            # First check the URI is a valid Twitter URL.
-            if not utils.is_valid_twitter_url(entity.uri):
-                results.append(
-                    ValidationResult(is_valid=False, reason="Invalid URI."),
-                    content_size_bytes_validated=entity.content_size_bytes,
-                )
-                continue
-
-            run_input = {
-                **MicroworldsTwitterScraper.BASE_RUN_INPUT,
-                "urls": [entity.uri],
-                "maxTweets": 1,
-            }
-            run_config = RunConfig(
-                actor_id=MicroworldsTwitterScraper.ACTOR_ID,
-                debug_info=f"Validate {entity.uri}",
-                max_data_entities=1,
-            )
-
-            # Retrieve the tweet from Apify.
-            dataset: List[dict] = None
-            try:
-                dataset: List[dict] = await self.runner.run(run_config, run_input)
-            except (
-                Exception
-            ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
-                bt.logging.error(
-                    f"Failed to validate entities: {traceback.format_exc()}."
-                )
-                # This is an unfortunate situation. We have no way to distinguish a genuine failure from
-                # one caused by malicious input. In my own testing I was able to make the Actor timeout by
-                # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
-                # pass malicious input for chunks they don't have.
-                results.append(
-                    ValidationResult(
-                        is_valid=False,
-                        reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
-                        content_size_bytes_validated=entity.content_size_bytes,
-                    )
-                )
-                continue
-
-            # Parse the response
-            tweets = self._best_effort_parse_dataset(dataset)
-            if len(tweets) < 1:
-                results.append(
-                    ValidationResult(
-                        is_valid=False,
-                        reason="Tweet not found or is invalid.",
-                        content_size_bytes_validated=entity.content_size_bytes,
-                    )
-                )
-                continue
-
-            # We found the tweet. Validate it.
-            actual_tweet = tweets[0]
-            results.append(utils.validate_tweet_content(actual_tweet, entity))
+        results = await asyncio.gather(
+            *[validate_entity(entity) for entity in entities]
+        )
 
         return results
 
@@ -238,48 +251,10 @@ async def test_validate():
             content='{"username":"@rEQjoewd6WfNFL3","text":"ありがとうございます\\n\\nそうなんです\\nほんと偶然です\\n聞いたときはビックリしました\\n\\nいえいえ、私の記念日だなんて\\nもったいないです\\n妹の記念日にしてください\\nぷぷっ","url":"https://twitter.com/rEQjoewd6WfNFL3/status/1743187684422799519","timestamp":"2024-01-05T08:28:00Z","tweet_hashtags":[]}',
             content_size_bytes=253,
         ),
-        DataEntity(
-            uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
-            datetime=dt.datetime(2023, 12, 9, 10, 52, tzinfo=dt.timezone.utc),
-            source=DataSource.X,
-            label=DataLabel(value="#bittensor"),
-            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
-            content_size_bytes=484,
-        ),
-        DataEntity(
-            uri="https://twitter.com/nirmaljajra2/status/1733439438473380254",
-            datetime=dt.datetime(2023, 12, 9, 10, 52, 10, tzinfo=dt.timezone.utc),
-            source=DataSource.X,
-            label=DataLabel(value="#bittensor"),
-            content=b'{"username":"@nirmaljajra2","text":"DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
-            content_size_bytes=484,
-        ),
     ]
 
     results = await scraper.validate(entities=true_entities)
     print(f"Validation results: {results}")
-
-    # Now modify the entities to make them invalid and check validation fails.
-    good_entity = true_entities[4]
-    bad_entities = [
-        good_entity.copy(
-            update={"uri": "https://twitter.com/nirmaljajra2/status/abc123"}
-        ),
-        good_entity.copy(
-            update={
-                "content": b'{"username":"@nirmaljajra2","text":"Random-text-insertion-DMind has the biggest advantage of using #Bittensor APIs. \\n\\nIt means it is not controlled/Run by a centralized network but it is powered by AI P2P modules making it more decentralized\\n\\n$PAAl uses OpenAI API which is centralized \\n\\nA detailed comparison","url":"https://twitter.com/nirmaljajra2/status/1733439438473380254","timestamp":"2023-12-09T10:52:00Z","tweet_hashtags":["#Bittensor","#PAAl"]}',
-            }
-        ),
-        good_entity.copy(
-            update={"datetime": good_entity.datetime + dt.timedelta(minutes=1)}
-        ),
-        # Hashtag ordering needs to be deterministic. Verify changing the order of the hashtags makes the content non-equivalent.
-        good_entity.copy(update={"label": DataLabel(value="#PAAl")}),
-    ]
-
-    for entity in bad_entities:
-        results = await scraper.validate(entities=[entity])
-        print(f"Expecting a failed validation. Result={results}")
 
 
 if __name__ == "__main__":

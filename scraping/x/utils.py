@@ -87,7 +87,7 @@ def validate_tweet_content(
     if (
         tweet_to_verify.text[-1] == "…"
         and len(tweet_to_verify.text) > 180
-        and actual_tweet.text.starts_with(tweet_to_verify.text[:-1])
+        and actual_tweet.text.startswith(tweet_to_verify.text[:-1])
     ):
         tweet_to_verify.text = actual_tweet.text
 
