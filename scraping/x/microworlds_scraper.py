@@ -171,6 +171,14 @@ class MicroworldsTwitterScraper(Scraper):
         results: List[XContent] = []
         for data in dataset:
             try:
+                # Check that we have the required fields.
+                if (
+                    ("full_text" not in data and "truncated_full_text" not in data)
+                    or "url" not in data
+                    or "created_at" not in data
+                ):
+                    continue
+
                 # Truncated_full_text is only populated if "full_text" is truncated.
                 text = (
                     data["truncated_full_text"]
@@ -185,7 +193,7 @@ class MicroworldsTwitterScraper(Scraper):
                         timestamp=dt.datetime.strptime(
                             data["created_at"], "%a %b %d %H:%M:%S %z %Y"
                         ),
-                        tweet_hashtags=utils.extract_hashtags(data["full_text"]),
+                        tweet_hashtags=utils.extract_hashtags(text),
                     )
                 )
             except Exception:
