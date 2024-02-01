@@ -1,12 +1,13 @@
 """General utility functions."""
 
-import asyncio
 import datetime as dt
+import functools
+import concurrent
 import pickle
-from socket import timeout
+import sys
 import time
 from math import floor
-from typing import Any, Callable
+from typing import Any, Callable, List, Optional
 import bittensor as bt
 from functools import lru_cache, update_wrapper
 
@@ -57,6 +58,35 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a validator."""
     return metagraph.validator_permit[uid] and metagraph.S[uid] >= 10_000
+
+
+def get_miner_uids(metagraph: bt.metagraph, my_uid: int) -> List[int]:
+    """Gets the uids of all miners in the metagraph."""
+    return sorted(
+        [
+            uid.item()
+            for uid in metagraph.uids
+            if is_miner(uid.item(), metagraph) and uid.item() != my_uid
+        ]
+    )
+
+
+def get_uid(wallet: bt.wallet, metagraph: bt.metagraph) -> Optional[int]:
+    """Gets the uid of the wallet in the metagraph or None if not registered."""
+    if wallet.hotkey.ss58_address in metagraph.hotkeys:
+        return metagraph.hotkeys.index(wallet.hotkey.ss58_address)
+    return None
+
+
+def assert_registered(wallet: bt.wallet, metagraph: bt.metagraph):
+    """Exits the process if wallet isn't registered in metagraph"""
+    # --- Check for registration.
+    if wallet.hotkey.ss58_address not in metagraph.hotkeys:
+        bt.logging.error(
+            f"Wallet: {wallet} is not registered on netuid {metagraph.netuid}."
+            f" Please register the hotkey using `btcli subnets register` before trying again."
+        )
+        sys.exit(1)
 
 
 def time_bucket_id_from_datetime(datetime: dt.datetime) -> int:
@@ -207,3 +237,28 @@ async def async_run_with_retry(
             # Wait before the next retry.
             time.sleep(delay_seconds)
     raise Exception("Unexpected state: Ran with retry but didn't hit a terminal state")
+
+
+def run_in_thread(func: functools.partial, ttl: int, name=None) -> Any:
+    """Runs the provided function on a thread with 'ttl' seconds to complete.
+
+    Args:
+        func (functools.partial): Function to be run.
+        ttl (int): How long to try for in seconds.
+
+    Returns:
+        Any: The value returned by 'func'
+    """
+
+    executor = concurrent.futures.ThreadPoolExecutor(max_workers=1)
+
+    try:
+        future = executor.submit(func)
+        return future.result(timeout=ttl)
+    except concurrent.futures.TimeoutError as e:
+        bt.logging.error(f"Failed to complete '{name}' within {ttl} seconds.")
+        raise TimeoutError(f"Failed to complete '{name}' within {ttl} seconds.") from e
+    finally:
+        bt.logging.trace(f"Completed {name}")
+        executor.shutdown(wait=False)
+        bt.logging.trace(f"{name} cleaned up successfully")

@@ -15,7 +15,7 @@ class TestScrapingConfig(unittest.TestCase):
         config = ScrapingConfig(
             scraper_configs=[
                 ScraperConfig(
-                    scraper_id=ScraperId.X_FLASH,
+                    scraper_id=ScraperId.X_MICROWORLDS,
                     cadence_seconds=300,
                     labels_to_scrape=[
                         LabelScrapingConfig(

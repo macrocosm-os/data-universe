@@ -149,3 +149,17 @@ def add_args(neuron_type: NeuronType, parser):
 
     else:
         raise ValueError(f"Invalid neuron type: {neuron_type}")
+
+
+def create_config(neuron_type: NeuronType):
+    """
+    Returns the configuration for the NeuronType
+    """
+    parser = argparse.ArgumentParser()
+    bt.wallet.add_args(parser)
+    bt.subtensor.add_args(parser)
+    bt.logging.add_args(parser)
+    bt.axon.add_args(parser)
+    add_args(neuron_type, parser)
+
+    return bt.config(parser)

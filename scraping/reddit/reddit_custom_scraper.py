@@ -32,7 +32,7 @@ class RedditCustomScraper(Scraper):
     Scrapes Reddit data using a personal reddit account.
     """
 
-    USER_AGENT = "User-Agent: python: "
+    USER_AGENT = f"User-Agent: python: {os.getenv('REDDIT_USERNAME')}"
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
@@ -75,32 +75,23 @@ class RedditCustomScraper(Scraper):
             content = None
 
             try:
-
-                async def _get_content():
-                    async with asyncpraw.Reddit(
-                        client_id=os.getenv("REDDIT_CLIENT_ID"),
-                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                        username=os.getenv("REDDIT_USERNAME"),
-                        password=os.getenv("REDDIT_PASSWORD"),
-                        user_agent=RedditCustomScraper.USER_AGENT
-                        + os.getenv("REDDIT_USERNAME"),
-                    ) as reddit:
-                        if reddit_content_to_verify.data_type == RedditDataType.POST:
-                            submission = await reddit.submission(
-                                url=reddit_content_to_verify.url
-                            )
-                            # Parse the response.
-                            return self._best_effort_parse_submission(submission)
-                        else:
-                            comment = await reddit.comment(
-                                url=reddit_content_to_verify.url
-                            )
-                            # Parse the response.
-                            return self._best_effort_parse_comment(comment)
-
-                content = await utils.async_run_with_retry(
-                    _get_content, max_retries=3, delay_seconds=5
-                )
+                async with asyncpraw.Reddit(
+                    client_id=os.getenv("REDDIT_CLIENT_ID"),
+                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                    username=os.getenv("REDDIT_USERNAME"),
+                    password=os.getenv("REDDIT_PASSWORD"),
+                    user_agent=RedditCustomScraper.USER_AGENT,
+                ) as reddit:
+                    if reddit_content_to_verify.data_type == RedditDataType.POST:
+                        submission = await reddit.submission(
+                            url=reddit_content_to_verify.url
+                        )
+                        # Parse the response.
+                        content = self._best_effort_parse_submission(submission)
+                    else:
+                        comment = await reddit.comment(url=reddit_content_to_verify.url)
+                        # Parse the response.
+                        content = self._best_effort_parse_comment(comment)
             except Exception as e:
                 bt.logging.error(
                     f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}."

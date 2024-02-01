@@ -55,7 +55,7 @@ The frequency and types of data your Miner will scrape is configured in the [scr
 
 By default `scraping_config.json` is setup use both the apify actor and the personal reddit account for scraping reddit.
 
-If you do not want to use Apify you should remove the sections where the `scraper_id` is set to either `Reddit.lite` or `X.flash`.
+If you do not want to use Apify you should remove the sections where the `scraper_id` is set to either `Reddit.lite` or `X.microworlds`.
 
 If you do not want to use a personal Reddit account you should remove the sections where the `scraper_id` is set to either `Reddit.custom`.
 
@@ -74,7 +74,7 @@ Let's walk through an example to explain how all these properties fit together.
 {
     "scraper_configs": [
         {
-            "scraper_id": "X.Flash",
+            "scraper_id": "X.microworlds",
             "cadence_secs": 300,
             "labels_to_scrape": [
                 {
@@ -97,7 +97,7 @@ Let's walk through an example to explain how all these properties fit together.
 }
 ```
 
-In this example, we configure the Miner to scrape using a single scraper, the "X.Flash" scraper. The scraper will run every 5 minutes (300 seconds). When it runs, it'll run 2 scrapes:
+In this example, we configure the Miner to scrape using a single scraper, the "X.microworlds" scraper. The scraper will run every 5 minutes (300 seconds). When it runs, it'll run 2 scrapes:
 1. The first will be a scrape for at most 100 items with #bittensor. The data scrape will choose a random [TimeBucket](../README.md#terminology) in (now - max_age_in_minutes, now). The probability distribution used to select a TimeBucket matches the Validator's incentive for [Data Freshness](../README.md#1-data-freshness): that is, it's weighted towards newer data.
 2. The second will be a scrape for either #decentralizedfinance or #tao, chosen at random (uniformly). The scrape will scrape at most 50 items, and will use a random TimeBucket between now and the maximum data freshness threshold.
 

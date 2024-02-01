@@ -25,7 +25,7 @@ import bittensor as bt
 from abc import ABC, abstractmethod
 
 # Sync calls set weights and also resyncs the metagraph.
-from neurons.config import NeuronType, check_config, add_args
+from neurons.config import NeuronType, check_config, add_args, create_config
 from common.utils import ttl_get_block
 from neurons import __spec_version__ as spec_version
 
@@ -40,7 +40,7 @@ class BaseNeuron(ABC):
     def __init__(self, config=None):
         self.spec_version = spec_version
 
-        self.config = copy.deepcopy(config or self.create_config())
+        self.config = copy.deepcopy(config or create_config(self.neuron_type()))
         check_config(self.config)
 
         # Set up logging with the provided configuration and directory.
@@ -98,19 +98,6 @@ class BaseNeuron(ABC):
 
     def get_config_for_test(self) -> bt.config:
         return self.config
-
-    def create_config(self):
-        """
-        Returns the configuration for this neuron.
-        """
-        parser = argparse.ArgumentParser()
-        bt.wallet.add_args(parser)
-        bt.subtensor.add_args(parser)
-        bt.logging.add_args(parser)
-        bt.axon.add_args(parser)
-        add_args(self.neuron_type(), parser)
-
-        return bt.config(parser)
 
     @property
     def block(self):
