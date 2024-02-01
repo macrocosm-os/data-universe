@@ -29,6 +29,8 @@ def extract_user(url: str) -> str:
     raise ValueError(f"Unable to extract user from {url}")
 
 
+# Note this doesn't handle cases with punctuation at the beginning or end of a tag.
+# Note this over-eagerly matches things like $10 and uses $ for cashtags not #.
 def extract_hashtags(text: str) -> List[str]:
     """Given a tweet, extracts the hashtags in the order they appear in the tweet."""
     hashtags = []
