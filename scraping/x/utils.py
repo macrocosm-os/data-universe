@@ -1,4 +1,3 @@
-from cgitb import text
 import bittensor as bt
 import re
 import traceback
