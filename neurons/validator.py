@@ -95,6 +95,7 @@ class Validator:
         self.thread: threading.Thread = None
         self.lock = threading.RLock()
         self.last_eval_time = dt.datetime.utcnow()
+        self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
 
     def setup(self):
@@ -315,18 +316,15 @@ class Validator:
             return dt.datetime.utcnow() - self.last_eval_time < dt.timedelta(minutes=35)
 
     def should_set_weights(self) -> bool:
-        # Don't set weights on initialization.
-        if self.step == 0:
-            return False
-
         # Check if enough epoch blocks have elapsed since the last epoch.
         if self.config.neuron.disable_set_weights:
             return False
 
-        # Define appropriate logic for when set weights.
-        return (
-            self.block - self.metagraph.last_update[self.uid]
-        ) > self.config.neuron.epoch_length
+        with self.lock:
+            # Set weights every 20 minutes.
+            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(
+                minutes=20
+            )
 
     def set_weights(self):
         """
@@ -392,6 +390,9 @@ class Validator:
             version_key=spec_version,
         )
 
+        with self.lock:
+            self.last_weights_set_time = dt.datetime.utcnow()
+
         bt.logging.success("Finished setting weights.")
 
     @property
@@ -427,9 +428,7 @@ def main():
     uid = utils.get_uid(wallet, metagraph)
 
     # Create the metagraph syncer and perform the initial sync.
-    metagraph_syncer = MetagraphSyncer(
-        subtensor, config={config.netuid: config.neuron.epoch_length * 12}
-    )
+    metagraph_syncer = MetagraphSyncer(subtensor, config={config.netuid: 20 * 60})
     # Perform an initial sync of all tracked metagraphs.
     metagraph_syncer.do_initial_sync()
     metagraph_syncer.start()
