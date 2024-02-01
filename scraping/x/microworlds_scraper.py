@@ -185,6 +185,25 @@ class MicroworldsTwitterScraper(Scraper):
                     if "truncated_full_text" in data and data["truncated_full_text"]
                     else data["full_text"]
                 )
+
+                # Microworlds returns cashtags separately under symbols.
+                # These are returned as list of dicts where the indices key is the first/last index and text is the tag.
+                # If there are no hashtags or cashtags they are empty lists.
+                hashtags = (
+                    data["entities"]["hashtags"]
+                    if "entities" in data and "hashtags" in data["entities"]
+                    else []
+                )
+                cashtags = (
+                    data["entities"]["symbols"]
+                    if "entities" in data and "symbols" in data["entities"]
+                    else []
+                )
+
+                sorted_tags = sorted(hashtags + cashtags, key=lambda x: x["indices"][0])
+
+                tags = ["#" + item["text"] for item in sorted_tags]
+
                 results.append(
                     XContent(
                         username=utils.extract_user(data["url"]),
@@ -193,7 +212,7 @@ class MicroworldsTwitterScraper(Scraper):
                         timestamp=dt.datetime.strptime(
                             data["created_at"], "%a %b %d %H:%M:%S %z %Y"
                         ),
-                        tweet_hashtags=utils.extract_hashtags(text),
+                        tweet_hashtags=tags,
                     )
                 )
             except Exception:
@@ -227,6 +246,14 @@ async def test_validate():
     scraper = MicroworldsTwitterScraper()
 
     true_entities = [
+        DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            content='{"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"]}',
+            content_size_bytes=318,
+        ),
         DataEntity(
             uri="https://twitter.com/HadsonNery/status/1752011223330124021",
             datetime=dt.datetime(2024, 1, 29, 16, 50, tzinfo=dt.timezone.utc),
