@@ -1,4 +1,5 @@
 import asyncio
+import threading
 import traceback
 import bittensor as bt
 from typing import List
@@ -24,6 +25,9 @@ class MicroworldsTwitterScraper(Scraper):
         "maxRequestRetries": 5,
         "searchMode": "live",
     }
+
+    # Due to actor memory limits only 4 of these can run in parallel on the default 32 GB of shared actor memory.
+    concurrent_validates_semaphore = threading.BoundedSemaphore(4)
 
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
@@ -106,9 +110,15 @@ class MicroworldsTwitterScraper(Scraper):
         if not entities:
             return []
 
-        results = await asyncio.gather(
-            *[validate_entity(entity) for entity in entities]
-        )
+        # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
+        bt.logging.trace("Acquiring semaphore for concurrent microworlds validations.")
+        with MicroworldsTwitterScraper.concurrent_validates_semaphore:
+            bt.logging.trace(
+                "Acquired semaphore for concurrent microworlds validations."
+            )
+            results = await asyncio.gather(
+                *[validate_entity(entity) for entity in entities]
+            )
 
         return results
 
@@ -294,7 +304,45 @@ async def test_validate():
     print(f"Validation results: {results}")
 
 
+async def test_multi_thread_validate():
+    scraper = MicroworldsTwitterScraper()
+
+    true_entities = [
+        DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            content='{"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"]}',
+            content_size_bytes=318,
+        ),
+        DataEntity(
+            uri="https://twitter.com/HadsonNery/status/1752011223330124021",
+            datetime=dt.datetime(2024, 1, 29, 16, 50, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#faleitoleve"),
+            content='{"username":"@HadsonNery","text":"Se ele fosse brabo mesmo e eu estaria aqui defendendo ele, pq ele não foi direto no Davi já que a intenção dele era fazer o Davi comprar o barulho dela 🤷🏻\u200d♂️ MC fofoqueiro foi macetado pela CUNHÃ #faleitoleve","url":"https://twitter.com/HadsonNery/status/1752011223330124021","timestamp":"2024-01-29T16:50:00Z","tweet_hashtags":["#faleitoleve"]}',
+            content_size_bytes=492,
+        ),
+    ]
+
+    def sync_validate(entities: list[DataEntity]) -> None:
+        """Synchronous version of eval_miner."""
+        asyncio.run(scraper.validate(entities))
+
+    threads = [
+        threading.Thread(target=sync_validate, args=(true_entities,)) for _ in range(5)
+    ]
+
+    for thread in threads:
+        thread.start()
+
+    for t in threads:
+        t.join(120)
+
+
 if __name__ == "__main__":
     bt.logging.set_trace(True)
+    asyncio.run(test_multi_thread_validate())
     asyncio.run(test_scrape())
     asyncio.run(test_validate())
