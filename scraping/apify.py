@@ -1,5 +1,5 @@
 import os
-from typing import List
+from typing import List, Optional
 from apify_client import ApifyClientAsync
 from pydantic import BaseModel, Field, PositiveInt
 import bittensor as bt
@@ -39,6 +39,10 @@ class RunConfig(StrictBaseModel):
         description="Optional debug info to include in logs relating to this run."
     )
 
+    memory_mb: Optional[int] = Field(
+        description="The amount of memory in mb to use for this run.", default=None
+    )
+
 
 class ActorRunError(Exception):
     """Exception raised when an actor run fails."""
@@ -75,6 +79,7 @@ class ActorRunner:
             timeout_secs=config.timeout_secs,
             # If not set, the client will wait indefinitely for the run to finish. Ensure we don't wait forever.
             wait_secs=config.timeout_secs + 5,
+            memory_mbytes=config.memory_mb,
         )
 
         # We want a success status. Timeout is also okay because it will return partial results.
