@@ -111,7 +111,11 @@ class MicroworldsTwitterScraper(Scraper):
             return []
 
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
+        bt.logging.trace("Acquiring semaphore for concurrent microworlds validations.")
         with MicroworldsTwitterScraper.concurrent_validates_semaphore:
+            bt.logging.trace(
+                "Acquired semaphore for concurrent microworlds validations."
+            )
             results = await asyncio.gather(
                 *[validate_entity(entity) for entity in entities]
             )
