@@ -41,19 +41,21 @@ class MinerScorer:
 
     def save_state(self, filepath):
         """Save the current state to the provided filepath."""
-        torch.save(
-            {
-                "scores": self.scores,
-                "credibility": self.miner_credibility,
-            },
-            filepath,
-        )
+        with self.lock:
+            torch.save(
+                {
+                    "scores": self.scores,
+                    "credibility": self.miner_credibility,
+                },
+                filepath,
+            )
 
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
         state = torch.load(filepath)
-        self.scores = state["scores"]
-        self.miner_credibility = state["credibility"]
+        with self.lock:
+            self.scores = state["scores"]
+            self.miner_credibility = state["credibility"]
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
