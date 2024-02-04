@@ -147,6 +147,12 @@ def add_args(neuron_type: NeuronType, parser):
             default=default_file,
         )
 
+        parser.add_argument(
+            "--offline",
+            action="store_true",
+            help="Set this flag to true to run the miner in offline mode.",
+            default=False,
+        )
     else:
         raise ValueError(f"Invalid neuron type: {neuron_type}")
 

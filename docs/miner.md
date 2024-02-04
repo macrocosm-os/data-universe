@@ -27,16 +27,29 @@ cd data-universe
 python -m pip install -e .
 ```
 
-5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
+5. (Optional) Run your miner in [offline mode](#offline) to scrape an initial set of data.
+
+6. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
 ## Running the Miner
 
 For this guide, we'll use [pm2](https://pm2.keymetrics.io/) to manage the Miner process, because it'll restart the Miner if it crashes. If you don't already have it, install pm2.
 
-Then, from the data-universe folder, run:
+### Online
+
+From the data-universe folder, run:
 ```shell
 pm2 start python -- ./neurons/miner.py --wallet.name your-wallet --wallet.hotkey your-hotkey
 ```
+
+### Offline
+
+From the data-universe folder, run:
+```shell
+pm2 start python -- ./neurons/miner.py --offline
+```
+
+Please note that your miner will not respond to validator requests in this mode and therefore if you have already registered to the subnet you should run in online mode.
 
 # Configuring the Miner
 
