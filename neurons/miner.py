@@ -42,21 +42,24 @@ class Miner(BaseNeuron):
     def __init__(self, config=None):
         super().__init__(config=config)
 
-        # The axon handles request processing, allowing validators to send this miner requests.
-        self.axon = bt.axon(wallet=self.wallet, port=self.config.axon.port)
+        if self.config.offline:
+            bt.logging.success("Running in offline mode. Skipping axon creation.")
+        else:
+            # The axon handles request processing, allowing validators to send this miner requests.
+            self.axon = bt.axon(wallet=self.wallet, port=self.config.axon.port)
 
-        # Attach determiners which functions are called when servicing a request.
-        bt.logging.info("Attaching forward function to miner axon.")
-        self.axon.attach(
-            forward_fn=self.get_index,
-            blacklist_fn=self.get_index_blacklist,
-            priority_fn=self.get_index_priority,
-        ).attach(
-            forward_fn=self.get_data_entity_bucket,
-            blacklist_fn=self.get_data_entity_bucket_blacklist,
-            priority_fn=self.get_data_entity_bucket_priority,
-        )
-        bt.logging.success(f"Axon created: {self.axon}.")
+            # Attach determiners which functions are called when servicing a request.
+            bt.logging.info("Attaching forward function to miner axon.")
+            self.axon.attach(
+                forward_fn=self.get_index,
+                blacklist_fn=self.get_index_blacklist,
+                priority_fn=self.get_index_priority,
+            ).attach(
+                forward_fn=self.get_data_entity_bucket,
+                blacklist_fn=self.get_data_entity_bucket_blacklist,
+                priority_fn=self.get_data_entity_bucket_priority,
+            )
+            bt.logging.success(f"Axon created: {self.axon}.")
 
         # Instantiate runners.
         self.should_exit: bool = False
@@ -102,46 +105,56 @@ class Miner(BaseNeuron):
         Initiates and manages the main loop for the miner.
         """
 
+        if self.config.offline:
+            bt.logging.success("Running in offline mode. Skipping axon serving.")
+        else:
         # Check that miner is registered on the network.
-        self.sync()
+            self.sync()
 
-        # Serve passes the axon information to the network + netuid we are hosting on.
-        # This will auto-update if the axon port of external ip have changed.
-        bt.logging.info(
-            f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
-        )
-        self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
+            # Serve passes the axon information to the network + netuid we are hosting on.
+            # This will auto-update if the axon port of external ip have changed.
+            bt.logging.info(
+                f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
+            )
+            self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
 
-        # Start  starts the miner's axon, making it active on the network.
-        self.axon.start()
+            # Start  starts the miner's axon, making it active on the network.
+            self.axon.start()
 
-        bt.logging.success(f"Miner starting at block: {self.block}.")
+            bt.logging.success(f"Miner starting at block: {self.block}.")
+
+            last_sync_block = self.block
 
         self.scraping_coordinator.run_in_background_thread()
 
         # This loop maintains the miner's operations until intentionally stopped.
-        last_sync_block = self.block
         try:
-            while not self.should_exit:
-                while self.block - last_sync_block < self.config.neuron.epoch_length:
-                    # Wait before checking again.
+            # In offline mode we just idle while the scraping_coordinator runs.
+            if self.config.offline:
+                while not self.should_exit:
                     time.sleep(12)
+            else:
+                while not self.should_exit:
+                    while self.block - last_sync_block < self.config.neuron.epoch_length:
+                        # Wait before checking again.
+                        time.sleep(12)
 
-                    # Check if we should exit.
-                    if self.should_exit:
-                        break
+                        # Check if we should exit.
+                        if self.should_exit:
+                            break
 
-                # Sync metagraph and potentially set weights.
-                self.sync()
+                    # Sync metagraph and potentially set weights.
+                    self.sync()
 
-                self._log_status(self.step)
+                    self._log_status(self.step)
 
-                last_sync_block = self.block
-                self.step += 1
+                    last_sync_block = self.block
+                    self.step += 1
 
         # If someone intentionally stops the miner, it'll safely terminate operations.
         except KeyboardInterrupt:
-            self.axon.stop()
+            if not self.config.offline:
+                self.axon.stop()
             self.scraping_coordinator.stop()
             bt.logging.success("Miner killed by keyboard interrupt.")
             sys.exit()
