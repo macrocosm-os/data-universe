@@ -26,8 +26,8 @@ class MicroworldsTwitterScraper(Scraper):
         "searchMode": "live",
     }
 
-    # Due to actor memory limits only 4 of these can run in parallel on the default 32 GB of shared actor memory.
-    concurrent_validates_semaphore = threading.BoundedSemaphore(4)
+    # As of 2/5/24 this actor only takes 256 MB in the default config so we can run a full batch without hitting shared actor memory limits.
+    concurrent_validates_semaphore = threading.BoundedSemaphore(10)
 
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
@@ -61,7 +61,6 @@ class MicroworldsTwitterScraper(Scraper):
                     actor_id=MicroworldsTwitterScraper.ACTOR_ID,
                     debug_info=f"Validate {entity.uri}",
                     max_data_entities=tweet_count,
-                    memory_mb=4096,  # Minimum required for Microworlds.
                 )
 
                 # Retrieve the tweets from Apify.
@@ -149,7 +148,6 @@ class MicroworldsTwitterScraper(Scraper):
             debug_info=f"Scrape {query}",
             max_data_entities=scrape_config.entity_limit,
             timeout_secs=MicroworldsTwitterScraper.SCRAPE_TIMEOUT_SECS,
-            memory_mb=4096,  # Minimum required for Microworlds.
         )
 
         bt.logging.trace(f"Performing Twitter scrape for search terms: {query}.")
