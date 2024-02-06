@@ -107,39 +107,6 @@ class TestMinerScorer(unittest.TestCase):
         self._add_score_to_uid(new_miner)
         self.assertGreater(self.scorer.get_scores()[new_miner], 0.0)
 
-    def test_get_credible_miners(self):
-        """Test get_credible_miners returns the correct set of miners."""
-
-        # Miners should start with a credibility score below the threshold to be credible.
-        self.assertEqual([], self.scorer.get_credible_miners())
-
-        # Create 2 miners: 1 honest, 1 shady
-        # The honest miner always passes validation.
-        honest_miner = 0
-        # The shady miner passes 50% of validations.
-        shady_miner = 1
-
-        honest_validation = [
-            ValidationResult(is_valid=True, content_size_bytes_validated=100),
-            ValidationResult(is_valid=True, content_size_bytes_validated=100),
-        ]
-        shady_validation = [
-            ValidationResult(is_valid=True, content_size_bytes_validated=100),
-            ValidationResult(is_valid=False, content_size_bytes_validated=100),
-        ]
-
-        # Perform a bunch of validations for them.
-        for _ in range(20):
-            self.scorer.on_miner_evaluated(
-                honest_miner, self.scorable_index, honest_validation
-            )
-            self.scorer.on_miner_evaluated(
-                shady_miner, self.scorable_index, shady_validation
-            )
-
-        # Now verify the honest miner is credible
-        self.assertEqual([honest_miner], self.scorer.get_credible_miners())
-
     def test_on_miner_evaluated_no_index(self):
         """Tests that on_miner_evaluated correctly updates the score if the miner has no index."""
         uid = 5
