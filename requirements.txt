@@ -1,6 +1,6 @@
 apify-client==1.6.1
 asyncpraw==7.7.1
-bittensor==6.5.0
+bittensor==6.7.1
 jupyter==1.0.0
 numpy==1.26.2
 # Bittensor require pydantic < 2.0.0

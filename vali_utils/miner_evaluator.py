@@ -324,8 +324,11 @@ class MinerEvaluator:
                 bt.logging.warning("No scorer state file found. Starting from scratch.")
                 return
 
-            self.scorer.load_state(filepath)
-            bt.logging.success(f"Loaded scorer state from: {filepath}.")
+            try:
+                self.scorer.load_state(filepath)
+                bt.logging.success(f"Loaded scorer state from: {filepath}.")
+            except Exception as e:
+                bt.logging.warning(f"Failed to load scorer state. Reason: {e}. Starting from scratch.")
 
             # Resize the scorer in case the loaded state is old and missing newly added neurons.
             self.scorer.resize(len(self.metagraph.hotkeys))

@@ -18,9 +18,6 @@ class MinerScorer:
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
 
-    # The minimum credibility score a miner must have to be considered trustworthy.
-    CREDIBLE_THRESHOLD = 0.8
-
     def __init__(
         self,
         num_neurons: int,
@@ -41,19 +38,21 @@ class MinerScorer:
 
     def save_state(self, filepath):
         """Save the current state to the provided filepath."""
-        torch.save(
-            {
-                "scores": self.scores,
-                "credibility": self.miner_credibility,
-            },
-            filepath,
-        )
+        with self.lock:
+            torch.save(
+                {
+                    "scores": self.scores,
+                    "credibility": self.miner_credibility,
+                },
+                filepath,
+            )
 
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
         state = torch.load(filepath)
-        self.scores = state["scores"]
-        self.miner_credibility = state["credibility"]
+        with self.lock:
+            self.scores = state["scores"]
+            self.miner_credibility = state["credibility"]
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -77,15 +76,6 @@ class MinerScorer:
         """Returns the credibility of miner 'uid'."""
         with self.lock:
             return self.miner_credibility[uid].item()
-
-    def get_credible_miners(self) -> List[int]:
-        """Returns the list of miner UIDs that are considered trustworthy."""
-        with self.lock:
-            return [
-                index
-                for index, value in enumerate(self.miner_credibility)
-                if value >= MinerScorer.CREDIBLE_THRESHOLD
-            ]
 
     def resize(self, num_neurons: int) -> None:
         """Resizes the score tensor to the new number of neurons.
