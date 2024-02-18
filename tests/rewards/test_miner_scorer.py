@@ -35,7 +35,7 @@ class TestMinerScorer(unittest.TestCase):
                 max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
             )
         )
-        self.scorer = MinerScorer(self.num_neurons, self.value_calculator, alpha=0.2)
+        self.scorer = MinerScorer(self.num_neurons, self.value_calculator)
 
         # Mock the current time
         self.now = dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(hours=3)
@@ -329,6 +329,23 @@ class TestMinerScorer(unittest.TestCase):
             constants.SCORE_GROWTH_LIMIT_THRESHOLD
             * constants.SCORE_GROWTH_LIMIT_PERCENT,
         )
+
+    def test_fresh_miner_credibility(self):
+        """Verifies that a fresh miner can reach 95% credibility within immunity period."""
+        uid = 0
+
+        honest_validation = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=100)
+        ]
+
+        # Starting credibility defaults to 0.
+        # With current 30 hours of credibility we will assume ~25 cycles of validation.
+
+        cycles = 25
+        for _ in range(cycles):
+            self.scorer._update_credibility(uid, honest_validation)
+
+        self.assertGreaterEqual(self.scorer.miner_credibility[uid].item(), 0.95)
 
 
 if __name__ == "__main__":
