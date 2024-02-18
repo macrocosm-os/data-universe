@@ -14,7 +14,7 @@ Follow the [OAuth2 First Steps guide](https://github.com/reddit-archive/reddit/w
 
 ## Providing your information to your miner or validator.
 
-Create a `.env` file in the `data-universe` directory if it doesn't already exist and add the following to it:
+Create a file named`.env` in the `data-universe` directory if it doesn't already exist and add the following to it:
 ```py
 REDDIT_CLIENT_ID="YOUR_REDDIT_CLIENT_ID"
 REDDIT_CLIENT_SECRET="YOUR_REDDIT_CLIENT_SECRET"
