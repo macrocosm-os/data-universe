@@ -35,7 +35,7 @@ class XContent(BaseModel):
             datetime=content.timestamp,
             source=DataSource.X,
             label=(
-                DataLabel(value=content.tweet_hashtags[0])
+                DataLabel(value=content.tweet_hashtags[0][:32])
                 if content.tweet_hashtags
                 else None
             ),

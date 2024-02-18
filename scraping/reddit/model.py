@@ -55,7 +55,7 @@ class RedditContent(BaseModel):
             uri=content.url,
             datetime=content.created_at,
             source=DataSource.REDDIT,
-            label=DataLabel(value=content.community),
+            label=DataLabel(value=content.community[:32]),
             content=content_bytes,
             content_size_bytes=len(content_bytes),
         )
