@@ -76,6 +76,7 @@ class Miner:
                     f"Hotkey {self.wallet.hotkey.ss58_address} not found in metagraph. Assuming this is a test."
                 )
 
+            self.last_sync_timestamp = dt.datetime.min
             self.step = 0
 
             # The axon handles request processing, allowing validators to send this miner requests.
@@ -151,9 +152,8 @@ class Miner:
             # Start  starts the miner's axon, making it active on the network.
             self.axon.start()
 
-            bt.logging.success(f"Miner starting at block: {self.block}.")
-
-            last_sync_block = self.block
+            self.last_sync_timestamp = dt.datetime.now()
+            bt.logging.success(f"Miner starting at {self.last_sync_timestamp}.")
 
         self.scraping_coordinator.run_in_background_thread()
 
@@ -165,8 +165,9 @@ class Miner:
                     time.sleep(12)
             else:
                 while not self.should_exit:
-                    while (
-                        self.block - last_sync_block < self.config.neuron.epoch_length
+                    # Epoch length defaults to 100 blocks at 12 seconds each for 20 minutes.
+                    while dt.datetime.now() - self.last_sync_timestamp < (
+                        dt.timedelta(seconds=12 * self.config.neuron.epoch_length)
                     ):
                         # Wait before checking again.
                         time.sleep(12)
@@ -180,7 +181,7 @@ class Miner:
 
                     self._log_status(self.step)
 
-                    last_sync_block = self.block
+                    self.last_sync_timestamp = dt.datetime.now()
                     self.step += 1
 
         # If someone intentionally stops the miner, it'll safely terminate operations.
@@ -411,10 +412,6 @@ class Miner:
     def get_config_for_test(self) -> bt.config:
         return self.config
 
-    @property
-    def block(self):
-        return utils.ttl_get_block(self)
-
     def sync(self):
         """
         Wrapper for synchronizing the state of the network for the given miner.
@@ -422,8 +419,7 @@ class Miner:
         # Ensure miner hotkey is still registered on the network.
         self.check_registered()
 
-        if self.should_sync_metagraph():
-            self.resync_metagraph()
+        self.resync_metagraph()
 
     def check_registered(self):
         # --- Check for registration.
@@ -436,14 +432,6 @@ class Miner:
                 f" Please register the hotkey using `btcli subnets register` before trying again."
             )
             sys.exit(1)
-
-    def should_sync_metagraph(self):
-        """
-        Check if enough epoch blocks have elapsed since the last checkpoint to sync.
-        """
-        return (
-            self.block - self.metagraph.last_update[self.uid]
-        ) > self.config.neuron.epoch_length
 
 
 # This is the main function, which runs the miner.
