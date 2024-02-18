@@ -238,9 +238,9 @@ class MinerEvaluator:
         with self.lock:
             metagraph = copy.deepcopy(self.metagraph)
 
-        # Run in batches of 10.
+        # Run in batches of 15.
         # TODO: Maybe make this configurable and run evaluations based on expected throughput
-        miners_to_eval = 10
+        miners_to_eval = 15
 
         # Check if the next miner is due an update.
         next_uid = self.miner_iterator.peek()
@@ -260,7 +260,7 @@ class MinerEvaluator:
             ).total_seconds()
 
         # Otherwise, execute the next batch of evaluations and skip any miners who were evaluated recently.
-        # Use a set in case the network has fewer than 10 miners.
+        # Use a set in case the network has fewer than 15 miners.
         uids_to_check = {next(self.miner_iterator) for _ in range(miners_to_eval)}
         uids_to_eval = set()
 
@@ -328,7 +328,9 @@ class MinerEvaluator:
                 self.scorer.load_state(filepath)
                 bt.logging.success(f"Loaded scorer state from: {filepath}.")
             except Exception as e:
-                bt.logging.warning(f"Failed to load scorer state. Reason: {e}. Starting from scratch.")
+                bt.logging.warning(
+                    f"Failed to load scorer state. Reason: {e}. Starting from scratch."
+                )
 
             # Resize the scorer in case the loaded state is old and missing newly added neurons.
             self.scorer.resize(len(self.metagraph.hotkeys))
