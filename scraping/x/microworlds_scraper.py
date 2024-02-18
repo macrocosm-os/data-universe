@@ -27,7 +27,7 @@ class MicroworldsTwitterScraper(Scraper):
     }
 
     # As of 2/5/24 this actor only takes 256 MB in the default config so we can run a full batch without hitting shared actor memory limits.
-    concurrent_validates_semaphore = threading.BoundedSemaphore(10)
+    concurrent_validates_semaphore = threading.BoundedSemaphore(20)
 
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
