@@ -1,5 +1,6 @@
 import datetime as dt
 import unittest
+from common import constants
 
 from sympy import timed
 from scraping.x.model import XContent
@@ -52,6 +53,21 @@ class TestModel(unittest.TestCase):
         for c in non_matching_content:
             self.assertFalse(content == c)
             self.assertFalse(c == content)
+
+    def test_label_truncation(self):
+        """Tests that XContents correctly truncate labels to 32 characters when converting to DataEntities"""
+        timestamp = dt.datetime.now()
+        content = XContent(
+            username="user1",
+            text="Hello world",
+            url="https://twitter.com/123",
+            timestamp=timestamp,
+            tweet_hashtags=["#loooooooooooooooooooooooonghashtag", "$TAO"],
+        )
+        entity = XContent.to_data_entity(content)
+
+        self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
+        self.assertEqual(entity.label.value, "#loooooooooooooooooooooooonghash")
 
 
 if __name__ == "__main__":

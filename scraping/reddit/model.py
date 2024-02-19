@@ -3,6 +3,7 @@ from enum import Enum
 from typing import Optional
 from pydantic import BaseModel, Field
 
+from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 
 # The username used for deleted users.
@@ -55,7 +56,7 @@ class RedditContent(BaseModel):
             uri=content.url,
             datetime=content.created_at,
             source=DataSource.REDDIT,
-            label=DataLabel(value=content.community),
+            label=DataLabel(value=content.community[: constants.MAX_LABEL_LENGTH]),
             content=content_bytes,
             content_size_bytes=len(content_bytes),
         )
