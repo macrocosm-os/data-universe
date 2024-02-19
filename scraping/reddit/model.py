@@ -48,13 +48,20 @@ class RedditContent(BaseModel):
     )
 
     @classmethod
-    def to_data_entity(cls, content: "RedditContent") -> DataEntity:
+    def to_data_entity(
+        cls, content: "RedditContent", obfuscate_content_date: bool
+    ) -> DataEntity:
         """Converts the RedditContent to a DataEntity."""
+        entity_created_at = content.created_at
+        if obfuscate_content_date:
+            content.created_at = entity_created_at.replace(
+                minute=0, second=0, microsecond=0
+            )
 
         content_bytes = content.json(by_alias=True).encode("utf-8")
         return DataEntity(
             uri=content.url,
-            datetime=content.created_at,
+            datetime=entity_created_at,
             source=DataSource.REDDIT,
             label=DataLabel(value=content.community[: constants.MAX_LABEL_LENGTH]),
             content=content_bytes,

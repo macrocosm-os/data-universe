@@ -1,5 +1,5 @@
 import time
-from common import utils
+from common import constants, utils
 from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
@@ -120,11 +120,25 @@ class RedditCustomScraper(Scraper):
                 continue
 
             # We found the Reddit content. Validate it.
-            results.append(
-                validate_reddit_content(
-                    actual_content=content, entity_to_validate=entity
+            if (
+                content.created_at
+                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+            ):
+                results.append(
+                    validate_reddit_content(
+                        actual_content=content,
+                        entity_to_validate=entity,
+                        allow_obfuscated_content_date=True,
+                    )
                 )
-            )
+            else:
+                results.append(
+                    validate_reddit_content(
+                        actual_content=content,
+                        entity_to_validate=entity,
+                        allow_obfuscated_content_date=False,
+                    )
+                )
 
         return results
 
@@ -204,7 +218,25 @@ class RedditCustomScraper(Scraper):
             f"Completed scrape for subreddit {subreddit_name}. Scraped {len(parsed_contents)} items."
         )
 
-        return [RedditContent.to_data_entity(content) for content in parsed_contents]
+        data_entities = []
+        for content in parsed_contents:
+            if (
+                content.created_at
+                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+            ):
+                data_entities.append(
+                    RedditContent.to_data_entity(
+                        content=content, obfuscate_content_date=True
+                    )
+                )
+            else:
+                data_entities.append(
+                    RedditContent.to_data_entity(
+                        content=content, obfuscate_content_date=False
+                    )
+                )
+
+        return data_entities
 
     def _best_effort_parse_submission(
         self, submission: asyncpraw.models.Submission
@@ -349,25 +381,31 @@ async def test_validate():
     good_entity = true_entities[1]
     good_comment_entity = true_entities[2]
     bad_entities = [
+        # Change url.
         good_entity.copy(
             update={
                 "uri": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask-abc123/"
             }
         ),
+        # Change title.
         good_entity.copy(
             update={
                 "content": b'{"id": "t3_18bf67l", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Hey all!!\\n\\nHow do we add TAO to MetaMask? Online gives me these network configurations and still doesn\\u2019t work? \\n\\nHow are you all storing TAO? I wanna purchase on MEXC, but holding off until I can store it!  \\ud83d\\ude11 \\n\\nThanks in advance!!!\\n\\n=====\\n\\nhere is a manual way.\\nNetwork Name\\nTao Network\\n\\nRPC URL\\nhttp://rpc.testnet.tao.network\\n\\nChain ID\\n558\\n\\nCurrency Symbol\\nTAO", "createdAt": "2023-12-05T15:59:13+00:00", "dataType": "post", "title": "How do you add TAO to MetaMask??!!?", "parent_id": null}',
             }
         ),
+        # Change created_at.
         good_entity.copy(
             update={"datetime": good_entity.datetime + dt.timedelta(seconds=1)}
         ),
+        # Change label.
         good_entity.copy(update={"label": DataLabel(value="bittensor_")}),
+        # Change comment parent id.
         good_comment_entity.copy(
             update={
                 "content": b'{"id": "t1_kc3w8lk", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?", "createdAt": "2023-12-05T16:35:16+00:00", "dataType": "comment", "parentId": "extra-long-parent-id"}'
             }
         ),
+        # Change submission parent id.
         good_entity.copy(
             update={
                 "content": b'{"id": "t3_18bf67l", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Hey all!!\\n\\nHow do we add TAO to MetaMask? Online gives me these network configurations and still doesn\\u2019t work? \\n\\nHow are you all storing TAO? I wanna purchase on MEXC, but holding off until I can store it!  \\ud83d\\ude11 \\n\\nThanks in advance!!!\\n\\n=====\\n\\nhere is a manual way.\\nNetwork Name\\nTao Network\\n\\nRPC URL\\nhttp://rpc.testnet.tao.network\\n\\nChain ID\\n558\\n\\nCurrency Symbol\\nTAO", "createdAt": "2023-12-05T15:59:13+00:00", "dataType": "post", "title": "How do you add TAO to MetaMask?", "parentId": "extra-long-parent-id"}'
@@ -381,7 +419,7 @@ async def test_validate():
 
 
 async def test_u_deleted():
-    """Verifies that the RedditLiteScraper can handle deleted users."""
+    """Verifies that the RedditCustomScraper can handle deleted users."""
     comment = DataEntity(
         uri="https://www.reddit.com/r/AskReddit/comments/ablzuq/people_who_havent_pooped_in_2019_yet_why_are_you/ed1j7is/",
         datetime=dt.datetime(2019, 1, 1, 22, 59, 9, tzinfo=dt.timezone.utc),

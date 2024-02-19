@@ -2,6 +2,7 @@ import asyncio
 import traceback
 import bittensor as bt
 from typing import List
+from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
@@ -99,7 +100,26 @@ class QuackerUrlScraper(Scraper):
                     )
                 )
                 continue
-            results.append(utils.validate_tweet_content(actual_tweet, entity))
+
+            if (
+                actual_tweet.timestamp
+                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+            ):
+                results.append(
+                    utils.validate_tweet_content(
+                        actual_tweet=actual_tweet,
+                        entity=entity,
+                        allow_obfuscated_content_date=True,
+                    )
+                )
+            else:
+                results.append(
+                    utils.validate_tweet_content(
+                        actual_tweet=actual_tweet,
+                        entity=entity,
+                        allow_obfuscated_content_date=False,
+                    )
+                )
 
         return results
 

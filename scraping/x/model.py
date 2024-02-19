@@ -27,13 +27,20 @@ class XContent(BaseModel):
     )
 
     @classmethod
-    def to_data_entity(cls, content: "XContent") -> DataEntity:
+    def to_data_entity(
+        cls, content: "XContent", obfuscate_content_date: bool
+    ) -> DataEntity:
         """Converts the XContent to a DataEntity."""
+        entity_timestamp = content.timestamp
+        if obfuscate_content_date:
+            content.timestamp = entity_timestamp.replace(
+                minute=0, second=0, microsecond=0
+            )
 
         content_bytes = content.json().encode("utf-8")
         return DataEntity(
             uri=content.url,
-            datetime=content.timestamp,
+            datetime=entity_timestamp,
             source=DataSource.X,
             label=(
                 DataLabel(value=content.tweet_hashtags[0][: constants.MAX_LABEL_LENGTH])

@@ -21,7 +21,9 @@ def is_valid_reddit_url(url: str) -> bool:
 
 
 def validate_reddit_content(
-    actual_content: RedditContent, entity_to_validate: DataEntity
+    actual_content: RedditContent,
+    entity_to_validate: DataEntity,
+    allow_obfuscated_content_date: bool,
 ) -> ValidationResult:
     """Verifies the RedditContent is valid by the definition provided by entity."""
     content_to_validate = None
@@ -37,6 +39,109 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
+    # Check Reddit id
+    if content_to_validate.id != actual_content.id:
+        bt.logging.info(
+            f"Reddit ids do not match: {actual_content} != {content_to_validate}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit ids do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # Check Reddit url
+    if content_to_validate.url != actual_content.url:
+        bt.logging.info(
+            f"Reddit urls do not match: {actual_content} != {content_to_validate}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit urls do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # Check Reddit username
+    if content_to_validate.username != actual_content.username:
+        bt.logging.info(
+            f"Reddit usernames do not match: {actual_content} != {content_to_validate}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit usernames do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # Check Reddit community
+    if content_to_validate.community != actual_content.community:
+        bt.logging.info(
+            f"Reddit communities do not match: {actual_content} != {content_to_validate}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit communities do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # Check Reddit body
+    if content_to_validate.body != actual_content.body:
+        bt.logging.info(
+            f"Reddit bodies do not match: {actual_content} != {content_to_validate}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit bodies do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # Check Reddit created_at
+    # If checking an data entity with obfuscated content we compare to the entity directly instead.
+    if allow_obfuscated_content_date:
+        if entity_to_validate.datetime != actual_content.created_at:
+            bt.logging.info(
+                f"Entity and Reddit timestamps do not match: {entity_to_validate} != {content_to_validate}"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Entity and Reddit timestamps do not match",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
+            )
+    else:
+        if content_to_validate.created_at != actual_content.created_at:
+            bt.logging.info(
+                f"Reddit timestamps do not match: {actual_content} != {content_to_validate}"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Reddit timestamps do not match",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
+            )
+
+    # Check Reddit data_type
+    if content_to_validate.data_type != actual_content.data_type:
+        bt.logging.info(
+            f"Reddit data types do not match: {actual_content} != {content_to_validate}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit data types do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # Post Only Fields
+    # Check Reddit Title
+    if content_to_validate.title != actual_content.title:
+        bt.logging.info(
+            f"Reddit titles do not match: {actual_content} != {content_to_validate}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit titles do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # Comment Only Fields
+    # Check Reddit Parent Id
     # Ignore exact parent id here until all scraped data has been scraped with correct parent id (~30 days):
     # Since the mistake was to assign the submission id which is always earlier and therefore smaller we can check that
     # length of the claimed is always less than or equal to that of the real entity.
@@ -61,20 +166,23 @@ def validate_reddit_content(
             actual_content.parent_id = None
             content_to_validate.parent_id = None
 
-    if actual_content != content_to_validate:
+    if content_to_validate.parent_id != actual_content.parent_id:
         bt.logging.info(
-            f"RedditContent does not match: {actual_content} != {content_to_validate}"
+            f"Reddit parent ids do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
             is_valid=False,
-            reason="Content does not match",
+            reason="Reddit parent ids do not match",
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
     # Wahey! The content is valid.
     # One final check. Does the Reddit content match the data entity information?
     try:
-        actual_entity = RedditContent.to_data_entity(actual_content)
+        # It does not matter if we obfuscate the content here since we only check non content.
+        actual_entity = RedditContent.to_data_entity(
+            content=actual_content, obfuscate_content_date=False
+        )
         if not DataEntity.are_non_content_fields_equal(
             actual_entity, entity_to_validate
         ):
