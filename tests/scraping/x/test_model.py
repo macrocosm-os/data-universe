@@ -1,5 +1,6 @@
 import datetime as dt
 import unittest
+from common import constants
 
 from sympy import timed
 from scraping.x.model import XContent
@@ -65,7 +66,7 @@ class TestModel(unittest.TestCase):
         )
         entity = XContent.to_data_entity(content)
 
-        self.assertEqual(len(entity.label.value), 32)
+        self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
 
 
 if __name__ == "__main__":

@@ -4,6 +4,7 @@ from re import X
 from typing import List
 from pydantic import BaseModel, ConfigDict, Field
 
+from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 
 
@@ -35,7 +36,7 @@ class XContent(BaseModel):
             datetime=content.timestamp,
             source=DataSource.X,
             label=(
-                DataLabel(value=content.tweet_hashtags[0][:32])
+                DataLabel(value=content.tweet_hashtags[0][: constants.MAX_LABEL_LENGTH])
                 if content.tweet_hashtags
                 else None
             ),

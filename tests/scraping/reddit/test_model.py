@@ -1,6 +1,7 @@
 import datetime as dt
 import unittest
 
+from common import constants
 from scraping.reddit.model import RedditContent, RedditDataType
 
 
@@ -20,7 +21,7 @@ class TestModel(unittest.TestCase):
         )
         entity = RedditContent.to_data_entity(content)
 
-        self.assertEqual(len(entity.label.value), 32)
+        self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
 
 
 if __name__ == "__main__":
