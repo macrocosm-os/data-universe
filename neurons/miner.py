@@ -17,6 +17,7 @@
 
 import asyncio
 from collections import defaultdict
+import copy
 import sys
 import threading
 import time
@@ -32,19 +33,52 @@ from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
+from neurons.config import NeuronType, check_config, create_config
 
-from neurons.base_neuron import BaseNeuron
 
-
-class Miner(BaseNeuron):
+class Miner:
     """The Glorious Miner."""
 
     def __init__(self, config=None):
-        super().__init__(config=config)
+        self.config = copy.deepcopy(config or create_config(NeuronType.MINER))
+        check_config(self.config)
+
+        bt.logging(config=self.config, logging_dir=self.config.full_path)
+        bt.logging.info(self.config)
 
         if self.config.offline:
-            bt.logging.success("Running in offline mode. Skipping axon creation.")
+            bt.logging.success(
+                "Running in offline mode. Skipping bittensor object setup and axon creation."
+            )
         else:
+            # The wallet holds the cryptographic key pairs for the miner.
+            self.wallet = bt.wallet(config=self.config)
+            bt.logging.info(f"Wallet: {self.wallet}.")
+
+            # The subtensor is our connection to the Bittensor blockchain.
+            self.subtensor = bt.subtensor(config=self.config)
+            bt.logging.info(f"Subtensor: {self.subtensor}.")
+
+            # The metagraph holds the state of the network, letting us know about other validators and miners.
+            self.metagraph = self.subtensor.metagraph(self.config.netuid)
+            bt.logging.info(f"Metagraph: {self.metagraph}.")
+
+            # Each miner gets a unique identity (UID) in the network for differentiation.
+            # TODO: Stop doing meaningful work in the constructor to make neurons more testable.
+            if self.wallet.hotkey.ss58_address in self.metagraph.hotkeys:
+                self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+                bt.logging.info(
+                    f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}."
+                )
+            else:
+                self.uid = 0
+                bt.logging.warning(
+                    f"Hotkey {self.wallet.hotkey.ss58_address} not found in metagraph. Assuming this is a test."
+                )
+
+            self.last_sync_timestamp = dt.datetime.min
+            self.step = 0
+
             # The axon handles request processing, allowing validators to send this miner requests.
             self.axon = bt.axon(wallet=self.wallet, port=self.config.axon.port)
 
@@ -97,9 +131,6 @@ class Miner(BaseNeuron):
         self.last_cleared_request_limits = dt.datetime.now()
         self.requests_by_hotkey = defaultdict(lambda: 0)
 
-    def neuron_type(self) -> NeuronType:
-        return NeuronType.MINER
-
     def run(self):
         """
         Initiates and manages the main loop for the miner.
@@ -108,7 +139,7 @@ class Miner(BaseNeuron):
         if self.config.offline:
             bt.logging.success("Running in offline mode. Skipping axon serving.")
         else:
-        # Check that miner is registered on the network.
+            # Check that miner is registered on the network.
             self.sync()
 
             # Serve passes the axon information to the network + netuid we are hosting on.
@@ -121,9 +152,8 @@ class Miner(BaseNeuron):
             # Start  starts the miner's axon, making it active on the network.
             self.axon.start()
 
-            bt.logging.success(f"Miner starting at block: {self.block}.")
-
-            last_sync_block = self.block
+            self.last_sync_timestamp = dt.datetime.now()
+            bt.logging.success(f"Miner starting at {self.last_sync_timestamp}.")
 
         self.scraping_coordinator.run_in_background_thread()
 
@@ -135,7 +165,10 @@ class Miner(BaseNeuron):
                     time.sleep(12)
             else:
                 while not self.should_exit:
-                    while self.block - last_sync_block < self.config.neuron.epoch_length:
+                    # Epoch length defaults to 100 blocks at 12 seconds each for 20 minutes.
+                    while dt.datetime.now() - self.last_sync_timestamp < (
+                        dt.timedelta(seconds=12 * self.config.neuron.epoch_length)
+                    ):
                         # Wait before checking again.
                         time.sleep(12)
 
@@ -143,12 +176,12 @@ class Miner(BaseNeuron):
                         if self.should_exit:
                             break
 
-                    # Sync metagraph and potentially set weights.
+                    # Sync metagraph.
                     self.sync()
 
                     self._log_status(self.step)
 
-                    last_sync_block = self.block
+                    self.last_sync_timestamp = dt.datetime.now()
                     self.step += 1
 
         # If someone intentionally stops the miner, it'll safely terminate operations.
@@ -209,28 +242,6 @@ class Miner(BaseNeuron):
                        None if the context was exited without an exception.
         """
         self.stop_run_thread()
-
-    def set_weights(self):
-        """
-        Self-assigns a weight of 1 to the current miner (identified by its UID) and
-        a weight of 0 to all other peers in the network. The weights determine the trust level the miner assigns to other nodes on the network.
-
-        Raises:
-            Exception: If there's an error while setting weights, the exception is logged for diagnosis.
-        """
-        try:
-            # --- Set weights.
-            self.subtensor.set_weights(
-                wallet=self.wallet,
-                netuid=self.metagraph.netuid,
-                uids=[self.uid],
-                weights=[1],
-                wait_for_inclusion=False,
-                version_key=self.spec_version,
-            )
-
-        except Exception as e:
-            bt.logging.error(f"Failed to set weights on chain with exception: { e }")
 
     def resync_metagraph(self):
         """Resyncs the metagraph and updates the hotkeys and moving averages based on the new metagraph."""
@@ -397,6 +408,30 @@ class Miner(BaseNeuron):
             f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}.",
         )
         return priority
+
+    def get_config_for_test(self) -> bt.config:
+        return self.config
+
+    def sync(self):
+        """
+        Wrapper for synchronizing the state of the network for the given miner.
+        """
+        # Ensure miner hotkey is still registered on the network.
+        self.check_registered()
+
+        self.resync_metagraph()
+
+    def check_registered(self):
+        # --- Check for registration.
+        if not self.subtensor.is_hotkey_registered(
+            netuid=self.config.netuid,
+            hotkey_ss58=self.wallet.hotkey.ss58_address,
+        ):
+            bt.logging.error(
+                f"Wallet: {self.wallet} is not registered on netuid {self.config.netuid}."
+                f" Please register the hotkey using `btcli subnets register` before trying again."
+            )
+            sys.exit(1)
 
 
 # This is the main function, which runs the miner.
