@@ -26,7 +26,11 @@ import bittensor as bt
 import datetime as dt
 from common import constants, utils
 from common.data import CompressedMinerIndex
-from common.protocol import GetDataEntityBucket, GetMinerIndex
+from common.protocol import (
+    GetDataEntityBucket,
+    GetMinerIndex,
+    GetObfuscatedDataEntityBuckets,
+)
 from neurons.config import NeuronType
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
@@ -108,7 +112,7 @@ class Miner(BaseNeuron):
         if self.config.offline:
             bt.logging.success("Running in offline mode. Skipping axon serving.")
         else:
-        # Check that miner is registered on the network.
+            # Check that miner is registered on the network.
             self.sync()
 
             # Serve passes the axon information to the network + netuid we are hosting on.
@@ -135,7 +139,9 @@ class Miner(BaseNeuron):
                     time.sleep(12)
             else:
                 while not self.should_exit:
-                    while self.block - last_sync_block < self.config.neuron.epoch_length:
+                    while (
+                        self.block - last_sync_block < self.config.neuron.epoch_length
+                    ):
                         # Wait before checking again.
                         time.sleep(12)
 
@@ -346,6 +352,39 @@ class Miner(BaseNeuron):
     ) -> float:
         return self.default_priority(synapse)
 
+    async def get_obfuscated_data_entity_buckets(
+        self, synapse: GetObfuscatedDataEntityBuckets
+    ) -> GetObfuscatedDataEntityBuckets:
+        """Runs after the GetObfuscatedDataEntityBuckets synapse has been deserialized (i.e. after synapse.data is available)."""
+        bt.logging.info(
+            f"Got to a GetObfuscatedDataEntityBuckets request from {synapse.dendrite.hotkey} for Bucket IDs: {str(synapse.data_entity_bucket_ids)}."
+        )
+
+        # Get a dict of all the obfuscated data entities by DataEntityBucketId.
+        # List all the data entities that this miner has for the requested DataEntityBucket.
+        synapse.bucket_ids_to_entities = (
+            self.storage.list_obfuscated_data_entities_in_data_entity_buckets(
+                synapse.data_entity_bucket_ids
+            )
+        )
+        synapse.version = constants.PROTOCOL_VERSION
+
+        bt.logging.success(
+            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(v) for v in synapse.bucket_ids_to_entities.values())} entities to {synapse.dendrite.hotkey}."
+        )
+
+        return synapse
+
+    async def get_data_entity_bucket_blacklist(
+        self, synapse: GetObfuscatedDataEntityBuckets
+    ) -> typing.Tuple[bool, str]:
+        return self.default_blacklist(synapse)
+
+    async def get_data_entity_bucket_priority(
+        self, synapse: GetObfuscatedDataEntityBuckets
+    ) -> float:
+        return self.default_priority(synapse)
+
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
         """The default blacklist that only allows requests from validators."""
         if synapse.dendrite.hotkey in [
@@ -380,8 +419,10 @@ class Miner(BaseNeuron):
             self.requests_by_hotkey[synapse.dendrite.hotkey] += 1
 
             # Blacklist if over request limit.
-            # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
-            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
+            # We allow up to 8 requests.
+            # 4 to allow for 1 get index, 1 get data entity bucket, and 2 get obfuscated data entity buckets.
+            # Then we double that to allow for the case of a validator restarting.
+            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 8:
                 bt.logging.trace(
                     f"Blacklisting hotkey {synapse.dendrite.hotkey} over eval period request limit."
                 )

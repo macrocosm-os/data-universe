@@ -93,4 +93,32 @@ class GetDataEntityBucket(BaseProtocol):
     )
 
 
+class GetObfuscatedDataEntityBuckets(BaseProtocol):
+    """
+    Protocol by which Validators can retrieve Obfuscated DataEntities from one or more Miner Buckets.
+
+    Attributes:
+    - bucket_ids: The ids of the buckets that the requester is asking for.
+    - bucket_ids_to_entities: A dict of DataEntityBucketId objects to a list of contained DataEntity objects.
+    """
+
+    # Required request input, filled by sending dendrite caller.
+    data_entity_bucket_ids: Optional[List[DataEntityBucketId]] = pydantic.Field(
+        title="data_entity_bucket_ids",
+        description="The identifiers for the requested DataEntityBuckets.",
+        frozen=True,
+        repr=False,
+        default=None,
+    )
+
+    # Required request output, filled by recieving axon.
+    bucket_ids_to_entities: Dict[DataEntityBucketId, List[DataEntity]] = pydantic.Field(
+        title="bucket_ids_to_entities",
+        description="A dict of of bucket ids to the obfuscated entities contained by that bucket.",
+        frozen=False,
+        repr=False,
+        default_factory=list,
+    )
+
+
 # TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
