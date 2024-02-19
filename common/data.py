@@ -32,8 +32,12 @@ class TimeBucket(StrictBaseModel):
     model_config = ConfigDict(frozen=True)
 
     id: PositiveInt = Field(
-        description="Monotonically increasing value idenitifying the given time bucket"
+        description="Monotonically increasing value idenitifying the given time bucket",
     )
+
+    # Manually define a hash function to handle TimeBucket not being seen as hashable by pydantic.
+    def __hash__(self) -> int:
+        return hash(int(self.id))
 
     @classmethod
     def from_datetime(cls, datetime: dt.datetime) -> Type["TimeBucket"]:
@@ -126,11 +130,18 @@ class DataEntity(StrictBaseModel):
 class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
 
+    # Makes the object "Immutable" once created.
+    model_config = ConfigDict(frozen=True)
+
     time_bucket: TimeBucket
     source: DataSource = Field()
     label: Optional[DataLabel] = Field(
         default=None,
     )
+
+    # Manually define a hash function to handle TimeBucket not being seen as hashable by pydantic.
+    def __hash__(self) -> int:
+        return hash(hash(self.time_bucket) + hash(self.source) + hash(self.label))
 
 
 class DataEntityBucket(StrictBaseModel):

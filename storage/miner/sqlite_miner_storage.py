@@ -236,6 +236,84 @@ class SqliteMinerStorage(MinerStorage):
             )
             return data_entities
 
+    def list_obfuscated_data_entities_in_data_entity_buckets(
+        self, data_entity_bucket_ids: List[DataEntityBucketId]
+    ) -> Dict[DataEntityBucketId, List[DataEntity]]:
+        """Lists data entities with obfuscated timestamps for each requested DataEntityBucketId.
+
+        Args:
+            data_entity_bucket_ids (List[DataEntityBucketId]): Which buckets to get entities for.
+
+        Returns:
+            Dict[DataEntityBucketId, List[DataEntity]]: Map of each bucket id to contained entities.
+        """
+        # Get rows that match the DataEntityBucketIds.
+        labels = set()
+        time_bucket_ids = set()
+        for bucket_id in data_entity_bucket_ids:
+            # Note that only twitter has NULL label and that all twitter labels are prefixed with #.
+            # Therefore we do not need to distinguish labels by source.
+            label = "NULL" if (bucket_id.label is None) else bucket_id.label.value
+            labels.add(label)
+            time_bucket_ids.add(bucket_id.time_bucket.id)
+
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"""SELECT * FROM DataEntity
+                    WHERE timeBucketId IN ({",".join(["?"] * len(time_bucket_ids))})
+                    AND label IN ({",".join(["?"] * len(labels))})
+                 """,
+                list(time_bucket_ids) + list(labels),
+            )
+
+            # Convert the rows into DataEntity objects and return them up to the configured max chunk size.
+            buckets_ids_to_entities = defaultdict(list)
+            bucket_ids_to_running_size = defaultdict(lambda: 0)
+
+            for row in cursor:
+                data_entity_bucket_id = DataEntityBucketId(
+                    time_bucket=TimeBucket(id=row["timeBucketId"]),
+                    source=DataSource(row["source"]),
+                    label=(
+                        DataLabel(value=row["label"])
+                        if row["label"] != "NULL"
+                        else None
+                    ),
+                )
+
+                # Technically this can return more than a GetDataEntityBucket which immediately stops.
+                # This will continue iterating through the other rows and may find smaller entities.
+                if (
+                    bucket_ids_to_running_size[data_entity_bucket_id]
+                    + row["contentSizeBytes"]
+                    <= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                ):
+                    # Construct the new DataEntity with all non null columns and datetime truncated to the hour.
+                    data_entity = DataEntity(
+                        uri=row["uri"],
+                        datetime=row["datetime"].replace(
+                            minute=0, second=0, microsecond=0
+                        ),
+                        source=DataSource(row["source"]),
+                        content=row["content"],
+                        content_size_bytes=row["contentSizeBytes"],
+                    )
+
+                    # Add the optional Label field if not null.
+                    if row["label"] != "NULL":
+                        data_entity.label = DataLabel(value=row["label"])
+
+                    buckets_ids_to_entities[data_entity_bucket_id].append(data_entity)
+                    bucket_ids_to_running_size[data_entity_bucket_id] += row[
+                        "contentSizeBytes"
+                    ]
+
+            bt.logging.trace(
+                f"Returning the following size per bucket id: {bucket_ids_to_running_size}."
+            )
+            return buckets_ids_to_entities
+
     def get_compressed_index(
         self,
         bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
@@ -354,15 +432,15 @@ class SqliteMinerStorage(MinerStorage):
                     else row["bucketSize"]
                 )
 
-                # Construct the new DataEntityBucket with all non null columns.
                 data_entity_bucket_id = DataEntityBucketId(
                     time_bucket=TimeBucket(id=row["timeBucketId"]),
                     source=DataSource(row["source"]),
+                    label=(
+                        DataLabel(value=row["label"])
+                        if row["label"] != "NULL"
+                        else None
+                    ),
                 )
-
-                # Add the optional Label field if not null.
-                if row["label"] != "NULL":
-                    data_entity_bucket_id.label = DataLabel(value=row["label"])
 
                 data_entity_bucket = DataEntityBucket(
                     id=data_entity_bucket_id, size_bytes=size

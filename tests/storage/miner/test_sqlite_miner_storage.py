@@ -645,6 +645,354 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Confirm we get back the expected summaries.
         self.assertEqual(data_entity_buckets, [expected_bucket_1])
 
+    def test_list_obfuscated_data_entities_in_data_entity_buckets_no_bucket(self):
+        """Tests getting back no obfuscated data entities."""
+        # Create the DataEntityBucketId to query by.
+        empty_bucket_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(dt.datetime.now()),
+            source=DataSource.X,
+            label=DataLabel(value="bad_label"),
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = (
+            self.test_storage.list_obfuscated_data_entities_in_data_entity_buckets(
+                [empty_bucket_id]
+            )
+        )
+
+        # Confirm we get back an empty map.
+        self.assertEqual(len(buckets_to_entities), 0)
+
+    def get_expected_obfuscated_entity(self, entity: DataEntity) -> DataEntity:
+        return DataEntity(
+            uri=entity.uri,
+            datetime=entity.datetime.replace(minute=0, second=0, microsecond=0),
+            source=entity.source,
+            label=entity.label,
+            content=entity.content,
+            content_size_bytes=entity.content_size_bytes,
+        )
+
+    def test_list_obfuscated_data_entities_in_data_entity_buckets_one_bucket(self):
+        """Tests getting back obfuscated data entities from one bucket."""
+        # Create an entity for bucket 1.
+        bucket1_datetime = dt.datetime(
+            2023, 12, 12, 1, 30, 0, 1000, tzinfo=dt.timezone.utc
+        )
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities([bucket1_entity1])
+
+        # Create the DataEntityBucketId to query by.
+        bucket1_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = (
+            self.test_storage.list_obfuscated_data_entities_in_data_entity_buckets(
+                [bucket1_id]
+            )
+        )
+
+        # Confirm we get back the expected obfuscated data entity.
+        self.assertEqual(
+            buckets_to_entities[bucket1_id],
+            [self.get_expected_obfuscated_entity(bucket1_entity1)],
+        )
+
+    def test_list_obfuscated_data_entities_in_data_entity_buckets_two_buckets(self):
+        # Create an entity for bucket 1.
+        bucket1_datetime = dt.datetime(
+            2023, 12, 12, 1, 30, 0, 1000, tzinfo=dt.timezone.utc
+        )
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+
+        # Create two entities for bucket 2.
+        bucket2_datetime = dt.datetime(
+            2023,
+            12,
+            12,
+            2,
+            30,
+            0,
+            1000,
+            tzinfo=pytz.timezone("America/Los_Angeles"),
+        )
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            label=None,
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=None,
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
+        )
+
+        # Create the DataEntityBucketId to query by.
+        bucket1_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+        )
+
+        bucket2_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+            source=DataSource.X,
+            label=None,
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = (
+            self.test_storage.list_obfuscated_data_entities_in_data_entity_buckets(
+                [bucket1_id, bucket2_id]
+            )
+        )
+
+        # Confirm we get back the expected obfuscated data entities.
+        self.assertEqual(
+            buckets_to_entities[bucket1_id],
+            [self.get_expected_obfuscated_entity(bucket1_entity1)],
+        )
+        self.assertEqual(
+            buckets_to_entities[bucket2_id],
+            [
+                self.get_expected_obfuscated_entity(bucket2_entity1),
+                self.get_expected_obfuscated_entity(bucket2_entity2),
+            ],
+        )
+
+    def test_list_obfuscated_data_entities_in_data_entity_buckets_same_time_bucket(
+        self,
+    ):
+        # Create an entity for bucket 1.
+        bucket1_datetime = dt.datetime(
+            2023, 12, 12, 1, 30, 0, 1000, tzinfo=dt.timezone.utc
+        )
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+
+        # Create two entities for bucket 2.
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket1_datetime,
+            source=DataSource.X,
+            label=None,
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket1_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=None,
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
+        )
+
+        # Create the DataEntityBucketId to query by.
+        bucket1_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+        )
+
+        bucket2_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.X,
+            label=None,
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = (
+            self.test_storage.list_obfuscated_data_entities_in_data_entity_buckets(
+                [bucket1_id, bucket2_id]
+            )
+        )
+
+        # Confirm we get back the expected obfuscated data entities.
+        self.assertEqual(
+            buckets_to_entities[bucket1_id],
+            [self.get_expected_obfuscated_entity(bucket1_entity1)],
+        )
+        self.assertEqual(
+            buckets_to_entities[bucket2_id],
+            [
+                self.get_expected_obfuscated_entity(bucket2_entity1),
+                self.get_expected_obfuscated_entity(bucket2_entity2),
+            ],
+        )
+
+    def test_list_obfuscated_data_entities_in_data_entity_buckets_same_label(self):
+        # Create an entity for bucket 1.
+        bucket1_datetime = dt.datetime(
+            2023, 12, 12, 1, 30, 0, 1000, tzinfo=dt.timezone.utc
+        )
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+
+        # Create two entities for bucket 2.
+        bucket2_datetime = dt.datetime(
+            2023,
+            12,
+            12,
+            2,
+            30,
+            0,
+            1000,
+            tzinfo=pytz.timezone("America/Los_Angeles"),
+        )
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
+        )
+
+        # Create the DataEntityBucketId to query by.
+        bucket1_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+        )
+
+        bucket2_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = (
+            self.test_storage.list_obfuscated_data_entities_in_data_entity_buckets(
+                [bucket1_id, bucket2_id]
+            )
+        )
+
+        # Confirm we get back the expected obfuscated data entities.
+        self.assertEqual(
+            buckets_to_entities[bucket1_id],
+            [self.get_expected_obfuscated_entity(bucket1_entity1)],
+        )
+        self.assertEqual(
+            buckets_to_entities[bucket2_id],
+            [
+                self.get_expected_obfuscated_entity(bucket2_entity1),
+                self.get_expected_obfuscated_entity(bucket2_entity2),
+            ],
+        )
+
+    def test_list_obfuscated_data_entities_in_data_entity_buckets_over_size(self):
+        """Tests getting back obfuscated data entities from one over-size bucket."""
+        # Create an entity for bucket 1.
+        bucket1_datetime = dt.datetime(
+            2023, 12, 12, 1, 30, 0, 1000, tzinfo=dt.timezone.utc
+        )
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+        bucket1_entity2 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities([bucket1_entity1, bucket1_entity2])
+
+        # Create the DataEntityBucketId to query by.
+        bucket1_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = (
+            self.test_storage.list_obfuscated_data_entities_in_data_entity_buckets(
+                [bucket1_id]
+            )
+        )
+
+        # Confirm we get back only the first expected obfuscated data entity.
+        self.assertEqual(
+            buckets_to_entities[bucket1_id],
+            [self.get_expected_obfuscated_entity(bucket1_entity1)],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

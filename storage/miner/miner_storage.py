@@ -4,7 +4,7 @@ from common.data import (
     DataEntity,
     DataEntityBucketId,
 )
-from typing import List
+from typing import Dict, List
 
 
 class MinerStorage(ABC):
@@ -25,4 +25,18 @@ class MinerStorage(ABC):
     @abstractmethod
     def get_compressed_index(self) -> CompressedMinerIndex:
         """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
+        raise NotImplemented
+
+    @abstractmethod
+    def list_obfuscated_data_entities_in_data_entity_buckets(
+        self, data_entity_bucket_ids: List[DataEntityBucketId]
+    ) -> Dict[DataEntityBucketId, List[DataEntity]]:
+        """Lists data entities with obfuscated timestamps for each requested DataEntityBucketId.
+
+        Args:
+            data_entity_bucket_ids (List[DataEntityBucketId]): Which buckets to get entities for.
+
+        Returns:
+            Dict[DataEntityBucketId, List[DataEntity]]: Map of each bucket id to contained entities.
+        """
         raise NotImplemented
