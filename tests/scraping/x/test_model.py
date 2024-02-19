@@ -67,6 +67,7 @@ class TestModel(unittest.TestCase):
         entity = XContent.to_data_entity(content)
 
         self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
+        self.assertEqual(entity.label.value, "#loooooooooooooooooooooooonghash")
 
 
 if __name__ == "__main__":
