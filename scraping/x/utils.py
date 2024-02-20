@@ -4,6 +4,7 @@ import traceback
 from typing import List
 from urllib.parse import urlparse
 from common.data import DataEntity
+from scraping import utils
 from scraping.scraper import ValidationResult
 
 from scraping.x.model import XContent
@@ -57,7 +58,7 @@ def sanitize_scraped_tweet(text: str) -> str:
 
 
 def validate_tweet_content(
-    actual_tweet: XContent, entity: DataEntity, allow_obfuscated_content_date: bool
+    actual_tweet: XContent, entity: DataEntity, require_obfuscated_content_date: bool
 ) -> ValidationResult:
     """Validates the tweet is valid by the definition provided by entity."""
     tweet_to_verify = None
@@ -119,35 +120,38 @@ def validate_tweet_content(
     # When obfuscating the date in the content we need to go to the second since the obfuscated date is to the minute.
 
     # We only go to minute granularity since that is all previous scrapers offered.
-    entity_timestamp = (
-        entity.datetime.replace(microsecond=0)
-        if allow_obfuscated_content_date
-        else entity.datetime.replace(second=0, microsecond=0)
-    )
-    actual_tweet_timestamp = (
+    actual_tweet.timestamp = (
         actual_tweet.timestamp.replace(microsecond=0)
-        if allow_obfuscated_content_date
+        if require_obfuscated_content_date
         else actual_tweet.timestamp.replace(second=0, microsecond=0)
     )
-    tweet_to_verify_timestamp = (
+    tweet_to_verify.timestamp = (
         tweet_to_verify.timestamp.replace(microsecond=0)
-        if allow_obfuscated_content_date
+        if require_obfuscated_content_date
         else tweet_to_verify.timestamp.replace(second=0, microsecond=0)
+    )
+    entity.datetime = (
+        entity.datetime.replace(microsecond=0)
+        if require_obfuscated_content_date
+        else entity.datetime.replace(second=0, microsecond=0)
     )
 
     # If checking an data entity with obfuscated content we compare to the entity directly instead.
-    if allow_obfuscated_content_date:
-        if entity_timestamp != actual_tweet_timestamp:
+    if require_obfuscated_content_date:
+        actual_tweet_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(
+            actual_tweet.timestamp
+        )
+        if tweet_to_verify.timestamp != actual_tweet_obfuscated_timestamp:
             bt.logging.info(
-                f"Entity and Tweet timestamps do not match to the minute: {entity} != {actual_tweet}."
+                f"Tweet timestamps do not match to the minute: {tweet_to_verify} != {actual_tweet}."
             )
             return ValidationResult(
                 is_valid=False,
-                reason="Entity and Tweet timestamps do not match to the minute",
+                reason="Tweet timestamps do not match to the minute",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
     else:
-        if tweet_to_verify_timestamp != actual_tweet_timestamp:
+        if tweet_to_verify.timestamp != actual_tweet.timestamp:
             bt.logging.info(
                 f"Tweet timestamps do not match to the minute: {tweet_to_verify} != {actual_tweet}."
             )

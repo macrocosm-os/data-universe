@@ -1,4 +1,5 @@
 from urllib.parse import urlparse
+from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataLabel
@@ -23,7 +24,7 @@ def is_valid_reddit_url(url: str) -> bool:
 def validate_reddit_content(
     actual_content: RedditContent,
     entity_to_validate: DataEntity,
-    allow_obfuscated_content_date: bool,
+    require_obfuscated_content_date: bool,
 ) -> ValidationResult:
     """Verifies the RedditContent is valid by the definition provided by entity."""
     content_to_validate = None
@@ -96,14 +97,17 @@ def validate_reddit_content(
 
     # Check Reddit created_at
     # If checking an data entity with obfuscated content we compare to the entity directly instead.
-    if allow_obfuscated_content_date:
-        if entity_to_validate.datetime != actual_content.created_at:
+    if require_obfuscated_content_date:
+        actual_content_obfuscated = utils.obfuscate_datetime_to_minute(
+            actual_content.created_at
+        )
+        if content_to_validate.created_at != actual_content_obfuscated:
             bt.logging.info(
-                f"Entity and Reddit timestamps do not match: {entity_to_validate} != {content_to_validate}"
+                f"Reddit timestamps do not match: {actual_content} != {content_to_validate}"
             )
             return ValidationResult(
                 is_valid=False,
-                reason="Entity and Reddit timestamps do not match",
+                reason="Reddit timestamps do not match",
                 content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
     else:

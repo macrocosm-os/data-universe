@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
+from scraping import utils
 
 
 class XContent(BaseModel):
@@ -33,7 +34,7 @@ class XContent(BaseModel):
         """Converts the XContent to a DataEntity."""
         entity_timestamp = content.timestamp
         if obfuscate_content_date:
-            content.timestamp = entity_timestamp.replace(second=0, microsecond=0)
+            content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
 
         content_bytes = content.json().encode("utf-8")
         return DataEntity(

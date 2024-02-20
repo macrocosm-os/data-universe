@@ -105,21 +105,15 @@ class MicroworldsTwitterScraper(Scraper):
                             content_size_bytes_validated=entity.content_size_bytes,
                         )
                 else:
-                    if (
+                    require_obfuscation = (
                         actual_tweet.timestamp
                         >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-                    ):
-                        return utils.validate_tweet_content(
-                            actual_tweet=actual_tweet,
-                            entity=entity,
-                            allow_obfuscated_content_date=True,
-                        )
-                    else:
-                        return utils.validate_tweet_content(
-                            actual_tweet=actual_tweet,
-                            entity=entity,
-                            allow_obfuscated_content_date=False,
-                        )
+                    )
+                    return utils.validate_tweet_content(
+                        actual_tweet=actual_tweet,
+                        entity=entity,
+                        require_obfuscated_content_date=require_obfuscation,
+                    )
 
         if not entities:
             return []

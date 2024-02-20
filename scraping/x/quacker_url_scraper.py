@@ -101,25 +101,17 @@ class QuackerUrlScraper(Scraper):
                 )
                 continue
 
-            if (
+            require_obfuscation = (
                 actual_tweet.timestamp
                 >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            ):
-                results.append(
-                    utils.validate_tweet_content(
-                        actual_tweet=actual_tweet,
-                        entity=entity,
-                        allow_obfuscated_content_date=True,
-                    )
+            )
+            results.append(
+                utils.validate_tweet_content(
+                    actual_tweet=actual_tweet,
+                    entity=entity,
+                    require_obfuscated_content_date=require_obfuscation,
                 )
-            else:
-                results.append(
-                    utils.validate_tweet_content(
-                        actual_tweet=actual_tweet,
-                        entity=entity,
-                        allow_obfuscated_content_date=False,
-                    )
-                )
+            )
 
         return results
 

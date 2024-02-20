@@ -120,25 +120,18 @@ class RedditCustomScraper(Scraper):
                 continue
 
             # We found the Reddit content. Validate it.
-            if (
+            require_obfuscation = (
                 content.created_at
                 >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            ):
-                results.append(
-                    validate_reddit_content(
-                        actual_content=content,
-                        entity_to_validate=entity,
-                        allow_obfuscated_content_date=True,
-                    )
+            )
+
+            results.append(
+                validate_reddit_content(
+                    actual_content=content,
+                    entity_to_validate=entity,
+                    require_obfuscated_content_date=require_obfuscation,
                 )
-            else:
-                results.append(
-                    validate_reddit_content(
-                        actual_content=content,
-                        entity_to_validate=entity,
-                        allow_obfuscated_content_date=False,
-                    )
-                )
+            )
 
         return results
 

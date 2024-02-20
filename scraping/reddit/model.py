@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field
 
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
+from scraping import utils
 
 # The username used for deleted users.
 # This is the value returned by the Apify lite scraper.
@@ -54,7 +55,7 @@ class RedditContent(BaseModel):
         """Converts the RedditContent to a DataEntity."""
         entity_created_at = content.created_at
         if obfuscate_content_date:
-            content.created_at = entity_created_at.replace(second=0, microsecond=0)
+            content.created_at = utils.obfuscate_datetime_to_minute(entity_created_at)
 
         content_bytes = content.json(by_alias=True).encode("utf-8")
         return DataEntity(
