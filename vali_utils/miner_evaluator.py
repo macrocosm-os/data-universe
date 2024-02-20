@@ -278,15 +278,18 @@ class MinerEvaluator:
         uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
 
         # Do not count the first loop since we start in a random place.
-        if self.last_seen_38_datetime is not None:
-            # Emit how many minutes its been since we've last evaluated 38 (current top miner).
-            statsd.gauge(
-                "evaluation_frequency_seconds",
-                (datetime.datetime.now() - self.last_seen_38_datetime).total_seconds(),
-            )
+        if 38 in uids_to_eval:
+            if self.last_seen_38_datetime is not None:
+                # Emit how many minutes its been since we've last evaluated 38 (current top miner).
+                statsd.gauge(
+                    "evaluation_frequency_seconds",
+                    (
+                        datetime.datetime.now() - self.last_seen_38_datetime
+                    ).total_seconds(),
+                )
 
-        # Update our sentinel to now.
-        self.last_seen_38_datetime = datetime.datetime.now()
+            # Update our sentinel to now.
+            self.last_seen_38_datetime = datetime.datetime.now()
 
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
