@@ -33,9 +33,7 @@ class XContent(BaseModel):
         """Converts the XContent to a DataEntity."""
         entity_timestamp = content.timestamp
         if obfuscate_content_date:
-            content.timestamp = entity_timestamp.replace(
-                minute=0, second=0, microsecond=0
-            )
+            content.timestamp = entity_timestamp.replace(second=0, microsecond=0)
 
         content_bytes = content.json().encode("utf-8")
         return DataEntity(

@@ -115,18 +115,29 @@ def validate_tweet_content(
         )
 
     # Check Tweet timestamp.
+    # Previously we only validated to the minute granularity to support data scraped by older apify actors.
+    # When obfuscating the date in the content we need to go to the second since the obfuscated date is to the minute.
+
     # We only go to minute granularity since that is all previous scrapers offered.
-    # If checking an data entity with obfuscated content we compare to the entity directly instead.
-    entity_timestamp_minute = entity.datetime.replace(second=0, microsecond=0)
-    actual_tweet_timestamp_minute = actual_tweet.timestamp.replace(
-        second=0, microsecond=0
+    entity_timestamp = (
+        entity.datetime.replace(microsecond=0)
+        if allow_obfuscated_content_date
+        else entity.datetime.replace(second=0, microsecond=0)
     )
-    tweet_to_verify_timestamp_minute = tweet_to_verify.timestamp.replace(
-        second=0, microsecond=0
+    actual_tweet_timestamp = (
+        actual_tweet.timestamp.replace(microsecond=0)
+        if allow_obfuscated_content_date
+        else actual_tweet.timestamp.replace(second=0, microsecond=0)
+    )
+    tweet_to_verify_timestamp = (
+        tweet_to_verify.timestamp.replace(microsecond=0)
+        if allow_obfuscated_content_date
+        else tweet_to_verify.timestamp.replace(second=0, microsecond=0)
     )
 
+    # If checking an data entity with obfuscated content we compare to the entity directly instead.
     if allow_obfuscated_content_date:
-        if entity_timestamp_minute != actual_tweet_timestamp_minute:
+        if entity_timestamp != actual_tweet_timestamp:
             bt.logging.info(
                 f"Entity and Tweet timestamps do not match to the minute: {entity} != {actual_tweet}."
             )
@@ -136,7 +147,7 @@ def validate_tweet_content(
                 content_size_bytes_validated=entity.content_size_bytes,
             )
     else:
-        if tweet_to_verify_timestamp_minute != actual_tweet_timestamp_minute:
+        if tweet_to_verify_timestamp != actual_tweet_timestamp:
             bt.logging.info(
                 f"Tweet timestamps do not match to the minute: {tweet_to_verify} != {actual_tweet}."
             )

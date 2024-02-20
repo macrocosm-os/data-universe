@@ -128,7 +128,7 @@ class TestModel(unittest.TestCase):
                 month=3,
                 day=1,
                 hour=1,
-                minute=0,
+                minute=1,
                 second=0,
                 microsecond=0,
                 tzinfo=dt.timezone.utc,
