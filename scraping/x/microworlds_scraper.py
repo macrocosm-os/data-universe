@@ -3,6 +3,7 @@ import threading
 import traceback
 import bittensor as bt
 from typing import List
+from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
@@ -104,7 +105,15 @@ class MicroworldsTwitterScraper(Scraper):
                             content_size_bytes_validated=entity.content_size_bytes,
                         )
                 else:
-                    return utils.validate_tweet_content(actual_tweet, entity)
+                    require_obfuscation = (
+                        actual_tweet.timestamp
+                        >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+                    )
+                    return utils.validate_tweet_content(
+                        actual_tweet=actual_tweet,
+                        entity=entity,
+                        require_obfuscated_content_date=require_obfuscation,
+                    )
 
         if not entities:
             return []
@@ -169,7 +178,25 @@ class MicroworldsTwitterScraper(Scraper):
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
         )
 
-        return [XContent.to_data_entity(x_content) for x_content in x_contents]
+        data_entities = []
+        for x_content in x_contents:
+            if (
+                x_content.timestamp
+                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+            ):
+                data_entities.append(
+                    XContent.to_data_entity(
+                        content=x_content, obfuscate_content_date=True
+                    )
+                )
+            else:
+                data_entities.append(
+                    XContent.to_data_entity(
+                        content=x_content, obfuscate_content_date=False
+                    )
+                )
+
+        return data_entities
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
         """Performs a best effort parsing of Apify dataset into List[XContent]

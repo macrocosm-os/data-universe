@@ -3,6 +3,7 @@ import random
 import traceback
 import bittensor as bt
 from typing import Any, Dict, List
+from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
@@ -122,7 +123,19 @@ class RedditLiteScraper(Scraper):
 
             # We found the Reddit content. Validate it.
             actual_content = items[0]
-            results.append(validate_reddit_content(actual_content, entity))
+
+            require_obfuscation = (
+                actual_content.created_at
+                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+            )
+
+            results.append(
+                validate_reddit_content(
+                    actual_content=actual_content,
+                    entity_to_validate=entity,
+                    require_obfuscated_content_date=require_obfuscation,
+                )
+            )
 
         return results
 
@@ -188,7 +201,25 @@ class RedditLiteScraper(Scraper):
             f"Completed scrape for {run_input['searches']}. Scraped {len(contents)} items."
         )
 
-        return [RedditContent.to_data_entity(content) for content in contents]
+        data_entities = []
+        for content in contents:
+            if (
+                content.created_at
+                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+            ):
+                data_entities.append(
+                    RedditContent.to_data_entity(
+                        content=content, obfuscate_content_date=True
+                    )
+                )
+            else:
+                data_entities.append(
+                    RedditContent.to_data_entity(
+                        content=content, obfuscate_content_date=False
+                    )
+                )
+
+        return data_entities
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[RedditContent]:
         """Performs a best effort parsing of Apify dataset into List[RedditContent]

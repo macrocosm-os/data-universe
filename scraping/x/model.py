@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
+from scraping import utils
 
 
 class XContent(BaseModel):
@@ -27,13 +28,18 @@ class XContent(BaseModel):
     )
 
     @classmethod
-    def to_data_entity(cls, content: "XContent") -> DataEntity:
+    def to_data_entity(
+        cls, content: "XContent", obfuscate_content_date: bool
+    ) -> DataEntity:
         """Converts the XContent to a DataEntity."""
+        entity_timestamp = content.timestamp
+        if obfuscate_content_date:
+            content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
 
         content_bytes = content.json().encode("utf-8")
         return DataEntity(
             uri=content.url,
-            datetime=content.timestamp,
+            datetime=entity_timestamp,
             source=DataSource.X,
             label=(
                 DataLabel(value=content.tweet_hashtags[0][: constants.MAX_LABEL_LENGTH])
