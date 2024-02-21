@@ -323,6 +323,14 @@ async def test_validate():
             content='{"username":"@rEQjoewd6WfNFL3","text":"ありがとうございます\\n\\nそうなんです\\nほんと偶然です\\n聞いたときはビックリしました\\n\\nいえいえ、私の記念日だなんて\\nもったいないです\\n妹の記念日にしてください\\nぷぷっ","url":"https://twitter.com/rEQjoewd6WfNFL3/status/1743187684422799519","timestamp":"2024-01-05T08:28:00Z","tweet_hashtags":[]}',
             content_size_bytes=253,
         ),
+        DataEntity(
+            uri="https://twitter.com/Sid14290237375/status/1760088426400162274",
+            datetime=dt.datetime(2024, 2, 20, 23, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#HowlongcanImakeahashtaganywayIg"),
+            content='{"username":"@Sid14290237375","text":"Testing hashtags\\n\\n#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest","url":"https://twitter.com/Sid14290237375/status/1760088426400162274","timestamp":"2024-02-20T23:45:00Z","tweet_hashtags":["#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest"]}',
+            content_size_bytes=356,
+        ),
     ]
 
     results = await scraper.validate(entities=true_entities)
