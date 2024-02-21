@@ -22,7 +22,7 @@ class MinerScorer:
         self,
         num_neurons: int,
         value_calculator: DataValueCalculator,
-        alpha: float = 0.075,
+        alpha: float = 0.15,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)

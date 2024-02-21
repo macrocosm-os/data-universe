@@ -28,3 +28,8 @@ SCORE_GROWTH_LIMIT_PERCENT = 1.05
 
 # Min evaluation period that must pass before a validator re-evaluates a miner.
 MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
+
+# Datetime after which DataEntity content field has lower granularity dates.
+REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD = datetime.datetime(
+    year=2024, month=3, day=1, tzinfo=datetime.timezone.utc
+)

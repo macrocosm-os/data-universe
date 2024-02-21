@@ -34,7 +34,7 @@ As of Dec 11th, 2023 data older than 30 days is not scored. This may increase in
 
 ### 2) Data Desirability
 
-Data Universe defines a DataDesirabilityLookup that defines which types of data are desirable (and which types are undesirable). Data deemed desirable is scored more highly. Data deemed undesirable is scored negatively. 
+Data Universe defines a [DataDesirabilityLookup](https://github.com/RusticLuftig/data-universe/blob/main/rewards/data_desirability_lookup.py) that defines which types of data are desirable. Data deemed desirable is scored more highly. Unspecified labels get the default_scale_factor of 0.5 meaning they score half value in comparison.
 
 The DataDesirabilityLookup will evolve over time, but each change will be announced ahead of time to give Miners adequate time to prepare for the update.
 

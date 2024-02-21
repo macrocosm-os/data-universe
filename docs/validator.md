@@ -4,9 +4,9 @@ The Validator is responsible for validating the Miners and scoring them accordin
 1. It requests the latest [MinerIndex](../README.md#terminology) from the miner, which it stores in a in-memory database.
 2. It chooses a random (sampled by size) DataEntityBucket from the MinerIndex to sample.
 3. It gets that DataEntityBucket from the Miner.
-4. It chooses N DataEntities from the DataEntityBucket to validate. It then scrapes the content from the apprioriate DataSource to get those DataEntities.
-5. It then compares those retrieved DataEntities agaisnt the ones provided by the Miner and updates the Miner Credibility, based on the result.
-6. Finally, it updates the Miner's score.
+4. It chooses N DataEntities from the DataEntityBucket to validate. It then scrapes the content from the appropriate DataSource to get those DataEntities.
+5. It then compares those retrieved DataEntities against the ones provided by the Miner and updates the Miner Credibility, based on the result.
+6. Finally, it updates the Miner's score. This is based on the total MinerIndex scaled by Freshness/Desirability/Duplication/Credibility.
 
 Once this sequence has been performed for all Miners, the Validator waits a period of time before starting the next loop to ensure it does not evaluate a Miner more often than once per N minutes. This helps ensure the cost of running a Validator is not too high, and also protects the network against high amounts of traffic.
 

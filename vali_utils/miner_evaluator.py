@@ -238,10 +238,6 @@ class MinerEvaluator:
         with self.lock:
             metagraph = copy.deepcopy(self.metagraph)
 
-        # Run in batches of 10.
-        # TODO: Maybe make this configurable and run evaluations based on expected throughput
-        miners_to_eval = 10
-
         # Check if the next miner is due an update.
         next_uid = self.miner_iterator.peek()
         hotkey = metagraph.hotkeys[next_uid]
@@ -259,24 +255,12 @@ class MinerEvaluator:
                 last_evaluated + constants.MIN_EVALUATION_PERIOD - now
             ).total_seconds()
 
-        # Otherwise, execute the next batch of evaluations and skip any miners who were evaluated recently.
-        # Use a set in case the network has fewer than 10 miners.
-        uids_to_check = {next(self.miner_iterator) for _ in range(miners_to_eval)}
-        uids_to_eval = set()
+        # Run in batches of 15.
+        miners_to_eval = 15
 
-        # Evaluate all miners in the batch who are due an update.
-        for uid in uids_to_check:
-            hotkey = metagraph.hotkeys[uid]
-            last_evaluated = self.storage.read_miner_last_updated(hotkey)
-
-            # If we have aleady evaluated this miner recently then do not evaluate it.
-            if (
-                not last_evaluated
-                or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
-            ):
-                uids_to_eval.add(uid)
-
-        assert uids_to_eval, "Expected at least 1 miner to evaluate."
+        # Otherwise, execute the next batch of evaluations.
+        # Use a set in case the network has fewer than 15 miners.
+        uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
 
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
@@ -328,7 +312,9 @@ class MinerEvaluator:
                 self.scorer.load_state(filepath)
                 bt.logging.success(f"Loaded scorer state from: {filepath}.")
             except Exception as e:
-                bt.logging.warning(f"Failed to load scorer state. Reason: {e}. Starting from scratch.")
+                bt.logging.warning(
+                    f"Failed to load scorer state. Reason: {e}. Starting from scratch."
+                )
 
             # Resize the scorer in case the loaded state is old and missing newly added neurons.
             self.scorer.resize(len(self.metagraph.hotkeys))

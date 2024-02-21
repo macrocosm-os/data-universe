@@ -88,7 +88,7 @@ Let's walk through an example to explain how all these properties fit together.
     "scraper_configs": [
         {
             "scraper_id": "X.microworlds",
-            "cadence_secs": 300,
+            "cadence_seconds": 300,
             "labels_to_scrape": [
                 {
                     "label_choices": [
