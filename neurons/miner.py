@@ -289,14 +289,10 @@ class Miner:
                 compressed_index = self.storage.get_compressed_index(
                     bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
                 )
-            elif synapse.version == 3:
-                compressed_index = self.storage.get_compressed_index(
-                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
-                )
+            # Only synapse.version 4 is supported at this time.
             else:
-                compressed_index = self.storage.get_compressed_index(
-                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
-                )
+                bt.logging.error(f"Unsupported protocol version: {synapse.version}.")
+
             synapse.compressed_index_serialized = compressed_index.json()
             bt.logging.success(
                 f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
