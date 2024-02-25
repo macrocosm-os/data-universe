@@ -99,6 +99,7 @@ class Miner:
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
+        self.compressed_index_refresh_thread: threading.Thread = None
         self.lock = threading.RLock()
 
         # Instantiate storage.
@@ -130,6 +131,23 @@ class Miner:
         self.request_lock = threading.RLock()
         self.last_cleared_request_limits = dt.datetime.now()
         self.requests_by_hotkey = defaultdict(lambda: 0)
+
+    def refresh_index(self):
+        """
+        Refreshes the cached compressed miner index periodically off the hot path of GetMinerIndex requests.
+        """
+        while not self.should_exit:
+            # Refresh the index if it hasn't been refreshed in the configured time period.
+            self.storage.refresh_compressed_index(
+                time_delta=constants.MINER_CACHE_FRESHNESS
+            )
+            bt.logging.trace("Refresh index thread finished refreshing the index.")
+            # Wait freshness period + 1 minute to try refreshing again.
+            time.sleep(
+                (
+                    constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=1)
+                ).total_seconds()
+            )
 
     def run(self):
         """
@@ -206,6 +224,10 @@ class Miner:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+            self.compressed_index_refresh_thread = threading.Thread(
+                target=self.refresh_index, daemon=True
+            )
+            self.compressed_index_refresh_thread.start()
             self.is_running = True
             bt.logging.debug("Started")
 
@@ -217,6 +239,7 @@ class Miner:
             bt.logging.debug("Stopping miner in background thread.")
             self.should_exit = True
             self.thread.join(5)
+            self.compressed_index_refresh_thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped")
 

@@ -102,8 +102,16 @@ class SqliteMinerStorage(MinerStorage):
             # Use Write Ahead Logging to avoid blocking reads.
             cursor.execute("pragma journal_mode=wal")
 
-        # Lock to avoid concurrency issues on clearing space when full
+        # Lock to avoid concurrency issues on clearing space when full.
         self.clearing_space_lock = threading.Lock()
+
+        # Lock around the refresh for the index.
+        self.cached_index_refresh_lock = threading.Lock()
+
+        # Lock around the cached get miner index.
+        self.cached_index_lock = threading.Lock()
+        self.cached_index_4 = None
+        self.cached_index_updated = dt.datetime.min
 
     def _create_connection(self):
         # Create the database if it doesn't exist, defaulting to the local directory.
@@ -239,61 +247,99 @@ class SqliteMinerStorage(MinerStorage):
             )
             return data_entities
 
+    def refresh_compressed_index(self, time_delta: dt.timedelta):
+        """Refreshes the compressed MinerIndex."""
+        # First check if we already have a fresh enough index, if so return immediately.
+        # Since the GetMinerIndex uses a 30 minute freshness period this should be the default path with the
+        # Refresh thread using a 20 minute freshness period and calling this method every 21 minutes.
+        with self.cached_index_lock:
+            if dt.datetime.now() - self.cached_index_updated <= time_delta:
+                bt.logging.trace(f"Cached index within {time_delta} freshness period.")
+                return
+            else:
+                bt.logging.info(
+                    f"Cached index out of {time_delta} freshness period. Refreshing cached index."
+                )
+
+        # Else we take the refresh lock and check again within the lock.
+        # This handles cases where multiple threads are waiting on refresh at the same time.
+        with self.cached_index_refresh_lock:
+            with self.cached_index_lock:
+                if dt.datetime.now() - self.cached_index_updated <= time_delta:
+                    bt.logging.trace(
+                        "After waiting on refresh lock the index was already refreshed."
+                    )
+                    return
+
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+
+                oldest_time_bucket_id = TimeBucket.from_datetime(
+                    dt.datetime.now()
+                    - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
+                ).id
+
+                # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
+                cursor.execute(
+                    """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
+                            WHERE timeBucketId >= ?
+                            GROUP BY timeBucketId, source, label
+                            ORDER BY bucketSize DESC
+                            LIMIT ?
+                            """,
+                    [
+                        oldest_time_bucket_id,
+                        constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
+                    ],  # Always get the max for caching and truncate to each necessary size.
+                )
+
+                buckets_by_source_by_label = defaultdict(dict)
+
+                for row in cursor:
+                    # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
+                    size = (
+                        constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                        if row["bucketSize"]
+                        >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                        else row["bucketSize"]
+                    )
+
+                    label = row["label"] if row["label"] != "NULL" else None
+
+                    bucket = buckets_by_source_by_label[DataSource(row["source"])].get(
+                        label, CompressedEntityBucket(label=label)
+                    )
+                    bucket.sizes_bytes.append(size)
+                    bucket.time_bucket_ids.append(row["timeBucketId"])
+                    buckets_by_source_by_label[DataSource(row["source"])][
+                        label
+                    ] = bucket
+
+                # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
+                bt.logging.trace("Creating protocol 4 cached index.")
+                with self.cached_index_lock:
+                    self.cached_index_4 = CompressedMinerIndex(
+                        sources={
+                            source: list(labels_to_buckets.values())
+                            for source, labels_to_buckets in buckets_by_source_by_label.items()
+                        }
+                    )
+                    self.cached_index_updated = dt.datetime.now()
+
     def get_compressed_index(
         self,
-        bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
+        bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
     ) -> CompressedMinerIndex:
         """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
 
-        with contextlib.closing(self._create_connection()) as connection:
-            cursor = connection.cursor()
+        # Force refresh index if 10 minutes beyond refersh period. Expected to be refreshed earlier by refresh loop.
+        self.refresh_compressed_index(
+            time_delta=(constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=10))
+        )
 
-            oldest_time_bucket_id = TimeBucket.from_datetime(
-                dt.datetime.now()
-                - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
-            ).id
-
-            # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
-            cursor.execute(
-                """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label FROM DataEntity
-                        WHERE timeBucketId >= ?
-                        GROUP BY timeBucketId, source, label
-                        ORDER BY bucketSize DESC
-                        LIMIT ?
-                        """,
-                [
-                    oldest_time_bucket_id,
-                    bucket_count_limit,
-                ],
-            )
-
-            buckets_by_source_by_label = defaultdict(dict)
-
-            for row in cursor:
-                # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
-                size = (
-                    constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                    if row["bucketSize"]
-                    >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                    else row["bucketSize"]
-                )
-
-                label = row["label"] if row["label"] != "NULL" else None
-
-                bucket = buckets_by_source_by_label[DataSource(row["source"])].get(
-                    label, CompressedEntityBucket(label=label)
-                )
-                bucket.sizes_bytes.append(size)
-                bucket.time_bucket_ids.append(row["timeBucketId"])
-                buckets_by_source_by_label[DataSource(row["source"])][label] = bucket
-
-            # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
-            return CompressedMinerIndex(
-                sources={
-                    source: list(labels_to_buckets.values())
-                    for source, labels_to_buckets in buckets_by_source_by_label.items()
-                }
-            )
+        with self.cached_index_lock:
+            # Only protocol 4 is supported at this time.
+            return self.cached_index_4
 
     def clear_content_from_oldest(self, content_bytes_to_clear: int):
         """Deletes entries starting from the oldest until we have cleared the specified amount of content."""
