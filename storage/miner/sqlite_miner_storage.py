@@ -99,6 +99,9 @@ class SqliteMinerStorage(MinerStorage):
             # Create the Index (if it does not already exist).
             cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_INDEX)
 
+            # Use Write Ahead Logging to avoid blocking reads.
+            cursor.execute("pragma journal_mode=wal")
+
         # Lock to avoid concurrency issues on clearing space when full
         self.clearing_space_lock = threading.Lock()
 
