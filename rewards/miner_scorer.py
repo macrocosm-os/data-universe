@@ -22,7 +22,8 @@ class MinerScorer:
         self,
         num_neurons: int,
         value_calculator: DataValueCalculator,
-        alpha: float = 0.15,
+        cred_alpha: float = 0.15,
+        score_alpha: float = 0.30,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
@@ -30,7 +31,8 @@ class MinerScorer:
             (num_neurons, 1), MinerScorer.STARTING_CREDIBILITY, dtype=torch.float32
         )
         self.value_calculator = value_calculator
-        self.alpha = alpha
+        self.cred_alpha = cred_alpha
+        self.score_alpha = score_alpha
 
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
@@ -170,7 +172,8 @@ class MinerScorer:
 
         # Use EMA to update the miner's credibility.
         self.miner_credibility[uid] = (
-            self.alpha * credibility + (1 - self.alpha) * self.miner_credibility[uid]
+            self.cred_alpha * credibility
+            + (1 - self.cred_alpha) * self.miner_credibility[uid]
         )
 
         bt.logging.trace(
@@ -183,7 +186,9 @@ class MinerScorer:
 
         Requires: self.lock is held.
         """
-        new_score = self.alpha * reward + (1 - self.alpha) * self.scores[uid]
+        new_score = (
+            self.score_alpha * reward + (1 - self.score_alpha) * self.scores[uid]
+        )
 
         # If the score is over the growth limit threshold then ensure it isn't growing faster than the percent limit.
         if new_score > constants.SCORE_GROWTH_LIMIT_THRESHOLD:

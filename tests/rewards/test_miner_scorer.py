@@ -41,6 +41,7 @@ class TestMinerScorer(unittest.TestCase):
         self.now = dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(hours=3)
 
         # Construct a ScorableMinerIndex with 2 chunks that should score 150 in total (without considering EMA)
+        self.scorable_index_full_score = 150
         self.scorable_index = ScorableMinerIndex(
             hotkey="abc123",
             scorable_data_entity_buckets=[
@@ -339,13 +340,33 @@ class TestMinerScorer(unittest.TestCase):
         ]
 
         # Starting credibility defaults to 0.
-        # With current 30 hours of credibility we will assume ~25 cycles of validation.
+        # With current 30 hours of immunity we will assume ~25 cycles of validation.
 
         cycles = 25
         for _ in range(cycles):
             self.scorer._update_credibility(uid, honest_validation)
 
         self.assertGreaterEqual(self.scorer.miner_credibility[uid].item(), 0.95)
+
+    def test_fresh_miner_score(self):
+        """Verifies that a fresh miner can reach 94% score within immunity period."""
+        uid = 0
+
+        honest_validation = [
+            ValidationResult(is_valid=True, content_size_bytes_validated=100)
+        ]
+
+        # Starting credibility defaults to 0.
+        # With current 30 hours of immunity we will assume ~25 cycles of validation.
+
+        cycles = 25
+        for _ in range(cycles):
+            self.scorer.on_miner_evaluated(uid, self.scorable_index, honest_validation)
+
+        self.assertGreaterEqual(
+            self.scorer.scores[uid].item(),
+            0.94 * self.scorable_index_full_score,
+        )
 
 
 if __name__ == "__main__":
