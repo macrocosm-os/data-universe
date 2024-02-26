@@ -254,7 +254,9 @@ class SqliteMinerStorage(MinerStorage):
         # Refresh thread using a 20 minute freshness period and calling this method every 21 minutes.
         with self.cached_index_lock:
             if dt.datetime.now() - self.cached_index_updated <= time_delta:
-                bt.logging.trace(f"Cached index within {time_delta} freshness period.")
+                bt.logging.trace(
+                    f"Skipping updating cached index. It is already fresher than {time_delta}."
+                )
                 return
             else:
                 bt.logging.info(
@@ -330,7 +332,7 @@ class SqliteMinerStorage(MinerStorage):
         self,
         bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
     ) -> CompressedMinerIndex:
-        """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
+        """Gets the compressed MinerIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
 
         # Force refresh index if 10 minutes beyond refersh period. Expected to be refreshed earlier by refresh loop.
         self.refresh_compressed_index(

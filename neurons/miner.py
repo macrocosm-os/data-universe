@@ -137,17 +137,24 @@ class Miner:
         Refreshes the cached compressed miner index periodically off the hot path of GetMinerIndex requests.
         """
         while not self.should_exit:
-            # Refresh the index if it hasn't been refreshed in the configured time period.
-            self.storage.refresh_compressed_index(
-                time_delta=constants.MINER_CACHE_FRESHNESS
-            )
-            bt.logging.trace("Refresh index thread finished refreshing the index.")
-            # Wait freshness period + 1 minute to try refreshing again.
-            time.sleep(
-                (
-                    constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=1)
-                ).total_seconds()
-            )
+            try:
+                # Refresh the index if it hasn't been refreshed in the configured time period.
+                self.storage.refresh_compressed_index(
+                    time_delta=constants.MINER_CACHE_FRESHNESS
+                )
+                bt.logging.trace("Refresh index thread finished refreshing the index.")
+                # Wait freshness period + 1 minute to try refreshing again.
+                # Wait the additional minute to ensure that the next refresh sees a 'stale' index.
+                time.sleep(
+                    (
+                        constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=1)
+                    ).total_seconds()
+                )
+            # In case of unforeseen errors, the refresh thread will log the error and continue operations.
+            except Exception:
+                bt.logging.error(traceback.format_exc())
+                # Sleep 5 minutes to avoid constant refresh attempts if they are consistently erroring.
+                time.sleep(60 * 5)
 
     def run(self):
         """
