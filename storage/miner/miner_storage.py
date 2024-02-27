@@ -5,6 +5,7 @@ from common.data import (
     DataEntityBucketId,
 )
 from typing import List
+import datetime as dt
 
 
 class MinerStorage(ABC):
@@ -25,4 +26,9 @@ class MinerStorage(ABC):
     @abstractmethod
     def get_compressed_index(self) -> CompressedMinerIndex:
         """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
+        raise NotImplemented
+
+    @abstractmethod
+    def refresh_compressed_index(self, date_time: dt.timedelta):
+        """Refreshes the compressed MinerIndex."""
         raise NotImplemented

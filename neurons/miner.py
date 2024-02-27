@@ -99,6 +99,7 @@ class Miner:
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
+        self.compressed_index_refresh_thread: threading.Thread = None
         self.lock = threading.RLock()
 
         # Instantiate storage.
@@ -130,6 +131,30 @@ class Miner:
         self.request_lock = threading.RLock()
         self.last_cleared_request_limits = dt.datetime.now()
         self.requests_by_hotkey = defaultdict(lambda: 0)
+
+    def refresh_index(self):
+        """
+        Refreshes the cached compressed miner index periodically off the hot path of GetMinerIndex requests.
+        """
+        while not self.should_exit:
+            try:
+                # Refresh the index if it hasn't been refreshed in the configured time period.
+                self.storage.refresh_compressed_index(
+                    time_delta=constants.MINER_CACHE_FRESHNESS
+                )
+                bt.logging.trace("Refresh index thread finished refreshing the index.")
+                # Wait freshness period + 1 minute to try refreshing again.
+                # Wait the additional minute to ensure that the next refresh sees a 'stale' index.
+                time.sleep(
+                    (
+                        constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=1)
+                    ).total_seconds()
+                )
+            # In case of unforeseen errors, the refresh thread will log the error and continue operations.
+            except Exception:
+                bt.logging.error(traceback.format_exc())
+                # Sleep 5 minutes to avoid constant refresh attempts if they are consistently erroring.
+                time.sleep(60 * 5)
 
     def run(self):
         """
@@ -206,6 +231,10 @@ class Miner:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+            self.compressed_index_refresh_thread = threading.Thread(
+                target=self.refresh_index, daemon=True
+            )
+            self.compressed_index_refresh_thread.start()
             self.is_running = True
             bt.logging.debug("Started")
 
@@ -217,6 +246,7 @@ class Miner:
             bt.logging.debug("Stopping miner in background thread.")
             self.should_exit = True
             self.thread.join(5)
+            self.compressed_index_refresh_thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped")
 
@@ -289,14 +319,10 @@ class Miner:
                 compressed_index = self.storage.get_compressed_index(
                     bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
                 )
-            elif synapse.version == 3:
-                compressed_index = self.storage.get_compressed_index(
-                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_3
-                )
+            # Only synapse.version 4 is supported at this time.
             else:
-                compressed_index = self.storage.get_compressed_index(
-                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX
-                )
+                bt.logging.error(f"Unsupported protocol version: {synapse.version}.")
+
             synapse.compressed_index_serialized = compressed_index.json()
             bt.logging.success(
                 f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
@@ -362,18 +388,24 @@ class Miner:
         if synapse.dendrite.hotkey in [
             "5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"
         ]:
-            return True, "Explictly blacklisted hotkey"
+            return (
+                True,
+                f"Explictly blacklisted hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
+            )
 
         if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
-            bt.logging.trace(
-                f"Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}."
+            return (
+                True,
+                f"Unrecognized hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
             )
-            return True, "Unrecognized hotkey"
 
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if not utils.is_validator(uid, self.metagraph):
-            return True, "Not a validator"
+            return (
+                True,
+                f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} is not a validator",
+            )
 
         # TODO: Break out limit per API.
         with self.request_lock:
@@ -393,10 +425,10 @@ class Miner:
             # Blacklist if over request limit.
             # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
             if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
-                bt.logging.trace(
-                    f"Blacklisting hotkey {synapse.dendrite.hotkey} over eval period request limit."
+                return (
+                    True,
+                    f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} over eval period request limit",
                 )
-                return True, "Hotkey over limit"
 
         return False, ""
 
