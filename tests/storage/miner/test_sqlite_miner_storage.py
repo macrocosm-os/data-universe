@@ -645,6 +645,79 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Confirm we get back the expected summaries.
         self.assertEqual(data_entity_buckets, [expected_bucket_1])
 
+    def test_cached_index(self):
+        """Tests that the compressed miner index is cached."""
+        now = dt.datetime.now()
+        # Create an entity for bucket 1.
+        bucket1_datetime = now
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=10,
+        )
+
+        # Create two entities for bucket 2.
+        bucket2_datetime = now + dt.timedelta(hours=1)
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(20),
+            content_size_bytes=20,
+        )
+
+        bucket2_entity2 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=DataLabel(value="label_2"),
+            content=bytes(30),
+            content_size_bytes=30,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
+        )
+
+        # Check that there is no cache yet.
+        self.assertIsNone(self.test_storage.cached_index_4)
+
+        # Get the index twice.
+        index = self.test_storage.get_compressed_index()
+        cached_index = self.test_storage.get_compressed_index()
+
+        expected_index = CompressedMinerIndex(
+            sources={
+                DataSource.REDDIT: [
+                    CompressedEntityBucket(
+                        label="label_1",
+                        time_bucket_ids=[TimeBucket.from_datetime(bucket1_datetime).id],
+                        sizes_bytes=[10],
+                    )
+                ],
+                DataSource.X: [
+                    CompressedEntityBucket(
+                        label="label_2",
+                        time_bucket_ids=[TimeBucket.from_datetime(bucket2_datetime).id],
+                        sizes_bytes=[50],
+                    )
+                ],
+            }
+        )
+
+        # Confirm we get back the expected summary.
+        self.assertTrue(utils.are_compressed_indexes_equal(index, expected_index))
+        # Confirm that the index is cached and that we it still matches on another get.
+        self.assertIsNotNone(self.test_storage.cached_index_4)
+        self.assertTrue(
+            utils.are_compressed_indexes_equal(cached_index, expected_index)
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
