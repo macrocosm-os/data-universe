@@ -140,15 +140,16 @@ class MinerEvaluator:
         )
 
         responses = None
-        async with bt.dendrite(wallet=self.wallet) as dendrite:
-            responses = await dendrite.forward(
-                axons=[axon_info],
-                synapse=GetDataEntityBucket(
-                    data_entity_bucket_id=chosen_data_entity_bucket.id,
-                    version=constants.PROTOCOL_VERSION,
-                ),
-                timeout=120,
-            )
+        with statsd.timed("get_data_entity_bucket_time"):
+            async with bt.dendrite(wallet=self.wallet) as dendrite:
+                responses = await dendrite.forward(
+                    axons=[axon_info],
+                    synapse=GetDataEntityBucket(
+                        data_entity_bucket_id=chosen_data_entity_bucket.id,
+                        version=constants.PROTOCOL_VERSION,
+                    ),
+                    timeout=120,
+                )
 
         data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
@@ -357,12 +358,13 @@ class MinerEvaluator:
 
         try:
             responses: List[GetMinerIndex] = None
-            async with bt.dendrite(wallet=self.wallet) as dendrite:
-                responses = await dendrite.forward(
-                    axons=[miner_axon],
-                    synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
-                    timeout=120,
-                )
+            with statsd.timed("get_miner_index_time"):
+                async with bt.dendrite(wallet=self.wallet) as dendrite:
+                    responses = await dendrite.forward(
+                        axons=[miner_axon],
+                        synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
+                        timeout=120,
+                    )
 
             response = vali_utils.get_single_successful_response(
                 responses, GetMinerIndex
