@@ -388,18 +388,24 @@ class Miner:
         if synapse.dendrite.hotkey in [
             "5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"
         ]:
-            return True, "Explictly blacklisted hotkey"
+            return (
+                True,
+                f"Explictly blacklisted hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
+            )
 
         if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
-            bt.logging.trace(
-                f"Blacklisting unrecognized hotkey {synapse.dendrite.hotkey}."
+            return (
+                True,
+                f"Unrecognized hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
             )
-            return True, "Unrecognized hotkey"
 
         uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         if not utils.is_validator(uid, self.metagraph):
-            return True, "Not a validator"
+            return (
+                True,
+                f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} is not a validator",
+            )
 
         # TODO: Break out limit per API.
         with self.request_lock:
@@ -419,10 +425,10 @@ class Miner:
             # Blacklist if over request limit.
             # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
             if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
-                bt.logging.trace(
-                    f"Blacklisting hotkey {synapse.dendrite.hotkey} over eval period request limit."
+                return (
+                    True,
+                    f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} over eval period request limit",
                 )
-                return True, "Hotkey over limit"
 
         return False, ""
 
