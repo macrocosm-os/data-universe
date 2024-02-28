@@ -182,14 +182,14 @@ class Miner:
 
         self.scraping_coordinator.run_in_background_thread()
 
-        # This loop maintains the miner's operations until intentionally stopped.
-        try:
-            # In offline mode we just idle while the scraping_coordinator runs.
-            if self.config.offline:
-                while not self.should_exit:
-                    time.sleep(12)
-            else:
-                while not self.should_exit:
+        while not self.should_exit:
+            # This loop maintains the miner's operations until intentionally stopped.
+            try:
+                # In offline mode we just idle while the scraping_coordinator runs.
+                if self.config.offline:
+                    while not self.should_exit:
+                        time.sleep(12)
+                else:
                     # Epoch length defaults to 100 blocks at 12 seconds each for 20 minutes.
                     while dt.datetime.now() - self.last_sync_timestamp < (
                         dt.timedelta(seconds=12 * self.config.neuron.epoch_length)
@@ -209,17 +209,17 @@ class Miner:
                     self.last_sync_timestamp = dt.datetime.now()
                     self.step += 1
 
-        # If someone intentionally stops the miner, it'll safely terminate operations.
-        except KeyboardInterrupt:
-            if not self.config.offline:
-                self.axon.stop()
-            self.scraping_coordinator.stop()
-            bt.logging.success("Miner killed by keyboard interrupt.")
-            sys.exit()
+            # If someone intentionally stops the miner, it'll safely terminate operations.
+            except KeyboardInterrupt:
+                if not self.config.offline:
+                    self.axon.stop()
+                self.scraping_coordinator.stop()
+                bt.logging.success("Miner killed by keyboard interrupt.")
+                sys.exit()
 
-        # In case of unforeseen errors, the miner will log the error and continue operations.
-        except Exception as e:
-            bt.logging.error(traceback.format_exc())
+            # In case of unforeseen errors, the miner will log the error and continue operations.
+            except Exception as e:
+                bt.logging.error(traceback.format_exc())
 
     def run_in_background_thread(self):
         """
