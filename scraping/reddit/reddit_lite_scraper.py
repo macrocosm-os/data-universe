@@ -203,21 +203,15 @@ class RedditLiteScraper(Scraper):
 
         data_entities = []
         for content in contents:
-            if (
+            require_obfuscation = (
                 content.created_at
                 >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            ):
-                data_entities.append(
-                    RedditContent.to_data_entity(
-                        content=content, obfuscate_content_date=True
-                    )
+            )
+            data_entities.append(
+                RedditContent.to_data_entity(
+                    content=content, obfuscate_content_date=require_obfuscation
                 )
-            else:
-                data_entities.append(
-                    RedditContent.to_data_entity(
-                        content=content, obfuscate_content_date=False
-                    )
-                )
+            )
 
         return data_entities
 
