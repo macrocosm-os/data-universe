@@ -25,7 +25,7 @@ class DataValueCalculator:
         """
 
         label = (
-            DataLabel(value=scorable_data_entity_bucket.label)
+            DataLabel.construct(value=scorable_data_entity_bucket.label)
             if scorable_data_entity_bucket.label
             else None
         )
@@ -33,7 +33,7 @@ class DataValueCalculator:
             scorable_data_entity_bucket.source, label
         )
         time_scalar = self._scale_factor_for_age(
-            TimeBucket(id=scorable_data_entity_bucket.time_bucket_id)
+            TimeBucket.construct(id=scorable_data_entity_bucket.time_bucket_id)
         )
         return (
             data_type_scale_factor
