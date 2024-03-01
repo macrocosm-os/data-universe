@@ -303,7 +303,12 @@ class MinerEvaluator:
             thread.start()
 
         bt.logging.trace(f"Waiting for {len(threads)} miner evals to finish.")
-        end = datetime.datetime.now() + datetime.timedelta(seconds=300)
+
+        # Initial hack to see if this will allow parallelization of evals post GetMinerIndex.
+        bt.logging.trace("Waiting 150 seconds before attempting to join threads.")
+        time.sleep(150)
+        # Only do a delta of an additional 150 seconds here for a min of 150 and max of 300 seconds per loop.
+        end = datetime.datetime.now() + datetime.timedelta(seconds=150)
         for t in threads:
             # Compute the timeout, so that all threads are waited for a total of 5 minutes.
             timeout = max(0, (end - datetime.datetime.now()).total_seconds())
