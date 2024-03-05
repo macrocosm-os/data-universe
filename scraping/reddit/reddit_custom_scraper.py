@@ -82,8 +82,9 @@ class RedditCustomScraper(Scraper):
             content = None
 
             try:
+                bt.logging.info("Waiting on reddit semaphore")
                 async with RedditCustomScraper.concurrent_validates_semaphore:
-
+                    bt.logging.info("Acquired reddit semaphore")
                     active_count = get_and_increment_count()
                     statsd.gauge("active_request_count", active_count)
                     statsd.gauge("Active tasks", len(asyncio.all_tasks()))
@@ -115,6 +116,7 @@ class RedditCustomScraper(Scraper):
                                 )
                                 # Parse the response.
                                 content = self._best_effort_parse_comment(comment)
+                bt.logging.info("Released reddit semaphore")
             except Exception as e:
                 statsd.increment(
                     "reddit_custom_scraper_requests", tags=["status:failure"]
