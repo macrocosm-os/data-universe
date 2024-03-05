@@ -29,7 +29,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-os.environ["PRAWCORE_TIMEOUT"] = 90
+os.environ["PRAWCORE_TIMEOUT"] = "90"
 
 
 class RedditCustomScraper(Scraper):
