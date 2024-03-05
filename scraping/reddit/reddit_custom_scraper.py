@@ -37,6 +37,10 @@ class RedditCustomScraper(Scraper):
 
     USER_AGENT = f"User-Agent: python: {os.getenv('REDDIT_USERNAME')}"
 
+    # Limit validations to one call at a time. Executing more than 1 seems to cause
+    # request exceptions form the Reddit client.
+    concurrent_validates_semaphore = asyncio.BoundedSemaphore(1)
+
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
         if not entities:
@@ -78,34 +82,39 @@ class RedditCustomScraper(Scraper):
             content = None
 
             try:
-                active_count = get_and_increment_count()
-                statsd.gauge("active_request_count", active_count)
-                statsd.gauge("Active tasks", len(asyncio.all_tasks()))
+                async with RedditCustomScraper.concurrent_validates_semaphore:
 
-                with statsd.timed("reddit_custom_scraper_latency"):
-                    async with asyncpraw.Reddit(
-                        client_id=os.getenv("REDDIT_CLIENT_ID"),
-                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                        username=os.getenv("REDDIT_USERNAME"),
-                        password=os.getenv("REDDIT_PASSWORD"),
-                        user_agent=RedditCustomScraper.USER_AGENT,
-                    ) as reddit:
-                        statsd.increment(
-                            "reddit_custom_scraper_requests", tags=["status:success"]
-                        )
-                        if reddit_content_to_verify.data_type == RedditDataType.POST:
-                            submission = await reddit.submission(
-                                url=reddit_content_to_verify.url
-                            )
-                            # Parse the response.
-                            content = self._best_effort_parse_submission(submission)
-                        else:
-                            comment = await reddit.comment(
-                                url=reddit_content_to_verify.url
-                            )
-                            # Parse the response.
-                            content = self._best_effort_parse_comment(comment)
+                    active_count = get_and_increment_count()
+                    statsd.gauge("active_request_count", active_count)
+                    statsd.gauge("Active tasks", len(asyncio.all_tasks()))
 
+                    with statsd.timed("reddit_custom_scraper_latency"):
+                        async with asyncpraw.Reddit(
+                            client_id=os.getenv("REDDIT_CLIENT_ID"),
+                            client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                            username=os.getenv("REDDIT_USERNAME"),
+                            password=os.getenv("REDDIT_PASSWORD"),
+                            user_agent=RedditCustomScraper.USER_AGENT,
+                        ) as reddit:
+                            statsd.increment(
+                                "reddit_custom_scraper_requests",
+                                tags=["status:success"],
+                            )
+                            if (
+                                reddit_content_to_verify.data_type
+                                == RedditDataType.POST
+                            ):
+                                submission = await reddit.submission(
+                                    url=reddit_content_to_verify.url
+                                )
+                                # Parse the response.
+                                content = self._best_effort_parse_submission(submission)
+                            else:
+                                comment = await reddit.comment(
+                                    url=reddit_content_to_verify.url
+                                )
+                                # Parse the response.
+                                content = self._best_effort_parse_comment(comment)
             except Exception as e:
                 statsd.increment(
                     "reddit_custom_scraper_requests", tags=["status:failure"]
