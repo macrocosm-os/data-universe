@@ -1,5 +1,4 @@
 import unittest
-from unittest.mock import Mock, patch
 
 from attr import dataclass
 from common import constants, utils
@@ -12,10 +11,8 @@ from common.data import (
     TimeBucket,
 )
 import datetime as dt
-import rewards.data_value_calculator
 
 
-@patch.object(rewards.data_value_calculator.dt, "datetime", Mock(wraps=dt.datetime))
 class TestDataValueCalculator(unittest.TestCase):
     def setUp(self):
         model = DataDesirabilityLookup(
@@ -47,7 +44,7 @@ class TestDataValueCalculator(unittest.TestCase):
     def test_get_score_for_data_entity_bucket_with_matching_label(self):
         """Generates a bucket with various data sources and labels and ensures the score is correct."""
         now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
-        rewards.data_value_calculator.dt.datetime.now.return_value = now
+        current_time_bucket = TimeBucket.from_datetime(now)
 
         @dataclass(frozen=True)
         class TestCaseInput:
@@ -78,13 +75,15 @@ class TestDataValueCalculator(unittest.TestCase):
                 # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                 scorable_bytes=100,
             )
-            score = self.value_calculator.get_score_for_data_entity_bucket(bucket)
+            score = self.value_calculator.get_score_for_data_entity_bucket(
+                bucket, current_time_bucket
+            )
             self.assertAlmostEqual(score, tc[1], places=5)
 
     def test_get_score_for_data_entity_bucket_score_decreases_over_time(self):
         """Generates a bucket containing data of various ages and verifies the score is as expected."""
         now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
-        rewards.data_value_calculator.dt.datetime.now.return_value = now
+        current_time_bucket = TimeBucket.from_datetime(now)
 
         # Verify score at the present time_bucket is scored at 100%.
         time_bucket_id = utils.time_bucket_id_from_datetime(now)
@@ -97,7 +96,9 @@ class TestDataValueCalculator(unittest.TestCase):
             scorable_bytes=100,
         )
         self.assertAlmostEqual(
-            self.value_calculator.get_score_for_data_entity_bucket(bucket),
+            self.value_calculator.get_score_for_data_entity_bucket(
+                bucket, current_time_bucket
+            ),
             75.0,
             places=5,
         )
@@ -115,7 +116,9 @@ class TestDataValueCalculator(unittest.TestCase):
             scorable_bytes=100,
         )
         self.assertAlmostEqual(
-            self.value_calculator.get_score_for_data_entity_bucket(bucket),
+            self.value_calculator.get_score_for_data_entity_bucket(
+                bucket, current_time_bucket
+            ),
             37.5,
             places=5,
         )
@@ -135,7 +138,11 @@ class TestDataValueCalculator(unittest.TestCase):
             scorable_bytes=100,
         )
         self.assertAlmostEqual(
-            self.value_calculator.get_score_for_data_entity_bucket(bucket), 0, places=5
+            self.value_calculator.get_score_for_data_entity_bucket(
+                bucket, current_time_bucket
+            ),
+            0,
+            places=5,
         )
 
         # Now verify the score decreases between now and max_age.
@@ -151,7 +158,9 @@ class TestDataValueCalculator(unittest.TestCase):
                 # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                 scorable_bytes=100,
             )
-            score = self.value_calculator.get_score_for_data_entity_bucket(bucket)
+            score = self.value_calculator.get_score_for_data_entity_bucket(
+                bucket, current_time_bucket
+            )
             self.assertLess(score, previous_score)
             previous_score = score
 

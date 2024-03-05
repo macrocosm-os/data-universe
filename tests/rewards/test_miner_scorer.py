@@ -1,4 +1,5 @@
 import random
+import time
 import unittest
 from unittest.mock import MagicMock, Mock, patch
 from typing import List
@@ -18,6 +19,7 @@ from rewards.miner_scorer import MinerScorer
 import datetime as dt
 import rewards.data_value_calculator
 from common import utils
+from tests import utils as test_utils
 
 
 @patch.object(rewards.data_value_calculator.dt, "datetime", Mock(wraps=dt.datetime))
@@ -28,8 +30,12 @@ class TestMinerScorer(unittest.TestCase):
             DataDesirabilityLookup(
                 distribution={
                     DataSource.REDDIT: DataSourceDesirability(
-                        weight=1,
+                        weight=0.2,
                         default_scale_factor=1,
+                    ),
+                    DataSource.X: DataSourceDesirability(
+                        weight=0.8,
+                        default_scale_factor=0.5,
                     ),
                 },
                 max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
@@ -49,17 +55,17 @@ class TestMinerScorer(unittest.TestCase):
                     time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label="testlabel",
-                    size_bytes=200,
+                    size_bytes=1000,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
-                    scorable_bytes=100,
+                    scorable_bytes=500,
                 ),
                 ScorableDataEntityBucket(
                     time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
                     source=DataSource.REDDIT,
                     label="otherlabel",
-                    size_bytes=200,
+                    size_bytes=1000,
                     # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
-                    scorable_bytes=50,
+                    scorable_bytes=250,
                 ),
             ],
             last_updated=self.now,
@@ -367,6 +373,22 @@ class TestMinerScorer(unittest.TestCase):
             self.scorer.scores[uid].item(),
             0.94 * self.scorable_index_full_score,
         )
+
+    def test_score_miner_perf(self):
+        """A perf test to check how long it takes to score an index."""
+
+        num_buckets = (
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+        )
+        index = test_utils.create_scorable_index(num_buckets=num_buckets)
+
+        start = time.time()
+        self.scorer.on_miner_evaluated(
+            0,
+            index,
+            [ValidationResult(is_valid=True, content_size_bytes_validated=100)],
+        )
+        print(f"Time to score {num_buckets} buckets:", time.time() - start)
 
 
 if __name__ == "__main__":
