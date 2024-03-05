@@ -29,6 +29,8 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+os.environ["PRAWCORE_TIMEOUT"] = 90
+
 
 class RedditCustomScraper(Scraper):
     """
@@ -96,7 +98,6 @@ class RedditCustomScraper(Scraper):
                             username=os.getenv("REDDIT_USERNAME"),
                             password=os.getenv("REDDIT_PASSWORD"),
                             user_agent=RedditCustomScraper.USER_AGENT,
-                            timeout=120,
                         ) as reddit:
                             statsd.increment(
                                 "reddit_custom_scraper_requests",
