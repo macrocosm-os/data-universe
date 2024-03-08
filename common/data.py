@@ -147,18 +147,6 @@ class DataEntityBucket(StrictBaseModel):
     )
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
-
-# TODO: Deprecate once Miners use the CompressedMinerIndex.
-class MinerIndex(StrictBaseModel):
-    """The Miner index."""
-
-    hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    data_entity_buckets: List[DataEntityBucket] = Field(
-        description="Buckets the miner is serving.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
-    )
-
-
 # For the Compressed data classes, we intentionally avoid using nested classes (particularly
 # nested pydantic classes) to avoid the performance hit of the extra validation.
 @dataclasses.dataclass()

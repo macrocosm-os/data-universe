@@ -4,7 +4,7 @@ import bittensor as bt
 import sqlite3
 import threading
 from typing import Any, Dict, Optional, Set, Tuple
-from common.data import CompressedMinerIndex, DataLabel, MinerIndex
+from common.data import CompressedMinerIndex, DataLabel
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from storage.validator.validator_storage import ValidatorStorage
 
@@ -174,56 +174,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def _label_value_parse_str(self, label: Optional[str]) -> str:
         """Same as _label_value_parse but with a string as input"""
         return "NULL" if (label is None) else label.casefold()
-
-    def upsert_miner_index(self, index: MinerIndex, credibility: float):
-        """Stores the index for all of the data that a specific miner promises to provide."""
-
-        bt.logging.trace(
-            f"{index.hotkey}: Upserting miner index with {len(index.data_entity_buckets)} buckets"
-        )
-
-        now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
-
-        # Upsert this Validator's minerId for the specified hotkey.
-        with self.lock:
-            miner_id = self._upsert_miner(index.hotkey, now_str, credibility)
-
-        # Parse every DataEntityBucket from the index into a list of values to insert.
-        values = []
-        for data_entity_bucket in index.data_entity_buckets:
-            try:
-                values.append(
-                    [
-                        miner_id,
-                        int(data_entity_bucket.id.source),
-                        self.label_dict.get_or_insert(
-                            self._label_value_parse(data_entity_bucket.id.label)
-                        ),
-                        data_entity_bucket.id.time_bucket.id,
-                        data_entity_bucket.size_bytes,
-                    ]
-                )
-            except:
-                # In the case that we fail to get a label (due to unsupported characters) we drop just that one bucket.
-                pass
-
-        with self.lock:
-            # Clear the previous keys for this miner.
-            self._delete_miner_index(index.hotkey)
-
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
-                # Batch in groups of 1m if necessary to avoid congestion issues.
-                value_subsets = [
-                    values[x : x + 1000000] for x in range(0, len(values), 1000000)
-                ]
-                for value_subset in value_subsets:
-                    cursor.executemany(
-                        """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
-                        value_subset,
-                    )
-                connection.commit()
 
     def upsert_compressed_miner_index(
         self, index: CompressedMinerIndex, hotkey: str, credibility: float

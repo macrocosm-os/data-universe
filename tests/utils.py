@@ -6,7 +6,6 @@ import datetime as dt
 from common.data import (
     CompressedMinerIndex,
     DataSource,
-    MinerIndex,
 )
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 
@@ -30,26 +29,6 @@ def wait_for_condition(condition: Callable[[], bool], timeout: float = 10.0):
         if time.time() - start_time > timeout:
             raise Exception("Timed out waiting for condition to be true.")
         time.sleep(0.1)
-
-
-def convert_to_scorable_miner_index(
-    index: MinerIndex, last_updated: dt.datetime
-) -> ScorableMinerIndex:
-    """Converts a MinerIndex to a ScorableMinerIndex, assuming size_bytes are fully scorable."""
-
-    return ScorableMinerIndex(
-        scorable_data_entity_buckets=[
-            ScorableDataEntityBucket(
-                time_bucket_id=bucket.id.time_bucket.id,
-                source=bucket.id.source,
-                label=bucket.id.label.value if bucket.id.label else None,
-                size_bytes=bucket.size_bytes,
-                scorable_bytes=bucket.size_bytes,
-            )
-            for bucket in index.data_entity_buckets
-        ],
-        last_updated=last_updated,
-    )
 
 
 def convert_compressed_index_to_scorable_miner_index(

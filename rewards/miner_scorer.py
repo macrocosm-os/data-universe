@@ -120,7 +120,7 @@ class MinerScorer:
 
         Args:
             uid (int): The miner's UID.
-            index (MinerIndex): The latest index of the miner.
+            index (ScorableMinerIndex): The latest index of the miner.
             validation_results (List[ValidationResult]): The results of data validation performed on the data provided by the miner.
         """
         with self.lock:

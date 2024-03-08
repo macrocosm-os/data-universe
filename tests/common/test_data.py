@@ -10,7 +10,6 @@ from common.data import (
     CompressedMinerIndex,
     DataLabel,
     DataSource,
-    MinerIndex,
     TimeBucket,
 )
 import unittest
