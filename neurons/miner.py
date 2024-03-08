@@ -311,35 +311,20 @@ class Miner:
             f"Got to a GetMinerIndex request from {synapse.dendrite.hotkey}."
         )
 
-        if synapse.version and synapse.version >= 2:
-            # List all the data entity buckets that this miner currently has.
-            compressed_index = None
-            # Return the appropriate amount of max buckets based on protocol of the requesting validator.
-            if synapse.version == 4:
-                compressed_index = self.storage.get_compressed_index(
-                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
-                )
-            # Only synapse.version 4 is supported at this time.
-            else:
-                bt.logging.error(f"Unsupported protocol version: {synapse.version}.")
+        # Only synapse.version 4 is supported at this time.
+        if synapse.version < 4:
+            bt.logging.error(f"Unsupported protocol version: {synapse.version}.")
+            return synapse
 
-            synapse.compressed_index_serialized = compressed_index.json()
-            bt.logging.success(
-                f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
-                + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
-            )
-        else:
-            synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
-
-            # Calculate total size of returned index for logging.
-            size = 0
-            for bucket in synapse.data_entity_buckets:
-                size += bucket.size_bytes
-
-            bt.logging.success(
-                f"Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets "
-                + f"to {synapse.dendrite.hotkey}."
-            )
+        # Return the appropriate amount of max buckets based on protocol of the requesting validator.
+        compressed_index = self.storage.get_compressed_index(
+            bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+        )
+        synapse.compressed_index_serialized = compressed_index.json()
+        bt.logging.success(
+            f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
+            + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
+        )
 
         synapse.version = constants.PROTOCOL_VERSION
 

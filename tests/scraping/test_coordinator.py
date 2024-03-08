@@ -62,7 +62,7 @@ class TestScraperCoordinator(unittest.TestCase):
         # Advance the clock by 45 seconds, and make sure both sources are returned.
         now += dt.timedelta(seconds=45)
         self.assertEqual(
-            [ScraperId.REDDIT_LITE, ScraperId.X_FLASH],
+            [ScraperId.REDDIT_LITE, ScraperId.X_MICROWORLDS],
             tracker.get_scraper_ids_ready_to_scrape(now),
         )
 

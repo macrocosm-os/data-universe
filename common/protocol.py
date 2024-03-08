@@ -44,16 +44,6 @@ class GetMinerIndex(BaseProtocol):
     - data_entity_buckets: A list of DataEntityBucket objects that the Miner can serve.
     """
 
-    # Required request output, filled by receiving axon.
-    data_entity_buckets: List[DataEntityBucket] = pydantic.Field(
-        title="data_entity_buckets",
-        description="All of the data entity buckets that a Miner can serve.",
-        frozen=False,
-        repr=False,
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
-        default_factory=list,
-    )
-
     # We opt to send the compressed index in pre-serialized form to have full control
     # over serialization and deserialization, rather than relying on fastapi and bittensors
     # interactions with pydantic serialization, which can be problematic for certain types.

@@ -11,7 +11,6 @@ from common.data import (
     DataEntityBucketId,
     DataLabel,
     DataSource,
-    MinerIndex,
     TimeBucket,
 )
 
@@ -165,69 +164,9 @@ class IntegrationTestProtocol(unittest.TestCase):
         finally:
             axon.stop()
 
-    def _create_test_indexes(self) -> Tuple[MinerIndex, CompressedMinerIndex]:
-        """Returns a tuple of a MinerIndex and its equivalent CompressedMinerIndex for testing."""
-        index = MinerIndex(
-            hotkey=self.wallet.hotkey.ss58_address,
-            data_entity_buckets=[
-                DataEntityBucket(
-                    id=DataEntityBucketId(
-                        time_bucket=TimeBucket(id=1),
-                        label=DataLabel(value="r/bittensor_"),
-                        source=DataSource.REDDIT,
-                    ),
-                    size_bytes=100,
-                ),
-                DataEntityBucket(
-                    id=DataEntityBucketId(
-                        time_bucket=TimeBucket(id=2),
-                        label=DataLabel(value="r/bittensor_"),
-                        source=DataSource.REDDIT,
-                    ),
-                    size_bytes=200,
-                ),
-                DataEntityBucket(
-                    id=DataEntityBucketId(
-                        time_bucket=TimeBucket(id=3),
-                        label=DataLabel(value="r/bittensor_"),
-                        source=DataSource.REDDIT,
-                    ),
-                    size_bytes=300,
-                ),
-                DataEntityBucket(
-                    id=DataEntityBucketId(
-                        time_bucket=TimeBucket(id=3),
-                        source=DataSource.X,
-                    ),
-                    size_bytes=123,
-                ),
-                DataEntityBucket(
-                    id=DataEntityBucketId(
-                        time_bucket=TimeBucket(id=4),
-                        source=DataSource.X,
-                    ),
-                    size_bytes=234,
-                ),
-                DataEntityBucket(
-                    id=DataEntityBucketId(
-                        time_bucket=TimeBucket(id=5),
-                        label=DataLabel(value="#bittensor"),
-                        source=DataSource.X,
-                    ),
-                    size_bytes=321,
-                ),
-                DataEntityBucket(
-                    id=DataEntityBucketId(
-                        time_bucket=TimeBucket(id=4),
-                        label=DataLabel(value="#bittensor"),
-                        source=DataSource.X,
-                    ),
-                    size_bytes=99,
-                ),
-            ],
-        )
-
-        compressed_index = CompressedMinerIndex(
+    def _create_test_index(self) -> CompressedMinerIndex:
+        """Returns a CompressedMinerIndex for testing."""
+        return CompressedMinerIndex(
             sources={
                 DataSource.REDDIT.value: [
                     CompressedEntityBucket(
@@ -250,8 +189,6 @@ class IntegrationTestProtocol(unittest.TestCase):
             }
         )
 
-        return (index, compressed_index)
-
     def test_get_miner_index(self):
         """Tests a round trip using the new compressed miner format."""
 
@@ -259,7 +196,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         # and then have the FakeMiner read them back out. For now, we just create
         # the response the miner will return directly.
 
-        index, compressed_index = self._create_test_indexes()
+        compressed_index = self._create_test_index()
 
         expected_response = GetMinerIndex(
             compressed_index_serialized=compressed_index.json(),
@@ -278,9 +215,7 @@ class IntegrationTestProtocol(unittest.TestCase):
 
         # TODO: Refactor the vali so that we can directly use vali code here.
         # Now that we have the response, write it t othe vali DB.
-        got_compressed_index = vali_utils.get_miner_index_from_response(
-            response, self.wallet.hotkey.ss58_address
-        )
+        got_compressed_index = vali_utils.get_miner_index_from_response(response)
         self.assertEqual(got_compressed_index, compressed_index)
 
         # Store in the vali DB.
@@ -292,8 +227,10 @@ class IntegrationTestProtocol(unittest.TestCase):
         scorable_index = self.vali_storage.read_miner_index(
             self.wallet.hotkey.ss58_address
         )
-        expected_scorable_index = test_utils.convert_to_scorable_miner_index(
-            index, scorable_index.last_updated
+        expected_scorable_index = (
+            test_utils.convert_compressed_index_to_scorable_miner_index(
+                compressed_index, scorable_index.last_updated
+            )
         )
         equal, reason = test_utils.are_scorable_indexes_equal(
             expected_scorable_index, scorable_index
@@ -317,9 +254,7 @@ class IntegrationTestProtocol(unittest.TestCase):
 
         # TODO: Refactor the vali so that we can directly use vali code here.
         # Now that we have the response, write it t othe vali DB.
-        got_compressed_index = vali_utils.get_miner_index_from_response(
-            response, self.wallet.hotkey.ss58_address
-        )
+        got_compressed_index = vali_utils.get_miner_index_from_response(response)
         self.assertTrue(
             test_utils.are_compressed_indexes_equal(
                 got_compressed_index, expected_index
