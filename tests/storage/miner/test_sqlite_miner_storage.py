@@ -719,8 +719,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
             utils.are_compressed_indexes_equal(cached_index, expected_index)
         )
 
-    def test_list_contents_in_data_entity_buckets_no_bucket(self):
-        """Tests getting back no contents."""
+    def test_list_contents_in_data_entity_buckets_empty_bucket(self):
+        """Tests getting back no contents from an empty bucket."""
         # Create the DataEntityBucketId to query by.
         empty_bucket_id = DataEntityBucketId(
             time_bucket=TimeBucket.from_datetime(dt.datetime.now()),
@@ -731,6 +731,48 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Get the contents by the bucket
         buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets(
             [empty_bucket_id]
+        )
+
+        # Confirm we get back an empty map.
+        self.assertEqual(len(buckets_to_contents), 0)
+
+    def test_list_contents_in_data_entity_buckets_no_bucket(self):
+        """Tests getting back no contents when not requesting a bucket."""
+        # Get the contents by the bucket
+        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets([])
+
+        # Confirm we get back an empty map.
+        self.assertEqual(len(buckets_to_contents), 0)
+
+    def test_list_contents_in_data_entity_buckets_too_many_buckets(self):
+        """Tests getting back no contents when requesting for too many buckets."""
+        bucket_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
+        time_bucket1 = TimeBucket.from_datetime(bucket_datetime)
+        bucket_ids = [
+            DataEntityBucketId(
+                time_bucket=time_bucket1,
+                source=DataSource.X,
+                label=DataLabel(value=f"label_{i}"),
+            )
+            for i in range(constants.BULK_BUCKETS_COUNT_LIMIT + 1)
+        ]
+
+        content1 = bytes(10)
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=content1,
+            content_size_bytes=10,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities([bucket1_entity1])
+
+        # Get the contents by the buckets.
+        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets(
+            bucket_ids
         )
 
         # Confirm we get back an empty map.
@@ -772,6 +814,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
     def test_list_contents_in_data_entity_buckets_two_buckets(self):
+        """Tests getting back contents from two buckets."""
         # Create an entity for bucket 1.
         bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
         content1 = bytes(10)
@@ -850,6 +893,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
     def test_list_contents_in_data_entity_buckets_same_time_bucket(
         self,
     ):
+        """Tests getting back contents from two entity buckets with the same time bucket."""
         # Create an entity for bucket 1.
         bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
         content1 = bytes(10)
@@ -917,6 +961,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
     def test_list_contents_in_data_entity_buckets_same_label(self):
+        """Tests getting back contents from two entity buckets with the same label."""
         # Create an entity for bucket 1.
         bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
         content1 = bytes(10)
@@ -990,6 +1035,79 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.assertEqual(
             buckets_to_entities[bucket2_id],
             [content2, content3],
+        )
+
+    def test_list_contents_in_data_entity_buckets_overlapping(self):
+        """Tests getting back contents does not get unspecified buckets with otherwise matching fields."""
+        label1 = DataLabel(value="label_1")
+        label2 = DataLabel(value="label_2")
+        bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
+        bucket2_datetime = dt.datetime(2024, 1, 2, 3, 30, 0, tzinfo=dt.timezone.utc)
+
+        # Create an entity for bucket 1.
+        content1 = bytes(10)
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=label1,
+            content=content1,
+            content_size_bytes=10,
+        )
+
+        # Create an entity for bucket 2.
+        content2 = bytes(20)
+        bucket2_entity1 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket2_datetime,
+            source=DataSource.REDDIT,
+            label=label2,
+            content=content2,
+            content_size_bytes=20,
+        )
+
+        # Create an entity for bucket 3 using the label of bucket 1 but the time bucket of bucket 2.
+        content3 = bytes(30)
+        bucket3_entity1 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket2_datetime,
+            source=DataSource.REDDIT,
+            label=label1,
+            content=content3,
+            content_size_bytes=30,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket2_entity1, bucket3_entity1]
+        )
+
+        # Create the DataEntityBucketId to query by.
+        bucket1_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.REDDIT,
+            label=label1,
+        )
+
+        bucket2_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket2_datetime),
+            source=DataSource.REDDIT,
+            label=label2,
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
+            [bucket1_id, bucket2_id]
+        )
+
+        # Confirm we get back the expected contents.
+        self.assertEqual(
+            buckets_to_entities[bucket1_id],
+            [content1],
+        )
+        self.assertEqual(
+            buckets_to_entities[bucket2_id],
+            [content2],
         )
 
     def test_list_contents_in_data_entity_buckets_over_size(self):

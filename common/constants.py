@@ -13,7 +13,10 @@ DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4 = 350_000
 
 # How big the collection of contents can be to limit size over the wire.
 BULK_CONTENTS_SIZE_LIMIT_BYTES = utils.mb_to_bytes(128)
-BULK_CONTENTS_COUNT_LIMIT = 500_000
+BULK_CONTENTS_COUNT_LIMIT = 200_000
+
+# How many different buckets can be requests at once.
+BULK_BUCKETS_COUNT_LIMIT = 100
 
 # How old a data entity bucket can be before the validators do not assign any value for them.
 DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS = 30

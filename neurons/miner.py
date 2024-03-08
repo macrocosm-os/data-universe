@@ -371,7 +371,7 @@ class Miner:
     async def get_contents_by_buckets(
         self, synapse: GetContentsByBuckets
     ) -> GetContentsByBuckets:
-        """Runs after the GetContentsByBuckets synapse has been deserialized (i.e. after synapse.data is available)."""
+        """Used to bulk expose raw contents for all entities within the requested buckets to validators for user queries."""
         bt.logging.info(
             f"Got to a GetContentsByBuckets request from {synapse.dendrite.hotkey} for Bucket IDs: {str(synapse.data_entity_bucket_ids)}."
         )
@@ -393,11 +393,18 @@ class Miner:
     async def get_contents_by_buckets_blacklist(
         self, synapse: GetContentsByBuckets
     ) -> typing.Tuple[bool, str]:
+        # Check that the maximum number of buckets to be requested at once is respected.
+        if len(synapse.data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT:
+            return (
+                True,
+                f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting {len(synapse.data_entity_bucket_ids)} data entity buckets over limit of {constants.BULK_BUCKETS_COUNT_LIMIT}.",
+            )
+
         # Check that none of the requested buckets are before the content obfuscation time start.
         minimum_time_bucket = TimeBucket.from_datetime(
             constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
         )
-        for id in synapse.bucket_ids_to_contents.keys:
+        for id in synapse.data_entity_bucket_ids.keys:
             if id.time_bucket.id < minimum_time_bucket.id:
                 return (
                     True,

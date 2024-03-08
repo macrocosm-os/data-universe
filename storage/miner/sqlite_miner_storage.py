@@ -337,26 +337,32 @@ class SqliteMinerStorage(MinerStorage):
         Returns:
             Dict[DataEntityBucketId, List[bytes]]: Map of each bucket id to contained contents.
         """
+        # If no bucket ids or too many bucket ids are provided return an empty dict.
+        if (
+            len(data_entity_bucket_ids) == 0
+            or len(data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT
+        ):
+            return defaultdict(list)
+
         # Get rows that match the DataEntityBucketIds.
-        labels = set()
-        time_bucket_ids = set()
+        # Use a list of alternating ids and labels to match the upcoming sql query.
+        time_bucket_ids_and_labels = list()
         for bucket_id in data_entity_bucket_ids:
+            time_bucket_ids_and_labels.append(bucket_id.time_bucket.id)
             # Note that only twitter has NULL label and that all twitter labels are prefixed with #.
             # Therefore we do not need to distinguish labels by source.
             label = "NULL" if (bucket_id.label is None) else bucket_id.label.value
-            labels.add(label)
-            time_bucket_ids.add(bucket_id.time_bucket.id)
+            time_bucket_ids_and_labels.append(label)
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
             cursor.execute(
                 f"""SELECT timeBucketId, source, label, content, contentSizeBytes FROM DataEntity
-                    WHERE timeBucketId IN ({",".join(["?"] * len(time_bucket_ids))})
-                    AND label IN ({",".join(["?"] * len(labels))})
+                    WHERE timeBucketId = ? AND label = ?
+                    {"OR timeBucketId = ? AND label = ?" * (len(data_entity_bucket_ids) - 1)}
                     LIMIT ?
                  """,
-                list(time_bucket_ids)
-                + list(labels)
+                list(time_bucket_ids_and_labels)
                 + [constants.BULK_CONTENTS_COUNT_LIMIT],
             )
 
@@ -369,11 +375,11 @@ class SqliteMinerStorage(MinerStorage):
                     running_size + row["contentSizeBytes"]
                     <= constants.BULK_CONTENTS_SIZE_LIMIT_BYTES
                 ):
-                    data_entity_bucket_id = DataEntityBucketId(
-                        time_bucket=TimeBucket(id=row["timeBucketId"]),
+                    data_entity_bucket_id = DataEntityBucketId.construct(
+                        time_bucket=TimeBucket.construct(id=row["timeBucketId"]),
                         source=DataSource(row["source"]),
                         label=(
-                            DataLabel(value=row["label"])
+                            DataLabel.construct(value=row["label"])
                             if row["label"] != "NULL"
                             else None
                         ),

@@ -102,10 +102,10 @@ class GetContentsByBuckets(BaseProtocol):
         default=None,
     )
 
-    # Required request output, filled by recieving axon.
+    # Required request output, filled by receiving axon.
     bucket_ids_to_contents: Dict[DataEntityBucketId, List[bytes]] = pydantic.Field(
         title="bucket_ids_to_contents",
-        description="A dict of of bucket ids to the contents contained by that bucket.",
+        description="A dict of bucket ids to the contents contained by that bucket.",
         frozen=False,
         repr=False,
         default_factory=dict,
