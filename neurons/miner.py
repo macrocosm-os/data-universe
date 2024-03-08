@@ -27,7 +27,7 @@ import bittensor as bt
 import datetime as dt
 from common import constants, utils
 from common.data import CompressedMinerIndex
-from common.protocol import GetDataEntityBucket, GetMinerIndex
+from common.protocol import GetDataEntityBucket, GetMinerIndex, GetContentsByBuckets
 from neurons.config import NeuronType
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
@@ -368,6 +368,38 @@ class Miner:
     ) -> float:
         return self.default_priority(synapse)
 
+    async def get_contents_by_buckets(
+        self, synapse: GetContentsByBuckets
+    ) -> GetContentsByBuckets:
+        """Runs after the GetContentsByBuckets synapse has been deserialized (i.e. after synapse.data is available)."""
+        bt.logging.info(
+            f"Got to a GetContentsByBuckets request from {synapse.dendrite.hotkey} for Bucket IDs: {str(synapse.data_entity_bucket_ids)}."
+        )
+
+        # Get a dict of all the contents by DataEntityBucketId for the requested Buckets.
+        synapse.bucket_ids_to_contents = (
+            self.storage.list_contents_in_data_entity_buckets(
+                synapse.data_entity_bucket_ids
+            )
+        )
+        synapse.version = constants.PROTOCOL_VERSION
+
+        bt.logging.success(
+            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(v) for v in synapse.bucket_ids_to_contents.values())} entities to {synapse.dendrite.hotkey}."
+        )
+
+        return synapse
+
+    async def get_contents_by_buckets_blacklist(
+        self, synapse: GetContentsByBuckets
+    ) -> typing.Tuple[bool, str]:
+        return self.default_blacklist(synapse)
+
+    async def get_contents_by_buckets_priority(
+        self, synapse: GetContentsByBuckets
+    ) -> float:
+        return self.default_priority(synapse)
+
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
         """The default blacklist that only allows requests from validators."""
         if synapse.dendrite.hotkey in [
@@ -408,8 +440,10 @@ class Miner:
             self.requests_by_hotkey[synapse.dendrite.hotkey] += 1
 
             # Blacklist if over request limit.
-            # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
-            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
+            # We allow up to 8 requests.
+            # 4 to allow for 1 get index, 1 get data entity bucket, and 2 get obfuscated data entity buckets.
+            # Then we double that to allow for the case of a validator restarting.
+            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 8:
                 return (
                     True,
                     f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} over eval period request limit",

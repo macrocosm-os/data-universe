@@ -83,4 +83,33 @@ class GetDataEntityBucket(BaseProtocol):
     )
 
 
+class GetContentsByBuckets(BaseProtocol):
+    """
+    Protocol by which Validators can retrieve contents from one or more Miner Buckets.
+    After March 1st all contents have their creation timestamp obfuscated to the minute.
+
+    Attributes:
+    - bucket_ids: The ids of the buckets that the requester is asking for.
+    - bucket_ids_to_contents: A dict of DataEntityBucketId objects to a list of contained contents.
+    """
+
+    # Required request input, filled by sending dendrite caller.
+    data_entity_bucket_ids: Optional[List[DataEntityBucketId]] = pydantic.Field(
+        title="data_entity_bucket_ids",
+        description="The identifiers for the requested DataEntityBuckets.",
+        frozen=True,
+        repr=False,
+        default=None,
+    )
+
+    # Required request output, filled by recieving axon.
+    bucket_ids_to_contents: Dict[DataEntityBucketId, List[bytes]] = pydantic.Field(
+        title="bucket_ids_to_contents",
+        description="A dict of of bucket ids to the contents contained by that bucket.",
+        frozen=False,
+        repr=False,
+        default_factory=dict,
+    )
+
+
 # TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
