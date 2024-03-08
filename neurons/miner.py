@@ -26,7 +26,7 @@ import typing
 import bittensor as bt
 import datetime as dt
 from common import constants, utils
-from common.data import CompressedMinerIndex
+from common.data import CompressedMinerIndex, TimeBucket
 from common.protocol import GetDataEntityBucket, GetMinerIndex, GetContentsByBuckets
 from neurons.config import NeuronType
 from scraping.config.config_reader import ConfigReader
@@ -393,6 +393,16 @@ class Miner:
     async def get_contents_by_buckets_blacklist(
         self, synapse: GetContentsByBuckets
     ) -> typing.Tuple[bool, str]:
+        # Check that none of the requested buckets are before the content obfuscation time start.
+        minimum_time_bucket = TimeBucket.from_datetime(
+            constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+        )
+        for id in synapse.bucket_ids_to_contents.keys:
+            if id.time_bucket.id < minimum_time_bucket.id:
+                return (
+                    True,
+                    f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting a data entity bucket: {id} before {constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD}.",
+                )
         return self.default_blacklist(synapse)
 
     async def get_contents_by_buckets_priority(
