@@ -69,6 +69,21 @@ class TestModel(unittest.TestCase):
         self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
         self.assertEqual(entity.label.value, "#loooooooooooooooooooooooonghash")
 
+    def test_label_truncation_lower(self):
+        """Tests truncation of characters that become longer when .lower() is used on them."""
+        timestamp = dt.datetime.now(tz=dt.timezone.utc)
+        content = XContent(
+            username="user1",
+            text="Hello world",
+            url="https://twitter.com/123",
+            timestamp=timestamp,
+            tweet_hashtags=["#İsrailleTicaretFilistineİhanet", "$TAO"],
+        )
+        entity = XContent.to_data_entity(content=content, obfuscate_content_date=False)
+
+        self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
+        self.assertEqual(entity.label.value, "#i̇srailleticaretfilistinei̇hane")
+
     def test_to_data_entity_non_obfuscated(self):
         timestamp = dt.datetime(
             year=2024,
