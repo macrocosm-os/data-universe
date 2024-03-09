@@ -89,6 +89,7 @@ class DataLabel(StrictBaseModel):
     @classmethod
     def lower_case_value(cls, value: str) -> str:
         """Converts the value to lower case to consistent casing throughout the system."""
+        # See reply on https://stackoverflow.com/questions/28695245/can-a-string-ever-get-shorter-when-converted-to-upper-lowercase.
         if len(value.lower()) > 32:
             raise ValueError(
                 f"Label: {value} when is over 32 characters when .lower() is applied: {value.lower()}."
