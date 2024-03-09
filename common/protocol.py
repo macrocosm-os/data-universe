@@ -17,7 +17,6 @@
 
 import bittensor as bt
 import pydantic
-from common import constants
 from common.data import (
     DataEntityBucket,
     DataEntity,
@@ -113,3 +112,10 @@ class GetContentsByBuckets(BaseProtocol):
 
 
 # TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
+
+# How many times validators can send requests per validation period.
+REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
+    GetMinerIndex: 1,
+    GetDataEntityBucket: 1,
+    GetContentsByBuckets: 5,
+}
