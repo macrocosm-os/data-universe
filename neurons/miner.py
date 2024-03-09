@@ -428,12 +428,6 @@ class Miner:
         ip = synapse.dendrite.ip
         synapse_type = type(synapse)
 
-        if hotkey in ["5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"]:
-            return (
-                True,
-                f"Explictly blacklisted hotkey {hotkey} at {ip}",
-            )
-
         if hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
             return (
