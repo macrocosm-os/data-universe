@@ -26,8 +26,13 @@ import typing
 import bittensor as bt
 import datetime as dt
 from common import constants, utils
-from common.data import CompressedMinerIndex
-from common.protocol import GetDataEntityBucket, GetMinerIndex
+from common.data import CompressedMinerIndex, TimeBucket
+from common.protocol import (
+    GetDataEntityBucket,
+    GetMinerIndex,
+    GetContentsByBuckets,
+    REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
+)
 from neurons.config import NeuronType
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
@@ -127,10 +132,10 @@ class Miner:
             config=scraping_config,
         )
 
-        # Configure per hotkey request limits.
+        # Configure per hotkey per request limits.
         self.request_lock = threading.RLock()
         self.last_cleared_request_limits = dt.datetime.now()
-        self.requests_by_hotkey = defaultdict(lambda: 0)
+        self.requests_by_type_by_hotkey = defaultdict(lambda: defaultdict(lambda: 0))
 
     def refresh_index(self):
         """
@@ -368,51 +373,107 @@ class Miner:
     ) -> float:
         return self.default_priority(synapse)
 
-    def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
-        """The default blacklist that only allows requests from validators."""
-        if synapse.dendrite.hotkey in [
-            "5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"
-        ]:
+    async def get_contents_by_buckets(
+        self, synapse: GetContentsByBuckets
+    ) -> GetContentsByBuckets:
+        """Used to bulk expose raw contents for all entities within the requested buckets to validators for user queries."""
+        bt.logging.info(
+            f"Got to a GetContentsByBuckets request from {synapse.dendrite.hotkey} for Bucket IDs: {str(synapse.data_entity_bucket_ids)}."
+        )
+
+        # Get a dict of all the contents by DataEntityBucketId for the requested Buckets.
+        synapse.bucket_ids_to_contents = (
+            self.storage.list_contents_in_data_entity_buckets(
+                synapse.data_entity_bucket_ids
+            )
+        )
+        synapse.version = constants.PROTOCOL_VERSION
+
+        bt.logging.success(
+            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(v) for v in synapse.bucket_ids_to_contents.values())} entities to {synapse.dendrite.hotkey}."
+        )
+
+        return synapse
+
+    async def get_contents_by_buckets_blacklist(
+        self, synapse: GetContentsByBuckets
+    ) -> typing.Tuple[bool, str]:
+        # Check that the maximum number of buckets to be requested at once is respected.
+        if len(synapse.data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT:
             return (
                 True,
-                f"Explictly blacklisted hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
+                f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting {len(synapse.data_entity_bucket_ids)} data entity buckets over limit of {constants.BULK_BUCKETS_COUNT_LIMIT}.",
             )
 
-        if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
+        # Check that none of the requested buckets are before the content obfuscation time start.
+        minimum_time_bucket = TimeBucket.from_datetime(
+            constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+        )
+        for id in synapse.data_entity_bucket_ids.keys:
+            if id.time_bucket.id < minimum_time_bucket.id:
+                return (
+                    True,
+                    f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting a data entity bucket: {id} before {constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD}.",
+                )
+        return self.default_blacklist(synapse)
+
+    async def get_contents_by_buckets_priority(
+        self, synapse: GetContentsByBuckets
+    ) -> float:
+        return self.default_priority(synapse)
+
+    def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
+        """The default blacklist that only allows requests from validators."""
+        hotkey = synapse.dendrite.hotkey
+        ip = synapse.dendrite.ip
+        synapse_type = type(synapse)
+
+        if hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
             return (
                 True,
-                f"Unrecognized hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
+                f"Unrecognized hotkey {hotkey} at {ip}",
             )
 
-        uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        uid = self.metagraph.hotkeys.index(hotkey)
         if not utils.is_validator(uid, self.metagraph):
             return (
                 True,
-                f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} is not a validator",
+                f"Hotkey {hotkey} at {ip} is not a validator",
             )
 
-        # TODO: Break out limit per API.
         with self.request_lock:
-            # Check if we need to clear the request limit counter.
+            # Check if we need to clear the request limit counters.
             if (
                 dt.datetime.now() - self.last_cleared_request_limits
             ) >= constants.MIN_EVALUATION_PERIOD:
                 bt.logging.trace(
-                    f"Clearing request limit counter by hotkey after an eval period: {constants.MIN_EVALUATION_PERIOD}."
+                    f"Clearing request limit counters by hotkey after an eval period: {constants.MIN_EVALUATION_PERIOD}."
                 )
-                self.requests_by_hotkey = defaultdict(lambda: 0)
+                for request_type in self.requests_by_type_by_hotkey:
+                    self.requests_by_type_by_hotkey[request_type] = defaultdict(
+                        lambda: 0
+                    )
                 self.last_cleared_request_limits = dt.datetime.now()
 
             # Record request.
-            self.requests_by_hotkey[synapse.dendrite.hotkey] += 1
+            self.requests_by_type_by_hotkey[synapse_type][hotkey] += 1
 
-            # Blacklist if over request limit.
-            # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
-            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
+            # Safety check for unmapped request types although unrecognized request types are handled earlier.
+            if synapse_type not in REQUEST_LIMIT_BY_TYPE_PER_PERIOD:
                 return (
                     True,
-                    f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} over eval period request limit",
+                    f"Hotkey {hotkey} at {ip} sent request for unmapped type: {synapse_type.__name__}.",
+                )
+
+            # Allow 2x the limit per period to account for restarts.
+            if (
+                self.requests_by_type_by_hotkey[synapse_type][hotkey]
+                > 2 * REQUEST_LIMIT_BY_TYPE_PER_PERIOD[synapse_type]
+            ):
+                return (
+                    True,
+                    f"Hotkey {hotkey} at {ip} over eval period request limit for {synapse_type.__name__}.",
                 )
 
         return False, ""
