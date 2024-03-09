@@ -93,6 +93,11 @@ class DataLabel(StrictBaseModel):
     @classmethod
     def lower_case_value(cls, value: str) -> str:
         """Converts the value to lower case to consistent casing throughout the system."""
+        # See reply on https://stackoverflow.com/questions/28695245/can-a-string-ever-get-shorter-when-converted-to-upper-lowercase.
+        if len(value.lower()) > 32:
+            raise ValueError(
+                f"Label: {value} when is over 32 characters when .lower() is applied: {value.lower()}."
+            )
         return value.lower()
 
 
@@ -157,6 +162,7 @@ class DataEntityBucket(StrictBaseModel):
         description="Identifies the qualities by which this bucket is grouped."
     )
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
+
 
 # For the Compressed data classes, we intentionally avoid using nested classes (particularly
 # nested pydantic classes) to avoid the performance hit of the extra validation.
