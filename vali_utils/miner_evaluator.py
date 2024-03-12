@@ -119,7 +119,18 @@ class MinerEvaluator:
             )
 
             test_synapse = GetContentsByBuckets(
-                data_entity_bucket_ids=bucket_ids,
+                data_entity_bucket_ids=[
+                    DataEntityBucketId(
+                        time_bucket=TimeBucket(id=471712),
+                        source=DataSource.REDDIT,
+                        label=DataLabel(value="r/bittensor_"),
+                    ),
+                    DataEntityBucketId(
+                        time_bucket=TimeBucket(id=471804),
+                        source=DataSource.REDDIT,
+                        label=DataLabel(value="r/bittensor_"),
+                    ),
+                ],
                 version=constants.PROTOCOL_VERSION,
             )
             bt.logging.success(f"Sending synapse: {test_synapse}.")
