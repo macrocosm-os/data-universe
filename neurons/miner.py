@@ -97,6 +97,10 @@ class Miner:
                 forward_fn=self.get_data_entity_bucket,
                 blacklist_fn=self.get_data_entity_bucket_blacklist,
                 priority_fn=self.get_data_entity_bucket_priority,
+            ).attach(
+                forward_fn=self.get_contents_by_buckets,
+                blacklist_fn=self.get_contents_by_buckets_blacklist,
+                priority_fn=self.get_contents_by_buckets_priority,
             )
             bt.logging.success(f"Axon created: {self.axon}.")
 
@@ -381,16 +385,35 @@ class Miner:
             f"Got to a GetContentsByBuckets request from {synapse.dendrite.hotkey} for Bucket IDs: {str(synapse.data_entity_bucket_ids)}."
         )
 
-        # Get a dict of all the contents by DataEntityBucketId for the requested Buckets.
-        synapse.bucket_ids_to_contents = (
-            self.storage.list_contents_in_data_entity_buckets(
-                synapse.data_entity_bucket_ids
+        # Check that the maximum number of buckets to be requested at once is respected.
+        if len(synapse.data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT:
+            bt.logging.warning(
+                f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting {len(synapse.data_entity_bucket_ids)} data entity buckets over limit of {constants.BULK_BUCKETS_COUNT_LIMIT}."
             )
+            return synapse
+
+        # Check that none of the requested buckets are before the content obfuscation time start.
+        minimum_time_bucket = TimeBucket.from_datetime(
+            constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
         )
+        for id in synapse.data_entity_bucket_ids:
+            if id.time_bucket.id < minimum_time_bucket.id:
+                bt.logging.warning(
+                    f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting a data entity bucket: {id} before {constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD}."
+                )
+                return synapse
+
+        # Get a dict of all the contents by DataEntityBucketId for the requested Buckets.
+        buckets_to_contents = self.storage.list_contents_in_data_entity_buckets(
+            synapse.data_entity_bucket_ids
+        )
+        synapse.bucket_ids_to_contents = [
+            (k, v) for k, v in buckets_to_contents.items()
+        ]
         synapse.version = constants.PROTOCOL_VERSION
 
         bt.logging.success(
-            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(v) for v in synapse.bucket_ids_to_contents.values())} entities to {synapse.dendrite.hotkey}."
+            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(contents) for (_,contents) in synapse.bucket_ids_to_contents)} entities to {synapse.dendrite.hotkey}."
         )
 
         return synapse
@@ -398,23 +421,6 @@ class Miner:
     async def get_contents_by_buckets_blacklist(
         self, synapse: GetContentsByBuckets
     ) -> typing.Tuple[bool, str]:
-        # Check that the maximum number of buckets to be requested at once is respected.
-        if len(synapse.data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT:
-            return (
-                True,
-                f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting {len(synapse.data_entity_bucket_ids)} data entity buckets over limit of {constants.BULK_BUCKETS_COUNT_LIMIT}.",
-            )
-
-        # Check that none of the requested buckets are before the content obfuscation time start.
-        minimum_time_bucket = TimeBucket.from_datetime(
-            constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-        )
-        for id in synapse.data_entity_bucket_ids.keys:
-            if id.time_bucket.id < minimum_time_bucket.id:
-                return (
-                    True,
-                    f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting a data entity bucket: {id} before {constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD}.",
-                )
         return self.default_blacklist(synapse)
 
     async def get_contents_by_buckets_priority(
