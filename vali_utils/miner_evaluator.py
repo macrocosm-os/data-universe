@@ -13,9 +13,12 @@ from common.data import (
     CompressedMinerIndex,
     DataEntityBucket,
     DataEntity,
+    DataEntityBucketId,
+    DataLabel,
     DataSource,
+    TimeBucket,
 )
-from common.protocol import GetDataEntityBucket, GetMinerIndex
+from common.protocol import GetDataEntityBucket, GetMinerIndex, GetContentsByBuckets
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -94,6 +97,50 @@ class MinerEvaluator:
             hotkey = self.metagraph.hotkeys[uid]
 
         bt.logging.info(f"{hotkey}: Evaluating miner.")
+
+        # TEST ONLY
+        if hotkey == "5HKM1HZNpQwcGWon5GAXqkzopmemjGuc2CGRECaLPcnoKtdM":
+            # Hardcoded bucket ids:
+            bucket_ids = [
+                DataEntityBucketId(
+                    time_bucket=TimeBucket(id=471712),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="r/bittensor_"),
+                ),
+                DataEntityBucketId(
+                    time_bucket=TimeBucket(id=471804),
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="r/bittensor_"),
+                ),
+            ]
+
+            bt.logging.success(
+                f"{hotkey}: Sending GetContentByBuckets for buckets: {bucket_ids}"
+            )
+
+            responses = None
+            async with bt.dendrite(wallet=self.wallet) as dendrite:
+                responses = await dendrite.forward(
+                    axons=[axon_info],
+                    synapse=GetContentsByBuckets(
+                        data_entity_bucket_ids=bucket_ids,
+                        version=constants.PROTOCOL_VERSION,
+                    ),
+                    timeout=120,
+                )
+
+            bucket_ids_to_contents = vali_utils.get_single_successful_response(
+                responses, GetContentsByBuckets
+            )
+
+            bt.logging.success(
+                f"{hotkey}: Got back bucket ids to contents GetContentByBuckets for buckets: {bucket_ids_to_contents}"
+            )
+        else:
+            pass
+
+        # Short circuit for this test.
+        return
 
         # Query the miner for the latest index.
         index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
