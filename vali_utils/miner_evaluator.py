@@ -118,13 +118,15 @@ class MinerEvaluator:
                 f"{hotkey}: Sending GetContentByBuckets for buckets: {bucket_ids}"
             )
 
+            test_synapse = GetContentsByBuckets(
+                data_entity_bucket_ids=bucket_ids,
+                version=constants.PROTOCOL_VERSION,
+            )
+            bt.logging.success(f"Sending synapse: {test_synapse}.")
+
             responses = None
             async with bt.dendrite(wallet=self.wallet) as dendrite:
-                test_synapse = GetContentsByBuckets(
-                    data_entity_bucket_ids=bucket_ids,
-                    version=constants.PROTOCOL_VERSION,
-                )
-                bt.logging.success(f"Sending synapse: {test_synapse}.")
+
                 responses = await dendrite.forward(
                     axons=[axon_info],
                     synapse=test_synapse,
