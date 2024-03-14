@@ -147,6 +147,8 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
         bt.logging.warning(
             f"Found {duplicates} duplicate URIs in the DataEntityBucket."
         )
+    else:
+        bt.logging.trace(f"No duplicate URIs found in the DataEntityBucket.")
 
     return True
 
