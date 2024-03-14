@@ -22,7 +22,7 @@ from common.data import (
     DataEntity,
     DataEntityBucketId,
 )
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 class BaseProtocol(bt.Synapse):
@@ -102,12 +102,15 @@ class GetContentsByBuckets(BaseProtocol):
     )
 
     # Required request output, filled by receiving axon.
-    bucket_ids_to_contents: Dict[DataEntityBucketId, List[bytes]] = pydantic.Field(
-        title="bucket_ids_to_contents",
-        description="A dict of bucket ids to the contents contained by that bucket.",
-        frozen=False,
-        repr=False,
-        default_factory=dict,
+    # Note a List of Tuples is used because a Dict with a dataclass as the key cannot be serialized properly by pydantic.
+    bucket_ids_to_contents: List[Tuple[DataEntityBucketId, List[bytes]]] = (
+        pydantic.Field(
+            title="bucket_ids_to_contents",
+            description="A list of bucket ids to the contents contained by that bucket. Each DataEntityBucketId appears at most once. This is just a flattened dictionary.",
+            frozen=False,
+            repr=False,
+            default_factory=list,
+        )
     )
 
 
