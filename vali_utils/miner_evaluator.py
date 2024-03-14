@@ -103,12 +103,17 @@ class MinerEvaluator:
             # Hardcoded bucket ids:
             bucket_ids = [
                 DataEntityBucketId(
-                    time_bucket=TimeBucket(id=471712),
+                    time_bucket=TimeBucket(id=474825),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="r/bittensor_"),
                 ),
                 DataEntityBucketId(
-                    time_bucket=TimeBucket(id=471804),
+                    time_bucket=TimeBucket(id=474826),  # Does not exist
+                    source=DataSource.REDDIT,
+                    label=DataLabel(value="r/bittensor_"),
+                ),
+                DataEntityBucketId(
+                    time_bucket=TimeBucket(id=474904),
                     source=DataSource.REDDIT,
                     label=DataLabel(value="r/bittensor_"),
                 ),
