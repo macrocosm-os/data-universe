@@ -4,7 +4,7 @@ from common.data import (
     DataEntity,
     DataEntityBucketId,
 )
-from typing import List
+from typing import Dict, List
 import datetime as dt
 
 
@@ -31,4 +31,16 @@ class MinerStorage(ABC):
     @abstractmethod
     def refresh_compressed_index(self, date_time: dt.timedelta):
         """Refreshes the compressed MinerIndex."""
+        raise NotImplemented
+
+    @abstractmethod
+    def list_contents_in_data_entity_buckets(
+        self, data_entity_bucket_ids: List[DataEntityBucketId]
+    ) -> Dict[DataEntityBucketId, List[bytes]]:
+        """Lists contents for each requested DataEntityBucketId.
+        Args:
+            data_entity_bucket_ids (List[DataEntityBucketId]): Which buckets to get contents for.
+        Returns:
+            Dict[DataEntityBucketId, List[bytes]]: Map of each bucket id to contained contents.
+        """
         raise NotImplemented

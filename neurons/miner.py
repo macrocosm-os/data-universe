@@ -26,8 +26,13 @@ import typing
 import bittensor as bt
 import datetime as dt
 from common import constants, utils
-from common.data import CompressedMinerIndex
-from common.protocol import GetDataEntityBucket, GetMinerIndex
+from common.data import CompressedMinerIndex, TimeBucket
+from common.protocol import (
+    GetDataEntityBucket,
+    GetMinerIndex,
+    GetContentsByBuckets,
+    REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
+)
 from neurons.config import NeuronType
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
@@ -92,6 +97,10 @@ class Miner:
                 forward_fn=self.get_data_entity_bucket,
                 blacklist_fn=self.get_data_entity_bucket_blacklist,
                 priority_fn=self.get_data_entity_bucket_priority,
+            ).attach(
+                forward_fn=self.get_contents_by_buckets,
+                blacklist_fn=self.get_contents_by_buckets_blacklist,
+                priority_fn=self.get_contents_by_buckets_priority,
             )
             bt.logging.success(f"Axon created: {self.axon}.")
 
@@ -127,10 +136,10 @@ class Miner:
             config=scraping_config,
         )
 
-        # Configure per hotkey request limits.
+        # Configure per hotkey per request limits.
         self.request_lock = threading.RLock()
         self.last_cleared_request_limits = dt.datetime.now()
-        self.requests_by_hotkey = defaultdict(lambda: 0)
+        self.requests_by_type_by_hotkey = defaultdict(lambda: defaultdict(lambda: 0))
 
     def refresh_index(self):
         """
@@ -182,14 +191,14 @@ class Miner:
 
         self.scraping_coordinator.run_in_background_thread()
 
-        # This loop maintains the miner's operations until intentionally stopped.
-        try:
-            # In offline mode we just idle while the scraping_coordinator runs.
-            if self.config.offline:
-                while not self.should_exit:
-                    time.sleep(12)
-            else:
-                while not self.should_exit:
+        while not self.should_exit:
+            # This loop maintains the miner's operations until intentionally stopped.
+            try:
+                # In offline mode we just idle while the scraping_coordinator runs.
+                if self.config.offline:
+                    while not self.should_exit:
+                        time.sleep(12)
+                else:
                     # Epoch length defaults to 100 blocks at 12 seconds each for 20 minutes.
                     while dt.datetime.now() - self.last_sync_timestamp < (
                         dt.timedelta(seconds=12 * self.config.neuron.epoch_length)
@@ -209,17 +218,17 @@ class Miner:
                     self.last_sync_timestamp = dt.datetime.now()
                     self.step += 1
 
-        # If someone intentionally stops the miner, it'll safely terminate operations.
-        except KeyboardInterrupt:
-            if not self.config.offline:
-                self.axon.stop()
-            self.scraping_coordinator.stop()
-            bt.logging.success("Miner killed by keyboard interrupt.")
-            sys.exit()
+            # If someone intentionally stops the miner, it'll safely terminate operations.
+            except KeyboardInterrupt:
+                if not self.config.offline:
+                    self.axon.stop()
+                self.scraping_coordinator.stop()
+                bt.logging.success("Miner killed by keyboard interrupt.")
+                sys.exit()
 
-        # In case of unforeseen errors, the miner will log the error and continue operations.
-        except Exception as e:
-            bt.logging.error(traceback.format_exc())
+            # In case of unforeseen errors, the miner will log the error and continue operations.
+            except Exception as e:
+                bt.logging.error(traceback.format_exc())
 
     def run_in_background_thread(self):
         """
@@ -311,35 +320,20 @@ class Miner:
             f"Got to a GetMinerIndex request from {synapse.dendrite.hotkey}."
         )
 
-        if synapse.version and synapse.version >= 2:
-            # List all the data entity buckets that this miner currently has.
-            compressed_index = None
-            # Return the appropriate amount of max buckets based on protocol of the requesting validator.
-            if synapse.version == 4:
-                compressed_index = self.storage.get_compressed_index(
-                    bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
-                )
-            # Only synapse.version 4 is supported at this time.
-            else:
-                bt.logging.error(f"Unsupported protocol version: {synapse.version}.")
+        # Only synapse.version 4 is supported at this time.
+        if synapse.version < 4:
+            bt.logging.error(f"Unsupported protocol version: {synapse.version}.")
+            return synapse
 
-            synapse.compressed_index_serialized = compressed_index.json()
-            bt.logging.success(
-                f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
-                + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
-            )
-        else:
-            synapse.data_entity_buckets = self.storage.list_data_entity_buckets()
-
-            # Calculate total size of returned index for logging.
-            size = 0
-            for bucket in synapse.data_entity_buckets:
-                size += bucket.size_bytes
-
-            bt.logging.success(
-                f"Returning uncompressed miner index of {size} bytes across {len(synapse.data_entity_buckets)} buckets "
-                + f"to {synapse.dendrite.hotkey}."
-            )
+        # Return the appropriate amount of max buckets based on protocol of the requesting validator.
+        compressed_index = self.storage.get_compressed_index(
+            bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+        )
+        synapse.compressed_index_serialized = compressed_index.json()
+        bt.logging.success(
+            f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
+            + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
+        )
 
         synapse.version = constants.PROTOCOL_VERSION
 
@@ -383,51 +377,109 @@ class Miner:
     ) -> float:
         return self.default_priority(synapse)
 
+    async def get_contents_by_buckets(
+        self, synapse: GetContentsByBuckets
+    ) -> GetContentsByBuckets:
+        """Used to bulk expose raw contents for all entities within the requested buckets to validators for user queries."""
+        bt.logging.info(
+            f"Got to a GetContentsByBuckets request from {synapse.dendrite.hotkey} for Bucket IDs: {str(synapse.data_entity_bucket_ids)}."
+        )
+
+        # Check that the maximum number of buckets to be requested at once is respected.
+        if len(synapse.data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT:
+            bt.logging.warning(
+                f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting {len(synapse.data_entity_bucket_ids)} data entity buckets over limit of {constants.BULK_BUCKETS_COUNT_LIMIT}."
+            )
+            return synapse
+
+        # Check that none of the requested buckets are before the content obfuscation time start.
+        minimum_time_bucket = TimeBucket.from_datetime(
+            constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
+        )
+        for id in synapse.data_entity_bucket_ids:
+            if id.time_bucket.id < minimum_time_bucket.id:
+                bt.logging.warning(
+                    f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting a data entity bucket: {id} before {constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD}."
+                )
+                return synapse
+
+        # Get a dict of all the contents by DataEntityBucketId for the requested Buckets.
+        buckets_to_contents = self.storage.list_contents_in_data_entity_buckets(
+            synapse.data_entity_bucket_ids
+        )
+        synapse.bucket_ids_to_contents = [
+            (k, v) for k, v in buckets_to_contents.items()
+        ]
+        synapse.version = constants.PROTOCOL_VERSION
+
+        bt.logging.success(
+            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(contents) for (_,contents) in synapse.bucket_ids_to_contents)} entities to {synapse.dendrite.hotkey}."
+        )
+
+        return synapse
+
+    async def get_contents_by_buckets_blacklist(
+        self, synapse: GetContentsByBuckets
+    ) -> typing.Tuple[bool, str]:
+        return self.default_blacklist(synapse)
+
+    async def get_contents_by_buckets_priority(
+        self, synapse: GetContentsByBuckets
+    ) -> float:
+        return self.default_priority(synapse)
+
     def default_blacklist(self, synapse: bt.Synapse) -> typing.Tuple[bool, str]:
         """The default blacklist that only allows requests from validators."""
-        if synapse.dendrite.hotkey in [
-            "5Gpt8XWFTXmKrRF1qaxcBQLvnPLpKi6Pt2XC4vVQR7gqNKtU"
-        ]:
-            return (
-                True,
-                f"Explictly blacklisted hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
-            )
+        hotkey = synapse.dendrite.hotkey
+        ip = synapse.dendrite.ip
+        synapse_type = type(synapse)
 
-        if synapse.dendrite.hotkey not in self.metagraph.hotkeys:
+        if hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
             return (
                 True,
-                f"Unrecognized hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip}",
+                f"Unrecognized hotkey {hotkey} at {ip}",
             )
 
-        uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        uid = self.metagraph.hotkeys.index(hotkey)
         if not utils.is_validator(uid, self.metagraph):
             return (
                 True,
-                f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} is not a validator",
+                f"Hotkey {hotkey} at {ip} is not a validator",
             )
 
-        # TODO: Break out limit per API.
         with self.request_lock:
-            # Check if we need to clear the request limit counter.
+            # Check if we need to clear the request limit counters.
             if (
                 dt.datetime.now() - self.last_cleared_request_limits
             ) >= constants.MIN_EVALUATION_PERIOD:
                 bt.logging.trace(
-                    f"Clearing request limit counter by hotkey after an eval period: {constants.MIN_EVALUATION_PERIOD}."
+                    f"Clearing request limit counters by hotkey after an eval period: {constants.MIN_EVALUATION_PERIOD}."
                 )
-                self.requests_by_hotkey = defaultdict(lambda: 0)
+                for request_type in self.requests_by_type_by_hotkey:
+                    self.requests_by_type_by_hotkey[request_type] = defaultdict(
+                        lambda: 0
+                    )
                 self.last_cleared_request_limits = dt.datetime.now()
 
             # Record request.
-            self.requests_by_hotkey[synapse.dendrite.hotkey] += 1
+            self.requests_by_type_by_hotkey[synapse_type][hotkey] += 1
 
-            # Blacklist if over request limit.
-            # We allow up to 4 requests in case a validator restarts and sends two pairs of index/bucket requests.
-            if self.requests_by_hotkey[synapse.dendrite.hotkey] > 4:
+            # Safety check for unmapped request types although unrecognized request types are handled earlier.
+            if synapse_type not in REQUEST_LIMIT_BY_TYPE_PER_PERIOD:
                 return (
                     True,
-                    f"Hotkey {synapse.dendrite.hotkey} at {synapse.dendrite.ip} over eval period request limit",
+                    f"Hotkey {hotkey} at {ip} sent request for unmapped type: {synapse_type.__name__}.",
+                )
+
+            # Allow 2x the limit per period to account for restarts.
+            if (
+                self.requests_by_type_by_hotkey[synapse_type][hotkey]
+                > 2 * REQUEST_LIMIT_BY_TYPE_PER_PERIOD[synapse_type]
+            ):
+                return (
+                    True,
+                    f"Hotkey {hotkey} at {ip} over eval period request limit for {synapse_type.__name__}.",
                 )
 
         return False, ""

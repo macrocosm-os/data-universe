@@ -328,6 +328,72 @@ class SqliteMinerStorage(MinerStorage):
                     )
                     self.cached_index_updated = dt.datetime.now()
 
+    def list_contents_in_data_entity_buckets(
+        self, data_entity_bucket_ids: List[DataEntityBucketId]
+    ) -> Dict[DataEntityBucketId, List[bytes]]:
+        """Lists contents for each requested DataEntityBucketId.
+        Args:
+            data_entity_bucket_ids (List[DataEntityBucketId]): Which buckets to get contents for.
+        Returns:
+            Dict[DataEntityBucketId, List[bytes]]: Map of each bucket id to contained contents.
+        """
+        # If no bucket ids or too many bucket ids are provided return an empty dict.
+        if (
+            len(data_entity_bucket_ids) == 0
+            or len(data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT
+        ):
+            return defaultdict(list)
+
+        # Get rows that match the DataEntityBucketIds.
+        # Use a list of alternating ids and labels to match the upcoming sql query.
+        time_bucket_ids_and_labels = list()
+        for bucket_id in data_entity_bucket_ids:
+            time_bucket_ids_and_labels.append(bucket_id.time_bucket.id)
+            # Note that only twitter has NULL label and that all twitter labels are prefixed with #.
+            # Therefore we do not need to distinguish labels by source.
+            label = "NULL" if (bucket_id.label is None) else bucket_id.label.value
+            time_bucket_ids_and_labels.append(label)
+
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(
+                f"""SELECT timeBucketId, source, label, content, contentSizeBytes FROM DataEntity
+                    WHERE timeBucketId = ? AND label = ?
+                    {"OR timeBucketId = ? AND label = ?" * (len(data_entity_bucket_ids) - 1)}
+                    LIMIT ?
+                 """,
+                list(time_bucket_ids_and_labels)
+                + [constants.BULK_CONTENTS_COUNT_LIMIT],
+            )
+
+            # Get the contents from each row and return them up to the configured max size.
+            buckets_ids_to_contents = defaultdict(list)
+            running_size = 0
+
+            for row in cursor:
+                if (
+                    running_size + row["contentSizeBytes"]
+                    <= constants.BULK_CONTENTS_SIZE_LIMIT_BYTES
+                ):
+                    data_entity_bucket_id = DataEntityBucketId.construct(
+                        time_bucket=TimeBucket.construct(id=row["timeBucketId"]),
+                        source=DataSource(row["source"]),
+                        label=(
+                            DataLabel.construct(value=row["label"])
+                            if row["label"] != "NULL"
+                            else None
+                        ),
+                    )
+                    buckets_ids_to_contents[data_entity_bucket_id].append(
+                        row["content"]
+                    )
+                    running_size += row["contentSizeBytes"]
+                else:
+                    # Return early since we hit the size limit.
+                    break
+
+            return buckets_ids_to_contents
+
     def get_compressed_index(
         self,
         bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
@@ -409,11 +475,12 @@ class SqliteMinerStorage(MinerStorage):
                 data_entity_bucket_id = DataEntityBucketId(
                     time_bucket=TimeBucket(id=row["timeBucketId"]),
                     source=DataSource(row["source"]),
+                    label=(
+                        DataLabel(value=row["label"])
+                        if row["label"] != "NULL"
+                        else None
+                    ),
                 )
-
-                # Add the optional Label field if not null.
-                if row["label"] != "NULL":
-                    data_entity_bucket_id.label = DataLabel(value=row["label"])
 
                 data_entity_bucket = DataEntityBucket(
                     id=data_entity_bucket_id, size_bytes=size

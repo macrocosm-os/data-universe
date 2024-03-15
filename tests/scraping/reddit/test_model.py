@@ -26,6 +26,26 @@ class TestModel(unittest.TestCase):
         self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
         self.assertEqual(entity.label.value, "r/looooooooooooooooooooooooongsu")
 
+    def test_label_truncation_lower(self):
+        """Tests truncation of characters that become longer when .lower() is used on them."""
+        timestamp = dt.datetime.now(tz=dt.timezone.utc)
+        content = RedditContent(
+            id="postId",
+            url="https://reddit.com/123",
+            username="user1",
+            communityName="r/İsrailleTicaretFilistineİhanet",
+            body="Hello world",
+            createdAt=timestamp,
+            dataType=RedditDataType.POST,
+            title="Title text",
+        )
+        entity = RedditContent.to_data_entity(
+            content=content, obfuscate_content_date=False
+        )
+
+        self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
+        self.assertEqual(entity.label.value, "r/i̇srailleticaretfilistinei̇han")
+
     def test_to_data_entity_non_obfuscated(self):
         timestamp = dt.datetime(
             year=2024,

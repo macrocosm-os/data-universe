@@ -8,7 +8,6 @@ from common.data import (
     CompressedMinerIndex,
     DataEntity,
     DataEntityBucket,
-    MinerIndex,
     TimeBucket,
 )
 from common.data_v2 import ScorableMinerIndex
@@ -158,20 +157,11 @@ def get_single_successful_response(
     return None
 
 
-def get_miner_index_from_response(
-    response: GetMinerIndex, hotkey: str
-) -> Union[MinerIndex, CompressedMinerIndex]:
+def get_miner_index_from_response(response: GetMinerIndex) -> CompressedMinerIndex:
     """Gets a MinerIndex from a GetMinerIndex response."""
     assert response.is_success
 
-    # If the uncompressed index is available, use it.
-    if response.data_entity_buckets:
-        return MinerIndex(
-            hotkey=hotkey,
-            data_entity_buckets=response.data_entity_buckets,
-        )
-    elif response.compressed_index_serialized:
-        # Otherwise, decompress the compressed index.
-        return CompressedMinerIndex.parse_raw(response.compressed_index_serialized)
+    if not response.compressed_index_serialized:
+        raise ValueError("GetMinerIndex response has no index.")
 
-    raise ValueError("GetMinerIndex response has no index.")
+    return CompressedMinerIndex.parse_raw(response.compressed_index_serialized)

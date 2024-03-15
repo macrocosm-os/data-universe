@@ -1,6 +1,6 @@
 import datetime as dt
 from typing import Optional
-from common.data import DataLabel, DataSource, TimeBucket
+from common.data import DataSource, TimeBucket
 from common.data_v2 import ScorableDataEntityBucket
 from rewards.data import DataDesirabilityLookup
 
@@ -11,10 +11,12 @@ class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""
 
     def __init__(self, model: DataDesirabilityLookup = data_desirability_lookup.LOOKUP):
-        self.model = model
+        self.model = DataDesirabilityLookup.to_primitive_data_desirability_lookup(model)
 
     def get_score_for_data_entity_bucket(
-        self, scorable_data_entity_bucket: ScorableDataEntityBucket
+        self,
+        scorable_data_entity_bucket: ScorableDataEntityBucket,
+        current_time_bucket: TimeBucket,
     ) -> float:
         """Returns the score for the given data entity bucket.
 
@@ -24,16 +26,11 @@ class DataValueCalculator:
             3. It's scaled based on the age of the data, where newer data is considered more valuable.
         """
 
-        label = (
-            DataLabel(value=scorable_data_entity_bucket.label)
-            if scorable_data_entity_bucket.label
-            else None
-        )
         data_type_scale_factor = self._scale_factor_for_source_and_label(
-            scorable_data_entity_bucket.source, label
+            scorable_data_entity_bucket.source, scorable_data_entity_bucket.label
         )
         time_scalar = self._scale_factor_for_age(
-            TimeBucket(id=scorable_data_entity_bucket.time_bucket_id)
+            scorable_data_entity_bucket.time_bucket_id, current_time_bucket.id
         )
         return (
             data_type_scale_factor
@@ -42,7 +39,7 @@ class DataValueCalculator:
         )
 
     def _scale_factor_for_source_and_label(
-        self, data_source: DataSource, label: Optional[DataLabel]
+        self, data_source: DataSource, label: Optional[str]
     ) -> float:
         """Returns the score scalar for the given data source and label."""
         data_source_reward = self.model.distribution[data_source]
@@ -51,15 +48,18 @@ class DataValueCalculator:
         )
         return data_source_reward.weight * label_factor
 
-    def _scale_factor_for_age(self, time_bucket: TimeBucket) -> float:
+    def _scale_factor_for_age(
+        self, time_bucket_id: int, current_time_bucket_id: int
+    ) -> float:
         """Returns the score scalar for data ."""
         # Data age is scored using a linear depreciation function, where data from now is scored 1 and data
         # that is max_age_in_hours old is scored 0.5.
         # All data older than max_age_in_hours is scored 0.
-        data_age_in_hours = (
-            dt.datetime.now(tz=dt.timezone.utc)
-            - TimeBucket.to_date_range(time_bucket).start
-        ).total_seconds() // 3600
+
+        # Note: This makes the assumption that TimeBuckets are 1 hour buckets, which isn't ideal,
+        # but we make the trade-off because it has a notable impact on perf vs. constructing TimeBuckets
+        # to compute the age in hours.
+        data_age_in_hours = current_time_bucket_id - time_bucket_id
 
         # Safe guard against future data.
         data_age_in_hours = max(0, data_age_in_hours)

@@ -9,7 +9,6 @@ from common.data import (
     DataEntity,
     DataEntityBucketId,
     DataLabel,
-    MinerIndex,
     TimeBucket,
     DataSource,
 )
@@ -452,35 +451,6 @@ class TestValiUtils(unittest.TestCase):
         unique = vali_utils.are_entities_unique(entities)
         self.assertFalse(unique)
 
-    def test_get_miner_index_from_response_old_index(self):
-        """Tests get_miner_index_from_response with an old index."""
-
-        buckets = [
-            DataEntityBucket(
-                id=DataEntityBucketId(
-                    time_bucket=TimeBucket(id=5),
-                    source=DataSource.REDDIT,
-                    label=DataLabel(value="r/bittensor_"),
-                ),
-                size_bytes=100,
-            ),
-            DataEntityBucket(
-                id=DataEntityBucketId(
-                    time_bucket=TimeBucket(id=6),
-                    source=DataSource.X,
-                    label=DataLabel(value="#bittensor"),
-                ),
-                size_bytes=200,
-            ),
-        ]
-        response = GetMinerIndex(
-            data_entity_buckets=buckets, dendrite=bt.TerminalInfo(status_code=200)
-        )
-
-        index = vali_utils.get_miner_index_from_response(response, "hk")
-        expected_index = MinerIndex(hotkey="hk", data_entity_buckets=buckets)
-        self.assertEqual(index, expected_index)
-
     def test_get_miner_index_from_response_compressed_index(self):
         """Tests get_miner_index_from_response with a compressed index."""
 
@@ -508,7 +478,7 @@ class TestValiUtils(unittest.TestCase):
             dendrite=bt.TerminalInfo(status_code=200),
         )
 
-        index = vali_utils.get_miner_index_from_response(response, "hk")
+        index = vali_utils.get_miner_index_from_response(response)
         self.assertEqual(index, compressed_index)
 
     def test_get_miner_index_from_response_new_index_bucket_size_too_large(self):
@@ -538,7 +508,7 @@ class TestValiUtils(unittest.TestCase):
         )
 
         with self.assertRaises(ValueError):
-            vali_utils.get_miner_index_from_response(response, "hk")
+            vali_utils.get_miner_index_from_response(response)
 
 
 if __name__ == "__main__":

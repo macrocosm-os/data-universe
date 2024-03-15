@@ -14,7 +14,6 @@ from common.data import (
     DataEntityBucket,
     DataEntity,
     DataSource,
-    MinerIndex,
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
@@ -348,7 +347,7 @@ class MinerEvaluator:
             # Validate the index.
             miner_index = None
             try:
-                miner_index = vali_utils.get_miner_index_from_response(response, hotkey)
+                miner_index = vali_utils.get_miner_index_from_response(response)
             except ValueError as e:
                 bt.logging.info(
                     f"{hotkey}: Miner returned an invalid index. Reason: {e}. Using last known index if present."
@@ -360,26 +359,13 @@ class MinerEvaluator:
 
             # Miner replied with a valid index. Store it and return it.
             miner_credibility = self.scorer.get_miner_credibility(uid)
-            if isinstance(miner_index, MinerIndex):
-                # Calculate total size of received index for logging.
-                size = 0
-                for bucket in miner_index.data_entity_buckets:
-                    size += bucket.size_bytes
-                bt.logging.success(
-                    f"{hotkey}: Got new uncompressed miner index of {size} bytes across {len(miner_index.data_entity_buckets)} buckets."
-                )
-                self.storage.upsert_miner_index(miner_index, miner_credibility)
-            else:
-                assert isinstance(
-                    miner_index, CompressedMinerIndex
-                ), f"Expected either a MinerIndex or CompressedMinerIndex but got {type(miner_index)}."
-                bt.logging.success(
-                    f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
-                    + f"across {CompressedMinerIndex.bucket_count(miner_index)} buckets."
-                )
-                self.storage.upsert_compressed_miner_index(
-                    miner_index, hotkey, miner_credibility
-                )
+            bt.logging.success(
+                f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
+                + f"across {CompressedMinerIndex.bucket_count(miner_index)} buckets."
+            )
+            self.storage.upsert_compressed_miner_index(
+                miner_index, hotkey, miner_credibility
+            )
 
             return self.storage.read_miner_index(hotkey)
         except Exception:

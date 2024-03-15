@@ -179,22 +179,17 @@ class MicroworldsTwitterScraper(Scraper):
         )
 
         data_entities = []
+
         for x_content in x_contents:
-            if (
+            require_obfuscation = (
                 x_content.timestamp
                 >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            ):
-                data_entities.append(
-                    XContent.to_data_entity(
-                        content=x_content, obfuscate_content_date=True
-                    )
+            )
+            data_entities.append(
+                XContent.to_data_entity(
+                    content=x_content, obfuscate_content_date=require_obfuscation
                 )
-            else:
-                data_entities.append(
-                    XContent.to_data_entity(
-                        content=x_content, obfuscate_content_date=False
-                    )
-                )
+            )
 
         return data_entities
 
@@ -330,6 +325,15 @@ async def test_validate():
             label=DataLabel(value="#HowlongcanImakeahashtaganywayIg"),
             content='{"username":"@Sid14290237375","text":"Testing hashtags\\n\\n#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest","url":"https://twitter.com/Sid14290237375/status/1760088426400162274","timestamp":"2024-02-20T23:45:00Z","tweet_hashtags":["#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest"]}',
             content_size_bytes=356,
+        ),
+        # Entity with a latin capital I with a dot above that becomes 2 characters when .lower() is used on it.
+        DataEntity(
+            uri="https://twitter.com/DervisMusa/status/1761758719941988688",
+            datetime=dt.datetime(2024, 2, 25, 14, 23, 5, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#i̇srailleticaretfilistinei̇hane"),
+            content='{"username": "@DervisMusa", "text": "\\"\\u0130srail\'le ticaret, Filistin\'e ihanet!\\"\\n(\\u0627\\u0644\\u062a\\u062c\\u0627\\u0631\\u0629 \\u0645\\u0639 \\u0625\\u0633\\u0631\\u0627\\u0626\\u064a\\u0644 \\u062a\\u062e\\u0648\\u0646 \\u0641\\u0644\\u0633\\u0637\\u064a\\u0646)\\n\\nAllah kabul etsin. Aya\\u011f\\u0131n\\u0131za / y\\u00fcre\\u011finize sa\\u011fl\\u0131k. Herkese \\u00f6rnek olur in\\u015fallah.\\n\\n#\\u0130srailleTicaretFilistine\\u0130hanet\\n\\n#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649 \\n#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646 \\n#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631 \\n#\\u0627\\u0644\\u064a\\u0645\\u0646\\n#Hamas\\n#deprem", "url": "https://twitter.com/DervisMusa/status/1761758719941988688", "timestamp": "2024-02-25T14:23:05+00:00", "tweet_hashtags": ["#\\u0130srailleTicaretFilistine\\u0130hanet", "#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649", "#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646", "#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631", "#\\u0627\\u0644\\u064a\\u0645\\u0646", "#Hamas", "#deprem"]}',
+            content_size_bytes=1072,
         ),
     ]
 

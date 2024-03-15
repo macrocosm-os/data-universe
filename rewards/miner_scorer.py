@@ -2,7 +2,9 @@ import threading
 from typing import List, Optional
 import torch
 import bittensor as bt
+import datetime as dt
 from common import constants
+from common.data import TimeBucket
 
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
@@ -118,7 +120,7 @@ class MinerScorer:
 
         Args:
             uid (int): The miner's UID.
-            index (MinerIndex): The latest index of the miner.
+            index (ScorableMinerIndex): The latest index of the miner.
             validation_results (List[ValidationResult]): The results of data validation performed on the data provided by the miner.
         """
         with self.lock:
@@ -132,9 +134,12 @@ class MinerScorer:
 
                 # Now score the miner based on the amount of data it has, scaled based on
                 # the reward distribution.
+                current_time_bucket = TimeBucket.from_datetime(
+                    dt.datetime.now(tz=dt.timezone.utc)
+                )
                 for bucket in index.scorable_data_entity_buckets:
                     score += self.value_calculator.get_score_for_data_entity_bucket(
-                        bucket
+                        bucket, current_time_bucket
                     )
 
                 # Scale the miner's score by its credibility, squared.

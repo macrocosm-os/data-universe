@@ -1,6 +1,6 @@
 from abc import ABC, abstractmethod
-from common.data import CompressedMinerIndex, MinerIndex
-from typing import Optional, Set
+from common.data import CompressedMinerIndex
+from typing import Optional
 import datetime as dt
 
 from common.data_v2 import ScorableMinerIndex
@@ -8,11 +8,6 @@ from common.data_v2 import ScorableMinerIndex
 
 class ValidatorStorage(ABC):
     """An abstract class which defines the contract that all implementations of ValidatorStorage must fulfill."""
-
-    @abstractmethod
-    def upsert_miner_index(self, index: MinerIndex, credibility: float = 0):
-        """Stores the index for all of the data that a specific miner promises to provide."""
-        raise NotImplemented
 
     @abstractmethod
     def upsert_compressed_miner_index(

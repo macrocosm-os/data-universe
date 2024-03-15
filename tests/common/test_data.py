@@ -10,12 +10,12 @@ from common.data import (
     CompressedMinerIndex,
     DataLabel,
     DataSource,
-    MinerIndex,
     TimeBucket,
 )
 import unittest
 
 from common.protocol import GetMinerIndex
+from pydantic import ValidationError
 
 
 class TestData(unittest.TestCase):
@@ -148,6 +148,11 @@ class TestData(unittest.TestCase):
 
         # Verify the deserialized form is as expected.
         self.assertEqual(deserialized_compressed_index, maximal_index)
+
+    def test_data_label_lower_validation(self):
+        """Tests that the data label value is checked to be <32 characters even after .lower()."""
+        with self.assertRaises(ValidationError):
+            bad_label = DataLabel(value="#İsrailleTicaretFilistineİhanet")
 
 
 if __name__ == "__main__":

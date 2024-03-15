@@ -1,8 +1,12 @@
+import random
 from typing import Any, Callable, Iterable, Tuple
 import time
 import datetime as dt
 
-from common.data import CompressedMinerIndex, MinerIndex
+from common.data import (
+    CompressedMinerIndex,
+    DataSource,
+)
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 
 
@@ -25,26 +29,6 @@ def wait_for_condition(condition: Callable[[], bool], timeout: float = 10.0):
         if time.time() - start_time > timeout:
             raise Exception("Timed out waiting for condition to be true.")
         time.sleep(0.1)
-
-
-def convert_to_scorable_miner_index(
-    index: MinerIndex, last_updated: dt.datetime
-) -> ScorableMinerIndex:
-    """Converts a MinerIndex to a ScorableMinerIndex, assuming size_bytes are fully scorable."""
-
-    return ScorableMinerIndex(
-        scorable_data_entity_buckets=[
-            ScorableDataEntityBucket(
-                time_bucket_id=bucket.id.time_bucket.id,
-                source=bucket.id.source,
-                label=bucket.id.label.value if bucket.id.label else None,
-                size_bytes=bucket.size_bytes,
-                scorable_bytes=bucket.size_bytes,
-            )
-            for bucket in index.data_entity_buckets
-        ],
-        last_updated=last_updated,
-    )
 
 
 def convert_compressed_index_to_scorable_miner_index(
@@ -125,3 +109,31 @@ def are_compressed_indexes_equal(
             return False
 
     return True
+
+
+def create_scorable_index(num_buckets: int) -> ScorableMinerIndex:
+    """Creates a CompressedMinerIndex with ~ the specified number of buckets."""
+    assert num_buckets > 1000
+
+    labels = [f"label{i}" for i in range(num_buckets // 2 // 500)]
+    time_buckets = [i for i in range(1, (num_buckets // 2 // len(labels)) + 1)]
+
+    # Split max buckets equaly between sources with reddit having 100 time buckets and x having 500.
+    buckets = []
+    for source in [DataSource.REDDIT.value, DataSource.X.value]:
+        for time_bucket in time_buckets:
+            for label in labels:
+                size = random.randint(50, 1000)
+                scorable_bytes = int(random.random() * size)
+                buckets.append(
+                    ScorableDataEntityBucket(
+                        time_bucket_id=time_bucket,
+                        source=source,
+                        label=label,
+                        size_bytes=size,
+                        scorable_bytes=scorable_bytes,
+                    )
+                )
+    return ScorableMinerIndex(
+        scorable_data_entity_buckets=buckets, last_updated=dt.datetime.now()
+    )

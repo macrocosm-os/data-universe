@@ -17,13 +17,12 @@
 
 import bittensor as bt
 import pydantic
-from common import constants
 from common.data import (
     DataEntityBucket,
     DataEntity,
     DataEntityBucketId,
 )
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Tuple
 
 
 class BaseProtocol(bt.Synapse):
@@ -43,16 +42,6 @@ class GetMinerIndex(BaseProtocol):
     Attributes:
     - data_entity_buckets: A list of DataEntityBucket objects that the Miner can serve.
     """
-
-    # Required request output, filled by receiving axon.
-    data_entity_buckets: List[DataEntityBucket] = pydantic.Field(
-        title="data_entity_buckets",
-        description="All of the data entity buckets that a Miner can serve.",
-        frozen=False,
-        repr=False,
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
-        default_factory=list,
-    )
 
     # We opt to send the compressed index in pre-serialized form to have full control
     # over serialization and deserialization, rather than relying on fastapi and bittensors
@@ -93,4 +82,43 @@ class GetDataEntityBucket(BaseProtocol):
     )
 
 
+class GetContentsByBuckets(BaseProtocol):
+    """
+    Protocol by which Validators can retrieve contents from one or more Miner Buckets.
+    After March 1st all contents have their creation timestamp obfuscated to the minute.
+
+    Attributes:
+    - bucket_ids: The ids of the buckets that the requester is asking for.
+    - bucket_ids_to_contents: A dict of DataEntityBucketId objects to a list of contained contents.
+    """
+
+    # Required request input, filled by sending dendrite caller.
+    data_entity_bucket_ids: Optional[List[DataEntityBucketId]] = pydantic.Field(
+        title="data_entity_bucket_ids",
+        description="The identifiers for the requested DataEntityBuckets.",
+        frozen=True,
+        repr=False,
+        default=None,
+    )
+
+    # Required request output, filled by receiving axon.
+    # Note a List of Tuples is used because a Dict with a dataclass as the key cannot be serialized properly by pydantic.
+    bucket_ids_to_contents: List[Tuple[DataEntityBucketId, List[bytes]]] = (
+        pydantic.Field(
+            title="bucket_ids_to_contents",
+            description="A list of bucket ids to the contents contained by that bucket. Each DataEntityBucketId appears at most once. This is just a flattened dictionary.",
+            frozen=False,
+            repr=False,
+            default_factory=list,
+        )
+    )
+
+
 # TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
+
+# How many times validators can send requests per validation period.
+REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
+    GetMinerIndex: 1,
+    GetDataEntityBucket: 1,
+    GetContentsByBuckets: 5,
+}

@@ -35,6 +35,10 @@ class TimeBucket(StrictBaseModel):
         description="Monotonically increasing value idenitifying the given time bucket"
     )
 
+    # Manually define a hash function to handle TimeBucket not being seen as hashable by pydantic.
+    def __hash__(self) -> int:
+        return hash(int(self.id))
+
     @classmethod
     def from_datetime(cls, datetime: dt.datetime) -> Type["TimeBucket"]:
         """Creates a TimeBucket from the provided datetime.
@@ -89,6 +93,11 @@ class DataLabel(StrictBaseModel):
     @classmethod
     def lower_case_value(cls, value: str) -> str:
         """Converts the value to lower case to consistent casing throughout the system."""
+        # See reply on https://stackoverflow.com/questions/28695245/can-a-string-ever-get-shorter-when-converted-to-upper-lowercase.
+        if len(value.lower()) > 32:
+            raise ValueError(
+                f"Label: {value} when is over 32 characters when .lower() is applied: {value.lower()}."
+            )
         return value.lower()
 
 
@@ -126,11 +135,18 @@ class DataEntity(StrictBaseModel):
 class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
 
+    # Makes the object "Immutable" once created.
+    model_config = ConfigDict(frozen=True)
+
     time_bucket: TimeBucket
     source: DataSource = Field()
     label: Optional[DataLabel] = Field(
         default=None,
     )
+
+    # Manually define a hash function to handle TimeBucket not being seen as hashable by pydantic.
+    def __hash__(self) -> int:
+        return hash(hash(self.time_bucket) + hash(self.source) + hash(self.label))
 
 
 class DataEntityBucket(StrictBaseModel):
@@ -146,17 +162,6 @@ class DataEntityBucket(StrictBaseModel):
         description="Identifies the qualities by which this bucket is grouped."
     )
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
-
-
-# TODO: Deprecate once Miners use the CompressedMinerIndex.
-class MinerIndex(StrictBaseModel):
-    """The Miner index."""
-
-    hotkey: str = Field(min_length=1, description="ss58_address of the miner's hotkey.")
-    data_entity_buckets: List[DataEntityBucket] = Field(
-        description="Buckets the miner is serving.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX,
-    )
 
 
 # For the Compressed data classes, we intentionally avoid using nested classes (particularly

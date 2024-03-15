@@ -42,7 +42,11 @@ class XContent(BaseModel):
             datetime=entity_timestamp,
             source=DataSource.X,
             label=(
-                DataLabel(value=content.tweet_hashtags[0][: constants.MAX_LABEL_LENGTH])
+                DataLabel(
+                    value=content.tweet_hashtags[0].lower()[
+                        : constants.MAX_LABEL_LENGTH
+                    ]
+                )
                 if content.tweet_hashtags
                 else None
             ),
