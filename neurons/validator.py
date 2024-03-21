@@ -34,6 +34,7 @@ from vali_utils.miner_evaluator import MinerEvaluator
 
 from neurons import __spec_version__ as spec_version
 
+import datadog
 from rich.table import Table
 from rich.console import Console
 
@@ -91,6 +92,7 @@ class Validator:
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
+        self.databox_thread: threading.Thread = None
         self.lock = threading.RLock()
         self.last_eval_time = dt.datetime.utcnow()
         self.last_weights_set_time = dt.datetime.utcnow()
@@ -156,7 +158,7 @@ class Validator:
         utils.assert_registered(self.wallet, self.metagraph)
 
         bt.logging.info(
-            f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
+            f"Running validator on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
         )
 
         bt.logging.info(f"Validator starting at block: {self.block}.")
@@ -238,6 +240,10 @@ class Validator:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+            self.databox_thread = threading.Thread(
+                target=self.evaluator.run_databox, daemon=True
+            )
+            self.databox_thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
 
@@ -273,6 +279,8 @@ class Validator:
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
+            self.evaluator.exit()
+            self.databox_thread.join(5)
             self.is_running = False
             if self.wandb_run:
                 self.wandb_run.finish()
@@ -453,4 +461,9 @@ def main():
 
 # The main function parses the configuration and runs the validator.
 if __name__ == "__main__":
+    options = {
+        "statsd_host": "127.0.0.1",
+        "statsd_port": 8125,
+    }
+    datadog.initialize(**options)
     main()

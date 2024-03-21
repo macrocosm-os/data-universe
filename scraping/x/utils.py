@@ -9,6 +9,8 @@ from scraping.scraper import ValidationResult
 
 from scraping.x.model import XContent
 
+from datadog import statsd
+
 
 def is_valid_twitter_url(url: str) -> bool:
     """Verifies a URL is both a valid URL and is for twitter.com."""
