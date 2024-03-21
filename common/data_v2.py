@@ -16,7 +16,6 @@ As a rule of thumb:
 2. Always use __slots__. T
 """
 
-
 import datetime as dt
 from pydantic import BaseModel, Field
 from typing import List, Optional
@@ -118,6 +117,6 @@ class ScorableMinerIndex(BaseModel):
 
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
         description="DataEntityBuckets the miner is serving, scored on uniqueness.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
+        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5,
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")

@@ -80,7 +80,7 @@ class TestData(unittest.TestCase):
         """Tests that the compressed version of the maximal Miner index is under our response size limit."""
 
         target_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5
         )
 
         # Figure out how many time buckets and labels we need to fill the index.

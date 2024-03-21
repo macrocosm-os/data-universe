@@ -110,7 +110,7 @@ class SqliteMinerStorage(MinerStorage):
 
         # Lock around the cached get miner index.
         self.cached_index_lock = threading.Lock()
-        self.cached_index_4 = None
+        self.cached_indexes: Dict[int, CompressedMinerIndex] = {}
         self.cached_index_updated = dt.datetime.min
 
     def _create_connection(self):
@@ -291,12 +291,18 @@ class SqliteMinerStorage(MinerStorage):
                             """,
                     [
                         oldest_time_bucket_id,
-                        constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
+                        constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5,
                     ],  # Always get the max for caching and truncate to each necessary size.
                 )
 
                 buckets_by_source_by_label = defaultdict(dict)
 
+                index_thresholds = [
+                    constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
+                    constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5,
+                ]
+
+                bucket_count = 0
                 for row in cursor:
                     # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
                     size = (
@@ -317,16 +323,39 @@ class SqliteMinerStorage(MinerStorage):
                         label
                     ] = bucket
 
-                # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
-                bt.logging.trace("Creating protocol 4 cached index.")
-                with self.cached_index_lock:
-                    self.cached_index_4 = CompressedMinerIndex(
-                        sources={
-                            source: list(labels_to_buckets.values())
-                            for source, labels_to_buckets in buckets_by_source_by_label.items()
-                        }
-                    )
-                    self.cached_index_updated = dt.datetime.now()
+                    bucket_count += 1
+                    if bucket_count == index_thresholds[0]:
+                        with self.cached_index_lock:
+                            bt.logging.trace(
+                                f"Creating protocol cached index of size: {index_thresholds[0]}"
+                            )
+                            self.cached_indexes[index_thresholds[0]] = (
+                                self._create_compressed_index(
+                                    buckets_by_source_by_label
+                                )
+                            )
+                            index_thresholds.pop(0)
+                            self.cached_index_updated = dt.datetime.now()
+
+                # If there are fewer buckets available than the maximum allowed, make
+                # sure we still cache the index with all the buckets we have.
+                if index_thresholds:
+                    # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
+                    with self.cached_index_lock:
+                        self.cached_indexes[index_thresholds[0]] = (
+                            self._create_compressed_index(buckets_by_source_by_label)
+                        )
+
+    def _create_compressed_index(
+        self, buckets_by_source_by_label: Dict[int, Dict[str, CompressedEntityBucket]]
+    ) -> CompressedMinerIndex:
+        """Converts a map of buckets by source by label into a CompressedMinerIndex."""
+        return CompressedMinerIndex(
+            sources={
+                source: list(labels_to_buckets.values())
+                for source, labels_to_buckets in buckets_by_source_by_label.items()
+            }
+        )
 
     def list_contents_in_data_entity_buckets(
         self, data_entity_bucket_ids: List[DataEntityBucketId]
@@ -396,7 +425,7 @@ class SqliteMinerStorage(MinerStorage):
 
     def get_compressed_index(
         self,
-        bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
+        bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5,
     ) -> CompressedMinerIndex:
         """Gets the compressed MinerIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
 
@@ -406,8 +435,16 @@ class SqliteMinerStorage(MinerStorage):
         )
 
         with self.cached_index_lock:
-            # Only protocol 4 is supported at this time.
-            return self.cached_index_4
+            index_sizes = reversed(sorted(list(self.cached_indexes.keys())))
+            for size in index_sizes:
+                if size <= bucket_count_limit:
+                    return self.cached_indexes[size]
+
+            # This should never happen.
+            bt.logging.error(
+                f"Failed to find a cached index with a size <= {bucket_count_limit}. Returning an empty index."
+            )
+            return CompressedMinerIndex(sources={})
 
     def clear_content_from_oldest(self, content_bytes_to_clear: int):
         """Deletes entries starting from the oldest until we have cleared the specified amount of content."""

@@ -378,7 +378,7 @@ class TestMinerScorer(unittest.TestCase):
         """A perf test to check how long it takes to score an index."""
 
         num_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5
         )
         index = test_utils.create_scorable_index(num_buckets=num_buckets)
 

@@ -326,9 +326,14 @@ class Miner:
             return synapse
 
         # Return the appropriate amount of max buckets based on protocol of the requesting validator.
-        compressed_index = self.storage.get_compressed_index(
-            bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
-        )
+        if synapse.version == 4:
+            compressed_index = self.storage.get_compressed_index(
+                bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+            )
+        else:
+            compressed_index = self.storage.get_compressed_index(
+                bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5
+            )
         synapse.compressed_index_serialized = compressed_index.json()
         bt.logging.success(
             f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "

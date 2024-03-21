@@ -24,7 +24,7 @@ class MinerStorage(ABC):
         raise NotImplemented
 
     @abstractmethod
-    def get_compressed_index(self) -> CompressedMinerIndex:
+    def get_compressed_index(self, bucket_count_limit: int) -> CompressedMinerIndex:
         """Gets the compressed MinedIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
         raise NotImplemented
 

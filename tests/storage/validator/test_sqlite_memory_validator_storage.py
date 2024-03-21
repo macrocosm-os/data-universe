@@ -7,7 +7,6 @@ import unittest
 import concurrent
 
 from common import constants, utils
-from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
@@ -244,7 +243,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Create the DataEntityBuckets for the index.
         sources = [int(DataSource.REDDIT), int(DataSource.X.value)]
         num_time_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5
             // len(sources)
             // len(labels)
         )
@@ -594,7 +593,9 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     @unittest.skip("Skip the large index test by default.")
     def test_many_large_indexes_perf(self):
         """Inserts 200 miners with maximal indexes and reads them back."""
-        max_buckets = DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
+        max_buckets = (
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_5
+        )
 
         labels = [f"label{i}" for i in range(100_000)]
         time_buckets = [i for i in range(1000, 10_000)]
