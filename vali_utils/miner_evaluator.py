@@ -87,6 +87,7 @@ class MinerEvaluator:
         """Returns the scorer used by the evaluator."""
         return self.scorer
 
+    @statsd.timed("eval_miner")
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous version of eval_miner."""
         asyncio.run(self.eval_miner(uid))

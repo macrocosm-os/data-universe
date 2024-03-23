@@ -1,5 +1,6 @@
 import contextlib
 import datetime as dt
+import stat
 import bittensor as bt
 import sqlite3
 import threading
@@ -15,6 +16,8 @@ from common.data_v2 import (
 from storage.validator.validator_storage import (
     ValidatorStorage,
 )
+
+from datadog import statsd
 
 
 class AutoIncrementDict:
@@ -183,6 +186,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         """Same as _label_value_parse but with a string as input"""
         return "NULL" if (label is None) else label.casefold()
 
+    @statsd.timed("storage.validator.upsert_compressed_miner_index")
     def upsert_compressed_miner_index(
         self, index: CompressedMinerIndex, hotkey: str, credibility: float
     ):
@@ -238,6 +242,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     )
                 connection.commit()
 
+    @statsd.timed("storage.validator.read_miner_index")
     def read_miner_index(
         self,
         miner_hotkey: str,
@@ -307,6 +312,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
                 return scored_index
 
+    @statsd.timed("storage.validator._delete_miner_index")
     def _delete_miner_index(self, miner_hotkey: str):
         """Removes the index for the specified miner."""
 
