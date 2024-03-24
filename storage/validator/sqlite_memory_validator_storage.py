@@ -228,7 +228,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         values.append(
                             [
                                 miner_id,
-                                int(source),
                                 self.label_dict.get_or_insert(
                                     self._label_value_parse_str(compressed_bucket.label)
                                 ),
@@ -261,16 +260,16 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def _process_read_results(self, cursor, source, scored_buckets):
         # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
         for row in cursor:
-            label_value = self.label_dict.get_by_id(row[1])
+            label_value = self.label_dict.get_by_id(row[0])
 
             # Add the bucket to the list of scored buckets on the overall index.
             scored_buckets.append(
                 ScorableDataEntityBucket(
-                    time_bucket_id=int(row[2]),
+                    time_bucket_id=int(row[1]),
                     source=source,
                     label=label_value if label_value != "NULL" else None,
-                    size_bytes=int(row[3] if row[3] else 0),
-                    scorable_bytes=int(row[4] if row[4] else 0),
+                    size_bytes=int(row[2] if row[2] else 0),
+                    scorable_bytes=int(row[3] if row[3] else 0),
                 )
             )
 
@@ -304,22 +303,22 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
                     sql_string = f"""WITH
                                     TempBuckets AS (
-                                        SELECT source, labelId, timeBucketId
+                                        SELECT labelId, timeBucketId
                                         FROM {table}
                                         WHERE MinerId = ?
                                     ),
                                     TempAgg AS (
-                                        SELECT source, labelId, timeBucketId,
+                                        SELECT labelId, timeBucketId,
                                         SUM(contentSizeBytes * credibility) as totalAdjContentSizeBytes
                                         FROM {table}
-                                        INNER JOIN TempBuckets USING (source, labelId, timeBucketId)
+                                        INNER JOIN TempBuckets USING (labelId, timeBucketId)
                                         JOIN Miner USING (minerId)
-                                        GROUP BY source, labelId, timeBucketId
+                                        GROUP BY labelId, timeBucketId
                                     )
-                                    SELECT source, labelId, timeBucketId, contentSizeBytes,
+                                    SELECT labelId, timeBucketId, contentSizeBytes,
                                         (contentSizeBytes * (contentSizeBytes * ?) / TempAgg.totalAdjContentSizeBytes) as scorableBytes
                                     FROM {table}
-                                    LEFT JOIN TempAgg USING (source, labelId, timeBucketId)
+                                    LEFT JOIN TempAgg USING (labelId, timeBucketId)
                                     WHERE minerId = ?"""
 
                     cursor.execute(sql_string, [miner_id, miner_credibility, miner_id])

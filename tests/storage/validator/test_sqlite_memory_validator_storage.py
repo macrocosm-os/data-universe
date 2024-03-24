@@ -597,7 +597,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             concurrent.futures.wait(futures)
             print("Verification complete")
 
-    # @unittest.skip("Skip the large index test by default.")
+    @unittest.skip("Skip the large index test by default.")
     def test_many_large_indexes_perf(self):
         """Inserts 250 miners with maximal indexes and reads them back."""
         max_buckets = DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
