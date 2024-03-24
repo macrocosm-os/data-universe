@@ -92,7 +92,7 @@ class Validator:
         self.should_exit: bool = False
         self.is_running: bool = False
         self.thread: threading.Thread = None
-        self.databox_thread: threading.Thread = None
+        # self.databox_thread: threading.Thread = None
         self.lock = threading.RLock()
         self.last_eval_time = dt.datetime.utcnow()
         self.last_weights_set_time = dt.datetime.utcnow()
@@ -240,10 +240,10 @@ class Validator:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
-            self.databox_thread = threading.Thread(
-                target=self.evaluator.run_databox, daemon=True
-            )
-            self.databox_thread.start()
+            # self.databox_thread = threading.Thread(
+            #     target=self.evaluator.run_databox, daemon=True
+            # )
+            # self.databox_thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
 
@@ -280,7 +280,7 @@ class Validator:
             self.should_exit = True
             self.thread.join(5)
             self.evaluator.exit()
-            self.databox_thread.join(5)
+            # self.databox_thread.join(5)
             self.is_running = False
             if self.wandb_run:
                 self.wandb_run.finish()

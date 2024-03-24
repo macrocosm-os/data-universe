@@ -107,17 +107,27 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                       ON Miner (minerId, credibility)"""
 
     # Updated Primary table in which the DataEntityBuckets for all miners are stored.
-    MINER_INDEX_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS MinerIndex (
+    REDDIT_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Reddit (
                                     minerId             INTEGER         NOT NULL,
-                                    source              TINYINT         NOT NULL,
                                     labelId             INTEGER         NOT NULL,
                                     timeBucketId        INTEGER         NOT NULL,
                                     contentSizeBytes    INTEGER         NOT NULL,
-                                    PRIMARY KEY(minerId, source, labelId, timeBucketId)
+                                    PRIMARY KEY(minerId, labelId, timeBucketId)
                                     ) WITHOUT ROWID"""
 
-    MINER_INDEX_TABLE_BUCKET_SIZE_INDEX = """CREATE INDEX IF NOT EXISTS bucket_size_index
-                                             ON MinerIndex (source, labelId, timeBucketId, contentSizeBytes)"""
+    TWITTER_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Twitter (
+                                    minerId             INTEGER         NOT NULL,
+                                    labelId             INTEGER         NOT NULL,
+                                    timeBucketId        INTEGER         NOT NULL,
+                                    contentSizeBytes    INTEGER         NOT NULL,
+                                    PRIMARY KEY(minerId, labelId, timeBucketId)
+                                    ) WITHOUT ROWID"""
+
+    REDDIT_INDEX_TABLE_BUCKET_SIZE_INDEX = """CREATE INDEX IF NOT EXISTS bucket_size_index
+                                             ON Reddit (labelId, timeBucketId, contentSizeBytes)"""
+
+    TWITTER_INDEX_TABLE_BUCKET_SIZE_INDEX = """CREATE INDEX IF NOT EXISTS bucket_size_index
+                                             ON Twitter (labelId, timeBucketId, contentSizeBytes)"""
 
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
@@ -133,9 +143,13 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor.execute(SqliteMemoryValidatorStorage.MINER_TABLE_CREDIBILTY_INDEX)
 
             # Create the Index table (if it does not already exist).
-            cursor.execute(SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_CREATE)
+            cursor.execute(SqliteMemoryValidatorStorage.REDDIT_TABLE_CREATE)
             cursor.execute(
-                SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_BUCKET_SIZE_INDEX
+                SqliteMemoryValidatorStorage.REDDIT_INDEX_TABLE_BUCKET_SIZE_INDEX
+            )
+            cursor.execute(SqliteMemoryValidatorStorage.TWITTER_TABLE_CREATE)
+            cursor.execute(
+                SqliteMemoryValidatorStorage.TWITTER_INDEX_TABLE_BUCKET_SIZE_INDEX
             )
 
             # Lock to avoid concurrency issues on interacting with the database.
@@ -202,8 +216,10 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         miner_id = self._upsert_miner(hotkey, now_str, credibility)
 
         # Parse every DataEntityBucket from the index into a list of values to insert.
-        values = []
+        reddit_values = []
+        twitter_values = []
         for source, compressed_buckets in index.sources.items():
+            values = reddit_values if source == 1 else twitter_values
             for compressed_bucket in compressed_buckets:
                 for time_bucket_id, size_bytes in zip(
                     compressed_bucket.time_bucket_ids, compressed_bucket.sizes_bytes
@@ -232,15 +248,31 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 cursor = connection.cursor()
                 # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
                 # Batch in groups of 1m if necessary to avoid congestion issues.
-                value_subsets = [
-                    values[x : x + 1_000_000] for x in range(0, len(values), 1_000_000)
-                ]
-                for value_subset in value_subsets:
-                    cursor.executemany(
-                        """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
-                        value_subset,
-                    )
+                cursor.executemany(
+                    """INSERT OR IGNORE INTO Reddit (minerId, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?)""",
+                    reddit_values,
+                )
+                cursor.executemany(
+                    """INSERT OR IGNORE INTO Twitter (minerId, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?)""",
+                    twitter_values,
+                )
                 connection.commit()
+
+    def _process_read_results(self, cursor, source, scored_buckets):
+        # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
+        for row in cursor:
+            label_value = self.label_dict.get_by_id(row[1])
+
+            # Add the bucket to the list of scored buckets on the overall index.
+            scored_buckets.append(
+                ScorableDataEntityBucket(
+                    time_bucket_id=int(row[2]),
+                    source=source,
+                    label=label_value if label_value != "NULL" else None,
+                    size_bytes=int(row[3] if row[3] else 0),
+                    scorable_bytes=int(row[4] if row[4] else 0),
+                )
+            )
 
     @statsd.timed("storage.validator.read_miner_index")
     def read_miner_index(
@@ -264,45 +296,35 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 last_updated = result[1]
                 miner_credibility = result[2]
 
-                # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
-                sql_string = """WITH
-                                TempBuckets AS (
-                                    SELECT source, labelId, timeBucketId
-                                    FROM MinerIndex
-                                    WHERE MinerId = ?
-                                ),
-                                TempAgg AS (
-                                    SELECT source, labelId, timeBucketId,
-                                    SUM(contentSizeBytes * credibility) as totalAdjContentSizeBytes
-                                    FROM MinerIndex
-                                    INNER JOIN TempBuckets USING (source, labelId, timeBucketId)
-                                    JOIN Miner USING (minerId)
-                                    GROUP BY source, labelId, timeBucketId
-                                )
-                                SELECT source, labelId, timeBucketId, contentSizeBytes,
-                                    (contentSizeBytes * (contentSizeBytes * ?) / TempAgg.totalAdjContentSizeBytes) as scorableBytes
-                                FROM MinerIndex
-                                LEFT JOIN TempAgg USING (source, labelId, timeBucketId)
-                                WHERE minerId = ?"""
-
-                cursor.execute(sql_string, [miner_id, miner_credibility, miner_id])
-
                 # Create to a list to hold each of the ScorableDataEntityBuckets we generate for this miner.
                 scored_data_entity_buckets = []
+                for source in [1, 2]:
+                    table = "Reddit" if source == 1 else "Twitter"
 
-                # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
-                for row in cursor:
-                    label_value = self.label_dict.get_by_id(row[1])
+                    # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
+                    sql_string = f"""WITH
+                                    TempBuckets AS (
+                                        SELECT source, labelId, timeBucketId
+                                        FROM {table}
+                                        WHERE MinerId = ?
+                                    ),
+                                    TempAgg AS (
+                                        SELECT source, labelId, timeBucketId,
+                                        SUM(contentSizeBytes * credibility) as totalAdjContentSizeBytes
+                                        FROM {table}
+                                        INNER JOIN TempBuckets USING (source, labelId, timeBucketId)
+                                        JOIN Miner USING (minerId)
+                                        GROUP BY source, labelId, timeBucketId
+                                    )
+                                    SELECT source, labelId, timeBucketId, contentSizeBytes,
+                                        (contentSizeBytes * (contentSizeBytes * ?) / TempAgg.totalAdjContentSizeBytes) as scorableBytes
+                                    FROM {table}
+                                    LEFT JOIN TempAgg USING (source, labelId, timeBucketId)
+                                    WHERE minerId = ?"""
 
-                    # Add the bucket to the list of scored buckets on the overall index.
-                    scored_data_entity_buckets.append(
-                        ScorableDataEntityBucket(
-                            time_bucket_id=int(row[2]),
-                            source=int(row[0]),
-                            label=label_value if label_value != "NULL" else None,
-                            size_bytes=int(row[3] if row[3] else 0),
-                            scorable_bytes=int(row[4] if row[4] else 0),
-                        )
+                    cursor.execute(sql_string, [miner_id, miner_credibility, miner_id])
+                    self._process_read_results(
+                        cursor, source, scored_data_entity_buckets
                     )
 
                 scored_index = ScorableMinerIndex(
@@ -326,7 +348,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             # Delete the rows for the specified miner.
             result = cursor.fetchone()
             if result is not None:
-                cursor.execute("DELETE FROM MinerIndex WHERE minerId = ?", [result[0]])
+                cursor.execute("DELETE FROM Reddit WHERE minerId = ?", [result[0]])
+                cursor.execute("DELETE FROM Twitter WHERE minerId = ?", [result[0]])
                 connection.commit()
 
     def delete_miner(self, hotkey: str):
