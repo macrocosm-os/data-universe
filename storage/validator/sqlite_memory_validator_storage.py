@@ -153,6 +153,9 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         # Avoid using a row_factory that would allow parsing results by column name for performance.
         # connection.row_factory = sqlite3.Row
         connection.isolation_level = None
+
+        connection.execute("PRAGMA synchronous = OFF;")
+        connection.execute("PRAGMA journal_mode = MEMORY;")
         return connection
 
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
@@ -239,20 +242,27 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             self._delete_miner_index(hotkey)
 
             with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
-                # Batch in groups of 1m if necessary to avoid congestion issues.
-                value_subsets = [
-                    values[x : x + 1_000_000] for x in range(0, len(values), 1_000_000)
-                ]
-                for value_subset in value_subsets:
-                    bt.logging.trace(f"{hotkey}: inserting 1M rows")
-                    cursor.executemany(
-                        """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
-                        value_subset,
-                    )
-                connection.commit()
-                bt.logging.trace(f"{hotkey}: Committed insert")
+                try:
+                    connection.execute("BEGIN TRANSACTION;")
+
+                    cursor = connection.cursor()
+                    # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
+                    # Batch in groups of 1m if necessary to avoid congestion issues.
+                    value_subsets = [
+                        values[x : x + 1_000_000]
+                        for x in range(0, len(values), 1_000_000)
+                    ]
+                    for value_subset in value_subsets:
+                        bt.logging.trace(f"{hotkey}: inserting up to 1M rows")
+                        cursor.executemany(
+                            """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
+                            value_subset,
+                        )
+                    connection.commit()
+                    bt.logging.trace(f"{hotkey}: Committed insert")
+                except sqlite3.Error as e:
+                    connection.rollback()
+                    bt.logging.error(f"Error inserting compressed index: {e}")
 
     @statsd.timed("storage.validator.read_miner_index")
     def read_miner_index(
