@@ -112,7 +112,9 @@ class MinerEvaluator:
         bt.logging.info(f"{hotkey}: Evaluating miner.")
 
         # Query the miner for the latest index.
+        bt.logging.trace(f"{hotkey}: starting _update_and_get_miner_index.")
         index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
+        bt.logging.trace(f"{hotkey}: finished _update_and_get_miner_index.")
         if not index:
             # The miner hasn't provided an index yet, so we can't validate them. Count as a failed validation.
             bt.logging.info(
@@ -132,6 +134,7 @@ class MinerEvaluator:
             return
 
         # From that index, find a data entity bucket to sample and get it from the miner.
+        bt.logging.trace(f"{hotkey} Choosing a data entity bucket to query")
         chosen_data_entity_bucket: DataEntityBucket = (
             vali_utils.choose_data_entity_bucket_to_query(index)
         )
@@ -150,6 +153,7 @@ class MinerEvaluator:
                     ),
                     timeout=120,
                 )
+                bt.logging.trace(f"{hotkey} Got GetDataEntityBucket response")
 
         data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
@@ -183,6 +187,9 @@ class MinerEvaluator:
         (valid, reason) = vali_utils.are_entities_valid(
             data_entities, chosen_data_entity_bucket
         )
+        bt.logging.trace(
+            f"{hotkey} Finished performing basic validation. Checking uniqueness."
+        )
         if not valid:
             bt.logging.info(
                 f"{hotkey}: Failed basic entity validation on Bucket ID: {chosen_data_entity_bucket.id} with reason: {reason}"
@@ -203,6 +210,9 @@ class MinerEvaluator:
         # Perform uniqueness validation on the entity contents.
         # If we didn't, the miner could just return the same data over and over again.
         unique = vali_utils.are_entities_unique(data_entities)
+        bt.logging.trace(
+            f"{hotkey} Finished checking uniqueness. Choosing entities to validate"
+        )
         if not unique:
             bt.logging.info(
                 f"{hotkey}: Failed enitity uniqueness checks on Bucket ID: {chosen_data_entity_bucket.id}."
@@ -240,7 +250,9 @@ class MinerEvaluator:
             f"{hotkey}: Data validation on selected entities finished with results: {validation_results}"
         )
 
+        bt.logging.trace(f"{hotkey} Scorer about to process validation result")
         self.scorer.on_miner_evaluated(uid, index, validation_results)
+        bt.logging.trace(f"{hotkey} Scorer finished processing validation result")
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
@@ -309,6 +321,8 @@ class MinerEvaluator:
             # Compute the timeout, so that all threads are waited for a total of 5 minutes.
             timeout = max(0, (end - datetime.datetime.now()).total_seconds())
             t.join(timeout=timeout)
+            bt.logging.trace(f"Joined thread. Probably about to wait for the next one.")
+
         bt.logging.trace(f"Finished waiting for {len(threads)} miner eval.")
 
         # Run the next evaluation batch immediately.
@@ -361,11 +375,13 @@ class MinerEvaluator:
             responses: List[GetMinerIndex] = None
             with statsd.timed("get_miner_index_time"):
                 async with bt.dendrite(wallet=self.wallet) as dendrite:
+                    bt.logging.trace(f"{hotkey}: Sending GetMinerIndex.")
                     responses = await dendrite.forward(
                         axons=[miner_axon],
                         synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
                         timeout=120,
                     )
+                    bt.logging.trace(f"{hotkey}: Finished sending GetMinerIndex.")
 
             response = vali_utils.get_single_successful_response(
                 responses, GetMinerIndex
@@ -380,6 +396,7 @@ class MinerEvaluator:
             # Validate the index.
             miner_index = None
             try:
+                bt.logging.trace(f"{hotkey}: Getting index from response")
                 miner_index = vali_utils.get_miner_index_from_response(response)
             except ValueError as e:
                 bt.logging.info(
@@ -391,13 +408,18 @@ class MinerEvaluator:
             assert miner_index is not None, "Miner index should not be None."
 
             # Miner replied with a valid index. Store it and return it.
+            bt.logging.trace(f"{hotkey}: Getting miner credibility.")
             miner_credibility = self.scorer.get_miner_credibility(uid)
             bt.logging.success(
                 f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
                 + f"across {CompressedMinerIndex.bucket_count(miner_index)} buckets."
             )
+            bt.logging.trace(f"{hotkey}: Upserting compressed index.")
             self.storage.upsert_compressed_miner_index(
                 miner_index, hotkey, miner_credibility
+            )
+            bt.logging.trace(
+                f"{hotkey}: Done upserting the compressed index. Reading scorable index."
             )
 
             return self.storage.read_miner_index(hotkey)

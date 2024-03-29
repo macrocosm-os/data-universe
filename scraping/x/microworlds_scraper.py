@@ -74,8 +74,14 @@ class MicroworldsTwitterScraper(Scraper):
                     statsd.gauge("active_request_count", active_count)
                     statsd.gauge("Active tasks", len(asyncio.all_tasks()))
                     with statsd.timed("twitter_microworlds_latency"):
+                        bt.logging.trace(
+                            f"Running Twitter Microworlds Actor for URI: {entity.uri}."
+                        )
                         dataset: List[dict] = await self.runner.run(
                             run_config, run_input
+                        )
+                        bt.logging.trace(
+                            f"Finished Twitter Microworlds Actor for URI: {entity.uri}."
                         )
                         statsd.increment("twitter_microworlds", tags=["status:success"])
                 except (
