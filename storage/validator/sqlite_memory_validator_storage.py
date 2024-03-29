@@ -158,7 +158,9 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
         miner_id = 0
 
+        bt.logging.trace(f"{hotkey} _upsert_miner waiting for lock")
         with self.lock:
+            bt.logging.trace(f"{hotkey} _upsert_miner got lock")
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
 
@@ -176,6 +178,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
                 miner_id = cursor.fetchone()[0]
 
+        bt.logging.trace(f"{hotkey} _upsert_miner returning minerId")
         return miner_id
 
     def _label_value_parse(self, label: Optional[DataLabel]) -> str:
@@ -231,6 +234,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         bt.logging.trace(f"{hotkey}: Constructed rows for insert. Waiting for lock.")
 
         with self.lock:
+            bt.logging.trace(f"{hotkey}: got lock")
             # Clear the previous keys for this miner.
             self._delete_miner_index(hotkey)
 
@@ -361,7 +365,9 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
     def read_miner_last_updated(self, miner_hotkey: str) -> Optional[dt.datetime]:
         """Gets when a specific miner was last updated."""
+        bt.logging.trace(f"{miner_hotkey}: read_miner_last_updated. Waiting for lock.")
         with self.lock:
+            bt.logging.trace(f"{miner_hotkey}: read_miner_last_updated. Got lock.")
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
                 cursor.execute(
