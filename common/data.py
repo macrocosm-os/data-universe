@@ -29,7 +29,8 @@ class TimeBucket(StrictBaseModel):
     """Represents a specific time bucket in the linear flow of time."""
 
     # Makes the object "Immutable" once created.
-    model_config = ConfigDict(frozen=True)
+    class Config:
+        frozen = True
 
     id: PositiveInt = Field(
         description="Monotonically increasing value idenitifying the given time bucket"
@@ -105,7 +106,8 @@ class DataEntity(StrictBaseModel):
     """A logical unit of data that has been scraped. E.g. a Reddit post"""
 
     # Makes the object "Immutable" once created.
-    model_config = ConfigDict(frozen=True)
+    class Config:
+        frozen = True
 
     # Path from which the entity was generated.
     uri: str
@@ -136,7 +138,8 @@ class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
 
     # Makes the object "Immutable" once created.
-    model_config = ConfigDict(frozen=True)
+    class Config:
+        frozen = True
 
     time_bucket: TimeBucket
     source: DataSource = Field()
