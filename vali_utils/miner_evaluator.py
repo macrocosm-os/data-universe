@@ -183,6 +183,10 @@ class MinerEvaluator:
         (valid, reason) = vali_utils.are_entities_valid(
             data_entities, chosen_data_entity_bucket
         )
+        if data_entity_bucket.id.label is None and len(data_entities) > 50_000:
+            bt.logging.info(
+                f"XXX: Received a very large labeled bucket: {data_entities}"
+            )
         if not valid:
             bt.logging.info(
                 f"{hotkey}: Failed basic entity validation on Bucket ID: {chosen_data_entity_bucket.id} with reason: {reason}"
