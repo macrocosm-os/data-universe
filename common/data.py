@@ -1,5 +1,4 @@
 import dataclasses
-import time
 from common import constants
 from common.date_range import DateRange
 from . import utils
@@ -150,6 +149,34 @@ class DataEntityBucketId(StrictBaseModel):
     # Manually define a hash function to handle TimeBucket not being seen as hashable by pydantic.
     def __hash__(self) -> int:
         return hash(hash(self.time_bucket) + hash(self.source) + hash(self.label))
+
+
+@dataclasses.dataclass()
+class CompressedDataEntity:
+    """A compressed version of the DataEntity to reduce bytes sent on the wire."""
+
+    # Path from which the entity was generated.
+    uri: str = dataclasses.field(metadata={"serialization_alias": "u"})
+
+    # When the entity was created (by the source, not by the miner).
+    # Should be in UTC.
+    datetime: dt.datetime = dataclasses.field(metadata={"serialization_alias": "d"})
+
+    # The serialized data. Format is determined by the source.
+    content: bytes = dataclasses.field(metadata={"serialization_alias": "c"})
+
+
+class CompressedDataEntities(BaseModel):
+    """A compressed version of all DataEntities in a single DataEntityBucket."""
+
+    id: DataEntityBucketId = Field(
+        description="The DataEntityBucket that all the 'entities' belong to."
+    )
+
+    entities: List[CompressedDataEntity] = Field(
+        description="List of compressed data entities in this bucket.",
+        default_factory=list,
+    )
 
 
 class DataEntityBucket(StrictBaseModel):

@@ -6,8 +6,11 @@ import time
 from common import constants, utils
 
 from common.data import (
+    CompressedDataEntities,
+    CompressedDataEntity,
     CompressedEntityBucket,
     CompressedMinerIndex,
+    DataEntityBucketId,
     DataLabel,
     DataSource,
     TimeBucket,
@@ -153,6 +156,24 @@ class TestData(unittest.TestCase):
         """Tests that the data label value is checked to be <32 characters even after .lower()."""
         with self.assertRaises(ValidationError):
             bad_label = DataLabel(value="#İsrailleTicaretFilistineİhanet")
+
+    def test_compressed_data_entities_serialization(self):
+        """Tests that the compressed version of data entity can be serialized and deserialized."""
+        compressed_entity = CompressedDataEntity(
+            uri="http://foobar.com",
+            datetime=dt.datetime.now(),
+            content=b"foobar",
+        )
+
+        compressed_entities = CompressedDataEntities(
+            id=DataEntityBucketId(
+                source=DataSource.REDDIT,
+                label=DataLabel(value="foobar"),
+                time_bucket=TimeBucket.from_datetime(dt.datetime.now()),
+            ),
+            entities=[compressed_entity],
+        )
+        print(compressed_entities.json())
 
 
 if __name__ == "__main__":

@@ -72,13 +72,21 @@ class GetDataEntityBucket(BaseProtocol):
         default=None,
     )
 
-    # Required request output, filled by recieving axon.
+    # Required request output, filled by receiving axon.
+    # TODO: Deprecate once compressed_data_entities is fully adopted.
     data_entities: List[DataEntity] = pydantic.Field(
         title="data_entities",
         description="All of the data that makes up the requested DataEntityBucket.",
         frozen=False,
         repr=False,
         default_factory=list,
+    )
+
+    # Required request output that should be used for all requests with version >= 5.
+    compressed_data_entities: str = pydantic.Field(
+        description="A preserialized compressed version of all DataEntities in the requested DataEntityBucket.",
+        repr=False,
+        default="",
     )
 
 

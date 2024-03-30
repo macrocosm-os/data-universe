@@ -4,6 +4,8 @@ import unittest
 import datetime as dt
 import bittensor as bt
 from common.data import (
+    CompressedDataEntities,
+    CompressedDataEntity,
     CompressedEntityBucket,
     CompressedMinerIndex,
     DataEntity,
@@ -133,6 +135,7 @@ class TestGetDataEntityBucket(unittest.TestCase):
         # Also check that the headers can be constructed.
         request.to_headers()
 
+        # Check the old response format.
         response = request.copy()
         response.data_entities = [
             DataEntity(
@@ -145,6 +148,26 @@ class TestGetDataEntityBucket(unittest.TestCase):
             )
             for i in range(350_000)
         ]
+        response_json = serialize_like_axon(response)
+        print(len(response_json))
+
+        # Check the new response format.
+        response = request.copy()
+        response.compressed_data_entities = CompressedDataEntities(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(dt.datetime.utcnow()),
+                label=DataLabel(value="r/bittensor_"),
+                source=DataSource.REDDIT,
+            ),
+            entities=[
+                CompressedDataEntity(
+                    uri=f"http://uri/{i}",
+                    content=b"Hello, world!",
+                    datetime=dt.datetime.utcnow(),
+                )
+                for i in range(350_000)
+            ],
+        ).json()
         response_json = serialize_like_axon(response)
         print(len(response_json))
 

@@ -25,7 +25,7 @@ DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS = 30
 MAX_LABEL_LENGTH = 32
 
 # The current protocol version (int)
-PROTOCOL_VERSION = 4
+PROTOCOL_VERSION = 5
 
 # Baseline threshold under which score increase limits are not applied.
 SCORE_GROWTH_LIMIT_THRESHOLD = utils.mb_to_bytes(1000)

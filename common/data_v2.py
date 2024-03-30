@@ -9,13 +9,12 @@ From the original data structures we learned:
 Hence, with the V2 models, we make trade-off the nicer coding symantics in exchange for better performance.
 
 If a class needs to be included as a Field in a pydantic BaseModel, it should be a dataclass (which adds a small overhead),
-because pydantic know how to serialize dataclasses, as long as all fields are themselves JSON serializable. 
+because pydantic knows how to serialize dataclasses, as long as all fields are themselves JSON serializable. 
 
 As a rule of thumb:
 1. If the class needs to perform validation on fields, use a class with a custom __init__, __eq__, and __hash__.
-2. Always use __slots__. T
+2. Always use __slots__. 
 """
-
 
 import datetime as dt
 from pydantic import BaseModel, Field
