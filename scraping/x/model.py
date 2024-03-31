@@ -1,7 +1,7 @@
 import datetime as dt
 import json
 from re import X
-from typing import List
+from typing import Dict, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from common import constants
@@ -15,8 +15,12 @@ class XContent(BaseModel):
     The model helps standardize the data format for tweets, even if they're scraped using different methods.
     """
 
-    # Ignore extra fields since we only care about the fields defined in this model.
-    model_config = ConfigDict(extra="ignore")
+    class Config:
+        extra = "forbid"
+
+    # model_config should NOT be set by Miners.
+    # In the near future, Validators will penalized Miners who set this field.
+    model_config: Dict[str, str] = Field(default=None)
 
     username: str
     text: str
@@ -36,7 +40,7 @@ class XContent(BaseModel):
         if obfuscate_content_date:
             content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
 
-        content_bytes = content.json().encode("utf-8")
+        content_bytes = content.json(exclude_none=True).encode("utf-8")
         return DataEntity(
             uri=content.url,
             datetime=entity_timestamp,

@@ -127,14 +127,16 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
 
     # Create a set to store the hash of each entity content.
     entity_content_hash_set = set()
+    uris = set()
 
     for entity in entities:
         entity_content_hash = hashlib.sha1(entity.content).hexdigest()
         # Check that this hash has not been seen before.
-        if entity_content_hash in entity_content_hash_set:
+        if entity_content_hash in entity_content_hash_set or entity.uri in uris:
             return False
         else:
             entity_content_hash_set.add(entity_content_hash)
+            uris.add(entity.uri)
 
     return True
 

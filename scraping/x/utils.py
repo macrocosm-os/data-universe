@@ -1,13 +1,28 @@
 import bittensor as bt
 import re
 import traceback
-from typing import List
+from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
 from scraping import utils
 from scraping.scraper import ValidationResult
 
 from scraping.x.model import XContent
+
+
+def _validate_model_config(model_config: Dict[str, str]) -> bool:
+    """Validates that extra content isn't stowed away in the 'model_config'
+
+    Args:
+        model_config (Dict[str, str]): Dict to validate.
+
+    Returns:
+        bool: True if the model configuration is valid.
+    """
+    # The model_config must either be empty, or contain only the 'extra' key with the value 'ignore'.
+    return model_config is None or (
+        len(model_config) == 1 and model_config.get("extra") == "ignore"
+    )
 
 
 def is_valid_twitter_url(url: str) -> bool:
@@ -172,6 +187,17 @@ def validate_tweet_content(
         return ValidationResult(
             is_valid=False,
             reason="Tweet hashtags do not match",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Validate the model_config.
+    if not _validate_model_config(tweet_to_verify.model_config):
+        bt.logging.info(
+            f"Tweet content contains an invalid model_config: {tweet_to_verify.model_config}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Tweet content contains an invalid model_config",
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
