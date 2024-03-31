@@ -24,6 +24,9 @@ class RedditContent(BaseModel):
     Useful to standardize the representation of Reddit data, that could be scraped from different sources.
     """
 
+    class Config:
+        extra = "forbid"
+
     id: str = Field(description="The unique ID of the post/comment")
     url: str = Field(
         description="URL of the post/comment",

@@ -1,6 +1,10 @@
 import unittest
 
+import datetime as dt
+
+from common.data import DataEntity, DataLabel, DataSource
 from scraping.x import utils
+from scraping.x.model import XContent
 
 
 class TestUtils(unittest.TestCase):
@@ -52,6 +56,78 @@ class TestUtils(unittest.TestCase):
         tweet_url = "https://twitter.com/status/user/1733247372950397060"
         with self.assertRaises(ValueError):
             utils.extract_user(tweet_url)
+
+    def test_validate_tweet_content(self):
+        """Validates a correct tweet passes validation."""
+        actual_tweet = XContent(
+            username="@bittensor_alert",
+            text="🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC",
+            url="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            timestamp=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#Bittensor", "#TAO", "#MEXC"],
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            content='{"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"],"model_config":{"extra": "ignore"}}',
+            content_size_bytes=291,
+        )
+
+        validation_result = utils.validate_tweet_content(
+            actual_tweet, entity_to_validate, True
+        )
+        self.assertTrue(validation_result.is_valid)
+
+    def test_validate_tweet_content_prevents_extra_fields(self):
+        """Validates that extra fields in the content fail validation."""
+        actual_tweet = XContent(
+            username="@bittensor_alert",
+            text="🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC",
+            url="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            timestamp=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#Bittensor", "#TAO", "#MEXC"],
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            content='{"extra_field":"look Ma, bigger content!","username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"],"model_config":{"extra": "ignore"}}',
+            content_size_bytes=331,
+        )
+
+        validation_result = utils.validate_tweet_content(
+            actual_tweet, entity_to_validate, True
+        )
+        self.assertFalse(validation_result.is_valid)
+
+    def test_validate_tweet_content_validates_model_config(self):
+        """Validates that the model_config is validated, if provided."""
+        actual_tweet = XContent(
+            username="@bittensor_alert",
+            text="🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC",
+            url="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            timestamp=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#Bittensor", "#TAO", "#MEXC"],
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            content='{"model_config":{"extra": "ignore123456"},"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"]}',
+            content_size_bytes=296,
+        )
+
+        validation_result = utils.validate_tweet_content(
+            actual_tweet, entity_to_validate, True
+        )
+        self.assertFalse(validation_result.is_valid)
 
 
 if __name__ == "__main__":
