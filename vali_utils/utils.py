@@ -127,6 +127,7 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
 
     # Create a set to store the hash of each entity content.
     entity_content_hash_set = set()
+    uris = set()
 
     for entity in entities:
         entity_content_hash = hashlib.sha1(entity.content).hexdigest()
@@ -135,6 +136,12 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
             return False
         else:
             entity_content_hash_set.add(entity_content_hash)
+
+        if entity.uri in uris:
+            bt.logging.error("YYY: Found a duplicate URI: " + entity.uri)
+            return False
+        else:
+            uris.add(entity.uri)
 
     return True
 
