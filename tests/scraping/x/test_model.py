@@ -150,6 +150,25 @@ class TestModel(unittest.TestCase):
             ),
         )
 
+    def test_to_data_entity_content_serialization(self):
+        """Verifies that the content is serialized correctly when converting to a DataEntity."""
+        content = XContent(
+            username="user1",
+            text="Hello world",
+            url="https://twitter.com/123",
+            timestamp=dt.datetime(2024, 3, 30, 1, 2, 3, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#bittensor", "$TAO"],
+        )
+
+        # Convert to entity and back to check granularity of the content timestamp.
+        entity = XContent.to_data_entity(content=content, obfuscate_content_date=True)
+
+        # The content should not contain the model_config field.
+        self.assertEqual(
+            entity.content,
+            b'{"username": "user1", "text": "Hello world", "url": "https://twitter.com/123", "timestamp": "2024-03-30T01:02:00+00:00", "tweet_hashtags": ["#bittensor", "$TAO"]}',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

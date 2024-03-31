@@ -122,6 +122,29 @@ class TestModel(unittest.TestCase):
             ),
         )
 
+    def test_to_data_entity_content_serialization(self):
+        """Verifies that the content is serialized correctly when converting to a DataEntity."""
+        content = RedditContent(
+            id="postId",
+            url="https://reddit.com/123",
+            username="user1",
+            communityName="r/bitcoin",
+            body="Hello world",
+            createdAt=dt.datetime(2024, 3, 30, 1, 2, 3, tzinfo=dt.timezone.utc),
+            dataType=RedditDataType.POST,
+            title="Title text",
+        )
+
+        # Convert to entity and back to check granularity of the content timestamp.
+        entity = RedditContent.to_data_entity(
+            content=content, obfuscate_content_date=True
+        )
+
+        self.assertEqual(
+            entity.content,
+            b'{"id": "postId", "url": "https://reddit.com/123", "username": "user1", "communityName": "r/bitcoin", "body": "Hello world", "createdAt": "2024-03-30T01:02:00+00:00", "dataType": "post", "title": "Title text", "parentId": null}',
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

@@ -40,7 +40,7 @@ class XContent(BaseModel):
         if obfuscate_content_date:
             content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
 
-        content_bytes = content.json().encode("utf-8")
+        content_bytes = content.json(exclude_none=True).encode("utf-8")
         return DataEntity(
             uri=content.url,
             datetime=entity_timestamp,
