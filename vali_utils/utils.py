@@ -84,6 +84,10 @@ def are_entities_valid(
     for entity in entities:
         actual_size += len(entity.content or b"")
         claimed_size += entity.content_size_bytes
+        bt.logging.debug(
+            f"Entity actual size: {actual_size}, claimed size: {claimed_size}, full print: {entity}"
+        )
+
         if entity.source != data_entity_bucket.id.source:
             return (
                 False,

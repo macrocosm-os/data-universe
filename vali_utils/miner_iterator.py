@@ -33,7 +33,7 @@ class MinerIterator:
             self.index += 1
             if self.index >= len(self.miner_uids):
                 self.index = 0
-            return uid
+            return 59
 
     def peek(self) -> int:
         """Returns the next miner UID without advancing the iterator."""
@@ -42,7 +42,7 @@ class MinerIterator:
                 # This iterator should be infinite. If there are no miner UIDs, raise an error.
                 raise IndexError("No miner UIDs.")
 
-            return self.miner_uids[self.index]
+            return 59
 
     def set_miner_uids(self, miner_uids: List[int]):
         """Updates the miner UIDs to iterate.

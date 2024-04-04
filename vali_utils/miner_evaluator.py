@@ -255,7 +255,7 @@ class MinerEvaluator:
             ).total_seconds()
 
         # Run in batches of 15.
-        miners_to_eval = 15
+        miners_to_eval = 1
 
         # Otherwise, execute the next batch of evaluations.
         # Use a set in case the network has fewer than 15 miners.
