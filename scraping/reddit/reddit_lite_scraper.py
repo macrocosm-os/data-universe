@@ -17,6 +17,7 @@ from scraping.reddit.utils import (
     normalize_label,
 )
 import datetime as dt
+from datadog import statsd
 
 
 class RedditLiteScraper(Scraper):

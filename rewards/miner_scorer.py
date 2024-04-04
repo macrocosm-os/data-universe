@@ -10,6 +10,8 @@ from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult
 
+from datadog import statsd
+
 
 class MinerScorer:
     """Tracks the score of each miner and handles updates to the scores.
@@ -126,6 +128,18 @@ class MinerScorer:
         with self.lock:
             score = 0.0
 
+            for result in validation_results:
+                reason = result.reason
+                if "is not in the expected range":
+                    reason = "entity datetime in not in the expected range"
+                statsd.increment(
+                    "validation_results",
+                    tags=[
+                        "is_valid:" + str(result.is_valid),
+                        f"reason:{reason}",
+                    ],
+                )
+
             # If the miner has an index, update it's credibility based on the validation result and score the current index.
             # Otherwise, score the miner 0 for this round, but don't touch its credibility.
             if index:
@@ -134,6 +148,9 @@ class MinerScorer:
 
                 # Now score the miner based on the amount of data it has, scaled based on
                 # the reward distribution.
+                bt.logging.trace(
+                    f"Miner {uid} has {len(index.scorable_data_entity_buckets)} buckets in the index."
+                )
                 current_time_bucket = TimeBucket.from_datetime(
                     dt.datetime.now(tz=dt.timezone.utc)
                 )
@@ -141,9 +158,12 @@ class MinerScorer:
                     score += self.value_calculator.get_score_for_data_entity_bucket(
                         bucket, current_time_bucket
                     )
+                bt.logging.trace(f"Miner {uid} scorable index is {score}")
 
                 # Scale the miner's score by its credibility, squared.
                 score *= self.miner_credibility[uid] ** 2
+            else:
+                bt.logging.trace(f"Miner {uid} has no index. Score=0")
 
             self._update_score(uid, score)
 
@@ -195,6 +215,8 @@ class MinerScorer:
             self.score_alpha * reward + (1 - self.score_alpha) * self.scores[uid]
         )
 
+        bt.logging.trace(f"Miner {uid} reward={reward}. New score={new_score.item()}")
+
         # If the score is over the growth limit threshold then ensure it isn't growing faster than the percent limit.
         if new_score > constants.SCORE_GROWTH_LIMIT_THRESHOLD:
             new_score = min(
@@ -202,5 +224,9 @@ class MinerScorer:
             )
             # Still allow a score to go from 0 to the SCORE_GROWTH_LIMIT_THRESHOLD in one go.
             new_score = max(new_score, constants.SCORE_GROWTH_LIMIT_THRESHOLD)
+
+            bt.logging.trace(
+                f"Miner {uid} new score was over the limit. New score={new_score}"
+            )
 
         self.scores[uid] = new_score

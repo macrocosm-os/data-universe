@@ -11,6 +11,8 @@ from scraping.x.model import XContent
 from scraping.x import utils
 import datetime as dt
 
+from datadog import statsd
+
 
 class QuackerUrlScraper(Scraper):
     """
@@ -108,6 +110,9 @@ class QuackerUrlScraper(Scraper):
                 )
             )
 
+        valid = sum(1 for result in results if result.is_valid)
+        statsd.increment("quacker_url_scraper.validate.valid", valid)
+        statsd.increment("quacker_url_scraper.validate.invalid", len(results) - valid)
         return results
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
