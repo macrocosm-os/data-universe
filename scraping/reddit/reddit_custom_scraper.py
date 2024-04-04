@@ -120,16 +120,10 @@ class RedditCustomScraper(Scraper):
                 continue
 
             # We found the Reddit content. Validate it.
-            require_obfuscation = (
-                content.created_at
-                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            )
-
             results.append(
                 validate_reddit_content(
                     actual_content=content,
                     entity_to_validate=entity,
-                    require_obfuscated_content_date=require_obfuscation,
                 )
             )
 
@@ -213,15 +207,7 @@ class RedditCustomScraper(Scraper):
 
         data_entities = []
         for content in parsed_contents:
-            require_obfuscation = (
-                content.created_at
-                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            )
-            data_entities.append(
-                RedditContent.to_data_entity(
-                    content=content, obfuscate_content_date=require_obfuscation
-                )
-            )
+            data_entities.append(RedditContent.to_data_entity(content=content))
 
         return data_entities
 

@@ -52,15 +52,12 @@ class RedditContent(BaseModel):
     )
 
     @classmethod
-    def to_data_entity(
-        cls, content: "RedditContent", obfuscate_content_date: bool
-    ) -> DataEntity:
+    def to_data_entity(cls, content: "RedditContent") -> DataEntity:
         """Converts the RedditContent to a DataEntity."""
         entity_created_at = content.created_at
-        if obfuscate_content_date:
-            content.created_at = utils.obfuscate_datetime_to_minute(entity_created_at)
-
+        content.created_at = utils.obfuscate_datetime_to_minute(entity_created_at)
         content_bytes = content.json(by_alias=True).encode("utf-8")
+
         return DataEntity(
             uri=content.url,
             datetime=entity_created_at,
