@@ -183,11 +183,11 @@ class Validator:
                 )
 
                 # Maybe set weights.
-                if self.should_set_weights():
-                    self.set_weights()
+                # if self.should_set_weights():
+                #    self.set_weights()
 
                 # Always save state.
-                self.save_state()
+                # self.save_state()
 
                 self.step += 1
 
