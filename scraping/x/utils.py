@@ -208,6 +208,23 @@ def validate_tweet_content(
         tweet_entity = XContent.to_data_entity(
             content=actual_tweet, obfuscate_content_date=False
         )
+
+        # Extra check that the content size is reasonably close to what we expect.
+        # Allow a 10 byte difference to account for timestamp serialization differences.
+        byte_difference_allowed = 10
+        # The entity generated here will never have a model config, so add that in as buffer if included.
+        if tweet_to_verify.model_config:
+            byte_difference_allowed += len('"model_config":{"extra": "ignore"}"')
+
+        if (
+            entity.content_size_bytes - tweet_entity.content_size_bytes
+        ) > byte_difference_allowed:
+            return ValidationResult(
+                is_valid=False,
+                reason="The claimed bytes are too big compared to the actual tweet.",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
         if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
             return ValidationResult(
                 is_valid=False,

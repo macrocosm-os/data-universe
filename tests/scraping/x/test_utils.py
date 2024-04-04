@@ -129,6 +129,81 @@ class TestUtils(unittest.TestCase):
         )
         self.assertFalse(validation_result.is_valid)
 
+    def test_validate_tweet_content_extra_bytes_below_limit(self):
+        """Validates a tweet with extra bytes below the limit passes validation."""
+        actual_tweet = XContent(
+            username="@bittensor_alert",
+            text="🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC",
+            url="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            timestamp=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#Bittensor", "#TAO", "#MEXC"],
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            # Extra spaces in the content.
+            content='{          "username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"],"model_config":{"extra": "ignore"}}',
+            content_size_bytes=326,
+        )
+
+        validation_result = utils.validate_tweet_content(
+            actual_tweet, entity_to_validate, True
+        )
+        self.assertTrue(validation_result.is_valid)
+
+    def test_validate_tweet_content_extra_bytes_above_limit(self):
+        """Validates a tweet with extra bytes above the limit fails validation."""
+        actual_tweet = XContent(
+            username="@bittensor_alert",
+            text="🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC",
+            url="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            timestamp=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#Bittensor", "#TAO", "#MEXC"],
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            # Extra spaces in the content.
+            content='{           "username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"],"model_config":{"extra": "ignore"}}',
+            content_size_bytes=327,
+        )
+
+        validation_result = utils.validate_tweet_content(
+            actual_tweet, entity_to_validate, True
+        )
+        self.assertFalse(validation_result.is_valid)
+
+    def test_validate_tweet_content_extra_bytes_above_limit_no_config(self):
+        """Validates a tweet with extra bytes above the limit and no model config fails validation."""
+        actual_tweet = XContent(
+            username="@bittensor_alert",
+            text="🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC",
+            url="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            timestamp=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#Bittensor", "#TAO", "#MEXC"],
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            # Extra spaces in the content.
+            content='{           "username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"]}',
+            content_size_bytes=292,
+        )
+
+        validation_result = utils.validate_tweet_content(
+            actual_tweet, entity_to_validate, True
+        )
+        self.assertFalse(validation_result.is_valid)
+
 
 if __name__ == "__main__":
     unittest.main()
