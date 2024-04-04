@@ -130,7 +130,7 @@ class MinerScorer:
 
             for result in validation_results:
                 reason = result.reason
-                if "is not in the expected range":
+                if "is not in the expected range" in reason:
                     reason = "entity datetime in not in the expected range"
                 statsd.increment(
                     "validation_results",
