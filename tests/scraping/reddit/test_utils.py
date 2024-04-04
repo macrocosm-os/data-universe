@@ -87,6 +87,64 @@ class TestUtils(unittest.TestCase):
         )
         self.assertFalse(validation_result.is_valid)
 
+    def test_validate_reddit_content_extra_bytes_below_limit(self):
+        """Verifies the RedditContent allows a small amount of additional bytes on the content."""
+        actual_content = RedditContent(
+            id="t1_kc3w8lk",
+            url="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/",
+            username="KOOLBREEZE144",
+            communityName="r/bittensor_",
+            body="Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?",
+            createdAt=dt.datetime(2023, 12, 5, 16, 35, 16, tzinfo=dt.timezone.utc),
+            dataType=RedditDataType.COMMENT,
+            title=None,
+            parentId="t1_kc3vd3n",
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/",
+            datetime=dt.datetime(2023, 12, 5, 16, 35, 16, tzinfo=dt.timezone.utc),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="r/bittensor_"),
+            # Extra spaces in the content.
+            content=b'{          "id": "t1_kc3w8lk", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?", "createdAt": "2023-12-05T16:35:00+00:00", "dataType": "comment", "parentId": "t1_kc3vd3n"}',
+            content_size_bytes=410,
+        )
+
+        validation_result = utils.validate_reddit_content(
+            actual_content, entity_to_validate, True
+        )
+        self.assertTrue(validation_result.is_valid)
+
+    def test_validate_reddit_content_extra_bytes_above_limit(self):
+        """Verifies the RedditContent forbids too many additional bytes on the content."""
+        actual_content = RedditContent(
+            id="t1_kc3w8lk",
+            url="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/",
+            username="KOOLBREEZE144",
+            communityName="r/bittensor_",
+            body="Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?",
+            createdAt=dt.datetime(2023, 12, 5, 16, 35, 16, tzinfo=dt.timezone.utc),
+            dataType=RedditDataType.COMMENT,
+            title=None,
+            parentId="t1_kc3vd3n",
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/",
+            datetime=dt.datetime(2023, 12, 5, 16, 35, 16, tzinfo=dt.timezone.utc),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="r/bittensor_"),
+            # Extra spaces in the content.
+            content=b'{            "id": "t1_kc3w8lk", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?", "createdAt": "2023-12-05T16:35:00+00:00", "dataType": "comment", "parentId": "t1_kc3vd3n"}',
+            content_size_bytes=411,
+        )
+
+        validation_result = utils.validate_reddit_content(
+            actual_content, entity_to_validate, True
+        )
+        self.assertFalse(validation_result.is_valid)
+
 
 if __name__ == "__main__":
     unittest.main()

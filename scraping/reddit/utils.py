@@ -187,6 +187,19 @@ def validate_reddit_content(
         actual_entity = RedditContent.to_data_entity(
             content=actual_content, obfuscate_content_date=False
         )
+
+        # Extra check that the content size is reasonably close to what we expect.
+        # Allow a 10 byte difference to account for timestamp serialization differences.
+        byte_difference_allowed = 10
+        if (
+            entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
+        ) > byte_difference_allowed:
+            return ValidationResult(
+                is_valid=False,
+                reason="The claimed bytes are too big compared to the actual Reddit content",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
+            )
+
         if not DataEntity.are_non_content_fields_equal(
             actual_entity, entity_to_validate
         ):
