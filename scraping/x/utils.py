@@ -122,18 +122,6 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
-    # Check Tweet timestamp.
-    # Timestamps on the entities must match the tweet exactly to the second.
-    if actual_tweet.timestamp != entity.datetime:
-        bt.logging.info(
-            f"Tweet and Entity timestamps do not match to the second: {entity.datetime} != {actual_tweet.timestamp}."
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Tweet and Entity timestamps do not match to the second",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
-
     # Timestamps on the contents within the entities must be obfuscated to the minute.
     actual_tweet_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(
         actual_tweet.timestamp
