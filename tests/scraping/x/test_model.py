@@ -64,7 +64,7 @@ class TestModel(unittest.TestCase):
             timestamp=timestamp,
             tweet_hashtags=["#loooooooooooooooooooooooonghashtag", "$TAO"],
         )
-        entity = XContent.to_data_entity(content=content, obfuscate_content_date=False)
+        entity = XContent.to_data_entity(content=content)
 
         self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
         self.assertEqual(entity.label.value, "#loooooooooooooooooooooooonghash")
@@ -79,37 +79,10 @@ class TestModel(unittest.TestCase):
             timestamp=timestamp,
             tweet_hashtags=["#İsrailleTicaretFilistineİhanet", "$TAO"],
         )
-        entity = XContent.to_data_entity(content=content, obfuscate_content_date=False)
+        entity = XContent.to_data_entity(content=content)
 
         self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
         self.assertEqual(entity.label.value, "#i̇srailleticaretfilistinei̇hane")
-
-    def test_to_data_entity_non_obfuscated(self):
-        timestamp = dt.datetime(
-            year=2024,
-            month=1,
-            day=2,
-            hour=3,
-            minute=4,
-            second=5,
-            microsecond=6,
-            tzinfo=dt.timezone.utc,
-        )
-        content = XContent(
-            username="user1",
-            text="Hello world",
-            url="https://twitter.com/123",
-            timestamp=timestamp,
-            tweet_hashtags=["#bittensor", "$TAO"],
-        )
-
-        # Convert to entity and back to check granularity of the content timestamp.
-        entity = XContent.to_data_entity(content=content, obfuscate_content_date=False)
-        content_roundtrip = XContent.from_data_entity(entity)
-
-        # Both the entity datetime and the entity content datetime should have full granularity.
-        self.assertEqual(entity.datetime, timestamp)
-        self.assertEqual(content_roundtrip.timestamp, timestamp)
 
     def test_to_data_entity_obfuscated(self):
         timestamp = dt.datetime(
@@ -131,7 +104,7 @@ class TestModel(unittest.TestCase):
         )
 
         # Convert to entity and back to check granularity of the content timestamp.
-        entity = XContent.to_data_entity(content=content, obfuscate_content_date=True)
+        entity = XContent.to_data_entity(content=content)
         content_roundtrip = XContent.from_data_entity(entity)
 
         # The entity datetime should have full granularity but the roundtripped content should not.
@@ -161,7 +134,7 @@ class TestModel(unittest.TestCase):
         )
 
         # Convert to entity and back to check granularity of the content timestamp.
-        entity = XContent.to_data_entity(content=content, obfuscate_content_date=True)
+        entity = XContent.to_data_entity(content=content)
 
         # The content should not contain the model_config field.
         self.assertEqual(

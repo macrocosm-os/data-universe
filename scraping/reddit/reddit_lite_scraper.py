@@ -124,16 +124,10 @@ class RedditLiteScraper(Scraper):
             # We found the Reddit content. Validate it.
             actual_content = items[0]
 
-            require_obfuscation = (
-                actual_content.created_at
-                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            )
-
             results.append(
                 validate_reddit_content(
                     actual_content=actual_content,
                     entity_to_validate=entity,
-                    require_obfuscated_content_date=require_obfuscation,
                 )
             )
 
@@ -203,15 +197,7 @@ class RedditLiteScraper(Scraper):
 
         data_entities = []
         for content in contents:
-            require_obfuscation = (
-                content.created_at
-                >= constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-            )
-            data_entities.append(
-                RedditContent.to_data_entity(
-                    content=content, obfuscate_content_date=require_obfuscation
-                )
-            )
+            data_entities.append(RedditContent.to_data_entity(content=content))
 
         return data_entities
 

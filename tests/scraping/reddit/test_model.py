@@ -19,9 +19,7 @@ class TestModel(unittest.TestCase):
             dataType=RedditDataType.POST,
             title="Title text",
         )
-        entity = RedditContent.to_data_entity(
-            content=content, obfuscate_content_date=False
-        )
+        entity = RedditContent.to_data_entity(content=content)
 
         self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
         self.assertEqual(entity.label.value, "r/looooooooooooooooooooooooongsu")
@@ -39,44 +37,10 @@ class TestModel(unittest.TestCase):
             dataType=RedditDataType.POST,
             title="Title text",
         )
-        entity = RedditContent.to_data_entity(
-            content=content, obfuscate_content_date=False
-        )
+        entity = RedditContent.to_data_entity(content=content)
 
         self.assertEqual(len(entity.label.value), constants.MAX_LABEL_LENGTH)
         self.assertEqual(entity.label.value, "r/i̇srailleticaretfilistinei̇han")
-
-    def test_to_data_entity_non_obfuscated(self):
-        timestamp = dt.datetime(
-            year=2024,
-            month=1,
-            day=2,
-            hour=3,
-            minute=4,
-            second=5,
-            microsecond=6,
-            tzinfo=dt.timezone.utc,
-        )
-        content = RedditContent(
-            id="postId",
-            url="https://reddit.com/123",
-            username="user1",
-            communityName="r/bitcoin",
-            body="Hello world",
-            createdAt=timestamp,
-            dataType=RedditDataType.POST,
-            title="Title text",
-        )
-
-        # Convert to entity and back to check granularity of the content timestamp.
-        entity = RedditContent.to_data_entity(
-            content=content, obfuscate_content_date=False
-        )
-        content_roundtrip = RedditContent.from_data_entity(entity)
-
-        # Both the entity datetime and the entity content datetime should have full granularity.
-        self.assertEqual(entity.datetime, timestamp)
-        self.assertEqual(content_roundtrip.created_at, timestamp)
 
     def test_to_data_entity_obfuscated(self):
         timestamp = dt.datetime(
@@ -101,9 +65,7 @@ class TestModel(unittest.TestCase):
         )
 
         # Convert to entity and back to check granularity of the content timestamp.
-        entity = RedditContent.to_data_entity(
-            content=content, obfuscate_content_date=True
-        )
+        entity = RedditContent.to_data_entity(content=content)
         content_roundtrip = RedditContent.from_data_entity(entity)
 
         # The entity datetime should have full granularity but the roundtripped content should not.
@@ -136,9 +98,7 @@ class TestModel(unittest.TestCase):
         )
 
         # Convert to entity and back to check granularity of the content timestamp.
-        entity = RedditContent.to_data_entity(
-            content=content, obfuscate_content_date=True
-        )
+        entity = RedditContent.to_data_entity(content=content)
 
         self.assertEqual(
             entity.content,

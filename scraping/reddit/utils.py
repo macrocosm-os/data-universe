@@ -24,7 +24,6 @@ def is_valid_reddit_url(url: str) -> bool:
 def validate_reddit_content(
     actual_content: RedditContent,
     entity_to_validate: DataEntity,
-    require_obfuscated_content_date: bool,
 ) -> ValidationResult:
     """Verifies the RedditContent is valid by the definition provided by entity."""
     content_to_validate = None
@@ -95,23 +94,22 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
-    # Check Reddit created_at
+    # Timestamps on the contents within the entities must be obfuscated to the minute.
     # If checking an data entity with obfuscated content we compare to the entity directly instead.
-    if require_obfuscated_content_date:
-        actual_content_obfuscated = utils.obfuscate_datetime_to_minute(
-            actual_content.created_at
-        )
-        if content_to_validate.created_at != actual_content_obfuscated:
+    actual_content_obfuscated = utils.obfuscate_datetime_to_minute(
+        actual_content.created_at
+    )
+    if content_to_validate.created_at != actual_content_obfuscated:
+        if content_to_validate.created_at == actual_content.created_at:
             bt.logging.info(
-                f"Reddit timestamps do not match: {actual_content} != {content_to_validate}"
+                f"Provided Reddit content datetime was not obfuscated to the minute as required: {actual_content} != {content_to_validate}"
             )
             return ValidationResult(
                 is_valid=False,
-                reason="Reddit timestamps do not match",
+                reason="Provided Reddit content datetime was not obfuscated to the minute as required",
                 content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
-    else:
-        if content_to_validate.created_at != actual_content.created_at:
+        else:
             bt.logging.info(
                 f"Reddit timestamps do not match: {actual_content} != {content_to_validate}"
             )
@@ -183,10 +181,20 @@ def validate_reddit_content(
     # Wahey! The content is valid.
     # One final check. Does the Reddit content match the data entity information?
     try:
-        # It does not matter if we obfuscate the content here since we only check non content.
-        actual_entity = RedditContent.to_data_entity(
-            content=actual_content, obfuscate_content_date=False
-        )
+        actual_entity = RedditContent.to_data_entity(content=actual_content)
+
+        # Extra check that the content size is reasonably close to what we expect.
+        # Allow a 10 byte difference to account for timestamp serialization differences.
+        byte_difference_allowed = 10
+        if (
+            entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
+        ) > byte_difference_allowed:
+            return ValidationResult(
+                is_valid=False,
+                reason="The claimed bytes are too big compared to the actual Reddit content",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
+            )
+
         if not DataEntity.are_non_content_fields_equal(
             actual_entity, entity_to_validate
         ):

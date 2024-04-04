@@ -392,17 +392,6 @@ class Miner:
             )
             return synapse
 
-        # Check that none of the requested buckets are before the content obfuscation time start.
-        minimum_time_bucket = TimeBucket.from_datetime(
-            constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD
-        )
-        for id in synapse.data_entity_bucket_ids:
-            if id.time_bucket.id < minimum_time_bucket.id:
-                bt.logging.warning(
-                    f"Rejecting GetContentsByBuckets request from {synapse.dendrite.hotkey} at {synapse.dendrite.ip} for requesting a data entity bucket: {id} before {constants.REDUCED_CONTENT_DATETIME_GRANULARITY_THRESHOLD}."
-                )
-                return synapse
-
         # Get a dict of all the contents by DataEntityBucketId for the requested Buckets.
         buckets_to_contents = self.storage.list_contents_in_data_entity_buckets(
             synapse.data_entity_bucket_ids
