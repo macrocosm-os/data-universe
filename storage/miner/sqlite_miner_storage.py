@@ -324,6 +324,10 @@ class SqliteMinerStorage(MinerStorage):
                         }
                     )
                     self.cached_index_updated = dt.datetime.now()
+                    bt.logging.success(
+                        f"Created cached index of {CompressedMinerIndex.size_bytes(self.cached_index_4)} bytes "
+                        + f"across {CompressedMinerIndex.bucket_count(self.cached_index_4)} buckets."
+                    )
 
     def list_contents_in_data_entity_buckets(
         self, data_entity_bucket_ids: List[DataEntityBucketId]
