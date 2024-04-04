@@ -146,7 +146,7 @@ class TestUtils(unittest.TestCase):
         )
 
         validation_result = utils.validate_reddit_content(
-            actual_content, entity_to_validate, True
+            actual_content, entity_to_validate
         )
         self.assertTrue(validation_result.is_valid)
 
@@ -175,7 +175,7 @@ class TestUtils(unittest.TestCase):
         )
 
         validation_result = utils.validate_reddit_content(
-            actual_content, entity_to_validate, True
+            actual_content, entity_to_validate
         )
         self.assertFalse(validation_result.is_valid)
 

@@ -94,18 +94,6 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
-    # Check Reddit created_at.
-    # Timestamps on the entities must match the reddit submission/post exactly to the second.
-    if actual_content.created_at != entity_to_validate.datetime:
-        bt.logging.info(
-            f"Reddit and Entity timestamps do not match to the second: {entity_to_validate.datetime} != {actual_content.created_at}"
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Reddit and Entity timestamps do not match to the second",
-            content_size_bytes_validated=entity_to_validate.content_size_bytes,
-        )
-
     # Timestamps on the contents within the entities must be obfuscated to the minute.
     # If checking an data entity with obfuscated content we compare to the entity directly instead.
     actual_content_obfuscated = utils.obfuscate_datetime_to_minute(
