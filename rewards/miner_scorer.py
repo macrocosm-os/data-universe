@@ -142,8 +142,8 @@ class MinerScorer:
                         bucket, current_time_bucket
                     )
 
-                # Scale the miner's score by its credibility, squared.
-                score *= self.miner_credibility[uid] ** 2
+                # Scale the miner's score by its credibility to the power of 2.5.
+                score *= self.miner_credibility[uid] ** 2.5
 
             self._update_score(uid, score)
 

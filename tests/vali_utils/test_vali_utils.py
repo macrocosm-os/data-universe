@@ -21,7 +21,8 @@ from common import utils
 
 class TestValiUtils(unittest.TestCase):
     def test_choose_data_entity_bucket_to_query(self):
-        """Calls choose_data_entity_bucket_to_query 10000 times and ensures the distribution of bucketss chosen is as expected."""
+        """Calls choose_data_entity_bucket_to_query 10000 times and ensures the distribution of buckets chosen is as expected."""
+        # We use scorable bytes when selecting, so keep size bytes identical.
         index = ScorableMinerIndex(
             hotkey="abc123",
             scorable_data_entity_buckets=[
@@ -31,7 +32,7 @@ class TestValiUtils(unittest.TestCase):
                     ),
                     source=DataSource.REDDIT,
                     label="0",
-                    size_bytes=100,
+                    size_bytes=300,
                     scorable_bytes=100,
                 ),
                 ScorableDataEntityBucket(
@@ -40,7 +41,7 @@ class TestValiUtils(unittest.TestCase):
                     ),
                     source=DataSource.REDDIT,
                     label="1",
-                    size_bytes=200,
+                    size_bytes=300,
                     scorable_bytes=200,
                 ),
                 ScorableDataEntityBucket(
