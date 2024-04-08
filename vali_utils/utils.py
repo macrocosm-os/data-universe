@@ -18,19 +18,19 @@ from common.protocol import GetMinerIndex
 def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
     """Chooses a random DataEntityBucket to query from a MinerIndex.
 
-    The random selection is done based on choosing a random byte in the total index to query, and then selecting
-    that DataEntityBucket
+    The random selection is done based on choosing a random scorable byte in the total index to query, and then
+    selecting that DataEntityBucket.
     """
     total_size = sum(
-        scorable_bucket.size_bytes
+        scorable_bucket.scorable_bytes
         for scorable_bucket in index.scorable_data_entity_buckets
     )
     chosen_byte = random.uniform(0, total_size)
     iterated_bytes = 0
     for scorable_bucket in index.scorable_data_entity_buckets:
-        if iterated_bytes + scorable_bucket.size_bytes >= chosen_byte:
+        if iterated_bytes + scorable_bucket.scorable_bytes >= chosen_byte:
             return scorable_bucket.to_data_entity_bucket()
-        iterated_bytes += scorable_bucket.size_bytes
+        iterated_bytes += scorable_bucket.scorable_bytes
     assert (
         False
     ), "Failed to choose a DataEntityBucket to query... which should never happen"
