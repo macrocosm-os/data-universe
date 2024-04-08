@@ -382,12 +382,6 @@ class MinerEvaluator:
         )
 
         with self.lock:
-            # Check if the metagraph axon info has changed.
-            if self.metagraph.axons == metagraph.axons:
-                # Nothing has changed. Skipped the update.
-                bt.logging.info(f"Metagraph {netuid} has not changed. Skipping update.")
-                return
-
             bt.logging.info(
                 "Evaluator: Metagraph updated, re-syncing hotkeys, and moving averages."
             )
@@ -399,7 +393,7 @@ class MinerEvaluator:
                     and not utils.is_validator(uid, metagraph)
                 ):
                     bt.logging.info(
-                        f"Hotkey {hotkey} w/ UID {uid} has been unregistered."
+                        f"Hotkey {hotkey} w/ UID {uid} has been unregistered or does not qualify to mine/validate."
                     )
                     self.scorer.reset(uid)  # hotkey has been replaced
                     try:
