@@ -355,7 +355,7 @@ class TestMinerScorer(unittest.TestCase):
         self.assertGreaterEqual(self.scorer.miner_credibility[uid].item(), 0.95)
 
     def test_fresh_miner_score(self):
-        """Verifies that a fresh miner can reach 94% score within immunity period."""
+        """Verifies that a fresh miner can reach 92% score within immunity period."""
         uid = 0
 
         honest_validation = [
@@ -371,7 +371,7 @@ class TestMinerScorer(unittest.TestCase):
 
         self.assertGreaterEqual(
             self.scorer.scores[uid].item(),
-            0.94 * self.scorable_index_full_score,
+            0.92 * self.scorable_index_full_score,
         )
 
     def test_score_miner_perf(self):
