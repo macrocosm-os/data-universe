@@ -478,6 +478,113 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Confirm we get back the expected data entities.
         self.assertEqual(data_entities, [bucket2_entity1, bucket2_entity2])
 
+    def test_list_entities_in_data_entity_bucket_over_max_size(self):
+        """Tests that we can get enough entities in an over max size data entity bucket"""
+        # Create two entities for the bucket.
+        bucket_datetime = dt.datetime(
+            2023,
+            12,
+            12,
+            2,
+            30,
+            0,
+            1000,
+            tzinfo=pytz.timezone("America/Los_Angeles"),
+        )
+        entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES / 1.5,
+        )
+
+        entity2 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=bytes(20),
+            content_size_bytes=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES / 1.5,
+        )
+
+        entity3 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=bytes(30),
+            content_size_bytes=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES / 1.5,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities([entity1, entity2, entity3])
+
+        # Create the DataEntityBucketId to query by.
+        bucket_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket_datetime),
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+        )
+
+        # Get the entities by the bucket
+        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(
+            bucket_id
+        )
+
+        # Confirm we get back exactly two of the entities.
+        self.assertEqual(len(data_entities), 2)
+
+    def test_list_entities_in_data_entity_bucket_exactly_max_size(self):
+        """Tests getting up to exactly the max size in a over max size data entity bucket"""
+        # Create two entities for the bucket.
+        bucket_datetime = dt.datetime(
+            2023,
+            12,
+            12,
+            2,
+            30,
+            0,
+            1000,
+            tzinfo=pytz.timezone("America/Los_Angeles"),
+        )
+        entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket_datetime,
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=bytes(10),
+            content_size_bytes=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES,
+        )
+
+        entity2 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket_datetime + dt.timedelta(seconds=1),
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+            content=bytes(20),
+            content_size_bytes=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities([entity1, entity2])
+
+        # Create the DataEntityBucketId to query by.
+        bucket_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket_datetime),
+            source=DataSource.X,
+            label=DataLabel(value="label_1"),
+        )
+
+        # Get the entities by the bucket
+        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(
+            bucket_id
+        )
+
+        # Confirm we get back exactly one of the entities.
+        self.assertEqual(len(data_entities), 1)
+
     def test_list_data_entity_buckets(self):
         """Tests that we can list the data entity buckets from storage."""
         now = dt.datetime.now()
@@ -1111,7 +1218,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
     def test_list_contents_in_data_entity_buckets_over_size(self):
-        """Tests getting back obfuscated data entities from one over-size bucket."""
+        """Tests getting back enough obfuscated data entities from one over-size bucket."""
         # Create an entity for bucket 1.
         bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
         content1 = bytes(10)
@@ -1121,7 +1228,62 @@ class TestSqliteMinerStorage(unittest.TestCase):
             source=DataSource.REDDIT,
             label=DataLabel(value="label_1"),
             content=content1,
-            content_size_bytes=10,
+            content_size_bytes=constants.BULK_CONTENTS_SIZE_LIMIT_BYTES / 1.5,
+        )
+        content2 = bytes(10)
+        bucket1_entity2 = DataEntity(
+            uri="test_entity_2",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=content2,
+            content_size_bytes=constants.BULK_CONTENTS_SIZE_LIMIT_BYTES / 1.5,
+        )
+        content3 = bytes(10)
+        bucket1_entity3 = DataEntity(
+            uri="test_entity_3",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=content3,
+            content_size_bytes=constants.BULK_CONTENTS_SIZE_LIMIT_BYTES / 1.5,
+        )
+
+        # Store the entities.
+        self.test_storage.store_data_entities(
+            [bucket1_entity1, bucket1_entity2, bucket1_entity3]
+        )
+
+        # Create the DataEntityBucketId to query by.
+        bucket1_id = DataEntityBucketId(
+            time_bucket=TimeBucket.from_datetime(bucket1_datetime),
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+        )
+
+        # Get the entities by the bucket
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
+            [bucket1_id]
+        )
+
+        # Confirm we get back only the two contents.
+        self.assertEqual(
+            len(buckets_to_entities[bucket1_id]),
+            2,
+        )
+
+    def test_list_contents_in_data_entity_buckets_exactly_max_size(self):
+        """Tests getting back obfuscated data entities up to exactly the max size."""
+        # Create an entity for bucket 1.
+        bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
+        content1 = bytes(10)
+        bucket1_entity1 = DataEntity(
+            uri="test_entity_1",
+            datetime=bucket1_datetime,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="label_1"),
+            content=content1,
+            content_size_bytes=constants.BULK_CONTENTS_SIZE_LIMIT_BYTES,
         )
         content2 = bytes(10)
         bucket1_entity2 = DataEntity(
@@ -1148,10 +1310,10 @@ class TestSqliteMinerStorage(unittest.TestCase):
             [bucket1_id]
         )
 
-        # Confirm we get back only the first expected content.
+        # Confirm we get back only one contents.
         self.assertEqual(
-            buckets_to_entities[bucket1_id],
-            [content1],
+            len(buckets_to_entities[bucket1_id]),
+            1,
         )
 
     @unittest.skip("Skip the max list contents test by default.")
