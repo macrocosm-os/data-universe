@@ -218,11 +218,8 @@ class SqliteMinerStorage(MinerStorage):
             running_size = 0
 
             for row in cursor:
-                if (
-                    running_size + row["contentSizeBytes"]
-                    >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                ):
-                    # If we would go over the max DataEntityBucket size instead return early.
+                # If we have already reached the max DataEntityBucket size instead return early.
+                if running_size >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
                     return data_entities
                 else:
                     # Construct the new DataEntity with all non null columns.
@@ -371,10 +368,7 @@ class SqliteMinerStorage(MinerStorage):
             running_size = 0
 
             for row in cursor:
-                if (
-                    running_size + row["contentSizeBytes"]
-                    <= constants.BULK_CONTENTS_SIZE_LIMIT_BYTES
-                ):
+                if running_size < constants.BULK_CONTENTS_SIZE_LIMIT_BYTES:
                     data_entity_bucket_id = DataEntityBucketId.construct(
                         time_bucket=TimeBucket.construct(id=row["timeBucketId"]),
                         source=DataSource(row["source"]),
