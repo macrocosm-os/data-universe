@@ -60,8 +60,6 @@ class MinerScorer:
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
-            if "scorable_bytes" in state:
-                self.scorable_bytes = state["scorable_bytes"]
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -80,7 +78,6 @@ class MinerScorer:
         with self.lock:
             self.scores[uid] = 0.0
             self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
-            self.scorable_bytes[uid] = 0
 
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
