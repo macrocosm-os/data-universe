@@ -19,6 +19,9 @@ class MinerScorer:
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
 
+    # The exponent used to scale the miner's score by its credibility.
+    _CREDIBILITY_EXP = 2.5
+
     def __init__(
         self,
         num_neurons: int,
@@ -149,13 +152,15 @@ class MinerScorer:
                 # new score remains unchanged. i.e. "you've told us you now have more valuable data, prove it".
                 # Note: After this step we then update the miner's credibility again, so if they passed
                 # validation this time then their score will increase.
-                previous_raw_score = self.scorable_bytes[uid]
+                previous_raw_score = self.scorable_bytes[uid].item()
                 if previous_raw_score > 0 and score > previous_raw_score:
                     previous_cred = self.miner_credibility[uid].item()
-                    cred_scalar = (previous_raw_score / score) ** (1 / 2.5)
+                    cred_scalar = (previous_raw_score / score) ** (
+                        1 / MinerScorer._CREDIBILITY_EXP
+                    )
                     self.miner_credibility[uid] *= cred_scalar
                     bt.logging.debug(
-                        f"Miner {uid}'s scorable bytes changd from {previous_raw_score} to {score}. Credibility adjusted from {previous_cred} to {self.miner_credibility[uid].item()}."
+                        f"Miner {uid}'s scorable bytes changed from {previous_raw_score} to {score}. Credibility changed from {previous_cred} to {self.miner_credibility[uid].item()}."
                     )
 
                 # Record raw score for next time.
@@ -164,8 +169,8 @@ class MinerScorer:
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)
 
-                # Finally, ccale the miner's score by its credibility to the power of 2.5.
-                score *= self.miner_credibility[uid] ** 2.5
+                # Finally, scale the miner's score by its credibility to the power of 2.5.
+                score *= self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP
 
             self.scores[uid] = score
 
