@@ -3,7 +3,6 @@ from typing import List, Optional
 import torch
 import bittensor as bt
 import datetime as dt
-from common import constants
 from common.data import TimeBucket
 
 from common.data_v2 import ScorableMinerIndex
@@ -25,16 +24,16 @@ class MinerScorer:
         num_neurons: int,
         value_calculator: DataValueCalculator,
         cred_alpha: float = 0.15,
-        score_alpha: float = 0.30,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
         self.miner_credibility = torch.full(
             (num_neurons, 1), MinerScorer.STARTING_CREDIBILITY, dtype=torch.float32
         )
+        # Keeps track of the amount of scorable bytes the miner had last time it was evaluated.
+        self.scorable_bytes = torch.zeros(num_neurons, dtype=torch.float32)
         self.value_calculator = value_calculator
         self.cred_alpha = cred_alpha
-        self.score_alpha = score_alpha
 
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
@@ -47,6 +46,7 @@ class MinerScorer:
                 {
                     "scores": self.scores,
                     "credibility": self.miner_credibility,
+                    "scorable_bytes": self.scorable_bytes,
                 },
                 filepath,
             )
@@ -57,6 +57,7 @@ class MinerScorer:
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
+            self.scorable_bytes = state["scorable_bytes"]
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -75,6 +76,7 @@ class MinerScorer:
         with self.lock:
             self.scores[uid] = 0.0
             self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
+            self.scorable_bytes[uid] = 0
 
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
@@ -109,6 +111,9 @@ class MinerScorer:
                     ),
                 ]
             )
+            self.scorable_bytes = torch.cat(
+                [self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)]
+            )
 
     def on_miner_evaluated(
         self,
@@ -129,10 +134,7 @@ class MinerScorer:
             # If the miner has an index, update it's credibility based on the validation result and score the current index.
             # Otherwise, score the miner 0 for this round, but don't touch its credibility.
             if index:
-                # First, update the miner's credibilty
-                self._update_credibility(uid, validation_results)
-
-                # Now score the miner based on the amount of data it has, scaled based on
+                # Compute the raw miner score based on the amount of data it has, scaled based on
                 # the reward distribution.
                 current_time_bucket = TimeBucket.from_datetime(
                     dt.datetime.now(tz=dt.timezone.utc)
@@ -142,10 +144,28 @@ class MinerScorer:
                         bucket, current_time_bucket
                     )
 
-                # Scale the miner's score by its credibility to the power of 2.5.
+                # If the score has increased since the last eval, decrease credibility so that the
+                # new score remains unchanged. i.e. "you've told us you now have more valuable data, prove it".
+                # Note: After this step we then update the miner's credibility again, so if they passed
+                # validation this time, then their score will increase.
+                previous_raw_score = self.scorable_bytes[uid]
+                if previous_raw_score > 0 and score > previous_raw_score:
+                    previous_cred = self.miner_credibility[uid].item()
+                    self.miner_credibility[uid] *= previous_raw_score / score
+                    bt.logging.debug(
+                        f"Miner {uid}'s scorable bytes changd from {previous_raw_score} to {score}. Cred adjusted {previous_cred} to {self.miner_credibility[uid].item()}."
+                    )
+
+                # Record raw score for next time.
+                self.scorable_bytes[uid] = score
+
+                # Now update the credibility again based on the current validation results.
+                self._update_credibility(uid, validation_results)
+
+                # Finally, ccale the miner's score by its credibility to the power of 2.5.
                 score *= self.miner_credibility[uid] ** 2.5
 
-            self._update_score(uid, score)
+            self.scores[uid] = score
 
             bt.logging.success(
                 f"Evaluated Miner {uid}. Score={self.scores[uid].item()}. Credibility={self.miner_credibility[uid].item()}."
@@ -185,22 +205,3 @@ class MinerScorer:
             f"""Evaluated Miner {uid}. Percent of bytes validated succesfully this attempt={credibility * 100}. 
                 Previous Credibility={previous_credibility}. New Credibility={self.miner_credibility[uid].item()}."""
         )
-
-    def _update_score(self, uid: int, reward: float):
-        """Performs exponential moving average on the scores based on the rewards received from the miners.
-
-        Requires: self.lock is held.
-        """
-        new_score = (
-            self.score_alpha * reward + (1 - self.score_alpha) * self.scores[uid]
-        )
-
-        # If the score is over the growth limit threshold then ensure it isn't growing faster than the percent limit.
-        if new_score > constants.SCORE_GROWTH_LIMIT_THRESHOLD:
-            new_score = min(
-                new_score, self.scores[uid] * constants.SCORE_GROWTH_LIMIT_PERCENT
-            )
-            # Still allow a score to go from 0 to the SCORE_GROWTH_LIMIT_THRESHOLD in one go.
-            new_score = max(new_score, constants.SCORE_GROWTH_LIMIT_THRESHOLD)
-
-        self.scores[uid] = new_score
