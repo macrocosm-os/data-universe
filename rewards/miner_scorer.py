@@ -57,7 +57,8 @@ class MinerScorer:
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
-            self.scorable_bytes = state["scorable_bytes"]
+            if "scorable_bytes" in state:
+                self.scorable_bytes = state["scorable_bytes"]
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -147,13 +148,14 @@ class MinerScorer:
                 # If the score has increased since the last eval, decrease credibility so that the
                 # new score remains unchanged. i.e. "you've told us you now have more valuable data, prove it".
                 # Note: After this step we then update the miner's credibility again, so if they passed
-                # validation this time, then their score will increase.
+                # validation this time then their score will increase.
                 previous_raw_score = self.scorable_bytes[uid]
                 if previous_raw_score > 0 and score > previous_raw_score:
                     previous_cred = self.miner_credibility[uid].item()
-                    self.miner_credibility[uid] *= previous_raw_score / score
+                    cred_scalar = (previous_raw_score / score) ** (1 / 2.5)
+                    self.miner_credibility[uid] *= cred_scalar
                     bt.logging.debug(
-                        f"Miner {uid}'s scorable bytes changd from {previous_raw_score} to {score}. Cred adjusted {previous_cred} to {self.miner_credibility[uid].item()}."
+                        f"Miner {uid}'s scorable bytes changd from {previous_raw_score} to {score}. Credibility adjusted from {previous_cred} to {self.miner_credibility[uid].item()}."
                     )
 
                 # Record raw score for next time.
