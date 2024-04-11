@@ -122,17 +122,13 @@ class TestMinerScorer(unittest.TestCase):
         for _ in range(10):
             self._add_score_to_uid(uid)
 
-        score = self.scorer.get_scores()[uid]
-
         # Now run an eval with no index.
         validation_results = [
             ValidationResult(is_valid=True, content_size_bytes_validated=100)
         ]
         self.scorer.on_miner_evaluated(uid, None, validation_results)
 
-        new_score = self.scorer.get_scores()[uid]
-        self.assertGreater(new_score, 0)
-        self.assertLess(new_score, score)
+        self.assertEqual(self.scorer.get_scores()[uid], 0)
 
     def test_on_miner_evaluated_credibilty_normalized_by_size(self):
         """Compares miners with varying levels of "honesty" by validation bytes as measured by the validation results,
@@ -311,31 +307,113 @@ class TestMinerScorer(unittest.TestCase):
                     scores[shady_miner].item(),
                 )
 
-    def test_update_score_respects_growth_limit_threshhold(self):
-        """Verifies that a score can only increase up to the threshold in one cycle."""
-        uid = 0
-        self.scorer.scores[uid] = 0
-
-        # Update by an amount big enough to account for alpha.
-        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_THRESHOLD * 1000)
-
-        self.assertEqual(
-            self.scorer.scores[uid], constants.SCORE_GROWTH_LIMIT_THRESHOLD
+    def test_score_decreases_on_fake_increased_claimed_size(self):
+        """Verifies that a miner that temporarily claims a larger size than it actually has, scores worse than if it
+        had been truthful throughout"""
+        actual_index = ScorableMinerIndex(
+            hotkey="1",
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=200,
+                    # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
+                    scorable_bytes=100,
+                ),
+            ],
+            last_updated=self.now,
+        )
+        # This index is a copy of the above but with a large fake bucket added.
+        faked_index = ScorableMinerIndex(
+            hotkey="1",
+            scorable_data_entity_buckets=[
+                ScorableDataEntityBucket(
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="testlabel",
+                    size_bytes=200,
+                    # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
+                    scorable_bytes=100,
+                ),
+                ScorableDataEntityBucket(
+                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                    source=DataSource.REDDIT,
+                    label="not-a-real-label",
+                    size_bytes=5000,
+                    # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
+                    scorable_bytes=4999,
+                ),
+            ],
+            last_updated=self.now,
         )
 
-    def test_update_score_respects_percent_limit(self):
-        """Verifies that a score can only increase by a percent amount in one cycle."""
-        uid = 0
-        # Start with an amount big enough to account for alpha and beat out the flat increase.
-        self.scorer.scores[uid] = constants.SCORE_GROWTH_LIMIT_THRESHOLD
-
-        self.scorer._update_score(uid, constants.SCORE_GROWTH_LIMIT_THRESHOLD * 1000)
-
-        self.assertEqual(
-            self.scorer.scores[uid],
-            constants.SCORE_GROWTH_LIMIT_THRESHOLD
-            * constants.SCORE_GROWTH_LIMIT_PERCENT,
+        uid = 5
+        # Give the miner an initial cred.
+        self.scorer.miner_credibility[uid] = 0.8
+        self.scorer.on_miner_evaluated(
+            uid,
+            actual_index,
+            [ValidationResult(is_valid=True, content_size_bytes_validated=200)],
         )
+
+        starting_score = self.scorer.get_scores()[uid].item()
+        # Cred should now = 0.8 * 0.85 + 0.15 = 0.83
+        # Score should be ~ (100 * 0.2) * 0.83 ** 2.5 = 12.5
+        self.assertGreater(starting_score, 12.0)
+
+        # Now provide the faked index for one eval cycle, and make sure the score decreases.
+        self.scorer.on_miner_evaluated(
+            uid,
+            faked_index,
+            [ValidationResult(is_valid=False, content_size_bytes_validated=5000)],
+        )
+        new_score = self.scorer.get_scores()[uid].item()
+        self.assertLess(new_score, starting_score)
+
+        # Finally, report the honest index again.
+        self.scorer.on_miner_evaluated(
+            uid,
+            actual_index,
+            [ValidationResult(is_valid=True, content_size_bytes_validated=200)],
+        )
+
+        # The score should now be less than the starting score, because the large
+        # increase in the index caused credibility to drop.
+        self.assertLess(self.scorer.get_scores()[uid].item(), starting_score)
+
+    def test_score_increases_on_real_increased_claimed_size(self):
+        """Verifies that an honest miner with an ever increasing index size, continously scores higher."""
+
+        previous_score = 0
+        uid = 5
+        self.scorer.miner_credibility[uid] = 1
+        for index_size in range(100, 1000, 100):
+            index = ScorableMinerIndex(
+                hotkey="1",
+                scorable_data_entity_buckets=[
+                    ScorableDataEntityBucket(
+                        time_bucket_id=utils.time_bucket_id_from_datetime(self.now),
+                        source=DataSource.REDDIT,
+                        label=None,
+                        size_bytes=index_size,
+                        scorable_bytes=index_size,
+                    ),
+                ],
+                last_updated=self.now,
+            )
+            self.scorer.on_miner_evaluated(
+                uid,
+                index,
+                [
+                    ValidationResult(
+                        is_valid=True, content_size_bytes_validated=index_size
+                    )
+                ],
+            )
+            score = self.scorer.get_scores()[uid].item()
+            self.assertGreater(score, previous_score)
+            previous_score = score
 
     def test_fresh_miner_credibility(self):
         """Verifies that a fresh miner can reach 95% credibility within immunity period."""
@@ -346,7 +424,7 @@ class TestMinerScorer(unittest.TestCase):
         ]
 
         # Starting credibility defaults to 0.
-        # With current 30 hours of immunity we will assume ~25 cycles of validation.
+        # With current 40 hours of immunity we will assume ~25 cycles of validation.
 
         cycles = 25
         for _ in range(cycles):
@@ -363,7 +441,7 @@ class TestMinerScorer(unittest.TestCase):
         ]
 
         # Starting credibility defaults to 0.
-        # With current 30 hours of immunity we will assume ~25 cycles of validation.
+        # With current 40 hours of immunity we will assume ~25 cycles of validation.
 
         cycles = 25
         for _ in range(cycles):

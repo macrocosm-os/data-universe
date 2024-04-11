@@ -27,12 +27,6 @@ MAX_LABEL_LENGTH = 32
 # The current protocol version (int)
 PROTOCOL_VERSION = 4
 
-# Baseline threshold under which score increase limits are not applied.
-SCORE_GROWTH_LIMIT_THRESHOLD = utils.mb_to_bytes(1000)
-
-# Percent limit for score increase in a single evaluation.
-SCORE_GROWTH_LIMIT_PERCENT = 1.05
-
 # Min evaluation period that must pass before a validator re-evaluates a miner.
 MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
 
