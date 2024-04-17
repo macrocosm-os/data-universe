@@ -271,7 +271,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#Bittensor"),
             content='{"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"]}',
-            content_size_bytes=318,
+            content_size_bytes=281,
         ),
         DataEntity(
             uri="https://twitter.com/HadsonNery/status/1752011223330124021",
@@ -279,7 +279,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#faleitoleve"),
             content='{"username":"@HadsonNery","text":"Se ele fosse brabo mesmo e eu estaria aqui defendendo ele, pq ele não foi direto no Davi já que a intenção dele era fazer o Davi comprar o barulho dela 🤷🏻\u200d♂️ MC fofoqueiro foi macetado pela CUNHÃ #faleitoleve","url":"https://twitter.com/HadsonNery/status/1752011223330124021","timestamp":"2024-01-29T16:50:00Z","tweet_hashtags":["#faleitoleve"]}',
-            content_size_bytes=492,
+            content_size_bytes=455,
         ),
         DataEntity(
             uri="https://twitter.com/TcMMTsTc/status/1733441357090545731",
@@ -287,14 +287,14 @@ async def test_validate():
             source=DataSource.X,
             label=None,
             content=b'{"username":"@TcMMTsTc","text":"\xe3\x81\xbc\xe3\x81\x8f\xe7\x9c\xa0\xe3\x81\x84\xe3\x81\xa7\xe3\x81\x99","url":"https://twitter.com/TcMMTsTc/status/1733441357090545731","timestamp":"2023-12-09T10:59:00Z","tweet_hashtags":[]}',
-            content_size_bytes=218,
+            content_size_bytes=203,
         ),
         DataEntity(
             uri="https://twitter.com/mdniy/status/1743249601925185642",
             datetime=dt.datetime(2024, 1, 5, 12, 34, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=None,
-            content='{"username":"@mdniy","text":"🗓January 6, 2024\\n0️⃣8️⃣ Days to Makar Sankranti 2024\\n📍Sun Temple, Surya Pahar, Goalpura, Assam\\n \\nDepartment of Yogic Science and Naturopathy, Mahapurusha Srimanta Sankaradeva Viswavidyalaya, Assam in collaboration with MDNIY is organizing mass Surya Namaskar Demonstration…","url":"https://twitter.com/mdniy/status/1743249601925185642","timestamp":"2024-01-05T12:34:00Z","tweet_hashtags":[]}',
+            content='{"username":"@mdniy","text":"🗓January 6, 2024\\n0️⃣8️⃣ Days to Makar Sankranti 2024\\n📍Sun Temple, Surya Pahar, Goalpura, Assam\\n \\nDepartment of Yogic Science and Naturopathy, Mahapurusha Srimanta Sankaradeva Viswavidyalaya, Assam in collaboration with MDNIY is organizing mass Surya Namaskar Demonstration tomorrow.","url":"https://twitter.com/mdniy/status/1743249601925185642","timestamp":"2024-01-05T12:34:00Z","tweet_hashtags":[]}',
             content_size_bytes=485,
         ),
         DataEntity(
@@ -303,7 +303,7 @@ async def test_validate():
             source=DataSource.X,
             label=None,
             content='{"username":"@rEQjoewd6WfNFL3","text":"ありがとうございます\\n\\nそうなんです\\nほんと偶然です\\n聞いたときはビックリしました\\n\\nいえいえ、私の記念日だなんて\\nもったいないです\\n妹の記念日にしてください\\nぷぷっ","url":"https://twitter.com/rEQjoewd6WfNFL3/status/1743187684422799519","timestamp":"2024-01-05T08:28:00Z","tweet_hashtags":[]}',
-            content_size_bytes=253,
+            content_size_bytes=643,
         ),
         DataEntity(
             uri="https://twitter.com/Sid14290237375/status/1760088426400162274",
@@ -311,16 +311,16 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#HowlongcanImakeahashtaganywayIg"),
             content='{"username":"@Sid14290237375","text":"Testing hashtags\\n\\n#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest","url":"https://twitter.com/Sid14290237375/status/1760088426400162274","timestamp":"2024-02-20T23:45:00Z","tweet_hashtags":["#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest"]}',
-            content_size_bytes=356,
+            content_size_bytes=319,
         ),
         # Entity with a latin capital I with a dot above that becomes 2 characters when .lower() is used on it.
         DataEntity(
             uri="https://twitter.com/DervisMusa/status/1761758719941988688",
-            datetime=dt.datetime(2024, 2, 25, 14, 23, 5, tzinfo=dt.timezone.utc),
+            datetime=dt.datetime(2024, 2, 25, 14, 23, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#i̇srailleticaretfilistinei̇hane"),
-            content='{"username": "@DervisMusa", "text": "\\"\\u0130srail\'le ticaret, Filistin\'e ihanet!\\"\\n(\\u0627\\u0644\\u062a\\u062c\\u0627\\u0631\\u0629 \\u0645\\u0639 \\u0625\\u0633\\u0631\\u0627\\u0626\\u064a\\u0644 \\u062a\\u062e\\u0648\\u0646 \\u0641\\u0644\\u0633\\u0637\\u064a\\u0646)\\n\\nAllah kabul etsin. Aya\\u011f\\u0131n\\u0131za / y\\u00fcre\\u011finize sa\\u011fl\\u0131k. Herkese \\u00f6rnek olur in\\u015fallah.\\n\\n#\\u0130srailleTicaretFilistine\\u0130hanet\\n\\n#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649 \\n#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646 \\n#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631 \\n#\\u0627\\u0644\\u064a\\u0645\\u0646\\n#Hamas\\n#deprem", "url": "https://twitter.com/DervisMusa/status/1761758719941988688", "timestamp": "2024-02-25T14:23:05+00:00", "tweet_hashtags": ["#\\u0130srailleTicaretFilistine\\u0130hanet", "#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649", "#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646", "#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631", "#\\u0627\\u0644\\u064a\\u0645\\u0646", "#Hamas", "#deprem"]}',
-            content_size_bytes=1072,
+            content='{"username": "@DervisMusa", "text": "\\"\\u0130srail\'le ticaret, Filistin\'e ihanet!\\"\\n(\\u0627\\u0644\\u062a\\u062c\\u0627\\u0631\\u0629 \\u0645\\u0639 \\u0625\\u0633\\u0631\\u0627\\u0626\\u064a\\u0644 \\u062a\\u062e\\u0648\\u0646 \\u0641\\u0644\\u0633\\u0637\\u064a\\u0646)\\n\\nAllah kabul etsin. Aya\\u011f\\u0131n\\u0131za / y\\u00fcre\\u011finize sa\\u011fl\\u0131k. Herkese \\u00f6rnek olur in\\u015fallah.\\n\\n#\\u0130srailleTicaretFilistine\\u0130hanet\\n\\n#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649 \\n#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646 \\n#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631 \\n#\\u0627\\u0644\\u064a\\u0645\\u0646\\n#Hamas\\n#deprem", "url": "https://twitter.com/DervisMusa/status/1761758719941988688", "timestamp": "2024-02-25T14:23:00+00:00", "tweet_hashtags": ["#\\u0130srailleTicaretFilistine\\u0130hanet", "#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649", "#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646", "#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631", "#\\u0627\\u0644\\u064a\\u0645\\u0646", "#Hamas", "#deprem"]}',
+            content_size_bytes=1035,
         ),
     ]
 
@@ -338,7 +338,7 @@ async def test_multi_thread_validate():
             source=DataSource.X,
             label=DataLabel(value="#Bittensor"),
             content='{"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"]}',
-            content_size_bytes=318,
+            content_size_bytes=281,
         ),
         DataEntity(
             uri="https://twitter.com/HadsonNery/status/1752011223330124021",
@@ -346,7 +346,7 @@ async def test_multi_thread_validate():
             source=DataSource.X,
             label=DataLabel(value="#faleitoleve"),
             content='{"username":"@HadsonNery","text":"Se ele fosse brabo mesmo e eu estaria aqui defendendo ele, pq ele não foi direto no Davi já que a intenção dele era fazer o Davi comprar o barulho dela 🤷🏻\u200d♂️ MC fofoqueiro foi macetado pela CUNHÃ #faleitoleve","url":"https://twitter.com/HadsonNery/status/1752011223330124021","timestamp":"2024-01-29T16:50:00Z","tweet_hashtags":["#faleitoleve"]}',
-            content_size_bytes=492,
+            content_size_bytes=455,
         ),
     ]
 
