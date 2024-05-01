@@ -19,7 +19,13 @@ from common.data import (
     TimeBucket,
 )
 import datetime as dt
-from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
+from common.data_v2 import (
+    ScorableDataEntityBucket,
+    ScorableMinerIndex,
+    DataBoxAgeSize,
+    DataBoxLabelSize,
+    DataBoxMiner,
+)
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
@@ -593,7 +599,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
     @unittest.skip("Skip the large index test by default.")
     def test_many_large_indexes_perf(self):
-        """Inserts 200 miners with maximal indexes and reads them back."""
+        """Inserts 250 miners with maximal indexes and reads them back."""
         max_buckets = DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
 
         labels = [f"label{i}" for i in range(100_000)]
@@ -614,8 +620,8 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 DataSource.X: [
                     CompressedEntityBucket(
                         label=label,
-                        time_bucket_ids=random.sample(time_buckets, 500),
-                        sizes_bytes=[i for i in range(500)],
+                        time_bucket_ids=random.sample(time_buckets, 50),
+                        sizes_bytes=[i for i in range(50)],
                     )
                     for label in random.sample(labels, int(max_buckets / 2 / 500))
                 ],
@@ -634,6 +640,199 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             miner = random.choice(miners)
             index = self.test_storage.read_miner_index(miner)
             print(f"Read index for miner {miner} in {time.time() - start}")
+
+        # Test Databox API Reads
+        databox_miner_start = time.time()
+        miner = random.choice(miners)
+        miners = self.test_storage.read_databox_miners()
+        print(f"Read databox miners in {time.time() - databox_miner_start}")
+
+        databox_age_size_start = time.time()
+        miner = random.choice(miners)
+        miners = self.test_storage.read_databox_age_sizes()
+        print(f"Read databox age sizes in {time.time() - databox_age_size_start}")
+
+        databox_label_size_start = time.time()
+        miner = random.choice(miners)
+        miners = self.test_storage.read_databox_label_sizes()
+        print(f"Read databox label sizes in {time.time() - databox_label_size_start}")
+
+def test_read_databox_miners(self):
+        """Tests that we can read a databox miner"""
+        # Create 3 DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        time_bucket = TimeBucket.from_datetime(now)
+
+        # Create the index containing the buckets.
+        index = MinerIndex(
+            hotkey="hotkey1",
+            data_entity_buckets=[
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.REDDIT,
+                        label=DataLabel(value="r/wallstreetbets"),
+                    ),
+                    size_bytes=10,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(time_bucket=time_bucket, source=DataSource.X),
+                    size_bytes=50,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.X,
+                        label=DataLabel(value="#bittensor"),
+                    ),
+                    size_bytes=200,
+                ),
+            ],
+        )
+
+        # Store the index.
+        self.test_storage.upsert_miner_index(index, credibility=0.5)
+
+        # Confirm we get back the expected miners.
+        databox_miners = self.test_storage.read_databox_miners()
+
+        self.assertEqual(len(databox_miners), 1)
+        # Check everything but last_updated
+        self.assertEqual(databox_miners[0].hotkey, "hotkey1")
+        self.assertEqual(databox_miners[0].credibility, 0.5)
+        self.assertEqual(databox_miners[0].bucket_count, 3)
+        self.assertEqual(databox_miners[0].content_size_bytes_reddit, 10)
+        self.assertEqual(databox_miners[0].content_size_bytes_twitter, 250)
+
+    def test_read_databox_label_sizes(self):
+        """Tests that we can read a databox label size"""
+        # Create 4 DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        time_bucket = TimeBucket.from_datetime(now)
+        time_bucket_2 = TimeBucket.from_datetime(now - dt.timedelta(hours=2))
+
+        # Create the index containing the buckets.
+        index = MinerIndex(
+            hotkey="hotkey1",
+            data_entity_buckets=[
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.REDDIT,
+                        label=DataLabel(value="r/wallstreetbets"),
+                    ),
+                    size_bytes=10,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket_2,
+                        source=DataSource.REDDIT,
+                        label=DataLabel(value="r/wallstreetbets"),
+                    ),
+                    size_bytes=20,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(time_bucket=time_bucket, source=DataSource.X),
+                    size_bytes=50,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.X,
+                        label=DataLabel(value="#bittensor"),
+                    ),
+                    size_bytes=200,
+                ),
+            ],
+        )
+
+        # Store the index.
+        self.test_storage.upsert_miner_index(index, credibility=0.5)
+
+        # Confirm we get back the expected miners.
+        databox_label_sizes = self.test_storage.read_databox_label_sizes()
+
+        # Sorted by reddit, then twitter size desc
+        expected_databox_label_size_1 = DataBoxLabelSize(
+            source=int(DataSource.REDDIT),
+            label_value="r/wallstreetbets",
+            content_size_bytes=30,
+            adj_content_size_bytes=15,
+        )
+        expected_databox_label_size_2 = DataBoxLabelSize(
+            source=int(DataSource.X),
+            label_value="#bittensor",
+            content_size_bytes=200,
+            adj_content_size_bytes=100,
+        )
+        expected_databox_label_size_3 = DataBoxLabelSize(
+            source=int(DataSource.X),
+            label_value="NULL",
+            content_size_bytes=50,
+            adj_content_size_bytes=25,
+        )
+
+        self.assertEqual(len(databox_label_sizes), 3)
+        self.assertEqual(databox_label_sizes[0], expected_databox_label_size_1)
+        self.assertEqual(databox_label_sizes[1], expected_databox_label_size_2)
+        self.assertEqual(databox_label_sizes[2], expected_databox_label_size_3)
+
+    def test_read_databox_age_sizes(self):
+        """Tests that we can read a databox age size"""
+        # Create 3 DataEntityBuckets for the index.
+        now = dt.datetime.utcnow()
+        time_bucket = TimeBucket.from_datetime(now)
+
+        # Create the index containing the buckets.
+        index = MinerIndex(
+            hotkey="hotkey1",
+            data_entity_buckets=[
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.REDDIT,
+                        label=DataLabel(value="r/wallstreetbets"),
+                    ),
+                    size_bytes=10,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(time_bucket=time_bucket, source=DataSource.X),
+                    size_bytes=50,
+                ),
+                DataEntityBucket(
+                    id=DataEntityBucketId(
+                        time_bucket=time_bucket,
+                        source=DataSource.X,
+                        label=DataLabel(value="#bittensor"),
+                    ),
+                    size_bytes=200,
+                ),
+            ],
+        )
+
+        # Store the index.
+        self.test_storage.upsert_miner_index(index, credibility=0.5)
+
+        # Confirm we get back the expected miners.
+        databox_age_sizes = self.test_storage.read_databox_age_sizes()
+
+        # Sorted by reddit, then twitter size desc
+        expected_databox_age_size_1 = DataBoxAgeSize(
+            source=int(DataSource.REDDIT),
+            time_bucket_id=time_bucket.id,
+            content_size_bytes=10,
+            adj_content_size_bytes=5,
+        )
+        expected_databox_age_size_2 = DataBoxAgeSize(
+            source=int(DataSource.X),
+            time_bucket_id=time_bucket.id,
+            content_size_bytes=250,
+            adj_content_size_bytes=125,
+        )
+
+        self.assertEqual(len(databox_age_sizes), 2)
+        self.assertEqual(databox_age_sizes[0], expected_databox_age_size_1)
+        self.assertEqual(databox_age_sizes[1], expected_databox_age_size_2)
 
 
 if __name__ == "__main__":

@@ -1,12 +1,23 @@
 import contextlib
 import datetime as dt
+import stat
 import bittensor as bt
 import sqlite3
 import threading
-from typing import Any, Dict, Optional, Set, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 from common.data import CompressedMinerIndex, DataLabel
-from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
-from storage.validator.validator_storage import ValidatorStorage
+from common.data_v2 import (
+    ScorableDataEntityBucket,
+    ScorableMinerIndex,
+    DataBoxMiner,
+    DataBoxLabelSize,
+    DataBoxAgeSize,
+)
+from storage.validator.validator_storage import (
+    ValidatorStorage,
+)
+
+from datadog import statsd
 
 
 class AutoIncrementDict:
@@ -175,6 +186,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         """Same as _label_value_parse but with a string as input"""
         return "NULL" if (label is None) else label.casefold()
 
+    @statsd.timed("storage.validator.upsert_compressed_miner_index")
     def upsert_compressed_miner_index(
         self, index: CompressedMinerIndex, hotkey: str, credibility: float
     ):
@@ -230,6 +242,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     )
                 connection.commit()
 
+    @statsd.timed("storage.validator.read_miner_index")
     def read_miner_index(
         self,
         miner_hotkey: str,
@@ -299,6 +312,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
                 return scored_index
 
+    @statsd.timed("storage.validator._delete_miner_index")
     def _delete_miner_index(self, miner_hotkey: str):
         """Removes the index for the specified miner."""
 
@@ -337,3 +351,137 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     return result[0]
                 else:
                     return None
+
+    def read_databox_miners(self) -> List[DataBoxMiner]:
+        """Gets details about miners for use in databox dashboards."""
+        databox_miners = []
+
+        with self.lock:
+            # TODO consider doing this in a single cursor and a subquery.
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """SELECT hotkey, credibility, COUNT(*),
+                            SUM(CASE WHEN source = 1 THEN contentSizeBytes ELSE 0 END),
+                            SUM(CASE WHEN source = 2 THEN contentSizeBytes ELSE 0 END),
+                            lastUpdated
+                    FROM Miner
+                    LEFT JOIN MinerIndex USING (minerId)
+                    GROUP BY minerId"""
+                )
+
+                for row in cursor:
+                    databox_miners.append(
+                        DataBoxMiner(
+                            hotkey=row[0],
+                            credibility=row[1],
+                            bucket_count=row[2],
+                            content_size_bytes_reddit=row[3],
+                            content_size_bytes_twitter=row[4],
+                            last_updated=row[5],
+                        )
+                    )
+
+            return databox_miners
+
+    def read_databox_age_sizes(self) -> List[DataBoxAgeSize]:
+        """Gets details about age sizes for use in databox dashboards."""
+
+        # Only get top 1k per source due to databox limits.
+        databox_age_sizes = []
+
+        with self.lock:
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """SELECT timeBucketId, SUM(contentSizeBytes), SUM(contentSizeBytes * credibility) as adjSize
+                    FROM Miner
+                    LEFT JOIN MinerIndex USING (minerId)
+                    WHERE source = 1
+                    GROUP BY timeBucketId
+                    ORDER BY adjSize DESC
+                    LIMIT 1000"""
+                )
+
+                for row in cursor:
+                    databox_age_sizes.append(
+                        DataBoxAgeSize(
+                            source=1,  # Get reddit first
+                            time_bucket_id=row[0],
+                            content_size_bytes=row[1],
+                            adj_content_size_bytes=int(row[2]),
+                        )
+                    )
+
+                cursor.execute(
+                    """SELECT timeBucketId, SUM(contentSizeBytes), SUM(contentSizeBytes * credibility) as adjSize
+                    FROM Miner
+                    LEFT JOIN MinerIndex USING (minerId)
+                    WHERE source = 2
+                    GROUP BY timeBucketId
+                    ORDER BY adjSize DESC
+                    LIMIT 1000"""
+                )
+
+                for row in cursor:
+                    databox_age_sizes.append(
+                        DataBoxAgeSize(
+                            source=2,  # Get X second
+                            time_bucket_id=row[0],
+                            content_size_bytes=row[1],
+                            adj_content_size_bytes=int(row[2]),
+                        )
+                    )
+
+            return databox_age_sizes
+
+    def read_databox_label_sizes(self) -> List[DataBoxLabelSize]:
+        """Gets details about label sizes for use in databox dashboards."""
+
+        # Only get top 1k per source due to databox limits.
+        databox_label_sizes = []
+
+        with self.lock:
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """SELECT labelId, SUM(contentSizeBytes), SUM(contentSizeBytes * credibility) as adjSize
+                    FROM Miner
+                    LEFT JOIN MinerIndex USING (minerId)
+                    WHERE source = 1
+                    GROUP BY labelId
+                    ORDER BY adjSize DESC
+                    LIMIT 1000"""
+                )
+
+                for row in cursor:
+                    databox_label_sizes.append(
+                        DataBoxLabelSize(
+                            source=1,  # Get reddit first
+                            label_value=self.label_dict.get_by_id(row[0]),
+                            content_size_bytes=row[1],
+                            adj_content_size_bytes=int(row[2]),
+                        )
+                    )
+
+                cursor.execute(
+                    """SELECT labelId, SUM(contentSizeBytes), SUM(contentSizeBytes * credibility) as adjSize
+                    FROM Miner
+                    LEFT JOIN MinerIndex USING (minerId)
+                    WHERE source = 2
+                    GROUP BY labelId
+                    ORDER BY adjSize DESC
+                    LIMIT 1000"""
+                )
+
+                for row in cursor:
+                    databox_label_sizes.append(
+                        DataBoxLabelSize(
+                            source=2,  # Get X second
+                            label_value=self.label_dict.get_by_id(row[0]),
+                            content_size_bytes=row[1],
+                            adj_content_size_bytes=int(row[2]),
+                        )
+                    )
+
+            return databox_label_sizes

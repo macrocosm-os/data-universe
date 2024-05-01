@@ -9,6 +9,8 @@ from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult
 
+from datadog import statsd
+
 
 class MinerScorer:
     """Tracks the score of each miner and handles updates to the scores.
@@ -132,11 +134,26 @@ class MinerScorer:
         with self.lock:
             score = 0.0
 
+            for result in validation_results:
+                reason = result.reason
+                if "is not in the expected range" in reason:
+                    reason = "entity datetime in not in the expected range"
+                statsd.increment(
+                    "validation_results",
+                    tags=[
+                        "is_valid:" + str(result.is_valid),
+                        f"reason:{reason}",
+                    ],
+                )
+
             # If the miner has an index, update it's credibility based on the validation result and score the current index.
             # Otherwise, score the miner 0 for this round, but don't touch its credibility.
             if index:
                 # Compute the raw miner score based on the amount of data it has, scaled based on
                 # the reward distribution.
+                bt.logging.trace(
+                    f"Miner {uid} has {len(index.scorable_data_entity_buckets)} buckets in the index."
+                )
                 current_time_bucket = TimeBucket.from_datetime(
                     dt.datetime.now(tz=dt.timezone.utc)
                 )
@@ -160,6 +177,10 @@ class MinerScorer:
                         f"Miner {uid}'s scorable bytes changed from {previous_raw_score} to {score}. Credibility changed from {previous_cred} to {self.miner_credibility[uid].item()}."
                     )
 
+                bt.logging.trace(
+                    f"Miner {uid} scorable index is {score}. Previous scorable bytes={previous_raw_score}"
+                )
+
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
 
@@ -168,6 +189,8 @@ class MinerScorer:
 
                 # Finally, scale the miner's score by its credibility to the power of 2.5.
                 score *= self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP
+            else:
+                bt.logging.trace(f"Miner {uid} has no index. Score=0")
 
             self.scores[uid] = score
 
