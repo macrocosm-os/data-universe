@@ -42,25 +42,14 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a miner."""
     # Assume everyone who isn't a validator is a miner.
     # This explicilty disallows validator/miner hybrids.
-    # Explicitly blacklist known bad coldkeys.
-    if metagraph.coldkeys[uid] in [
-        "5DF9jPcH8hvEoiV217zXD9C2Uad9GVwAM7jbmsM5SMwUFzaS",
-        "5CMfxqSmWPyjWy16MPHw117y2VE7MvZ93rf3U6A77xf1trBA",
-        "5GbWdBLCzXFd4ZSh8CGPYDRkxy8vcmULbfHE5gZgowxjgzHp",
-        "5Di443BWvJKLHnLAkxvzSZUcu4jSE6Ka9UStjEMduwzRsy5b",
-        "5DkcViCGRxrCwTdM3C3Y11TgXnEdHiC6g5pdw4UH98MZnfwA",
-        "5E4fb9wp1YS6Yj6ygoGaWDh9Pi6NENUUHiV5BqbjmtrjY1dS",
-        "5CyuNczRc5bR9Q4DKdjpPpZ2zNaf7kXzViS9yhWsiCsLUtQa",
-        "5Ebmd3AfZLwUyKeYMxjAjsFDhdZnCWPDnGyaK7oiQT9Bdj4G",
-        "5HQsitnqVvWKSnSoMkMqA6ZYoUZRxVSxTH37RkXKC7hd6sP9",
-        "5HieZncwaY3NwjAif3mFmADSUjKxqwmFJAoFC4VzhV9STcWu",
-        "5FtGg3dG5Xoos24UU2eV5WjDRAHHp9g1CHpeaZv5JNYPzTvp",
-        "5Ebmd3AfZLwUyKeYMxjAjsFDhdZnCWPDnGyaK7oiQT9Bdj4G",
-    ]:
-        bt.logging.trace(f"Ignoring known bad coldkey {metagraph.coldkeys[uid]}.")
-        return False
+    # 1) Blacklist known bad coldkeys.
 
-    return metagraph.Tv[uid] == 0
+    # if metagraph.coldkeys[uid] in [
+    # ]:
+    #     bt.logging.trace(f"Ignoring known bad coldkey {metagraph.coldkeys[uid]}.")
+    #     return False
+
+    return not is_validator(uid, metagraph)
 
 
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
