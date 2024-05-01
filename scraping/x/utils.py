@@ -9,6 +9,8 @@ from scraping.scraper import ValidationResult
 
 from scraping.x.model import XContent
 
+from datadog import statsd
+
 
 def _validate_model_config(model_config: Dict[str, str]) -> bool:
     """Validates that extra content isn't stowed away in the 'model_config'

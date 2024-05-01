@@ -1,5 +1,7 @@
 import copy
 import datetime
+import sys
+import time
 import traceback
 import asyncio
 import threading
@@ -24,10 +26,15 @@ from storage.validator.sqlite_memory_validator_storage import (
 )
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
+from storage.validator.validator_storage import (
+    ValidatorStorage,
+)
+from storage.validator.mysql_databox_storage import MysqlDataboxStorage
 
 from typing import List, Optional
 
 from rewards.miner_scorer import MinerScorer
+from datadog import statsd
 
 
 class MinerEvaluator:
@@ -61,6 +68,14 @@ class MinerEvaluator:
         )
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
+        self.databox_storage: MysqlDataboxStorage = MysqlDataboxStorage(
+            host=os.getenv("MYSQL_DATABOX_HOST"),
+            user=os.getenv("MYSQL_DATABOX_USER"),
+            password=os.getenv("MYSQL_DATABOX_PW"),
+            database=os.getenv("MYSQL_DATABOX_DB"),
+        )
+
+        self.last_seen_38_datetime = None
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -72,6 +87,7 @@ class MinerEvaluator:
         """Returns the scorer used by the evaluator."""
         return self.scorer
 
+    @statsd.timed("eval_miner")
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous version of eval_miner."""
         asyncio.run(self.eval_miner(uid))
@@ -124,15 +140,16 @@ class MinerEvaluator:
         )
 
         responses = None
-        async with bt.dendrite(wallet=self.wallet) as dendrite:
-            responses = await dendrite.forward(
-                axons=[axon_info],
-                synapse=GetDataEntityBucket(
-                    data_entity_bucket_id=chosen_data_entity_bucket.id,
-                    version=constants.PROTOCOL_VERSION,
-                ),
-                timeout=120,
-            )
+        with statsd.timed("get_data_entity_bucket_time"):
+            async with bt.dendrite(wallet=self.wallet) as dendrite:
+                responses = await dendrite.forward(
+                    axons=[axon_info],
+                    synapse=GetDataEntityBucket(
+                        data_entity_bucket_id=chosen_data_entity_bucket.id,
+                        version=constants.PROTOCOL_VERSION,
+                    ),
+                    timeout=120,
+                )
 
         data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
@@ -203,6 +220,30 @@ class MinerEvaluator:
             )
             return
 
+        # Output to datadog only for buckets that have passed basic validation.
+        if chosen_data_entity_bucket.id.source == DataSource.REDDIT:
+            statsd.distribution(
+                "bucket_reddit.entity_count", len(data_entity_bucket.data_entities)
+            )
+            statsd.distribution(
+                "bucket_reddit.size", chosen_data_entity_bucket.size_bytes
+            )
+        elif chosen_data_entity_bucket.id.label is None:
+            statsd.distribution(
+                "bucket_twitter_none.entity_count",
+                len(data_entity_bucket.data_entities),
+            )
+            statsd.distribution(
+                "bucket_twitter_none.size", chosen_data_entity_bucket.size_bytes
+            )
+        else:
+            statsd.distribution(
+                "bucket_twitter.entity_count", len(data_entity_bucket.data_entities)
+            )
+            statsd.distribution(
+                "bucket_twitter.size", chosen_data_entity_bucket.size_bytes
+            )
+
         # Basic validation and uniqueness passed. Now sample some entities for data correctness.
         entities_to_validate: List[DataEntity] = vali_utils.choose_entities_to_verify(
             data_entities
@@ -261,6 +302,20 @@ class MinerEvaluator:
         # Use a set in case the network has fewer than 15 miners.
         uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
 
+        # Do not count the first loop since we start in a random place.
+        if 38 in uids_to_eval:
+            if self.last_seen_38_datetime is not None:
+                # Emit how many minutes its been since we've last evaluated 38 (current top miner).
+                statsd.gauge(
+                    "evaluation_frequency_seconds",
+                    (
+                        datetime.datetime.now() - self.last_seen_38_datetime
+                    ).total_seconds(),
+                )
+
+            # Update our sentinel to now.
+            self.last_seen_38_datetime = datetime.datetime.now()
+
         bt.logging.info(
             f"Running validation on the following batch of uids: {uids_to_eval}."
         )
@@ -272,6 +327,7 @@ class MinerEvaluator:
             thread.start()
 
         bt.logging.trace(f"Waiting for {len(threads)} miner evals to finish.")
+
         end = datetime.datetime.now() + datetime.timedelta(seconds=300)
         for t in threads:
             # Compute the timeout, so that all threads are waited for a total of 5 minutes.
@@ -327,12 +383,13 @@ class MinerEvaluator:
 
         try:
             responses: List[GetMinerIndex] = None
-            async with bt.dendrite(wallet=self.wallet) as dendrite:
-                responses = await dendrite.forward(
-                    axons=[miner_axon],
-                    synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
-                    timeout=120,
-                )
+            with statsd.timed("get_miner_index_time"):
+                async with bt.dendrite(wallet=self.wallet) as dendrite:
+                    responses = await dendrite.forward(
+                        axons=[miner_axon],
+                        synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
+                        timeout=120,
+                    )
 
             response = vali_utils.get_single_successful_response(
                 responses, GetMinerIndex
@@ -358,10 +415,15 @@ class MinerEvaluator:
             assert miner_index is not None, "Miner index should not be None."
 
             # Miner replied with a valid index. Store it and return it.
+            # Output to datadog only for valid indexes.
+            index_size = CompressedMinerIndex.size_bytes(miner_index)
+            index_bucket_count = CompressedMinerIndex.bucket_count(miner_index)
+            statsd.distribution("index.bucket_count", index_bucket_count)
+            statsd.distribution("index.size", index_size)
             miner_credibility = self.scorer.get_miner_credibility(uid)
             bt.logging.success(
-                f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
-                + f"across {CompressedMinerIndex.bucket_count(miner_index)} buckets."
+                f"{hotkey}: Got new compressed miner index of {index_size} bytes "
+                + f"across {index_bucket_count} buckets."
             )
             self.storage.upsert_compressed_miner_index(
                 miner_index, hotkey, miner_credibility
@@ -414,3 +476,65 @@ class MinerEvaluator:
                 self.scorer.resize(len(metagraph.hotkeys))
 
             self.metagraph = copy.deepcopy(metagraph)
+
+    def exit(self):
+        self.should_exit = True
+
+    def run_databox(self):
+        """
+        Initiates and manages the databox loop for the validator, which
+
+        1. Periodically updates the mysql databox tables with current information.
+        """
+
+        # Sleep on startup to avoid wiping the tables on restart.
+        time.sleep(datetime.timedelta(minutes=90).total_seconds())
+
+        # This loop maintains the validator's databox table updates until intentionally stopped.
+        while not self.should_exit:
+            try:
+                bt.logging.trace("Updating databox tables.")
+
+                next_databox_update = datetime.datetime.utcnow() + datetime.timedelta(
+                    minutes=45
+                )
+
+                # Get Databox Miners from SqliteMemory and write to mysql.
+                self.databox_storage.insert_miners(self.storage.read_databox_miners())
+
+                # Get Databox Age Sizes from SqliteMemory and write to mysql.
+                self.databox_storage.insert_age_sizes(
+                    self.storage.read_databox_age_sizes()
+                )
+
+                # Get Databox Label Sizes from SqliteMemory and write to mysql.
+                self.databox_storage.insert_label_sizes(
+                    self.storage.read_databox_label_sizes()
+                )
+
+                wait_time = max(
+                    0,
+                    (next_databox_update - datetime.datetime.utcnow()).total_seconds(),
+                )
+
+                bt.logging.trace(
+                    f"Finished updating databox tables. Waiting {wait_time} seconds until next update."
+                )
+
+                if wait_time > 0:
+                    time.sleep(wait_time)
+
+            # TODO: Confirm but I think this needs to be in both threads in case one or the other is running.
+            # If someone intentionally stops the validator, it'll safely terminate operations.
+            except KeyboardInterrupt:
+                bt.logging.success(
+                    "Validator killed by keyboard interrupt while in databox run."
+                )
+                sys.exit()
+
+            # In case of unforeseen errors, the validator will log the error and continue operations.
+            except Exception as err:
+                bt.logging.error("Error during databox run", str(err))
+                bt.logging.debug(
+                    traceback.print_exception(type(err), err, err.__traceback__)
+                )

@@ -9,8 +9,10 @@ from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
+from scraping.x.classifiers import TweetLabeler
 from scraping.x import utils
 import datetime as dt
+import pytest
 
 
 class ApiDojoTwitterScraper(Scraper):
@@ -108,6 +110,11 @@ class ApiDojoTwitterScraper(Scraper):
                             content_size_bytes_validated=entity.content_size_bytes,
                         )
                 else:
+                    # Generate label for tweet in validation if no hashtags
+                    labeler = TweetLabeler()
+                    if not actual_tweet.tweet_hashtags: 
+                        actual_tweet.tweet_hashtags = labeler.label_tweet_multiple(actual_tweet.text)
+                        print(actual_tweet.tweet_hashtags)
                     return utils.validate_tweet_content(
                         actual_tweet=actual_tweet,
                         entity=entity,
@@ -237,7 +244,7 @@ class ApiDojoTwitterScraper(Scraper):
 
         return results
 
-
+@pytest.mark.asyncio
 async def test_scrape():
     scraper = ApiDojoTwitterScraper()
 
@@ -256,7 +263,7 @@ async def test_scrape():
 
     return entities
 
-
+@pytest.mark.asyncio
 async def test_validate():
     scraper = ApiDojoTwitterScraper()
 
@@ -323,7 +330,7 @@ async def test_validate():
     results = await scraper.validate(entities=true_entities)
     print(f"Validation results: {results}")
 
-
+@pytest.mark.asyncio
 async def test_multi_thread_validate():
     scraper = ApiDojoTwitterScraper()
 
