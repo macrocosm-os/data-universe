@@ -93,7 +93,9 @@ class MicroworldsTwitterScraper(Scraper):
 
                 actual_tweet = None
                 for tweet in tweets:
-                    if tweet.url == entity.uri:
+                    if utils.normalize_url(tweet.url) == utils.normalize_url(
+                        entity.uri
+                    ):
                         actual_tweet = tweet
                         break
                 if actual_tweet is None:
@@ -227,7 +229,7 @@ class MicroworldsTwitterScraper(Scraper):
                     XContent(
                         username=utils.extract_user(data["url"]),
                         text=utils.sanitize_scraped_tweet(text),
-                        url=data["url"],
+                        url=utils.normalize_url(data["url"]),
                         timestamp=dt.datetime.strptime(
                             data["created_at"], "%a %b %d %H:%M:%S %z %Y"
                         ),
@@ -322,6 +324,15 @@ async def test_validate():
             content='{"username": "@DervisMusa", "text": "\\"\\u0130srail\'le ticaret, Filistin\'e ihanet!\\"\\n(\\u0627\\u0644\\u062a\\u062c\\u0627\\u0631\\u0629 \\u0645\\u0639 \\u0625\\u0633\\u0631\\u0627\\u0626\\u064a\\u0644 \\u062a\\u062e\\u0648\\u0646 \\u0641\\u0644\\u0633\\u0637\\u064a\\u0646)\\n\\nAllah kabul etsin. Aya\\u011f\\u0131n\\u0131za / y\\u00fcre\\u011finize sa\\u011fl\\u0131k. Herkese \\u00f6rnek olur in\\u015fallah.\\n\\n#\\u0130srailleTicaretFilistine\\u0130hanet\\n\\n#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649 \\n#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646 \\n#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631 \\n#\\u0627\\u0644\\u064a\\u0645\\u0646\\n#Hamas\\n#deprem", "url": "https://twitter.com/DervisMusa/status/1761758719941988688", "timestamp": "2024-02-25T14:23:05+00:00", "tweet_hashtags": ["#\\u0130srailleTicaretFilistine\\u0130hanet", "#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649", "#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646", "#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631", "#\\u0627\\u0644\\u064a\\u0645\\u0646", "#Hamas", "#deprem"]}',
             content_size_bytes=1072,
         ),
+        # x.com domain.
+        DataEntity(
+            uri="https://x.com/Sid14290237375/status/1760088426400162274",
+            datetime=dt.datetime(2024, 2, 20, 23, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#HowlongcanImakeahashtaganywayIg"),
+            content='{"username":"@Sid14290237375","text":"Testing hashtags\\n\\n#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest","url":"https://x.com/Sid14290237375/status/1760088426400162274","timestamp":"2024-02-20T23:45:00Z","tweet_hashtags":["#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest"]}',
+            content_size_bytes=356,
+        ),
     ]
 
     results = await scraper.validate(entities=true_entities)
@@ -367,6 +378,6 @@ async def test_multi_thread_validate():
 
 if __name__ == "__main__":
     bt.logging.set_trace(True)
-    asyncio.run(test_multi_thread_validate())
-    asyncio.run(test_scrape())
+    # asyncio.run(test_multi_thread_validate())
+    # asyncio.run(test_scrape())
     asyncio.run(test_validate())
