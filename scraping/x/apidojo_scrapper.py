@@ -13,9 +13,9 @@ from scraping.x import utils
 import datetime as dt
 
 
-class AdajoboTwitterScraper(Scraper):
+class ApiDojoTwitterScraper(Scraper):
     """
-    Scrapes tweets using the Adajobo Twitter Scraper: https://console.apify.com/actors/heLL6fUofdPgRXZie.
+    Scrapes tweets using the Adajobo Twitter Scraper: https://console.apify.com/actors/61RPP7dywgiy0JPD0.
     """
 
     ACTOR_ID = "61RPP7dywgiy0JPD0"
@@ -23,9 +23,9 @@ class AdajoboTwitterScraper(Scraper):
     SCRAPE_TIMEOUT_SECS = 120
 
     BASE_RUN_INPUT = {
-        "maxRequestRetries": 5,
-        "searchMode": "live",
+        "maxRequestRetries": 5
     }
+
 
     # As of 2/5/24 this actor only takes 256 MB in the default config so we can run a full batch without hitting shared actor memory limits.
     concurrent_validates_semaphore = threading.BoundedSemaphore(20)
@@ -55,12 +55,12 @@ class AdajoboTwitterScraper(Scraper):
                 tweet_count = 1 if attempt == 1 else 5
 
                 run_input = {
-                    **AdajoboTwitterScraper.BASE_RUN_INPUT,
+                    **ApiDojoTwitterScraper.BASE_RUN_INPUT,
                     "urls": [entity.uri],
                     "maxTweets": tweet_count,
                 }
                 run_config = RunConfig(
-                    actor_id=AdajoboTwitterScraper.ACTOR_ID,
+                    actor_id=ApiDojoTwitterScraper.ACTOR_ID,
                     debug_info=f"Validate {entity.uri}",
                     max_data_entities=tweet_count,
                 )
@@ -116,7 +116,7 @@ class AdajoboTwitterScraper(Scraper):
 
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
         bt.logging.trace("Acquiring semaphore for concurrent adajobo validations.")
-        with AdajoboTwitterScraper.concurrent_validates_semaphore:
+        with ApiDojoTwitterScraper.concurrent_validates_semaphore:
             bt.logging.trace(
                 "Acquired semaphore for concurrent adajobo validations."
             )
@@ -130,7 +130,7 @@ class AdajoboTwitterScraper(Scraper):
         """Scrapes a batch of Tweets according to the scrape config."""
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
-        bt.logging.debug(f"scrape conf: {scrape_config}")
+
         query = f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)} until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
         if scrape_config.labels:
             label_query = " OR ".join([label.value for label in scrape_config.labels])
@@ -144,16 +144,16 @@ class AdajoboTwitterScraper(Scraper):
         # Construct the input to the runner.
         max_items = scrape_config.entity_limit or 150
         run_input = {
-            **AdajoboTwitterScraper.BASE_RUN_INPUT,
+            **ApiDojoTwitterScraper.BASE_RUN_INPUT,
             "searchTerms": [query],
             "maxTweets": max_items,
         }
 
         run_config = RunConfig(
-            actor_id=AdajoboTwitterScraper.ACTOR_ID,
+            actor_id=ApiDojoTwitterScraper.ACTOR_ID,
             debug_info=f"Scrape {query}",
             max_data_entities=scrape_config.entity_limit,
-            timeout_secs=AdajoboTwitterScraper.SCRAPE_TIMEOUT_SECS,
+            timeout_secs=ApiDojoTwitterScraper.SCRAPE_TIMEOUT_SECS,
         )
 
         bt.logging.success(f"Performing Twitter scrape for search terms: {query}.")
@@ -187,7 +187,7 @@ class AdajoboTwitterScraper(Scraper):
         """Performs a best effort parsing of Apify dataset into List[XContent]
 
         Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}]:
+        if dataset == [{"zero_result": True}] or not dataset: # Todo remove first statement if it's not necessary
             return []
 
         results: List[XContent] = []
@@ -202,26 +202,21 @@ class AdajoboTwitterScraper(Scraper):
                 ):
                     continue
 
-                # Truncated_full_text is only populated if "full_text" is truncated.
                 text = data['text']
 
-                # Adajobo returns cashtags separately under symbols.
+                # Apidojo returns cashtags separately under symbols.
                 # These are returned as list of dicts where the indices key is the first/last index and text is the tag.
                 # If there are no hashtags or cashtags they are empty lists.
-                hashtags = (
-                    data["entities"]["hashtags"]
-                    if "entities" in data and "hashtags" in data["entities"]
-                    else []
-                )
-                cashtags = (
-                    data["entities"]["symbols"]
-                    if "entities" in data and "symbols" in data["entities"]
-                    else []
-                )
 
-                sorted_tags = sorted(hashtags + cashtags, key=lambda x: x["indices"][0])
+                # Safely retrieve hashtags and symbols lists using dictionary.get() method
+                hashtags = data.get('entities', {}).get('hashtags', [])
+                cashtags = data.get('entities', {}).get('symbols', [])
 
-                tags = ["#" + item["text"] for item in sorted_tags]
+                # Combine hashtags and cashtags into one list and sort them by their first index
+                sorted_tags = sorted(hashtags + cashtags, key=lambda x: x['indices'][0])
+
+                # Create a list of formatted tags with prefixes
+                tags = ["#" + item['text'] for item in sorted_tags]
 
                 results.append(
                     XContent(
@@ -243,7 +238,7 @@ class AdajoboTwitterScraper(Scraper):
 
 
 async def test_scrape():
-    scraper = AdajoboTwitterScraper()
+    scraper = ApiDojoTwitterScraper()
 
     entities = await scraper.scrape(
         ScrapeConfig(
@@ -252,7 +247,7 @@ async def test_scrape():
                 start=dt.datetime(2024, 5, 27, 0, 0, 0, tzinfo=dt.timezone.utc),
                 end=dt.datetime(2024, 5, 27, 9, 0, 0, tzinfo=dt.timezone.utc),
             ),
-            labels=[DataLabel(value="#ElonMusk"), DataLabel(value="#btc")],
+            labels=[DataLabel(value="#bittgergnergerojngoierjgensor")],
         )
     )
 
@@ -262,7 +257,7 @@ async def test_scrape():
 
 
 async def test_validate():
-    scraper = AdajoboTwitterScraper()
+    scraper = ApiDojoTwitterScraper()
 
     true_entities = [
         DataEntity(
@@ -329,7 +324,7 @@ async def test_validate():
 
 
 async def test_multi_thread_validate():
-    scraper = AdajoboTwitterScraper()
+    scraper = ApiDojoTwitterScraper()
 
     true_entities = [
         DataEntity(
@@ -367,6 +362,6 @@ async def test_multi_thread_validate():
 
 if __name__ == "__main__":
     bt.logging.set_trace(True)
-    asyncio.run(test_multi_thread_validate())
+    #asyncio.run(test_multi_thread_validate())
     asyncio.run(test_scrape())
-    asyncio.run(test_validate())
+    # asyncio.run(test_validate())
