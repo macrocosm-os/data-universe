@@ -17,7 +17,7 @@ class ScraperId(str, Enum):
     X_FLASH = "X.flash"
     REDDIT_CUSTOM = "Reddit.custom"
     X_MICROWORLDS = "X.microworlds"
-    X_ADAJOBO = "X.adajobo"
+    X_APIDOJO = "X.apidojo"
 
 
 class ValidationResult(StrictBaseModel):

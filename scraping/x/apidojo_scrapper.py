@@ -115,10 +115,10 @@ class ApiDojoTwitterScraper(Scraper):
             return []
 
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
-        bt.logging.trace("Acquiring semaphore for concurrent adajobo validations.")
+        bt.logging.trace("Acquiring semaphore for concurrent apidojo validations.")
         with ApiDojoTwitterScraper.concurrent_validates_semaphore:
             bt.logging.trace(
-                "Acquired semaphore for concurrent adajobo validations."
+                "Acquired semaphore for concurrent apidojo validations."
             )
             results = await asyncio.gather(
                 *[validate_entity(entity) for entity in entities]

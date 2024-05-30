@@ -13,7 +13,7 @@ DEFAULT_FACTORIES = {
     ScraperId.X_FLASH: MicroworldsTwitterScraper,
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
     ScraperId.X_MICROWORLDS: MicroworldsTwitterScraper,
-    ScraperId.X_ADAJOBO: ApiDojoTwitterScraper
+    ScraperId.X_APIDOJO: ApiDojoTwitterScraper
 }
 
 
