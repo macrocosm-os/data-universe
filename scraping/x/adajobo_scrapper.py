@@ -141,8 +141,6 @@ class AdajoboTwitterScraper(Scraper):
             # I attempted using "#" instead, but that still returned empty results ¯\_(ツ)_/¯
             query += " e"
 
-        print(query)
-
         # Construct the input to the runner.
         max_items = scrape_config.entity_limit or 150
         run_input = {
@@ -172,9 +170,8 @@ class AdajoboTwitterScraper(Scraper):
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
-        x_contents = self._best_effort_parse_dataset(dataset) # TODO
+        x_contents = self._best_effort_parse_dataset(dataset)
 
-        bt.logging.debug(f'Len after decoding: {len(x_contents)}')
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
         )
