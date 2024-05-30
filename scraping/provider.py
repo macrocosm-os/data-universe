@@ -5,6 +5,7 @@ from scraping.reddit.reddit_lite_scraper import RedditLiteScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.scraper import Scraper, ScraperId
 from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
+from scraping.x.adajobo_scrapper import AdajoboTwitterScraper
 
 DEFAULT_FACTORIES = {
     ScraperId.REDDIT_LITE: RedditLiteScraper,
@@ -12,6 +13,7 @@ DEFAULT_FACTORIES = {
     ScraperId.X_FLASH: MicroworldsTwitterScraper,
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
     ScraperId.X_MICROWORLDS: MicroworldsTwitterScraper,
+    ScraperId.X_ADAJOBO: AdajoboTwitterScraper
 }
 
 

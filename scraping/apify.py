@@ -90,9 +90,7 @@ class ActorRunner:
             raise ActorRunError(
                 f"Actor ({config.actor_id}) [{config.debug_info}] failed: {run}"
             )
-
         iterator = client.dataset(run["defaultDatasetId"]).iterate_items()
 
         items = [i async for i in iterator]
-
         return items

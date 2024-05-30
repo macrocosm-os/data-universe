@@ -131,6 +131,7 @@ class MicroworldsTwitterScraper(Scraper):
         """Scrapes a batch of Tweets according to the scrape config."""
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
+        bt.logging.debug(f"scrape conf: {scrape_config}")
         query = f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)} until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
         if scrape_config.labels:
             label_query = " OR ".join([label.value for label in scrape_config.labels])

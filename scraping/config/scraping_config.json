@@ -1,7 +1,7 @@
 {
     "scraper_configs": [
         {
-            "scraper_id": "X.microworlds",
+            "scraper_id": "X.adajobo",
             "cadence_seconds": 300,
             "labels_to_scrape": [
                 {

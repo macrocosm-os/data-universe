@@ -15,7 +15,7 @@ import datetime as dt
 
 class AdajoboTwitterScraper(Scraper):
     """
-    Scrapes tweets using the Microworlds Twitter Scraper: https://console.apify.com/actors/heLL6fUofdPgRXZie.
+    Scrapes tweets using the Adajobo Twitter Scraper: https://console.apify.com/actors/heLL6fUofdPgRXZie.
     """
 
     ACTOR_ID = "61RPP7dywgiy0JPD0"
@@ -115,10 +115,10 @@ class AdajoboTwitterScraper(Scraper):
             return []
 
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
-        bt.logging.trace("Acquiring semaphore for concurrent microworlds validations.")
+        bt.logging.trace("Acquiring semaphore for concurrent adajobo validations.")
         with AdajoboTwitterScraper.concurrent_validates_semaphore:
             bt.logging.trace(
-                "Acquired semaphore for concurrent microworlds validations."
+                "Acquired semaphore for concurrent adajobo validations."
             )
             results = await asyncio.gather(
                 *[validate_entity(entity) for entity in entities]
@@ -130,6 +130,7 @@ class AdajoboTwitterScraper(Scraper):
         """Scrapes a batch of Tweets according to the scrape config."""
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
+        bt.logging.debug(f"scrape conf: {scrape_config}")
         query = f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)} until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
         if scrape_config.labels:
             label_query = " OR ".join([label.value for label in scrape_config.labels])
@@ -171,7 +172,9 @@ class AdajoboTwitterScraper(Scraper):
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
-        x_contents = self._best_effort_parse_dataset(dataset)
+        x_contents = self._best_effort_parse_dataset(dataset) # TODO
+
+        bt.logging.debug(f'Len after decoding: {len(x_contents)}')
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
         )
@@ -192,23 +195,20 @@ class AdajoboTwitterScraper(Scraper):
 
         results: List[XContent] = []
         for data in dataset:
+            bt.logging.debug(data)
             try:
                 # Check that we have the required fields.
                 if (
-                    ("full_text" not in data and "truncated_full_text" not in data)
+                    ("text" not in data)
                     or "url" not in data
-                    or "created_at" not in data
+                    or "createdAt" not in data
                 ):
                     continue
 
                 # Truncated_full_text is only populated if "full_text" is truncated.
-                text = (
-                    data["truncated_full_text"]
-                    if "truncated_full_text" in data and data["truncated_full_text"]
-                    else data["full_text"]
-                )
+                text = data['text']
 
-                # Microworlds returns cashtags separately under symbols.
+                # Adajobo returns cashtags separately under symbols.
                 # These are returned as list of dicts where the indices key is the first/last index and text is the tag.
                 # If there are no hashtags or cashtags they are empty lists.
                 hashtags = (
@@ -228,11 +228,11 @@ class AdajoboTwitterScraper(Scraper):
 
                 results.append(
                     XContent(
-                        username=utils.extract_user(data["url"]),
+                        username= data['author']['userName'],# utils.extract_user(data["url"]),
                         text=utils.sanitize_scraped_tweet(text),
                         url=data["url"],
                         timestamp=dt.datetime.strptime(
-                            data["created_at"], "%a %b %d %H:%M:%S %z %Y"
+                            data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
                     )
@@ -370,6 +370,6 @@ async def test_multi_thread_validate():
 
 if __name__ == "__main__":
     bt.logging.set_trace(True)
-    # asyncio.run(test_multi_thread_validate())
+    asyncio.run(test_multi_thread_validate())
     asyncio.run(test_scrape())
-    # asyncio.run(test_validate())
+    asyncio.run(test_validate())
