@@ -68,7 +68,7 @@ The frequency and types of data your Miner will scrape is configured in the [scr
 
 By default `scraping_config.json` is setup use both the apify actor and the personal reddit account for scraping reddit.
 
-If you do not want to use Apify you should remove the sections where the `scraper_id` is set to either `Reddit.lite` or `X.microworlds`.
+If you do not want to use Apify you should remove the sections where the `scraper_id` is set to either `Reddit.lite` or `X.microworlds` or `X.apidojo`.
 
 If you do not want to use a personal Reddit account you should remove the sections where the `scraper_id` is set to either `Reddit.custom`.
 
@@ -87,7 +87,7 @@ Let's walk through an example to explain how all these properties fit together.
 {
     "scraper_configs": [
         {
-            "scraper_id": "X.microworlds",
+            "scraper_id": "X.apidojo",
             "cadence_seconds": 300,
             "labels_to_scrape": [
                 {

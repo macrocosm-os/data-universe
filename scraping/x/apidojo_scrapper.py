@@ -15,7 +15,7 @@ import datetime as dt
 
 class ApiDojoTwitterScraper(Scraper):
     """
-    Scrapes tweets using the Adajobo Twitter Scraper: https://console.apify.com/actors/61RPP7dywgiy0JPD0.
+    Scrapes tweets using the Apidojo Twitter Scraper: https://console.apify.com/actors/61RPP7dywgiy0JPD0.
     """
 
     ACTOR_ID = "61RPP7dywgiy0JPD0"
