@@ -37,7 +37,7 @@ class ApiDojoTwitterScraper(Scraper):
         """Validate the correctness of a DataEntity by URI."""
 
         async def validate_entity(entity) -> ValidationResult:
-            if not utils.is_valid_twitter_url(entity.uri):
+            if not utils.is_valid_twitter_or_x_url(entity.uri):
                 return ValidationResult(
                     is_valid=False,
                     reason="Invalid URI.",
@@ -56,8 +56,8 @@ class ApiDojoTwitterScraper(Scraper):
 
                 run_input = {
                     **ApiDojoTwitterScraper.BASE_RUN_INPUT,
-                    "urls": [entity.uri],
-                    "maxTweets": tweet_count,
+                    "startUrls": [entity.uri],
+                    "maxItems": tweet_count,
                 }
                 run_config = RunConfig(
                     actor_id=ApiDojoTwitterScraper.ACTOR_ID,
@@ -91,12 +91,13 @@ class ApiDojoTwitterScraper(Scraper):
 
                 # Parse the response
                 tweets = self._best_effort_parse_dataset(dataset)
-
+                bt.logging.debug(tweets)
                 actual_tweet = None
                 for tweet in tweets:
                     if tweet.url == entity.uri:
                         actual_tweet = tweet
                         break
+                bt.logging.debug(actual_tweet)
                 if actual_tweet is None:
                     # Only append a failed result if on final attempt.
                     if attempt == max_attempts:
@@ -192,7 +193,6 @@ class ApiDojoTwitterScraper(Scraper):
 
         results: List[XContent] = []
         for data in dataset:
-            bt.logging.debug(data)
             try:
                 # Check that we have the required fields.
                 if (

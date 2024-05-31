@@ -91,8 +91,6 @@ class ActorRunner:
                 f"Actor ({config.actor_id}) [{config.debug_info}] failed: {run}"
             )
         iterator = client.dataset(run["defaultDatasetId"]).iterate_items()
-        bt.logging.debug(f'Returned iterator: {iterator}')
         items = [i async for i in iterator]
-        bt.logging.debug(f'Returned items: {items}')
 
         return items
