@@ -1,8 +1,6 @@
 import abc
 from enum import Enum
-import bittensor as bt
-import asyncio
-import traceback
+
 from typing import Dict, List, Optional
 
 from pydantic import BaseModel, Field, PositiveInt
@@ -19,6 +17,7 @@ class ScraperId(str, Enum):
     X_FLASH = "X.flash"
     REDDIT_CUSTOM = "Reddit.custom"
     X_MICROWORLDS = "X.microworlds"
+    X_APIDOJO = "X.apidojo"
 
 
 class ValidationResult(StrictBaseModel):

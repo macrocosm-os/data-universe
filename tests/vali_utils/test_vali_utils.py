@@ -477,6 +477,31 @@ class TestValiUtils(unittest.TestCase):
         ]
         self.assertFalse(vali_utils.are_entities_unique(entities))
 
+    def test_are_entities_unique_duplicate_twitter_uris(self):
+        """Tests that duplicated uris (with different twitter/x domains) are not considered unique."""
+        datetime = dt.datetime(2024, 3, 30, 2, 39, 43, tzinfo=dt.timezone.utc)
+        label = DataLabel(value="#TikTok")
+
+        entities = [
+            DataEntity(
+                uri="https://x.com/DorisCeciliaCa6/status/1773902901280129234",
+                datetime=datetime,
+                source=DataSource.X,
+                label=label,
+                content=b'{"username": "@DorisCeciliaCa6", "text": "\\ud83c\\udde8\\ud83c\\uddf1\\ud83c\\udde8\\ud83c\\uddf1\\ud83c\\udde8\\ud83c\\uddf1\\ud83c\\udde8\\ud83c\\uddf1\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffcCheck out Amina\'s video! #TikTok", "url": "https://x.com/DorisCeciliaCa6/status/1773902901280129234", "timestamp": "2024-03-30T02:39:00.002112+00:00", "tweet_hashtags": ["#TikTok"], "model_config": {"extra": "ignore"}}',
+                content_size_bytes=482,
+            ),
+            DataEntity(
+                uri="https://twitter.com/DorisCeciliaCa6/status/1773902901280129234",
+                datetime=datetime,
+                source=DataSource.X,
+                label=label,
+                content=b'{"username": "@DorisCeciliaCa6", "text": "\\ud83c\\udde8\\ud83c\\uddf1\\ud83c\\udde8\\ud83c\\uddf1\\ud83c\\udde8\\ud83c\\uddf1\\ud83c\\udde8\\ud83c\\uddf1\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffc\\ud83d\\udc4f\\ud83c\\udffcCheck out Amina\'s video! #TikTok", "url": "https://twitter.com/DorisCeciliaCa6/status/1773902901280129234", "timestamp": "2024-03-30T02:39:00.002111+00:00", "tweet_hashtags": ["#TikTok"], "model_config": {"extra": "ignore"}}',
+                content_size_bytes=482,
+            ),
+        ]
+        self.assertFalse(vali_utils.are_entities_unique(entities))
+
     def test_get_miner_index_from_response_compressed_index(self):
         """Tests get_miner_index_from_response with a compressed index."""
 

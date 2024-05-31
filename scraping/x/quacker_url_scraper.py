@@ -88,7 +88,7 @@ class QuackerUrlScraper(Scraper):
         for entity in entities:
             actual_tweet = None
             for tweet in tweets:
-                if tweet.url == entity.uri:
+                if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
                     actual_tweet = tweet
                     break
             if actual_tweet is None:
@@ -125,7 +125,7 @@ class QuackerUrlScraper(Scraper):
                     XContent(
                         username=utils.extract_user(data["url"]),
                         text=utils.sanitize_scraped_tweet(data["full_text"]),
-                        url=data["url"],
+                        url=utils.normalize_url(data["url"]),
                         timestamp=dt.datetime.strptime(
                             data["created_at"], "%Y-%m-%dT%H:%M:%S.%fZ"
                         ).replace(tzinfo=dt.timezone.utc),

@@ -50,7 +50,7 @@ Validators remain suspicious of Miners and so they periodically check a sample o
 
 As you can see from the above, Data Universe rewards diversity of data (storing 200 copies of the same data isn't exactly beneficial!) 
 
-To help understand the current data on the Subnet, the Data Universe team hosts a dashboard (https://shorturl.at/qBM02), showing the amount of each type of data (by DataEntityBucketId) on the Subnet. Miners are strongly encouraged to use this dashboard to customize their [Miner Configuration](./docs/miner.md#configuring-the-miner), to maximize their rewards.
+To help understand the current data on the Subnet, the Data Universe team hosts a dashboard (https://shorturl.at/Ca5uu), showing the amount of each type of data (by DataEntityBucketId) on the Subnet. Miners are strongly encouraged to use this dashboard to customize their [Miner Configuration](./docs/miner.md#configuring-the-miner), to maximize their rewards.
 
 # Getting Started
 
