@@ -91,10 +91,11 @@ class ApiDojoTwitterScraper(Scraper):
 
                 # Parse the response
                 tweets = self._best_effort_parse_dataset(dataset)
-                bt.logging.debug(tweets)
+
                 actual_tweet = None
+
                 for tweet in tweets:
-                    if tweet.url == entity.uri:
+                    if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
                         actual_tweet = tweet
                         break
                 bt.logging.debug(actual_tweet)
@@ -362,6 +363,6 @@ async def test_multi_thread_validate():
 
 if __name__ == "__main__":
     bt.logging.set_trace(True)
-    #asyncio.run(test_multi_thread_validate())
+    asyncio.run(test_multi_thread_validate())
     asyncio.run(test_scrape())
     asyncio.run(test_validate())
