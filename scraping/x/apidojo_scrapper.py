@@ -37,7 +37,7 @@ class ApiDojoTwitterScraper(Scraper):
         """Validate the correctness of a DataEntity by URI."""
 
         async def validate_entity(entity) -> ValidationResult:
-            if not utils.is_valid_twitter_or_x_url(entity.uri):
+            if not utils.is_valid_twitter_url(entity.uri):
                 return ValidationResult(
                     is_valid=False,
                     reason="Invalid URI.",
@@ -364,4 +364,4 @@ if __name__ == "__main__":
     bt.logging.set_trace(True)
     #asyncio.run(test_multi_thread_validate())
     asyncio.run(test_scrape())
-    # asyncio.run(test_validate())
+    asyncio.run(test_validate())
