@@ -27,6 +27,11 @@ class TestUtils(unittest.TestCase):
                 "https://www.twitter.com/bittensor_alert/status/1733247372950397060"
             )
         )
+        self.assertTrue(
+            utils.is_valid_twitter_url(
+                "https://www.x.com/bittensor_alert/status/1733247372950397060"
+            )
+        )
 
     def test_sanitize_text(self):
         """Tests sanitize_text with various tweets."""
@@ -228,6 +233,55 @@ class TestUtils(unittest.TestCase):
             actual_tweet, entity_to_validate
         )
         self.assertFalse(validation_result.is_valid)
+
+    def test_validate_tweet_content_url_normalized(self):
+        """Validates tweet validation passes when using both twitter.com and x.com."""
+        actual_tweet = XContent(
+            username="@bittensor_alert",
+            text="🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC",
+            url="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            timestamp=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#Bittensor", "#TAO", "#MEXC"],
+        )
+
+        entity_to_validate = DataEntity(
+            uri="https://x.com/bittensor_alert/status/1748585332935622672",
+            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#Bittensor"),
+            content='{"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://x.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"],"model_config":{"extra": "ignore"}}',
+            content_size_bytes=291,
+        )
+
+        validation_result = utils.validate_tweet_content(
+            actual_tweet, entity_to_validate
+        )
+        self.assertTrue(validation_result.is_valid)
+
+    def test_normalize_url_https(self):
+        """Validates twitter URLs are normalized to the x.com domain."""
+        self.assertEqual(
+            "https://twitter.com/bittensor_alert/status/1748585332935622672",
+            utils.normalize_url(
+                "https://x.com/bittensor_alert/status/1748585332935622672"
+            ),
+        )
+
+    def test_normalize_url_http(self):
+        """Validates twitter URLs are normalized to the x.com domain."""
+        self.assertEqual(
+            "http://twitter.com/bittensor_alert/status/1748585332935622672",
+            utils.normalize_url(
+                "http://x.com/bittensor_alert/status/1748585332935622672"
+            ),
+        )
+
+    def test_normalize_url_non_twitter_url(self):
+        """Validates a non twitter URL is not normalized."""
+        self.assertEqual(
+            "https://reddit.com/r/bittensor/soiu8324",
+            utils.normalize_url("https://reddit.com/r/bittensor/soiu8324"),
+        )
 
 
 if __name__ == "__main__":
