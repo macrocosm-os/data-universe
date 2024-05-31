@@ -39,6 +39,12 @@ def is_valid_twitter_url(url: str) -> bool:
         return False
 
 
+def remove_at_sign_from_username(username: str) -> str:
+    if username.startswith('@'):
+        return username[1:]
+    return username
+
+
 def normalize_url(url: str) -> str:
     """Normalizes a twitter URL to the twitter.com domain."""
     # We normalize to the twitter.com domain because that is what was historically used.
@@ -99,7 +105,7 @@ def validate_tweet_content(
         )
 
     # Check Tweet username
-    if tweet_to_verify.username != actual_tweet.username:
+    if remove_at_sign_from_username(tweet_to_verify.username) != remove_at_sign_from_username(actual_tweet.username):
         bt.logging.info(
             f"Tweet usernames do not match: {tweet_to_verify} != {actual_tweet}."
         )

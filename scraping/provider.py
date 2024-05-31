@@ -5,13 +5,15 @@ from scraping.reddit.reddit_lite_scraper import RedditLiteScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.scraper import Scraper, ScraperId
 from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
+from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
 
 DEFAULT_FACTORIES = {
     ScraperId.REDDIT_LITE: RedditLiteScraper,
-    # For backwards compatibility with old configs, remap x.flash to x.microworlds.
+    # For backwards compatibility with old configs, remap x.flash to x.apidojo.
     ScraperId.X_FLASH: MicroworldsTwitterScraper,
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
     ScraperId.X_MICROWORLDS: MicroworldsTwitterScraper,
+    ScraperId.X_APIDOJO: ApiDojoTwitterScraper
 }
 
 
