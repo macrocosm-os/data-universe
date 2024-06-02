@@ -13,6 +13,7 @@ from common.data import (
 from common.data_v2 import ScorableMinerIndex
 from common.date_range import DateRange
 from common.protocol import GetMinerIndex
+from scraping.x import utils as x_utils
 
 
 def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
@@ -115,6 +116,13 @@ def are_entities_valid(
     return (True, "")
 
 
+def _normalize_uri(uri: str) -> str:
+    """Normalizes a URI (independent of DataSource) for equality comparison."""
+    # For now, we only normalize twitter URIs. Other DataSources don't require any normalization.
+    # Note: This will leave the URI untouched if it is not a twitter URI.
+    return x_utils.normalize_url(uri)
+
+
 def are_entities_unique(entities: List[DataEntity]) -> bool:
     """Checks that all entities in a DataEntityBucket are unique.
 
@@ -131,12 +139,13 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
 
     for entity in entities:
         entity_content_hash = hashlib.sha1(entity.content).hexdigest()
-        # Check that this hash has not been seen before.
-        if entity_content_hash in entity_content_hash_set or entity.uri in uris:
+        normalized_uri = _normalize_uri(entity.uri)
+        # Check that the hash and URI have not been seen before
+        if entity_content_hash in entity_content_hash_set or normalized_uri in uris:
             return False
         else:
             entity_content_hash_set.add(entity_content_hash)
-            uris.add(entity.uri)
+            uris.add(normalized_uri)
 
     return True
 

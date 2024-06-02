@@ -34,14 +34,29 @@ def is_valid_twitter_url(url: str) -> bool:
 
     try:
         result = urlparse(url)
-        return all([result.scheme, result.netloc]) and "twitter.com" in result.netloc
+        return all([result.scheme, result.netloc]) and (
+            "twitter.com" in result.netloc or "x.com" in result.netloc
+        )
     except ValueError:
         return False
 
 
+def remove_at_sign_from_username(username: str) -> str:
+    if username.startswith('@'):
+        return username[1:]
+    return username
+
+
+def normalize_url(url: str) -> str:
+    """Normalizes a twitter URL to the twitter.com domain."""
+    # We normalize to the twitter.com domain because that is what was historically used.
+    # This will ensure the miner's DB deduplicates correctly.
+    return url.replace("x.com/", "twitter.com/")
+
+
 def extract_user(url: str) -> str:
     """Extracts the twitter user from the URL and returns it in the expected format."""
-    pattern = r"https://twitter.com/(\w+)/status/.*"
+    pattern = r"https://(?:twitter|x).com/(\w+)/status/.*"
     if re.match(pattern, url):
         return f"@{re.match(pattern, url).group(1)}"
     raise ValueError(f"Unable to extract user from {url}")
@@ -92,7 +107,7 @@ def validate_tweet_content(
         )
 
     # Check Tweet username
-    if tweet_to_verify.username != actual_tweet.username:
+    if remove_at_sign_from_username(tweet_to_verify.username) != remove_at_sign_from_username(actual_tweet.username):
         bt.logging.info(
             f"Tweet usernames do not match: {tweet_to_verify} != {actual_tweet}."
         )
@@ -114,7 +129,7 @@ def validate_tweet_content(
         )
 
     # Check Tweet url
-    if tweet_to_verify.url != actual_tweet.url:
+    if normalize_url(tweet_to_verify.url) != normalize_url(actual_tweet.url):
         bt.logging.info(
             f"Tweet urls do not match: {tweet_to_verify} != {actual_tweet}."
         )
@@ -191,6 +206,10 @@ def validate_tweet_content(
                 reason="The claimed bytes are too big compared to the actual tweet.",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
+
+        # Normalize the URI to allow either x.com or twitter.com URIs.
+        tweet_entity.uri = normalize_url(tweet_entity.uri)
+        entity.uri = normalize_url(entity.uri)
 
         if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
             return ValidationResult(
