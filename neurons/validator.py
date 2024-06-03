@@ -121,7 +121,7 @@ class Validator:
         self.is_setup = True
 
     def get_version_tag(self):
-        """Fetches version tag from """
+        """Fetches version tag"""
         try:
             subprocess.run(['git', 'fetch', '--tags'], check=True)
             version_tag = subprocess.check_output(['git', 'describe', '--tags', '--abbrev=0']).strip().decode('utf-8')
