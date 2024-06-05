@@ -1,7 +1,7 @@
 import datetime as dt
 import json
 from re import X
-from typing import Dict, List, Optional
+from typing import Dict, List
 from pydantic import BaseModel, ConfigDict, Field
 
 from common import constants
@@ -31,7 +31,6 @@ class XContent(BaseModel):
         description="A list of hashtags associated with the tweet, in order they appear in the tweet. Note: it's critical this ordering is respected as the first tag is used as the DataLabel for the index.",
     )
 
-    is_retweet: Optional[bool]
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:
         """Converts the XContent to a DataEntity."""

@@ -184,17 +184,6 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
-    if actual_tweet.is_retweet:
-        bt.logging.info(
-            f"That is not an original tweet; it's a retweet. It will not be scored starting June 6th."
-        )
-
-        # return ValidationResult(
-        #     is_valid=False,
-        #     reason="hat is not an original tweet; it's a retweet.",
-        #     content_size_bytes_validated=entity.content_size_bytes,
-        # )
-
     # Wahey! A valid Tweet.
     # One final check. Does the tweet content match the data entity information?
     try:
@@ -207,7 +196,6 @@ def validate_tweet_content(
         if tweet_to_verify.model_config:
             byte_difference_allowed += len('"model_config":{"extra": "ignore"}"')
 
-        byte_difference_allowed += len("is_retweet=False")
         if (
             entity.content_size_bytes - tweet_entity.content_size_bytes
         ) > byte_difference_allowed:

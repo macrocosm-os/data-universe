@@ -26,7 +26,6 @@ import time
 import datetime as dt
 import os
 import wandb
-import subprocess
 from common.metagraph_syncer import MetagraphSyncer
 import common.utils as utils
 import bittensor as bt
@@ -120,17 +119,6 @@ class Validator:
 
         self.is_setup = True
 
-    def get_version_tag(self):
-        """Fetches version tag"""
-        try:
-            subprocess.run(['git', 'fetch', '--tags'], check=True)
-            version_tag = subprocess.check_output(['git', 'describe', '--tags', '--abbrev=0']).strip().decode('utf-8')
-            return version_tag
-        
-        except subprocess.CalledProcessError as e:
-            print(f"Couldn't fetch latest version tag: {e}")
-            return "error"
-
     def new_wandb_run(self):
         """Creates a new wandb run to save information to."""
         # Create a unique run id for this run.
@@ -138,8 +126,6 @@ class Validator:
         self.wandb_run_start = now
         run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
         name = "validator-" + str(self.uid) + "-" + run_id
-        version_tag = self.get_version_tag()
-
         self.wandb_run = wandb.init(
             name=name,
             project="logging",
@@ -149,7 +135,6 @@ class Validator:
                 "hotkey": self.wallet.hotkey.ss58_address,
                 "run_name": run_id,
                 "type": "validator",
-                "version": version_tag,
             },
             allow_val_change=True,
             anonymous="allow",
