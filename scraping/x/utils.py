@@ -115,6 +115,75 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
+    # Check Tweet text
+    if tweet_to_verify.text != actual_tweet.text:
+        bt.logging.info(
+            f"Tweet texts do not match: {tweet_to_verify} != {actual_tweet}."
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Tweet texts do not match",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Check Tweet url
+    if normalize_url(tweet_to_verify.url) != normalize_url(actual_tweet.url):
+        bt.logging.info(
+            f"Tweet urls do not match: {tweet_to_verify} != {actual_tweet}."
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Tweet urls do not match",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Timestamps on the contents within the entities must be obfuscated to the minute.
+    actual_tweet_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(
+        actual_tweet.timestamp
+    )
+    if tweet_to_verify.timestamp != actual_tweet_obfuscated_timestamp:
+        # Check if this is specifically because the entity was not obfuscated.
+        if tweet_to_verify.timestamp == actual_tweet.timestamp:
+            bt.logging.info(
+                f"Provided tweet content datetime was not obfuscated to the minute as required. {tweet_to_verify.timestamp} != {actual_tweet_obfuscated_timestamp}"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Provided tweet content datetime was not obfuscated to the minute as required",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        else:
+            bt.logging.info(
+                f"Tweet timestamps do not match to the minute: {tweet_to_verify} != {actual_tweet}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet timestamps do not match to the minute",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+    # Check Tweet hashtags.
+    if tweet_to_verify.tweet_hashtags != actual_tweet.tweet_hashtags:
+        bt.logging.info(
+            f"Tweet hashtags do not match: {tweet_to_verify} != {actual_tweet}."
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Tweet hashtags do not match",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Validate the model_config.
+    if not _validate_model_config(tweet_to_verify.model_config):
+        bt.logging.info(
+            f"Tweet content contains an invalid model_config: {tweet_to_verify.model_config}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Tweet content contains an invalid model_config",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
     if actual_tweet.is_retweet:
         bt.logging.info(
             f"That is not an original tweet; it's a retweet. It will not be scored starting June 6th."
