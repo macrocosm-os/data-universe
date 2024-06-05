@@ -219,6 +219,8 @@ class ApiDojoTwitterScraper(Scraper):
                 # Create a list of formatted tags with prefixes
                 tags = ["#" + item['text'] for item in sorted_tags]
 
+                is_retweet = data.get('isRetweet', False)
+
                 results.append(
                     XContent(
                         username= data['author']['userName'],# utils.extract_user(data["url"]),
@@ -228,6 +230,7 @@ class ApiDojoTwitterScraper(Scraper):
                             data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
+                        is_retweet=is_retweet,
                     )
                 )
             except Exception:
@@ -364,5 +367,5 @@ async def test_multi_thread_validate():
 if __name__ == "__main__":
     bt.logging.set_trace(True)
     asyncio.run(test_multi_thread_validate())
-    asyncio.run(test_scrape())
-    asyncio.run(test_validate())
+    # asyncio.run(test_scrape())
+    # asyncio.run(test_validate())
