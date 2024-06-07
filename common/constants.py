@@ -32,3 +32,7 @@ MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
 
 # Miner compressed index cache freshness.
 MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
+RETWEET_ELIGIBLE_DATE = datetime.datetime(
+    year=2024, month=6, day=10, tzinfo=datetime.timezone.utc
+)
+

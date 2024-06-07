@@ -4,6 +4,7 @@ import traceback
 from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
+from common.constants import RETWEET_ELIGIBLE_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 
@@ -185,15 +186,17 @@ def validate_tweet_content(
         )
 
     if actual_tweet.is_retweet:
-        bt.logging.info(
-            f"That is not an original tweet; it's a retweet. It will not be scored starting June 6th."
-        )
+        if actual_tweet_obfuscated_timestamp >= RETWEET_ELIGIBLE_DATE:
+            return ValidationResult(
+                    is_valid=False,
+                    reason="That is not an original tweet; it's a retweet created after eligible date.",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+        else:
+            bt.logging.info(
+                f"That is not an original tweet; it's a retweet. It will not be scored starting June 6th."
+            )
 
-        # return ValidationResult(
-        #     is_valid=False,
-        #     reason="hat is not an original tweet; it's a retweet.",
-        #     content_size_bytes_validated=entity.content_size_bytes,
-        # )
 
     # Wahey! A valid Tweet.
     # One final check. Does the tweet content match the data entity information?
