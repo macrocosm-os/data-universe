@@ -7,10 +7,13 @@ from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from scraping.global_counter import decrement_count, get_and_increment_count
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
 from scraping.x import utils
 import datetime as dt
+
+from datadog import statsd
 
 
 class ApiDojoTwitterScraper(Scraper):
@@ -68,7 +71,15 @@ class ApiDojoTwitterScraper(Scraper):
                 # Retrieve the tweets from Apify.
                 dataset: List[dict] = None
                 try:
-                    dataset: List[dict] = await self.runner.run(run_config, run_input)
+                    active_count = get_and_increment_count()
+                    statsd.gauge("active_request_count", active_count)
+                    statsd.gauge("Active tasks", len(asyncio.all_tasks()))
+                    with statsd.timed("twitter_apidojo_latency"):
+                        dataset: List[dict] = await self.runner.run(
+                            run_config, run_input
+                        )
+                        statsd.increment("twitter_apidojo", tags=["status:success"])
+
                 except (
                     Exception
                 ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
@@ -76,6 +87,7 @@ class ApiDojoTwitterScraper(Scraper):
                         # Retrying.
                         continue
                     else:
+                        statsd.increment("twitter_apidojo", tags=["status:failure"])
                         bt.logging.error(
                             f"Failed to run actor: {traceback.format_exc()}."
                         )
@@ -88,6 +100,8 @@ class ApiDojoTwitterScraper(Scraper):
                             reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
                             content_size_bytes_validated=entity.content_size_bytes,
                         )
+                finally:
+                    decrement_count()
 
                 # Parse the response
                 tweets = self._best_effort_parse_dataset(dataset)
@@ -125,6 +139,11 @@ class ApiDojoTwitterScraper(Scraper):
             results = await asyncio.gather(
                 *[validate_entity(entity) for entity in entities]
             )
+
+        valid = sum(1 for result in results if result.is_valid)
+        invalid = sum(1 for result in results if not result.is_valid)
+        statsd.increment("twitter_validate.valid", valid)
+        statsd.increment("twitter_validate.invalid", invalid)
 
         return results
 
