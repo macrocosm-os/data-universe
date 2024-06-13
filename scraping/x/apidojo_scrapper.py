@@ -9,7 +9,6 @@ from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
-from scraping.x.classifiers import TweetLabeler
 from scraping.x import utils
 import datetime as dt
 import pytest
@@ -110,11 +109,6 @@ class ApiDojoTwitterScraper(Scraper):
                             content_size_bytes_validated=entity.content_size_bytes,
                         )
                 else:
-                    # Generate label for tweet in validation if no hashtags
-                    labeler = TweetLabeler()
-                    if not actual_tweet.tweet_hashtags: 
-                        actual_tweet.tweet_hashtags = labeler.label_tweet_multiple(actual_tweet.text)
-                        print(actual_tweet.tweet_hashtags)
                     return utils.validate_tweet_content(
                         actual_tweet=actual_tweet,
                         entity=entity,

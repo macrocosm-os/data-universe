@@ -24,7 +24,7 @@ class TweetLabeler:
     def label_tweet_singular(self, text: str) -> str:
         """ Returns best possible tweet label based on text """
         # currently using label_tweet_multiple
-        return label_tweet_multiple(text)[0]
+        return self.label_tweet_multiple(text)[0]
 
 
     def label_tweet_multiple(self, text: str) -> List[str]:

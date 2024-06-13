@@ -6,6 +6,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
+from scraping.x.classifiers import TweetLabeler
 from scraping import utils
 
 
@@ -37,22 +38,22 @@ class XContent(BaseModel):
         entity_timestamp = content.timestamp
         content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
         content_bytes = content.json(exclude_none=True).encode("utf-8")
+        entity_generated_label = False
+        if content.tweet_hashtags:
+            entity_label = DataLabel(value = content.tweet_hashtags[0].lower())[:constants.MAX_LABEL_LENGTH]
+        else:
+            # Generate a label from the tweet content
+            entity_label = DataLabel(value = TweetLabeler.label_tweet_singular.lower(content.text))[:constants.MAX_LABEL_LENGTH]
+            entity_generated_label = True
 
         return DataEntity(
             uri=content.url,
             datetime=entity_timestamp,
             source=DataSource.X,
-            label=(
-                DataLabel(
-                    value=content.tweet_hashtags[0].lower()[
-                        : constants.MAX_LABEL_LENGTH
-                    ]
-                )
-                if content.tweet_hashtags
-                else None
-            ),
+            label=entity_label,
             content=content_bytes,
             content_size_bytes=len(content_bytes),
+            is_generated_label = entity_generated_label
         )
 
     @classmethod

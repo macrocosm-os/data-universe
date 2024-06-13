@@ -118,6 +118,7 @@ class DataEntity(StrictBaseModel):
     )
     content: bytes
     content_size_bytes: int = Field(ge=0)
+    is_generated_label: bool = Field(default=False)
 
     @classmethod
     def are_non_content_fields_equal(
@@ -143,6 +144,7 @@ class DataEntityBucketId(StrictBaseModel):
     label: Optional[DataLabel] = Field(
         default=None,
     )
+    is_generated_label: bool = Field(default=False)
 
     # Manually define a hash function to handle TimeBucket not being seen as hashable by pydantic.
     def __hash__(self) -> int:
