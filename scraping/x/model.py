@@ -39,18 +39,14 @@ class XContent(BaseModel):
         content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
         content_bytes = content.json(exclude_none=True).encode("utf-8")
         entity_generated_label = False
+        entity_label = None
+
         if not content.tweet_hashtags and labeler.check_english(content.text):
             # Generate a label from the tweet content
-            print(f"***\n{content.text}\n***")
-            print(labeler.check_english(text=content.text))
-            label = labeler.label_tweet_singular(text = content.text).lower()[:constants.MAX_LABEL_LENGTH]
             entity_label = DataLabel(value = labeler.label_tweet_singular(text = content.text).lower()[:constants.MAX_LABEL_LENGTH])
-            print(entity_label)
             entity_generated_label = True
         elif content.tweet_hashtags:
             entity_label = DataLabel(value = content.tweet_hashtags[0].lower()[:constants.MAX_LABEL_LENGTH])
-        else:
-            entity_label = None
 
         return DataEntity(
             uri=content.url,
@@ -67,3 +63,4 @@ class XContent(BaseModel):
         """Converts a DataEntity to an XContent."""
 
         return XContent.parse_raw(data_entity.content.decode("utf-8"))
+    

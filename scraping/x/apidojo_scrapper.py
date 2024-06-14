@@ -184,7 +184,6 @@ class ApiDojoTwitterScraper(Scraper):
         for x_content in x_contents:
             data_entities.append(XContent.to_data_entity(content=x_content, labeler=TweetLabeler()))
 
-        return data_entities
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
@@ -245,10 +244,10 @@ async def test_scrape():
         ScrapeConfig(
             entity_limit=100,
             date_range=DateRange(
-                start=dt.datetime(2024, 5, 27, 0, 0, 0, tzinfo=dt.timezone.utc),
-                end=dt.datetime(2024, 5, 27, 9, 0, 0, tzinfo=dt.timezone.utc),
+                start=dt.datetime(2024, 6, 14, 1, 0, 57, tzinfo=dt.timezone.utc),
+                end=dt.datetime(2024, 6, 14, 1, 0, 59, tzinfo=dt.timezone.utc),
             ),
-            labels=[DataLabel(value="#bittgergnergerojngoierjgensor")],
+            labels=None,
         )
     )
 
@@ -361,6 +360,6 @@ async def test_multi_thread_validate():
 
 if __name__ == "__main__":
     bt.logging.set_trace(True)
-    asyncio.run(test_multi_thread_validate())
+    #asyncio.run(test_multi_thread_validate())
     asyncio.run(test_scrape())
-    asyncio.run(test_validate())
+    #asyncio.run(test_validate())

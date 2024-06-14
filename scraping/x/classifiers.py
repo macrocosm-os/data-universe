@@ -5,7 +5,7 @@ import numpy as np
 from scipy.special import expit
 from typing import List
 from langdetect import detect
-
+from langdetect.lang_detect_exception import LangDetectException
 
 class TweetLabeler:
     def __init__(self, model_name: str = "cardiffnlp/tweet-topic-latest-multi"):
@@ -16,8 +16,15 @@ class TweetLabeler:
 
 
     def check_english(self, text: str) -> bool:
-        if detect(text) != "en":
+        if not text:
             return False
+
+        try:
+            if detect(text) != "en":
+                return False
+        except LangDetectException:
+            return False
+
         return True
 
 
