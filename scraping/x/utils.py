@@ -6,7 +6,7 @@ from urllib.parse import urlparse
 from common.data import DataEntity
 from scraping import utils
 from scraping.scraper import ValidationResult
-
+from scraping.x.classifiers import TweetLabeler
 from scraping.x.model import XContent
 
 from datadog import statsd
@@ -189,7 +189,7 @@ def validate_tweet_content(
     # Wahey! A valid Tweet.
     # One final check. Does the tweet content match the data entity information?
     try:
-        tweet_entity = XContent.to_data_entity(content=actual_tweet)
+        tweet_entity = XContent.to_data_entity(content=actual_tweet, labeler=TweetLabeler())
 
         # Extra check that the content size is reasonably close to what we expect.
         # Allow a 10 byte difference to account for timestamp serialization differences.

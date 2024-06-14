@@ -29,22 +29,19 @@ class TweetLabeler:
 
     def label_tweet_multiple(self, text: str) -> List[str]:
         """ Returns a list of possible tweet labels from highest to lowest score, above 0.5"""
-        if self.check_english(text):
-            tokens = self.tokenizer(text, return_tensors = 'pt') # Pytorch
-            output = self.model(**tokens)
-            scores = output[0][0].detach().numpy()
-            scores = expit(scores)
-            label_predictions = (scores >= 0.5) * 1
+        tokens = self.tokenizer(text, return_tensors = 'pt') # Pytorch
+        output = self.model(**tokens)
+        scores = output[0][0].detach().numpy()
+        scores = expit(scores)
+        label_predictions = (scores >= 0.5) * 1
 
+        # mapping to classes
+        label_list = []
+        for i in range(len(label_predictions)):
+            if label_predictions[i]:
+                label_list.append(f"{self.class_mapping[i]}")
 
-            # mapping to classes
-            label_list = []
-            for i in range(len(label_predictions)):
-                if label_predictions[i]:
-                    label_list.append(f"{self.class_mapping[i]}")
-
-
-            return label_list
+        return label_list
         
 
 

@@ -10,6 +10,7 @@ from scraping.global_counter import decrement_count, get_and_increment_count
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
+from scraping.x.classifiers import TweetLabeler
 from scraping.x import utils
 import datetime as dt
 
@@ -197,7 +198,7 @@ class MicroworldsTwitterScraper(Scraper):
         data_entities = []
 
         for x_content in x_contents:
-            data_entities.append(XContent.to_data_entity(content=x_content))
+            data_entities.append(XContent.to_data_entity(content=x_content, labeler=TweetLabeler))
 
         return data_entities
 

@@ -10,8 +10,8 @@ from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
 from scraping.x import utils
+from scraping.x.classifiers import TweetLabeler
 import datetime as dt
-import pytest
 
 
 class ApiDojoTwitterScraper(Scraper):
@@ -182,7 +182,7 @@ class ApiDojoTwitterScraper(Scraper):
         data_entities = []
 
         for x_content in x_contents:
-            data_entities.append(XContent.to_data_entity(content=x_content))
+            data_entities.append(XContent.to_data_entity(content=x_content, labeler=TweetLabeler()))
 
         return data_entities
 
@@ -238,7 +238,6 @@ class ApiDojoTwitterScraper(Scraper):
 
         return results
 
-@pytest.mark.asyncio
 async def test_scrape():
     scraper = ApiDojoTwitterScraper()
 
@@ -257,7 +256,6 @@ async def test_scrape():
 
     return entities
 
-@pytest.mark.asyncio
 async def test_validate():
     scraper = ApiDojoTwitterScraper()
 
@@ -324,7 +322,6 @@ async def test_validate():
     results = await scraper.validate(entities=true_entities)
     print(f"Validation results: {results}")
 
-@pytest.mark.asyncio
 async def test_multi_thread_validate():
     scraper = ApiDojoTwitterScraper()
 
