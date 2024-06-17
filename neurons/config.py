@@ -119,6 +119,12 @@ def add_args(neuron_type: NeuronType, parser):
             default=False,
         )
 
+        parser.add_argument(
+            "--neuron.disable_set_weights",
+            action="store_true",
+            help="Set this flag to disable setting the weights to network."
+        )
+
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(
             "--neuron.database_name",
