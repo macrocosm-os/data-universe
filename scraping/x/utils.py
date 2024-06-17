@@ -96,6 +96,7 @@ def validate_tweet_content(
     tweet_to_verify = None
     try:
         tweet_to_verify = XContent.from_data_entity(entity)
+        print(f"\n\n{tweet_to_verify}\n\n")
     except Exception:
         bt.logging.error(
             f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}."
