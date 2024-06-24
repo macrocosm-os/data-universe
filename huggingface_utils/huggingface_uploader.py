@@ -70,8 +70,14 @@ class HuggingFaceUploader:
 
         self.hf_api.create_repo(token=self.hf_token, repo_id=dataset_name, private=False, repo_type="dataset",
                                 exist_ok=True)
-        self.hf_api.upload_folder(token=self.hf_token, folder_path=self.output_dir, repo_id=repo_id,
-                                  path_in_repo='data/', repo_type='dataset')
+        self.hf_api.upload_folder(token=self.hf_token,
+                                  folder_path=self.output_dir,
+                                  repo_id=repo_id,
+                                  path_in_repo='data/',
+                                  repo_type='dataset',
+                                  allow_patterns="*.parquet",  # Upload all local parquet files
+                                  delete_patterns="*.parquet",  # Delete all remote parquet files before
+                                  )
 
 
 # Example usage
