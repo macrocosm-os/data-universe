@@ -15,7 +15,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-import asyncio
 from collections import defaultdict
 import copy
 import sys
@@ -39,6 +38,7 @@ from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
+from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 
 
 class Miner:
@@ -109,7 +109,17 @@ class Miner:
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.compressed_index_refresh_thread: threading.Thread = None
+        self.hugging_face_thread: threading.Thread = None
         self.lock = threading.RLock()
+
+        # Instantiate HF
+        self.use_hf_uploader = self.config.huggingface
+        if self.use_hf_uploader:
+            self.hf_uploader = HuggingFaceUploader(
+                db_path=self.config.neuron.database_name,
+                table_name='DataEntity',
+                output_dir='hf_storage'
+            )
 
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
@@ -164,6 +174,20 @@ class Miner:
                 bt.logging.error(traceback.format_exc())
                 # Sleep 5 minutes to avoid constant refresh attempts if they are consistently erroring.
                 time.sleep(60 * 5)
+
+    def upload_hugging_face(self):
+        if not self.use_hf_uploader:
+            bt.logging.debug("HuggingFace Uploader is not enabled.")
+            return
+
+        while not self.should_exit:
+            try:
+                self.hf_uploader.upload_sql_to_huggingface()
+            # In case of unforeseen errors, the refresh thread will log the error and continue operations.
+            except Exception:
+                bt.logging.error(traceback.format_exc())
+                time_sleep_val = 60 * 24 * 7
+                time.sleep(time_sleep_val)
 
     def run(self):
         """
@@ -244,6 +268,10 @@ class Miner:
                 target=self.refresh_index, daemon=True
             )
             self.compressed_index_refresh_thread.start()
+            self.hugging_face_thread = threading.Thread(
+                target=self.upload_hugging_face, daemon=True)
+
+            self.hugging_face_thread.start()
             self.is_running = True
             bt.logging.debug("Started")
 
