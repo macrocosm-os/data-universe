@@ -25,7 +25,7 @@ def remove_all_files_in_directory(directory):
             elif os.path.isdir(file_path):
                 os.rmdir(file_path)
         except Exception as e:
-            bt.logging.debug(f'Failed to delete {file_path}. Reason: {e}')
+            bt.logging.info(f'Failed to delete {file_path}. Reason: {e}')
 
 
 class HuggingFaceUploader:
@@ -50,13 +50,13 @@ class HuggingFaceUploader:
                     df = preprocess_data(df, source)
                     parquet_path = os.path.join(self.output_dir, f"train-{self.table_name}_chunk_{i}.parquet")
                     df.to_parquet(parquet_path)
-                    bt.logging.trace(f"Saved Parquet file: {parquet_path}")
+                    bt.logging.info(f"Saved Parquet file: {parquet_path}")
 
                 self.upload_parquet_to_hf(source)
                 remove_all_files_in_directory(self.output_dir)
 
             except Exception as e:
-                bt.logging.trace(f"Failed to load and save data from table {self.table_name}: {e}")
+                bt.logging.info(f"Failed to load and save data from table {self.table_name}: {e}")
 
         conn.close()
 

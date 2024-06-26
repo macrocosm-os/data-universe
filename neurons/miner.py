@@ -177,12 +177,14 @@ class Miner:
 
     def upload_hugging_face(self):
         if not self.use_hf_uploader:
-            bt.logging.debug("HuggingFace Uploader is not enabled.")
+            bt.logging.info("HuggingFace Uploader is not enabled.")
             return
 
         while not self.should_exit:
             try:
                 self.hf_uploader.upload_sql_to_huggingface()
+                time_sleep_val = 60 * 24 * 7
+                time.sleep(time_sleep_val)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
                 bt.logging.error(traceback.format_exc())
