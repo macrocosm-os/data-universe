@@ -22,7 +22,7 @@ If you haven't already, create an account at [Hugging Face's website](https://hu
 3. Add the following line to your `.env` file:
 
    ```
-   HF_TOKEN=<YOUR_HF_TOKEN_HERE>
+   HUGGINGFACE_TOKEN=<YOUR_HF_TOKEN_HERE>
    ```
 
    Replace `<YOUR_HF_TOKEN_HERE>` with the token you copied in the previous step.
@@ -38,7 +38,7 @@ from dotenv import load_dotenv
 load_dotenv()
 # Ensure the token is loaded from the .env file
 api = HfApi()
-api.set_access_token(os.getenv('HF_TOKEN'))
+api.set_access_token(os.getenv('HUGGINGFACE_TOKEN'))
 ```
 
 #### Finalizing Setup
