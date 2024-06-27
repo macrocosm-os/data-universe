@@ -117,8 +117,6 @@ class Miner:
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
-                table_name='DataEntity',
-                output_dir='hf_storage'
             )
 
         # Instantiate storage.
@@ -182,13 +180,14 @@ class Miner:
 
         while not self.should_exit:
             try:
-                self.hf_uploader.upload_sql_to_huggingface()
-                time_sleep_val = 60 * 24 * 7
+                if self.storage.should_upload_hf_data():
+                    self.hf_uploader.upload_sql_to_huggingface(self.storage)
+                time_sleep_val = dt.timedelta(minutes=90).total_seconds() # TODO MAKE SLEEP SOONER ?
                 time.sleep(time_sleep_val)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
                 bt.logging.error(traceback.format_exc())
-                time_sleep_val = 60 * 24 * 7
+                time_sleep_val = dt.timedelta(minutes=90).total_seconds()
                 time.sleep(time_sleep_val)
 
     def run(self):

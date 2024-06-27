@@ -10,6 +10,7 @@ from common.data import (
     DataLabel,
     DataSource,
     TimeBucket,
+    HuggingFaceMetadata,
 )
 from storage.miner.miner_storage import MinerStorage
 from typing import Dict, List
@@ -74,6 +75,12 @@ class SqliteMinerStorage(MinerStorage):
     DATA_ENTITY_TABLE_INDEX = """CREATE INDEX IF NOT EXISTS data_entity_bucket_index2
                                 ON DataEntity (timeBucketId, source, label, contentSizeBytes)"""
 
+    HF_METADATA_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS HFMetaData (
+                                uri                 TEXT            PRIMARY KEY,
+                                source              INTEGER         NOT NULL,
+                                updatedAt           TIMESTAMP(6)    NOT NULL
+                                ) WITHOUT ROWID"""
+
     def __init__(
         self,
         database="SqliteMinerStorage.sqlite",
@@ -99,6 +106,8 @@ class SqliteMinerStorage(MinerStorage):
             # Create the Index (if it does not already exist).
             cursor.execute(SqliteMinerStorage.DATA_ENTITY_TABLE_INDEX)
 
+            # Create the huggingface table to store HF Info
+            cursor.execute(SqliteMinerStorage.HF_METADATA_TABLE_CREATE)
             # Use Write Ahead Logging to avoid blocking reads.
             cursor.execute("pragma journal_mode=wal")
 
@@ -188,6 +197,54 @@ class SqliteMinerStorage(MinerStorage):
 
             # Commit the insert.
             connection.commit()
+
+    def store_hf_dataset_info(self, hf_metadatas: List[HuggingFaceMetadata]):  # TODO
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            # Parse every HFMetadata into a list of value lists for inserting.
+            values = []
+            for hf_metadata in hf_metadatas:
+                values.append(
+                    [
+                        hf_metadata.repo_name,
+                        hf_metadata.source,
+                        hf_metadata.updated_at
+                    ]
+                )
+
+            # Insert overwriting duplicate keys (in case of updated content).
+            cursor.executemany("REPLACE INTO HFMetaData VALUES (?,?,?)", values)
+
+            # Commit the insert.
+            connection.commit()
+
+    def should_upload_hf_data(self) -> bool:
+        sql_query = """
+            SELECT datetime(AVG(strftime('%s', UpdatedAt)), 'unixepoch') AS AvgUpdatedAt
+            FROM HFMetaData;
+        """
+        try:
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+                cursor.execute(sql_query)
+                result = cursor.fetchone()
+
+                if result is None or result[0] is None:
+                    return True  # No data found
+
+                average_datetime = dt.datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
+                average_datetime = average_datetime.replace(tzinfo=dt.timezone.utc)
+
+                current_datetime = dt.datetime.now(dt.timezone.utc)
+
+                # Calculate time difference for 25000 blocks (300,000 seconds (~4 days))
+                time_difference = dt.timedelta(seconds=300000)
+                threshold_datetime = current_datetime - time_difference
+
+                return threshold_datetime > average_datetime
+        except sqlite3.Error as e:
+            print(f"An error occurred: {e}")
+            return False
 
     def list_data_entities_in_data_entity_bucket(
         self, data_entity_bucket_id: DataEntityBucketId

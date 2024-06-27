@@ -4,10 +4,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-
-
 TWEET_DATASET_COLUMNS = ['text', 'label', 'tweet_hashtags', 'datetime']
-
 REDDIT_DATASET_COLUMNS = ['text', 'label', 'dataType', 'communityName', 'datetime']
 
 

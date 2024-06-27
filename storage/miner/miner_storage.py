@@ -44,8 +44,3 @@ class MinerStorage(ABC):
             Dict[DataEntityBucketId, List[bytes]]: Map of each bucket id to contained contents.
         """
         raise NotImplemented
-
-
-# class HFMetadataStorage(ABC):
-#     @abstractmethod
-#     def
