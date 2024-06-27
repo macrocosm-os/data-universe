@@ -198,7 +198,7 @@ class SqliteMinerStorage(MinerStorage):
             # Commit the insert.
             connection.commit()
 
-    def store_hf_dataset_info(self, hf_metadatas: List[HuggingFaceMetadata]):  # TODO
+    def store_hf_dataset_info(self, hf_metadatas: List[HuggingFaceMetadata]):
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
             # Parse every HFMetadata into a list of value lists for inserting.
