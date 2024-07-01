@@ -154,6 +154,13 @@ def add_args(neuron_type: NeuronType, parser):
         )
 
         parser.add_argument(
+            "--huggingface",
+            action="store_true",
+            help="Set this flag to true to upload your data into HF dataset",
+            default=False
+        )
+
+        parser.add_argument(
             "--offline",
             action="store_true",
             help="Set this flag to true to run the miner in offline mode.",
