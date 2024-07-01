@@ -68,7 +68,6 @@ class HuggingFaceUploader:
                 bt.logging.info(f"Failed to load and save data from table {self.table_name}: {e}")
 
         storage.store_hf_dataset_info(hf_values)
-        return hf_values
 
     def upload_parquet_to_hf(self, source):
         if not self.hf_token:

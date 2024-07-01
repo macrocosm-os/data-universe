@@ -37,8 +37,7 @@ from dotenv import load_dotenv
 
 load_dotenv()
 # Ensure the token is loaded from the .env file
-api = HfApi()
-api.set_access_token(os.getenv('HUGGINGFACE_TOKEN'))
+api = HfApi(token=os.getenv('HUGGINGFACE_TOKEN'))
 ```
 
 #### Finalizing Setup

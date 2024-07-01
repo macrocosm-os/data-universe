@@ -178,17 +178,19 @@ class Miner:
             bt.logging.info("HuggingFace Uploader is not enabled.")
             return
 
+        time_sleep_val = dt.timedelta(minutes=30).total_seconds()
+        time.sleep(time_sleep_val)
+
         while not self.should_exit:
             try:
                 if self.storage.should_upload_hf_data():
                     self.hf_uploader.upload_sql_to_huggingface(self.storage)
-                time_sleep_val = dt.timedelta(minutes=90).total_seconds() # TODO MAKE SLEEP SOONER ?
-                time.sleep(time_sleep_val)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
                 bt.logging.error(traceback.format_exc())
-                time_sleep_val = dt.timedelta(minutes=90).total_seconds()
-                time.sleep(time_sleep_val)
+
+            time_sleep_val = dt.timedelta(minutes=90).total_seconds()
+            time.sleep(time_sleep_val)
 
     def run(self):
         """

@@ -24,7 +24,7 @@ def preprocess_reddit_df(df: pd.DataFrame) -> pd.DataFrame:
 
     df['content'] = df['content'].apply(lambda b: json.loads(b.decode('utf-8')))
     df['text'] = df['content'].apply(lambda x: x.get('body'))
-    df['dataType'] = df['content'].apply(lambda x: x.get('body'))
+    df['dataType'] = df['content'].apply(lambda x: x.get('dataType'))
     df['communityName'] = df['content'].apply(lambda x: x.get('communityName'))
     del df['content']
 
