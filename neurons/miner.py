@@ -453,6 +453,7 @@ class Miner:
         hotkey = synapse.dendrite.hotkey
         ip = synapse.dendrite.ip
         synapse_type = type(synapse)
+        port = synapse.dendrite.port
 
         if hotkey not in self.metagraph.hotkeys:
             # Ignore requests from unrecognized entities.
@@ -466,6 +467,15 @@ class Miner:
             return (
                 True,
                 f"Hotkey {hotkey} at {ip} is not a validator",
+            )
+        
+        # Verify axon information
+        expected_ip = self.metagraph.axons[uid].ip
+        expected_port = self.metagraph.axons[uid].port
+        if ip != expected_ip or port != expected_port:
+            return(
+                True,
+                f"Unexpected axon associated with validator with hotkey {hotkey}",
             )
 
         with self.request_lock:
