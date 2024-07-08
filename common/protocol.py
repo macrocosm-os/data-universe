@@ -21,6 +21,7 @@ from common.data import (
     DataEntityBucket,
     DataEntity,
     DataEntityBucketId,
+    HuggingFaceMetadata
 )
 from typing import Dict, List, Optional, Tuple
 
@@ -114,6 +115,20 @@ class GetContentsByBuckets(BaseProtocol):
     )
 
 
+class GetHuggingFaceMetadata(BaseProtocol):
+    """
+    Protocol by which Validators can retrieve HuggingFace metadata from a Miner.
+    """
+
+    # Required request output, filled by receiving axon.
+    metadata: List[HuggingFaceMetadata] = pydantic.Field(
+        title="metadata",
+        description="List of HuggingFace metadata entries.",
+        frozen=False,
+        repr=False,
+        default_factory=list,
+    )
+
 # TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
 
 # How many times validators can send requests per validation period.
@@ -121,4 +136,5 @@ REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
     GetMinerIndex: 1,
     GetDataEntityBucket: 1,
     GetContentsByBuckets: 5,
+    GetHuggingFaceMetadata: 1, # New entry for HuggingFace metadata requests
 }
