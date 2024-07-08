@@ -246,6 +246,28 @@ class SqliteMinerStorage(MinerStorage):
             print(f"An error occurred: {e}")
             return False
 
+    def get_hf_metadata(self) -> List[HuggingFaceMetadata]:
+        sql_query = """
+            SELECT * FROM HFMetaData;
+        """
+
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(sql_query)
+            hf_metadatas = []
+
+            i = 0
+            for row in cursor:
+                hf_metadata = HuggingFaceMetadata(
+                    repo_name=row['repo_name'],
+                    source=row['source'],
+                    updated_at=row['updated_at']
+                )
+
+                hf_metadatas.append(hf_metadata)
+
+        return hf_metadatas
+
     def list_data_entities_in_data_entity_bucket(
         self, data_entity_bucket_id: DataEntityBucketId
     ) -> List[DataEntity]:
