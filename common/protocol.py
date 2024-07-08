@@ -124,9 +124,7 @@ class GetHuggingFaceMetadata(BaseProtocol):
     metadata: List[HuggingFaceMetadata] = pydantic.Field(
         title="metadata",
         description="List of HuggingFace metadata entries.",
-        frozen=False,
-        repr=False,
-        default_factory=list,
+        default_factory=list
     )
 
 # TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
