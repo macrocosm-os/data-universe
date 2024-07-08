@@ -259,9 +259,9 @@ class SqliteMinerStorage(MinerStorage):
             i = 0
             for row in cursor:
                 hf_metadata = HuggingFaceMetadata(
-                    repo_name=row['repo_name'],
+                    repo_name=row['uri'],
                     source=row['source'],
-                    updated_at=row['updated_at']
+                    updated_at=row['updatedAt']
                 )
 
                 hf_metadatas.append(hf_metadata)
