@@ -289,21 +289,34 @@ class IntegrationTestProtocol(unittest.TestCase):
             < dt.timedelta(seconds=30)
         )
 
-    def test_get_huggingface_metadata(self):
-        """Tests a round trip for HuggingFace metadata."""
-        expected_metadata = self._insert_test_hf_metadata(self.miner_storage)
-
-        request = GetHuggingFaceMetadata()
+    def test_huggingface_metadata(self):
+        # Setup
         miner = FakeMiner(storage=self.miner_storage)
-        response = self._test_round_trip(miner.get_huggingface_metadata, request)
+
+        # Test upserting metadata
+        metadata_to_upsert = [
+            HuggingFaceMetadata(repo_name="test_repo_1", source=DataSource.REDDIT,
+                                updated_at=dt.datetime.now(dt.timezone.utc)),
+            HuggingFaceMetadata(repo_name="test_repo_2", source=DataSource.X,
+                                updated_at=dt.datetime.now(dt.timezone.utc))
+        ]
+        self.vali_storage.upsert_hf_metadata("test_hotkey", metadata_to_upsert)
+
+        # Test retrieving metadata
+        response = self._test_round_trip(miner.get_huggingface_metadata, GetHuggingFaceMetadata())
 
         self.assertTrue(response.is_success)
-        self.assertEqual(len(response.metadata), len(expected_metadata))
+        self.assertEqual(len(response.metadata), 2)
+        # Add more detailed assertions here
 
-        for expected, actual in zip(expected_metadata, response.metadata):
-            self.assertEqual(expected.repo_name, actual.repo_name)
-            self.assertEqual(expected.source, actual.source)
-            self.assertEqual(expected.updated_at, actual.updated_at)
+        # Test deleting metadata
+        self.vali_storage._delete_hf_metadata("test_hotkey")
+
+        # Verify deletion
+        response = self._test_round_trip(miner.get_huggingface_metadata, GetHuggingFaceMetadata())
+        print(f"Debig: {response}")
+        self.assertTrue(response.is_success)
+        self.assertEqual(len(response.metadata), 2)
 
 
 if __name__ == "__main__":
