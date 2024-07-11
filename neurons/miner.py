@@ -122,6 +122,7 @@ class Miner:
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
+                miner_uid=self.uid
             )
 
         # Instantiate storage.

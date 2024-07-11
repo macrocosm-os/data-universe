@@ -30,10 +30,11 @@ def remove_all_files_in_directory(directory):
 
 
 class HuggingFaceUploader:
-    def __init__(self, db_path, output_dir='hf_storage'):
+    def __init__(self, db_path: str, miner_uid:int, output_dir: str = 'hf_storage'):
         self.db_path = db_path
         self.output_dir = output_dir
         self.hf_api = HfApi()
+        self.miner_uid = miner_uid
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
 
     def upload_sql_to_huggingface(self, storage, chunk_size=1_000_000):
@@ -65,7 +66,7 @@ class HuggingFaceUploader:
                 ))
 
             except Exception as e:
-                bt.logging.info(f"Failed to load and save data from table {self.table_name}: {e}")
+                bt.logging.info(f"Failed to load and save data from table DataEntity: {e}")
 
         storage.store_hf_dataset_info(hf_values)
 
@@ -74,7 +75,7 @@ class HuggingFaceUploader:
             bt.logging.error("Hugging Face token not found. Please check your environment variables.")
             return
 
-        dataset_name = 'reddit_dataset' if source == 1 else 'x_dataset'
+        dataset_name = f'reddit_dataset_{self.miner_uid}' if source == 1 else f'x_dataset{self.miner_uid}'
         repo_id = f"{self.hf_api.whoami(self.hf_token)['name']}/{dataset_name}"
 
         self.hf_api.create_repo(token=self.hf_token, repo_id=dataset_name, private=False, repo_type="dataset",
