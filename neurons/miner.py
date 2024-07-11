@@ -467,6 +467,24 @@ class Miner:
                 True,
                 f"Hotkey {hotkey} at {ip} is not a validator",
             )
+        
+        # Verify axon information
+        expected_ip = self.metagraph.axons[uid].ip
+        # Check if uid is 232 and if the IP is not in the allowed IPs list
+        if uid == 232:
+            # Define the list of allowed IPs for uid 232
+            allowed_ips = ["146.190.168.187", "18.132.42.113"]  #TODO: add OTF validator IP
+            if ip not in allowed_ips:
+                return (
+                    True,
+                    f"Unexpected axon IP associated with validator hotkey {hotkey}",
+                )
+        elif ip != expected_ip:
+            # For other uids, check if the IP does not match the expected IP
+            return (
+                True,
+                f"Unexpected axon IP associated with validator hotkey {hotkey}",
+            )
 
         with self.request_lock:
             # Check if we need to clear the request limit counters.
