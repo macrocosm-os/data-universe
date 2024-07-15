@@ -118,13 +118,14 @@ class MinerEvaluator:
 
         ##########
         # Query HuggingFace metadata
-        hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-        if hf_metadata is not None:
-            bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
-            # You can process or store this metadata as needed
-            # For now, we're just logging it
-        else:
-            bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
+        if hotkey == '5FxJhi6vT1KEEYXcegtGBJnTkbdBZavYtprHdf6zo6pqfvkR':  # TODO ADD THE OUR MINER HOTKEY
+            hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
+            if hf_metadata is not None:
+                bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
+                # You can process or store this metadata as needed
+                # For now, we're just logging it
+            else:
+                bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
         ##########
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
