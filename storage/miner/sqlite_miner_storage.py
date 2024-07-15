@@ -221,7 +221,12 @@ class SqliteMinerStorage(MinerStorage):
     def should_upload_hf_data(self) -> bool:
         sql_query = """
             SELECT datetime(AVG(strftime('%s', UpdatedAt)), 'unixepoch') AS AvgUpdatedAt
-            FROM HFMetaData;
+            FROM (
+                SELECT UpdatedAt
+                FROM HFMetaData
+                ORDER BY UpdatedAt DESC
+                LIMIT 2
+            );
         """
         try:
             with contextlib.closing(self._create_connection()) as connection:
@@ -248,7 +253,9 @@ class SqliteMinerStorage(MinerStorage):
 
     def get_hf_metadata(self) -> List[HuggingFaceMetadata]:
         sql_query = """
-            SELECT * FROM HFMetaData;
+            SELECT * FROM HFMetaData
+            ORDER BY UpdatedAt DESC
+            LIMIT 2;
         """
 
         with contextlib.closing(self._create_connection()) as connection:
