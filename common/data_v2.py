@@ -18,6 +18,7 @@ As a rule of thumb:
 
 
 import datetime as dt
+from attr import dataclass
 from pydantic import BaseModel, Field
 from typing import List, Optional
 
@@ -121,3 +122,29 @@ class ScorableMinerIndex(BaseModel):
         max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")
+
+
+@dataclass
+class DataBoxMiner:
+    hotkey: str
+    credibility: float
+    bucket_count: int
+    content_size_bytes_reddit: int
+    content_size_bytes_twitter: int
+    last_updated: dt.datetime
+
+
+@dataclass
+class DataBoxLabelSize:
+    source: int
+    label_value: str
+    content_size_bytes: int
+    adj_content_size_bytes: int
+
+
+@dataclass
+class DataBoxAgeSize:
+    source: int
+    time_bucket_id: int
+    content_size_bytes: int
+    adj_content_size_bytes: int
