@@ -3,7 +3,7 @@ import pandas as pd
 import bittensor as bt
 import os
 from huggingface_hub import HfApi
-from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df
+from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
 from dotenv import load_dotenv
 import datetime as dt
 from common.data import HuggingFaceMetadata
@@ -75,7 +75,7 @@ class HuggingFaceUploader:
             bt.logging.error("Hugging Face token not found. Please check your environment variables.")
             return
 
-        dataset_name = f'reddit_dataset_{self.miner_uid}' if source == 1 else f'x_dataset{self.miner_uid}'
+        dataset_name = f'reddit_dataset_{self.miner_uid}' if source == 1 else f'x_dataset_{self.miner_uid}'
         repo_id = f"{self.hf_api.whoami(self.hf_token)['name']}/{dataset_name}"
 
         self.hf_api.create_repo(token=self.hf_token, repo_id=dataset_name, private=False, repo_type="dataset",

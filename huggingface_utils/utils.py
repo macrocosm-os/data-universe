@@ -1,11 +1,18 @@
 import pandas as pd
 import json
+import hashlib
 from dotenv import load_dotenv
 
 load_dotenv()
 
 TWEET_DATASET_COLUMNS = ['text', 'label', 'tweet_hashtags', 'datetime']
 REDDIT_DATASET_COLUMNS = ['text', 'label', 'dataType', 'communityName', 'datetime']
+
+
+def generate_static_integer(hotkey: str, max_value=256) -> int:
+    hash_value = hashlib.md5(hotkey.encode()).digest()
+    integer_value = int.from_bytes(hash_value, byteorder='big')
+    return integer_value % max_value
 
 
 def preprocess_twitter_df(df: pd.DataFrame):
