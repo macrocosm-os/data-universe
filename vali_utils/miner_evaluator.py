@@ -112,6 +112,18 @@ class MinerEvaluator:
 
         bt.logging.info(f"{hotkey}: Evaluating miner.")
 
+        ##########
+        # Query HuggingFace metadata
+        if uid == 123:  # TODO ADD THE OUR MINER HOTKEY
+            hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
+            if hf_metadata is not None:
+                bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
+                # You can process or store this metadata as needed
+                # For now, we're just logging it
+            else:
+                bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
+        ##########
+
         # Query the miner for the latest index.
         index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
         if not index:
@@ -132,17 +144,7 @@ class MinerEvaluator:
             )
             return
 
-        ##########
-        # Query HuggingFace metadata
-        if hotkey == '5FxJhi6vT1KEEYXcegtGBJnTkbdBZavYtprHdf6zo6pqfvkR':  # TODO ADD THE OUR MINER HOTKEY
-            hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-            if hf_metadata is not None:
-                bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
-                # You can process or store this metadata as needed
-                # For now, we're just logging it
-            else:
-                bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
-        ##########
+
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
             vali_utils.choose_data_entity_bucket_to_query(index)
