@@ -4,7 +4,8 @@ import traceback
 from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import RETWEET_ELIGIBLE_DATE
+from common.constants import RETWEET_ELIGIBLE_DATE, RETWEET_HALT_DATE
+import datetime as dt
 from scraping import utils
 from scraping.scraper import ValidationResult
 
@@ -91,7 +92,7 @@ def sanitize_scraped_tweet(text: str) -> str:
 
 
 def validate_tweet_content(
-    actual_tweet: XContent, entity: DataEntity
+    actual_tweet: XContent, entity: DataEntity, is_retweet: bool
 ) -> ValidationResult:
     """Validates the tweet is valid by the definition provided by entity."""
     tweet_to_verify = None
@@ -187,7 +188,14 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
-    if actual_tweet.is_retweet:
+    if is_retweet and dt.datetime.now(dt.timezone.utc) >= RETWEET_HALT_DATE:
+        return ValidationResult(
+            is_valid=False,
+            reason="Retweets are no longer eligible after July 6, 2024.",
+            content_size_bytes_validated=entity.content_size_bytes
+        )
+
+    if is_retweet:
         if actual_tweet_obfuscated_timestamp >= RETWEET_ELIGIBLE_DATE:
             return ValidationResult(
                     is_valid=False,

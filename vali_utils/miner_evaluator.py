@@ -16,8 +16,9 @@ from common.data import (
     DataEntityBucket,
     DataEntity,
     DataSource,
+    HuggingFaceMetadata,
 )
-from common.protocol import GetDataEntityBucket, GetMinerIndex
+from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -131,6 +132,17 @@ class MinerEvaluator:
             )
             return
 
+        ##########
+        # Query HuggingFace metadata
+        if hotkey == '5FxJhi6vT1KEEYXcegtGBJnTkbdBZavYtprHdf6zo6pqfvkR':  # TODO ADD THE OUR MINER HOTKEY
+            hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
+            if hf_metadata is not None:
+                bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
+                # You can process or store this metadata as needed
+                # For now, we're just logging it
+            else:
+                bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
+        ##########
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
             vali_utils.choose_data_entity_bucket_to_query(index)
@@ -433,6 +445,34 @@ class MinerEvaluator:
         except Exception:
             bt.logging.error(
                 f"{hotkey} Failed to update and get miner index.",
+                traceback.format_exc(),
+            )
+            return None
+
+    async def _query_huggingface_metadata(
+            self, hotkey: str, uid: int, miner_axon: bt.AxonInfo
+    ) -> Optional[List[HuggingFaceMetadata]]:
+        bt.logging.info(f"{hotkey}: Getting HuggingFace metadata from miner.")
+
+        try:
+            synapse = GetHuggingFaceMetadata(version=constants.PROTOCOL_VERSION)
+            async with bt.dendrite(wallet=self.wallet) as dendrite:
+                responses = await dendrite.forward(
+                    axons=[miner_axon],
+                    synapse=synapse,
+                    timeout=120,
+                )
+
+            if not responses or len(responses) == 0 or not isinstance(responses[0], GetHuggingFaceMetadata):
+                bt.logging.info(f"{hotkey}: Miner failed to respond with HuggingFace metadata.")
+                return None
+
+            response = responses[0]
+            bt.logging.success(f"{hotkey}: Got HuggingFace metadata with {len(response.metadata)} entries.")
+            return response.metadata
+        except Exception:
+            bt.logging.error(
+                f"{hotkey} Failed to query HuggingFace metadata.",
                 traceback.format_exc(),
             )
             return None

@@ -121,15 +121,24 @@ class DataEntity(StrictBaseModel):
 
     @classmethod
     def are_non_content_fields_equal(
-        cls, this: "DataEntity", other: "DataEntity"
+            cls, this: "DataEntity", other: "DataEntity"
     ) -> bool:
         """Returns whether this entity matches the non-content fields of another entity."""
         return (
-            this.uri == other.uri
-            and this.datetime == other.datetime
-            and this.source == other.source
-            and this.label == other.label
+                this.uri == other.uri
+                and this.datetime == other.datetime
+                and this.source == other.source
+                and this.label == other.label
         )
+
+
+class HuggingFaceMetadata(StrictBaseModel):
+    # The name of repo
+    repo_name: str
+    # The datetime of the data entity, usually its creation time.
+    # Should be in UTC.
+    source: DataSource
+    updated_at: dt.datetime
 
 
 class DataEntityBucketId(StrictBaseModel):
@@ -193,7 +202,7 @@ class CompressedMinerIndex(BaseModel):
     @validator("sources")
     @classmethod
     def validate_index_size(
-        cls, sources: Dict[int, List[CompressedEntityBucket]]
+            cls, sources: Dict[int, List[CompressedEntityBucket]]
     ) -> Dict[int, List[CompressedEntityBucket]]:
         """Converts the value to lower case for consistent casing throughout the system."""
         size = sum(

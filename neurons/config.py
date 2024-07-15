@@ -119,6 +119,12 @@ def add_args(neuron_type: NeuronType, parser):
             default=False,
         )
 
+        parser.add_argument(
+            "--neuron.disable_set_weights",
+            action="store_true",
+            help="Set this flag to disable setting the weights to network."
+        )
+
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(
             "--neuron.database_name",
@@ -145,6 +151,13 @@ def add_args(neuron_type: NeuronType, parser):
             type=str,
             help="The location of the scraping config JSON file to use",
             default=default_file,
+        )
+
+        parser.add_argument(
+            "--huggingface",
+            action="store_true",
+            help="Set this flag to true to upload your data into HF dataset",
+            default=False
         )
 
         parser.add_argument(

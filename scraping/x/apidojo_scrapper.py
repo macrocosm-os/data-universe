@@ -2,7 +2,7 @@ import asyncio
 import threading
 import traceback
 import bittensor as bt
-from typing import List
+from typing import List, Tuple
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
@@ -46,7 +46,6 @@ class ApiDojoTwitterScraper(Scraper):
                     reason="Invalid URI.",
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
-
             attempt = 0
             max_attempts = 2
 
@@ -104,14 +103,16 @@ class ApiDojoTwitterScraper(Scraper):
                     decrement_count()
 
                 # Parse the response
-                tweets = self._best_effort_parse_dataset(dataset)
+                tweets, is_retweets = self._best_effort_parse_dataset(dataset)
 
                 actual_tweet = None
 
-                for tweet in tweets:
+                for index, tweet in enumerate(tweets):
                     if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
                         actual_tweet = tweet
+                        is_retweet = is_retweets[index]
                         break
+
                 bt.logging.debug(actual_tweet)
                 if actual_tweet is None:
                     # Only append a failed result if on final attempt.
@@ -125,6 +126,7 @@ class ApiDojoTwitterScraper(Scraper):
                     return utils.validate_tweet_content(
                         actual_tweet=actual_tweet,
                         entity=entity,
+                        is_retweet=is_retweet
                     )
 
         if not entities:
@@ -132,6 +134,7 @@ class ApiDojoTwitterScraper(Scraper):
 
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
         bt.logging.trace("Acquiring semaphore for concurrent apidojo validations.")
+
         with ApiDojoTwitterScraper.concurrent_validates_semaphore:
             bt.logging.trace(
                 "Acquired semaphore for concurrent apidojo validations."
@@ -191,7 +194,7 @@ class ApiDojoTwitterScraper(Scraper):
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
-        x_contents = self._best_effort_parse_dataset(dataset)
+        x_contents, is_retweets = self._best_effort_parse_dataset(dataset)
 
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
@@ -204,14 +207,15 @@ class ApiDojoTwitterScraper(Scraper):
 
         return data_entities
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
+    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
 
         Any errors are logged and ignored."""
         if dataset == [{"zero_result": True}] or not dataset: # Todo remove first statement if it's not necessary
-            return []
+            return [], []
 
         results: List[XContent] = []
+        is_retweets: List[bool] = []
         for data in dataset:
             try:
                 # Check that we have the required fields.
@@ -239,7 +243,7 @@ class ApiDojoTwitterScraper(Scraper):
                 tags = ["#" + item['text'] for item in sorted_tags]
 
                 is_retweet = data.get('isRetweet', False)
-
+                is_retweets.append(is_retweet)
                 results.append(
                     XContent(
                         username= data['author']['userName'],# utils.extract_user(data["url"]),
@@ -249,15 +253,13 @@ class ApiDojoTwitterScraper(Scraper):
                             data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
-                        is_retweet=is_retweet,
                     )
                 )
             except Exception:
                 bt.logging.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
-
-        return results
+        return results, is_retweets
 
 
 async def test_scrape():
