@@ -4,7 +4,6 @@ import traceback
 from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import RETWEET_ELIGIBLE_DATE, RETWEET_HALT_DATE
 import datetime as dt
 from scraping import utils
 from scraping.scraper import ValidationResult
@@ -186,24 +185,12 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
-    if is_retweet and dt.datetime.now(dt.timezone.utc) >= RETWEET_HALT_DATE:
+    if is_retweet:
         return ValidationResult(
             is_valid=False,
             reason="Retweets are no longer eligible after July 6, 2024.",
             content_size_bytes_validated=entity.content_size_bytes
         )
-
-    if is_retweet:
-        if actual_tweet_obfuscated_timestamp >= RETWEET_ELIGIBLE_DATE:
-            return ValidationResult(
-                    is_valid=False,
-                    reason="That is not an original tweet; it's a retweet created after eligible date.",
-                    content_size_bytes_validated=entity.content_size_bytes,
-                )
-        else:
-            bt.logging.info(
-                f"That is not an original tweet; it's a retweet. It will not be scored starting June 6th."
-            )
 
 
     # Wahey! A valid Tweet.

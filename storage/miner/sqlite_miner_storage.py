@@ -221,7 +221,12 @@ class SqliteMinerStorage(MinerStorage):
     def should_upload_hf_data(self) -> bool:
         sql_query = """
             SELECT datetime(AVG(strftime('%s', UpdatedAt)), 'unixepoch') AS AvgUpdatedAt
-            FROM HFMetaData;
+            FROM (
+                SELECT UpdatedAt
+                FROM HFMetaData
+                ORDER BY UpdatedAt DESC
+                LIMIT 2
+            );
         """
         try:
             with contextlib.closing(self._create_connection()) as connection:
@@ -245,6 +250,30 @@ class SqliteMinerStorage(MinerStorage):
         except sqlite3.Error as e:
             print(f"An error occurred: {e}")
             return False
+
+    def get_hf_metadata(self) -> List[HuggingFaceMetadata]:
+        sql_query = """
+            SELECT * FROM HFMetaData
+            ORDER BY UpdatedAt DESC
+            LIMIT 2;
+        """
+
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(sql_query)
+            hf_metadatas = []
+
+            i = 0
+            for row in cursor:
+                hf_metadata = HuggingFaceMetadata(
+                    repo_name=row['uri'],
+                    source=row['source'],
+                    updated_at=row['updatedAt']
+                )
+
+                hf_metadatas.append(hf_metadata)
+
+        return hf_metadatas
 
     def list_data_entities_in_data_entity_bucket(
         self, data_entity_bucket_id: DataEntityBucketId

@@ -1,4 +1,4 @@
-from typing import Callable, Tuple
+from typing import Callable, Tuple, List
 import unittest
 import bittensor as bt
 import datetime as dt
@@ -12,9 +12,10 @@ from common.data import (
     DataLabel,
     DataSource,
     TimeBucket,
+    HuggingFaceMetadata,
 )
 
-from common.protocol import GetDataEntityBucket, GetMinerIndex
+from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata
 from storage.miner.miner_storage import MinerStorage
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from storage.validator.sqlite_memory_validator_storage import (
@@ -28,10 +29,10 @@ class FakeMiner:
     """A simple implementation of a miner that defines the protocol forward functions."""
 
     def __init__(
-        self,
-        index: GetMinerIndex = None,
-        entities: GetDataEntityBucket = None,
-        storage: MinerStorage = None,
+            self,
+            index: GetMinerIndex = None,
+            entities: GetDataEntityBucket = None,
+            storage: MinerStorage = None,
     ):
         self.index = index
         self.entities = entities
@@ -47,16 +48,17 @@ class FakeMiner:
         return self.index
 
     def get_data_bucket(
-        self, request: old_protocol.GetDataEntityBucket
+            self, request: old_protocol.GetDataEntityBucket
     ) -> old_protocol.GetDataEntityBucket:
         return self.entities
 
+    def get_huggingface_metadata(self, request: GetHuggingFaceMetadata) -> GetHuggingFaceMetadata:
+        if self.storage:
+            request.metadata = self.storage.get_hf_metadata()
+        return request
+
 
 class IntegrationTestProtocol(unittest.TestCase):
-    # The commented out tests run a mini E2E test for round trip serialization of a protocol message.
-    # To run it, first make sure you have a wallet named "unit_test" with hotkey "unit_test".
-    # Then update the axon info to use the correct addresses for your wallets.
-
     def _insert_and_get_index(self, storage: MinerStorage) -> CompressedMinerIndex:
         now = dt.datetime.now()
         # Create an entity for bucket 1.
@@ -104,6 +106,23 @@ class IntegrationTestProtocol(unittest.TestCase):
             }
         )
 
+    def _insert_test_hf_metadata(self, storage: MinerStorage) -> List[HuggingFaceMetadata]:
+        now = dt.datetime.now(dt.timezone.utc)
+        test_metadata = [
+            HuggingFaceMetadata(
+                repo_name="test_repo_1",
+                source=DataSource.REDDIT,
+                updated_at=now
+            ),
+            HuggingFaceMetadata(
+                repo_name="test_repo_2",
+                source=DataSource.X,
+                updated_at=now + dt.timedelta(hours=1)
+            ),
+        ]
+        storage.store_hf_dataset_info(test_metadata)
+        return test_metadata
+
     def setUp(self):
         # Enable logging
         bt.logging(
@@ -123,13 +142,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         self.miner_storage = SqliteMinerStorage()
 
     def _test_round_trip(self, forward_fn: Callable, request: bt.Synapse) -> bt.Synapse:
-        """Base test for verifying a protocol message between dendrite and axon.
-
-        Args:
-            - forward_fn: The function that handles the request on the axon.
-            - request: The request to send to the axon.
-        """
-
+        """Base test for verifying a protocol message between dendrite and axon."""
         port = 1234
         axon = bt.axon(
             wallet=self.wallet,
@@ -144,7 +157,6 @@ class IntegrationTestProtocol(unittest.TestCase):
 
             dendrite = bt.dendrite(wallet=self.wallet)
 
-            request = GetMinerIndex()
             response = dendrite.query(
                 axons=bt.AxonInfo(
                     version=1,
@@ -191,11 +203,6 @@ class IntegrationTestProtocol(unittest.TestCase):
 
     def test_get_miner_index(self):
         """Tests a round trip using the new compressed miner format."""
-
-        # TODO: Eventually this should write entries to the FakeMiner's storage
-        # and then have the FakeMiner read them back out. For now, we just create
-        # the response the miner will return directly.
-
         compressed_index = self._create_test_index()
 
         expected_response = GetMinerIndex(
@@ -213,8 +220,7 @@ class IntegrationTestProtocol(unittest.TestCase):
             response.compressed_index_serialized,
         )
 
-        # TODO: Refactor the vali so that we can directly use vali code here.
-        # Now that we have the response, write it t othe vali DB.
+        # Now that we have the response, write it to the vali DB.
         got_compressed_index = vali_utils.get_miner_index_from_response(response)
         self.assertEqual(got_compressed_index, compressed_index)
 
@@ -244,7 +250,6 @@ class IntegrationTestProtocol(unittest.TestCase):
 
     def test_get_compressed_miner_index(self):
         """Tests a round trip using the new compressed miner format."""
-
         expected_index = self._insert_and_get_index(self.miner_storage)
 
         # Send a request to the fake miner to get the miner index.
@@ -252,8 +257,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         miner = FakeMiner(storage=self.miner_storage)
         response = self._test_round_trip(miner.get_miner_index, request)
 
-        # TODO: Refactor the vali so that we can directly use vali code here.
-        # Now that we have the response, write it t othe vali DB.
+        # Now that we have the response, write it to the vali DB.
         got_compressed_index = vali_utils.get_miner_index_from_response(response)
         self.assertTrue(
             test_utils.are_compressed_indexes_equal(
@@ -284,6 +288,35 @@ class IntegrationTestProtocol(unittest.TestCase):
             scorable_index.last_updated - dt.datetime.utcnow()
             < dt.timedelta(seconds=30)
         )
+
+    def test_huggingface_metadata(self):
+        # Setup
+        miner = FakeMiner(storage=self.miner_storage)
+
+        # Test upserting metadata
+        metadata_to_upsert = [
+            HuggingFaceMetadata(repo_name="test_repo_1", source=DataSource.REDDIT,
+                                updated_at=dt.datetime.now(dt.timezone.utc)),
+            HuggingFaceMetadata(repo_name="test_repo_2", source=DataSource.X,
+                                updated_at=dt.datetime.now(dt.timezone.utc))
+        ]
+        self.vali_storage.upsert_hf_metadata("test_hotkey", metadata_to_upsert)
+
+        # Test retrieving metadata
+        response = self._test_round_trip(miner.get_huggingface_metadata, GetHuggingFaceMetadata())
+
+        self.assertTrue(response.is_success)
+        self.assertEqual(len(response.metadata), 2)
+        # Add more detailed assertions here
+
+        # Test deleting metadata
+        self.vali_storage._delete_hf_metadata("test_hotkey")
+
+        # Verify deletion
+        response = self._test_round_trip(miner.get_huggingface_metadata, GetHuggingFaceMetadata())
+        print(f"Debig: {response}")
+        self.assertTrue(response.is_success)
+        self.assertEqual(len(response.metadata), 2)
 
 
 if __name__ == "__main__":
