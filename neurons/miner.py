@@ -30,6 +30,7 @@ from common.protocol import (
     GetDataEntityBucket,
     GetMinerIndex,
     GetContentsByBuckets,
+    GetHuggingFaceMetadata,
     REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
 )
 from neurons.config import NeuronType
@@ -101,6 +102,10 @@ class Miner:
                 forward_fn=self.get_contents_by_buckets,
                 blacklist_fn=self.get_contents_by_buckets_blacklist,
                 priority_fn=self.get_contents_by_buckets_priority,
+            ).attach(
+                forward_fn=self.get_huggingface_metadata,
+                blacklist_fn=self.get_huggingface_metadata_blacklist,
+                priority_fn=self.get_huggingface_metadata_priority,
             )
             bt.logging.success(f"Axon created: {self.axon}.")
 
@@ -117,6 +122,7 @@ class Miner:
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
+                miner_uid=self.uid
             )
 
         # Instantiate storage.
@@ -184,6 +190,7 @@ class Miner:
         while not self.should_exit:
             try:
                 if self.storage.should_upload_hf_data():
+                    bt.logging.info("Trying to upload the data into HuggingFace.")
                     self.hf_uploader.upload_sql_to_huggingface(self.storage)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
@@ -397,6 +404,26 @@ class Miner:
         )
 
         return synapse
+
+    async def get_huggingface_metadata(self, synapse: GetHuggingFaceMetadata) -> GetHuggingFaceMetadata:
+        bt.logging.info(f"Got a GetHuggingFaceMetadata request from {synapse.dendrite.hotkey}.")
+
+        # Query the HuggingFace metadata from the database
+        synapse.metadata = self.storage.get_hf_metadata()
+
+        if not synapse.metadata:
+            bt.logging.info(f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
+        else:
+            bt.logging.success(
+                f"Returning {len(synapse.metadata)} HuggingFace metadata entries to {synapse.dendrite.hotkey}.")
+
+        return synapse
+
+    async def get_huggingface_metadata_blacklist(self, synapse: GetHuggingFaceMetadata) -> typing.Tuple[bool, str]:
+        return self.default_blacklist(synapse)
+
+    async def get_huggingface_metadata_priority(self, synapse: GetHuggingFaceMetadata) -> float:
+        return self.default_priority(synapse)
 
     async def get_data_entity_bucket_blacklist(
         self, synapse: GetDataEntityBucket
