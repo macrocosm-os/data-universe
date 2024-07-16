@@ -8,6 +8,7 @@ from common import constants
 from common.data_v2 import ScorableMinerIndex
 from common.metagraph_syncer import MetagraphSyncer
 import common.utils as utils
+import datetime as dt
 import bittensor as bt
 from common.data import (
     CompressedMinerIndex,
@@ -17,6 +18,7 @@ from common.data import (
     HuggingFaceMetadata,
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata
+from common.constants import HF_METADATA_QUERY_DATE
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -118,7 +120,7 @@ class MinerEvaluator:
 
         ##########
         # Query HuggingFace metadata
-        if hotkey == '5FxJhi6vT1KEEYXcegtGBJnTkbdBZavYtprHdf6zo6pqfvkR':  # TODO ADD THE OUR MINER HOTKEY
+        if dt.datetime.now(dt.timezone.utc) >= HF_METADATA_QUERY_DATE:
             hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
             if hf_metadata is not None:
                 bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
