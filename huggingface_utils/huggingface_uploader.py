@@ -47,6 +47,7 @@ class HuggingFaceUploader:
             try:
 
                 query = f"SELECT datetime, label, content FROM DataEntity WHERE source = {source};"
+                bt.logging.info(f"Started uploading the data into HF with the source: {source}")
                 with sqlite3.connect(self.db_path) as conn:
                     df_iterator = pd.read_sql_query(query, conn, chunksize=chunk_size)
 
@@ -57,6 +58,7 @@ class HuggingFaceUploader:
                     bt.logging.info(f"Saved Parquet file: {parquet_path}")
 
                 repo_id = self.upload_parquet_to_hf(source)
+                bt.logging.info(f'Dataset {repo_id} uploaded.')
                 remove_all_files_in_directory(self.output_dir)
 
                 hf_values.append(HuggingFaceMetadata(
