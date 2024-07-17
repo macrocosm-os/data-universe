@@ -142,8 +142,8 @@ class Validator:
 
         self.wandb_run = wandb.init(
             name=name,
-            project="logging",
-            entity="bt-subnet13",
+            project="data-universe-validators",
+            entity="macrocosmos",
             config={
                 "uid": self.uid,
                 "hotkey": self.wallet.hotkey.ss58_address,
