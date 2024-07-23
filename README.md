@@ -85,4 +85,4 @@ See [Validator Setup](docs/validator.md#validator_setup) to learn how to setup a
 
 We welcome feedback! 
 
-If you have a suggestion, please reach out to @rusticluftig and @sid_data_universe on the Discord channel, or file an Issue.
+If you have a suggestion, please reach out to @arrmlet, @ewekazoo or any of the broader Macrocosmos Team on the Discord channel, or file an Issue.
