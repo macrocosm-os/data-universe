@@ -190,6 +190,7 @@ class Miner:
         while not self.should_exit:
             try:
                 if self.storage.should_upload_hf_data():
+                    bt.logging.info("Trying to upload the data into HuggingFace.")
                     self.hf_uploader.upload_sql_to_huggingface(self.storage)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
