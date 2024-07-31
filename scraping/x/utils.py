@@ -22,7 +22,7 @@ def _validate_model_config(model_config: Dict[str, str]) -> bool:
     """
     # The model_config must either be empty, or contain only the 'extra' key with the value 'ignore'.
     return model_config is None or (
-        len(model_config) == 1 and model_config.get("extra") == "ignore"
+            len(model_config) == 1 and model_config.get("extra") == "ignore"
     )
 
 
@@ -34,7 +34,7 @@ def is_valid_twitter_url(url: str) -> bool:
     try:
         result = urlparse(url)
         return all([result.scheme, result.netloc]) and (
-            "twitter.com" in result.netloc or "x.com" in result.netloc
+                "twitter.com" in result.netloc or "x.com" in result.netloc
         )
     except ValueError:
         return False
@@ -88,8 +88,18 @@ def sanitize_scraped_tweet(text: str) -> str:
     return re.sub(pattern, "", text)
 
 
+def are_hashtags_valid(tweet_to_verify_hashtags: List, actual_tweet_hashtags: List) -> bool:
+    """
+    Check if all hashtags from tweet_to_verify are present in actual_tweet.
+    :param tweet_to_verify_hashtags: List of hashtags from the tweet submitted by the miner
+    :param actual_tweet_hashtags: List of hashtags from the tweet scraped by the validator
+    :return: Boolean indicating if all tweet_to_verify hashtags are present in actual_tweet
+    """
+    return all(tag in actual_tweet_hashtags for tag in tweet_to_verify_hashtags)
+
+
 def validate_tweet_content(
-    actual_tweet: XContent, entity: DataEntity, is_retweet: bool
+        actual_tweet: XContent, entity: DataEntity, is_retweet: bool
 ) -> ValidationResult:
     """Validates the tweet is valid by the definition provided by entity."""
     tweet_to_verify = None
@@ -164,14 +174,9 @@ def validate_tweet_content(
             )
 
     # Check Tweet hashtags.
-    if tweet_to_verify.tweet_hashtags != actual_tweet.tweet_hashtags:
+    if not are_hashtags_valid(tweet_to_verify.tweet_hashtags, actual_tweet.tweet_hashtags):
         bt.logging.info(
-            f"Tweet hashtags do not match: {tweet_to_verify} != {actual_tweet}."
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Tweet hashtags do not match",
-            content_size_bytes_validated=entity.content_size_bytes,
+            f"Tweet hashtags do not match: {tweet_to_verify.tweet_hashtags} not subset of {actual_tweet.tweet_hashtags}."
         )
 
     # Validate the model_config.
@@ -192,7 +197,6 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes
         )
 
-
     # Wahey! A valid Tweet.
     # One final check. Does the tweet content match the data entity information?
     try:
@@ -207,7 +211,7 @@ def validate_tweet_content(
 
         byte_difference_allowed += len("is_retweet=False")
         if (
-            entity.content_size_bytes - tweet_entity.content_size_bytes
+                entity.content_size_bytes - tweet_entity.content_size_bytes
         ) > byte_difference_allowed:
             return ValidationResult(
                 is_valid=False,
