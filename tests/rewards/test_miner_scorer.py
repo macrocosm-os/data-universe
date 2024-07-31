@@ -30,11 +30,11 @@ class TestMinerScorer(unittest.TestCase):
             DataDesirabilityLookup(
                 distribution={
                     DataSource.REDDIT: DataSourceDesirability(
-                        weight=0.2,
-                        default_scale_factor=1,
+                        weight=0.4,
+                        default_scale_factor=0.5,
                     ),
                     DataSource.X: DataSourceDesirability(
-                        weight=0.8,
+                        weight=0.6,
                         default_scale_factor=0.5,
                     ),
                 },

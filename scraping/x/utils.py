@@ -88,6 +88,16 @@ def sanitize_scraped_tweet(text: str) -> str:
     return re.sub(pattern, "", text)
 
 
+def are_hashtags_valid(tweet_to_verify_hashtags: List, actual_tweet_hashtags: List) -> bool:
+    """
+    Check if all hashtags from tweet_to_verify are present in actual_tweet.
+
+    :param tweet_to_verify_hashtags: List of hashtags from the tweet submitted by the miner
+    :param actual_tweet_hashtags: List of hashtags from the tweet scraped by the validator
+    :return: Boolean indicating if all tweet_to_verify hashtags are present in actual_tweet
+    """
+    return all(tag in actual_tweet_hashtags for tag in tweet_to_verify_hashtags)
+
 def validate_tweet_content(
     actual_tweet: XContent, entity: DataEntity, is_retweet: bool
 ) -> ValidationResult:
@@ -164,9 +174,9 @@ def validate_tweet_content(
             )
 
     # Check Tweet hashtags.
-    if tweet_to_verify.tweet_hashtags != actual_tweet.tweet_hashtags:
+    if not are_hashtags_valid(tweet_to_verify.tweet_hashtags, actual_tweet.tweet_hashtags):
         bt.logging.info(
-            f"Tweet hashtags do not match: {tweet_to_verify} != {actual_tweet}."
+            f"Tweet hashtags do not match: {tweet_to_verify.tweet_hashtags} not subset of {actual_tweet.tweet_hashtags}."
         )
         return ValidationResult(
             is_valid=False,
@@ -196,18 +206,19 @@ def validate_tweet_content(
     # Wahey! A valid Tweet.
     # One final check. Does the tweet content match the data entity information?
     try:
+        actual_tweet.tweet_hashtags = tweet_to_verify.tweet_hashtags
         tweet_entity = XContent.to_data_entity(content=actual_tweet)
 
         # Extra check that the content size is reasonably close to what we expect.
         # Allow a 10 byte difference to account for timestamp serialization differences.
-        byte_difference_allowed = 10
+        byte_difference_allowed = 20
         # The entity generated here will never have a model config, so add that in as buffer if included.
         if tweet_to_verify.model_config:
             byte_difference_allowed += len('"model_config":{"extra": "ignore"}"')
 
         byte_difference_allowed += len("is_retweet=False")
         if (
-            entity.content_size_bytes - tweet_entity.content_size_bytes
+            abs(entity.content_size_bytes - tweet_entity.content_size_bytes)
         ) > byte_difference_allowed:
             return ValidationResult(
                 is_valid=False,
