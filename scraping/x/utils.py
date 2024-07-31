@@ -90,6 +90,16 @@ def sanitize_scraped_tweet(text: str) -> str:
     return re.sub(pattern, "", text)
 
 
+def are_hashtags_valid(tweet_to_verify_hashtags: List, actual_tweet_hashtags: List) -> bool:
+    """
+    Check if all hashtags from tweet_to_verify are present in actual_tweet.
+
+    :param tweet_to_verify_hashtags: List of hashtags from the tweet submitted by the miner
+    :param actual_tweet_hashtags: List of hashtags from the tweet scraped by the validator
+    :return: Boolean indicating if all tweet_to_verify hashtags are present in actual_tweet
+    """
+    return all(tag in actual_tweet_hashtags for tag in tweet_to_verify_hashtags)
+
 def validate_tweet_content(
     actual_tweet: XContent, entity: DataEntity, is_retweet: bool
 ) -> ValidationResult:
@@ -166,9 +176,9 @@ def validate_tweet_content(
             )
 
     # Check Tweet hashtags.
-    if tweet_to_verify.tweet_hashtags != actual_tweet.tweet_hashtags:
+    if not are_hashtags_valid(tweet_to_verify.tweet_hashtags, actual_tweet.tweet_hashtags):
         bt.logging.info(
-            f"Tweet hashtags do not match: {tweet_to_verify} != {actual_tweet}."
+            f"Tweet hashtags do not match: {tweet_to_verify.tweet_hashtags} not subset of {actual_tweet.tweet_hashtags}."
         )
         return ValidationResult(
             is_valid=False,
