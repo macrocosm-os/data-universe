@@ -604,9 +604,9 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     bt.logging.trace(row)
                     databox_hf_infos.append(
                         DataBoxHFData(
-                            source=int(row[1]),
-                            repo_name=str(row[2]),
-                            last_updated=row[3]
+                            source=int(row[0]),
+                            repo_name=str(row[1]),
+                            last_updated=row[2]
                         )
                     )
             bt.logging.info(f'TEST DATABOX: {databox_hf_infos}')
