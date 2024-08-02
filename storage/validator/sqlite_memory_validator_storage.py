@@ -601,6 +601,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 )
 
                 for row in cursor:
+                    bt.logging.trace(row)
                     databox_hf_infos.append(
                         DataBoxHFData(
                             source=int(row[1]),
