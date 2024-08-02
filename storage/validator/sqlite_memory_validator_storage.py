@@ -16,6 +16,7 @@ from common.data_v2 import (
     DataBoxMiner,
     DataBoxLabelSize,
     DataBoxAgeSize,
+    DataBoxHFData
 )
 from storage.validator.validator_storage import (
     ValidatorStorage,
@@ -587,3 +588,26 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     )
 
             return databox_label_sizes
+
+    def read_databox_huggingface_data(self):
+        """Gets details about hf data for use in databox dashboards."""
+        databox_hf_infos = []
+        with self.lock:
+            with contextlib.closing(self._create_connection()) as connection:
+                cursor = connection.cursor()
+                cursor.execute(
+                    """SELECT source, repo_name, updated_at FROM  HFMetadata"""
+
+                )
+
+                for row in cursor:
+                    databox_hf_infos.append(
+                        DataBoxHFData(
+                            source=int(row[1]),
+                            repo_name=str(row[2]),
+                            last_updated=row[3]
+                        )
+                    )
+            bt.logging.info(f'TEST DATABOX: {databox_hf_infos}')
+            return databox_hf_infos
+

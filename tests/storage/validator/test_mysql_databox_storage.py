@@ -5,6 +5,7 @@ from storage.validator.mysql_databox_storage import (
     DataBoxAgeSize,
     DataBoxLabelSize,
     DataBoxMiner,
+    DataBoxHFData
 )
 
 
@@ -12,7 +13,7 @@ class TestMysqlDataboxStorage(unittest.TestCase):
     def setUp(self):
         # Make a test database for the test to operate against.
         self.test_storage = MysqlDataboxStorage(
-            "localhost", "test-user", "test-pw", "test_db"
+            "localhost", "superuser", "6606867", "test_db"
         )
 
     def tearDown(self):
@@ -21,6 +22,7 @@ class TestMysqlDataboxStorage(unittest.TestCase):
         cursor.execute("DROP TABLE Miner")
         cursor.execute("DROP TABLE LabelSize")
         cursor.execute("DROP TABLE AgeSize")
+        cursor.execute("DROP TABLE HFData")
         self.test_storage.connection.commit()
 
     def test_insert_miners(self):
@@ -99,6 +101,21 @@ class TestMysqlDataboxStorage(unittest.TestCase):
 
         self.assertEqual(2, cursor.rowcount)
 
+    def test_hf_infos(self):
+        hf_infos = [
+            DataBoxHFData(
+                source=1,
+                repo_name=f'repo_{i}',
+                last_updated=dt.datetime.now(),
+            )
+            for i in range(3)
+        ]
+
+        self.test_storage.insert_hf_info(repo_infos=hf_infos)
+        cursor = self.test_storage.connection.cursor(buffered=True)
+        cursor.execute("SELECT * FROM HFDATA")
+
+        self.assertEqual(3, cursor.rowcount)
 
 if __name__ == "__main__":
     unittest.main()

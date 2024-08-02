@@ -1,7 +1,7 @@
 from typing import List
 import datetime as dt
 import mysql.connector
-from common.data_v2 import DataBoxMiner, DataBoxLabelSize, DataBoxAgeSize
+from common.data_v2 import DataBoxMiner, DataBoxLabelSize, DataBoxAgeSize, DataBoxHFData
 
 
 class MysqlDataboxStorage:
@@ -38,6 +38,12 @@ class MysqlDataboxStorage:
                                     PRIMARY KEY(source, timeBucketId)
                                 )"""
 
+    HF_DATA_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS HFData (
+                                    source              TINYINT         NOT NULL,
+                                    repoName           VARCHAR(64)     NOT NULL,
+                                    lastUpdated         DATETIME(6)     NOT NULL
+                                )"""
+
     def __init__(self, host: str, user: str, password: str, database: str):
         # Get the connection to the user-created MySQL database.
         self.connection = mysql.connector.connect(
@@ -51,7 +57,8 @@ class MysqlDataboxStorage:
         cursor.execute(MysqlDataboxStorage.LABEL_SIZE_TABLE_CREATE)
         # Create the Age Size table if it doesn't exist
         cursor.execute(MysqlDataboxStorage.AGE_SIZE_TABLE_CREATE)
-
+        #CREATE HF mysql table
+        cursor.execute(MysqlDataboxStorage.HF_DATA_TABLE_CREATE)
         # Update the database to use the correct collation for accent sensitivity.
         # This can't escape the database name as it is part of the command, but it is against your own database.
         cursor.execute("ALTER DATABASE " + database + " COLLATE utf8mb4_0900_as_ci;")
@@ -137,3 +144,27 @@ class MysqlDataboxStorage:
         )
 
         self.connection.commit()
+
+    def insert_hf_info(self, repo_infos: List[DataBoxHFData]):
+        cursor = self.connection.cursor()
+
+        vals = [
+            [
+                repo_info.source,
+                repo_info.repo_name,
+                repo_info.last_updated,
+            ]
+            for repo_info in repo_infos
+        ]
+
+        # cursor.execute("TRUNCATE AgeSize") # TODO do we need to truncate ?
+
+        cursor.executemany(
+            """INSERT IGNORE INTO HFData 
+               (source, repoName, lastUpdated)
+               VALUES (%s, %s, %s)""",
+            vals,
+        )
+
+        self.connection.commit()
+

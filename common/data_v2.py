@@ -148,3 +148,10 @@ class DataBoxAgeSize:
     time_bucket_id: int
     content_size_bytes: int
     adj_content_size_bytes: int
+
+
+@dataclass
+class DataBoxHFData:
+    source: int
+    repo_name: str
+    last_updated: dt.datetime

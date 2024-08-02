@@ -557,6 +557,11 @@ class MinerEvaluator:
                     self.storage.read_databox_label_sizes()
                 )
 
+                # Get HFMetadata from SqliteMemory and write to mysql.
+                self.databox_storage.insert_hf_info(
+                    self.storage.read_databox_huggingface_data()
+                )
+
                 wait_time = max(
                     0,
                     (next_databox_update - datetime.datetime.utcnow()).total_seconds(),
