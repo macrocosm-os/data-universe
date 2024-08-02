@@ -142,6 +142,8 @@ class MinerEvaluator:
             hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
             if hf_metadata is not None:
                 bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
+                if len(hf_metadata):
+                    self.storage.upsert_hf_metadata(hotkey, hf_metadata)
                 # You can process or store this metadata as needed
                 # For now, we're just logging it
             else:
