@@ -4,7 +4,7 @@ import torch
 import bittensor as bt
 import datetime as dt
 from common.data import TimeBucket
-
+import math
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult
@@ -41,6 +41,9 @@ class MinerScorer:
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
         self.lock = threading.Lock()
+
+        # Start date for HF scoring decay
+        self.hf_start_date = dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=30)
 
     def save_state(self, filepath):
         """Save the current state to the provided filepath."""
@@ -116,11 +119,28 @@ class MinerScorer:
                 [self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)]
             )
 
+    def hf_linear(self, days_elapsed: int) -> float:
+        """Returns the HF multiplier for a linear HF score decay function, given the current time."""
+        linear_multiplier = days_elapsed / 30.0
+        return linear_multiplier
+
+    def hf_exp(self, days_elapsed: int) -> float:
+        """Returns the HF multiplier for a exponential HF score decay function, given the current time."""
+        exp_multiplier = math.exp(days_elapsed - 30.0)
+        return exp_multiplier
+
+    def hf_pow(self, days_elapsed: int) -> float:
+        """Returns the HF multiplier for a power HF score decay function, given the current time."""
+        pow_multiplier = math.pow(days_elapsed / 30.0, 2.5)
+        return pow_multiplier
+
     def on_miner_evaluated(
         self,
         uid: int,
         index: Optional[ScorableMinerIndex],
         validation_results: List[ValidationResult],
+        invalid_hf: Optional[bool],
+        hf_validation_date: Optional[dt.datetime], 
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
 
@@ -163,8 +183,17 @@ class MinerScorer:
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
 
+                # Scale the miner's score by its HF validation result.
+                if hf_validation_date:
+                    days_elapsed = (hf_validation_date - self.hf_start_date).days
+
+                    # Power HF score decay function. 
+                    hf_pow = self.hf_pow(days_elapsed)
+                    hf_penalty = max(0, 1 - hf_pow * invalid_hf) 
+                    score *= hf_penalty
+
                 # Now update the credibility again based on the current validation results.
-                self._update_credibility(uid, validation_results)
+                self._update_credibility(uid, validation_results, hf_penalty)
 
                 # Finally, scale the miner's score by its credibility to the power of 2.5.
                 score *= self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP
@@ -175,7 +204,11 @@ class MinerScorer:
                 f"Evaluated Miner {uid}. Score={self.scores[uid].item()}. Credibility={self.miner_credibility[uid].item()}."
             )
 
-    def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
+    def _update_credibility(
+            self, 
+            uid: int, 
+            validation_results: List[ValidationResult],
+            hf_penalty: float):
         """Updates the miner's credibility based on the most recent set of validation_results.
 
         Requires: self.lock is held.
@@ -184,7 +217,7 @@ class MinerScorer:
             len(validation_results) > 0
         ), "Must be provided at least 1 validation result."
 
-        # Weight the current set of validation_results by the total content size validaed
+        # Weight the current set of validation_results by the total content size validaed.
         total_bytes_validated = sum(
             result.content_size_bytes_validated for result in validation_results
         )
@@ -202,7 +235,7 @@ class MinerScorer:
         # Use EMA to update the miner's credibility.
         self.miner_credibility[uid] = (
             self.cred_alpha * credibility
-            + (1 - self.cred_alpha) * self.miner_credibility[uid]
+            + (1 - self.cred_alpha) * self.miner_credibility[uid] * hf_penalty
         )
 
         bt.logging.trace(
