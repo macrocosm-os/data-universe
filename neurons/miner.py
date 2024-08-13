@@ -57,7 +57,7 @@ class Miner:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
-            self.uid = 0 # No uid
+            self.uid = 0  # Offline mode so assume it's == 0
 
         else:
             # The wallet holds the cryptographic key pairs for the miner.
@@ -129,7 +129,7 @@ class Miner:
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
-                miner_uid=self.uid,
+                miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
                 encoding_key_manager=self.encoding_key_manager
             )
 

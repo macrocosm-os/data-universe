@@ -4,7 +4,7 @@ import bittensor as bt
 import os
 from huggingface_hub import HfApi
 from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
-from huggingface_utils.encoding_system import EncodingKeyManager, encode_url  # Import the encryption functionality
+from huggingface_utils.encoding_system import EncodingKeyManager  # Import the encryption functionality
 from dotenv import load_dotenv
 import datetime as dt
 from common.data import HuggingFaceMetadata
@@ -31,11 +31,12 @@ def remove_all_files_in_directory(directory):
 
 
 class HuggingFaceUploader:
-    def __init__(self, db_path: str, encoding_key_manager: EncodingKeyManager, miner_uid:int, output_dir: str = 'hf_storage'):
+    def __init__(self, db_path: str, encoding_key_manager: EncodingKeyManager, miner_hotkey: str, output_dir: str = 'hf_storage'):
         self.db_path = db_path
         self.output_dir = output_dir
         self.hf_api = HfApi()
-        self.miner_uid = miner_uid
+        self.miner_hotkey = miner_hotkey
+        self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
 
@@ -79,7 +80,7 @@ class HuggingFaceUploader:
             bt.logging.error("Hugging Face token not found. Please check your environment variables.")
             return
 
-        dataset_name = f'reddit_dataset_{self.miner_uid}' if source == 1 else f'x_dataset_{self.miner_uid}'
+        dataset_name = f'reddit_dataset_{self.unique_id}' if source == 1 else f'x_dataset_{self.unique_id}'
         repo_id = f"{self.hf_api.whoami(self.hf_token)['name']}/{dataset_name}"
 
         self.hf_api.create_repo(token=self.hf_token, repo_id=dataset_name, private=False, repo_type="dataset",
