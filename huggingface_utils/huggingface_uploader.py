@@ -4,17 +4,18 @@ import bittensor as bt
 import os
 from huggingface_hub import HfApi
 from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
+from huggingface_utils.encoding_system import EncodingKeyManager, encode_url  # Import the encryption functionality
 from dotenv import load_dotenv
 import datetime as dt
 from common.data import HuggingFaceMetadata
 load_dotenv()
 
 
-def preprocess_data(df, source):
+def preprocess_data(df, source, encoding_key_manager):
     if source == 1:
-        return preprocess_reddit_df(df)
+        return preprocess_reddit_df(df, key_manager=encoding_key_manager)
     else:
-        return preprocess_twitter_df(df)
+        return preprocess_twitter_df(df, key_manager=encoding_key_manager)
 
 
 def remove_all_files_in_directory(directory):
@@ -30,11 +31,12 @@ def remove_all_files_in_directory(directory):
 
 
 class HuggingFaceUploader:
-    def __init__(self, db_path: str, miner_uid:int, output_dir: str = 'hf_storage'):
+    def __init__(self, db_path: str, encoding_key_manager: EncodingKeyManager, miner_uid:int, output_dir: str = 'hf_storage'):
         self.db_path = db_path
         self.output_dir = output_dir
         self.hf_api = HfApi()
         self.miner_uid = miner_uid
+        self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
 
     def upload_sql_to_huggingface(self, storage, chunk_size=1_000_000):
@@ -52,7 +54,7 @@ class HuggingFaceUploader:
                     df_iterator = pd.read_sql_query(query, conn, chunksize=chunk_size)
 
                 for i, df in enumerate(df_iterator):
-                    df = preprocess_data(df, source)
+                    df = preprocess_data(df, source, self.encoding_key_manager)
                     parquet_path = os.path.join(self.output_dir, f"train-DataEntity_chunk_{i}.parquet")
                     df.to_parquet(parquet_path)
                     bt.logging.info(f"Saved Parquet file: {parquet_path}")

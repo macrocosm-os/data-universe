@@ -40,6 +40,7 @@ from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
+from huggingface_utils.encoding_system import EncodingKeyManager
 
 
 class Miner:
@@ -56,6 +57,8 @@ class Miner:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
+            self.uid = 0 # No uid
+
         else:
             # The wallet holds the cryptographic key pairs for the miner.
             self.wallet = bt.wallet(config=self.config)
@@ -117,12 +120,17 @@ class Miner:
         self.hugging_face_thread: threading.Thread = None
         self.lock = threading.RLock()
 
+        # Instantiate encoding keys
+        self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
+        bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
+
         # Instantiate HF
         self.use_hf_uploader = self.config.huggingface
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
-                miner_uid=self.uid
+                miner_uid=self.uid,
+                encoding_key_manager=self.encoding_key_manager
             )
 
         # Instantiate storage.
