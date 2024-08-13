@@ -1,115 +1,120 @@
+"""Module for URL encoding and decoding using Fernet encryption."""
+
 import base64
 import json
 import os
-from cryptography.hazmat.primitives import hashes
-from cryptography.hazmat.primitives.asymmetric import rsa, padding
-from cryptography.hazmat.primitives import serialization
-import pandas as pd
+import time
+from typing import Tuple, Optional
 
+import pandas as pd
+from cryptography.fernet import Fernet
 
 class EncodingKeyManager:
+    """Manages the encryption key for URL encoding and decoding."""
+
     def __init__(self, key_path: str = 'encoding_key.json'):
+        """Initialize the EncodingKeyManager with a key file path."""
         self.key_path = key_path
-        self.public_key, self.private_key = self.load_or_generate_key()
+        self.sym_key = self._load_or_generate_key()
+        self.fernet = Fernet(self.sym_key)
 
-    def load_or_generate_key(self):
+    def _load_or_generate_key(self) -> bytes:
+        """Load an existing key or generate a new one if it doesn't exist."""
         if os.path.exists(self.key_path):
-            with open(self.key_path, 'r') as f:
+            with open(self.key_path, 'r', encoding='utf-8') as f:
                 key_data = json.load(f)
-                public_key = serialization.load_pem_public_key(key_data['public_key'].encode())
-                private_key = serialization.load_pem_private_key(
-                    key_data['private_key'].encode(),
-                    password=None
-                )
+                return key_data['sym_key'].encode()
         else:
-            private_key = rsa.generate_private_key(
-                public_exponent=65537,
-                key_size=2048,
-            )
-            public_key = private_key.public_key()
-            self.save_key(private_key, public_key)
+            sym_key = Fernet.generate_key()
+            self._save_key(sym_key)
+            return sym_key
 
-        return public_key, private_key
-
-    def save_key(self, private_key, public_key):
+    def _save_key(self, sym_key: bytes) -> None:
+        """Save the symmetric key to a JSON file."""
         key_data = {
-            'private_key': private_key.private_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PrivateFormat.PKCS8,
-                encryption_algorithm=serialization.NoEncryption()
-            ).decode(),
-            'public_key': public_key.public_bytes(
-                encoding=serialization.Encoding.PEM,
-                format=serialization.PublicFormat.SubjectPublicKeyInfo
-            ).decode()
+            'sym_key': sym_key.decode()
         }
-        with open(self.key_path, 'w') as f:
+        with open(self.key_path, 'w', encoding='utf-8') as f:
             json.dump(key_data, f)
 
-    def get_public_key(self):
-        return self.public_key
-
-    def get_private_key(self):
-        return self.private_key
+    def get_fernet(self) -> Fernet:
+        """Get the Fernet instance for encryption/decryption."""
+        return self.fernet
 
 
-def encode_url(url, public_key):
-    encoded = public_key.encrypt(
-        url.encode(),
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None
-        )
-    )
-    return base64.b64encode(encoded).decode()
+def encode_url(url: str, fernet: Fernet) -> Optional[str]:
+    """Encode a URL using Fernet encryption."""
+    try:
+        encoded = fernet.encrypt(url.encode())
+        return base64.urlsafe_b64encode(encoded).decode()
+    except Exception as e:
+        print(f"Encryption failed for URL: {url}")
+        print(f"Error: {str(e)}")
+        return None
 
 
-def decode_url(encoded_url, private_key):
-    decoded = private_key.decrypt(
-        base64.b64decode(encoded_url),
-        padding.OAEP(
-            mgf=padding.MGF1(algorithm=hashes.SHA256()),
-            algorithm=hashes.SHA256(),
-            label=None
-        )
-    )
-    return decoded.decode()
+def decode_url(encoded_url: str, fernet: Fernet) -> Optional[str]:
+    """Decode an encoded URL using Fernet decryption."""
+    try:
+        decoded = fernet.decrypt(base64.urlsafe_b64decode(encoded_url.encode()))
+        return decoded.decode()
+    except Exception as e:
+        print(f"Decryption failed for encoded URL: {encoded_url}")
+        print(f"Error: {str(e)}")
+        return None
 
 
-def encode_dataframe_column(df, column_name, key_manager):
-    public_key = key_manager.get_public_key()
-    df[f'{column_name}_encoded'] = df[column_name].apply(lambda url: encode_url(url, public_key))
+def encode_dataframe_column(df: pd.DataFrame, column_name: str, key_manager: EncodingKeyManager) -> pd.DataFrame:
+    """Encode a column of URLs in a DataFrame."""
+    fernet = key_manager.get_fernet()
+    df[f'{column_name}_encoded'] = df[column_name].apply(lambda url: encode_url(url, fernet))
     return df
 
 
-def decode_dataframe_column(df, column_name, key_manager):
-    private_key = key_manager.get_private_key()
-    column_name = column_name.split('_encoded')[0]
-    df[column_name] = df[column_name].apply(lambda url: decode_url(url, private_key))
+def decode_dataframe_column(df: pd.DataFrame, column_name: str, key_manager: EncodingKeyManager) -> pd.DataFrame:
+    """Decode a column of encoded URLs in a DataFrame."""
+    fernet = key_manager.get_fernet()
+    original_column_name = column_name.replace('_encoded', '')
+    df[original_column_name] = df[column_name].apply(lambda url: decode_url(url, fernet))
     return df
 
 
-# Usage example
-if __name__ == "__main__":
+def main():
+    """Main function to demonstrate URL encoding and decoding."""
     # Initialize EncodingKeyManager
     key_manager = EncodingKeyManager()
 
-    # Create a sample DataFrame
+    # Create a larger sample DataFrame (1 million rows)
+    n_rows = 1_000_000
+    urls = [
+        'https://example.com/short_url',
+        'https://example.com/medium_length_url_with_some_parameters?param1=value1&param2=value2',
+        'https://example.com/very_long_url_with_many_parameters_and_some_special_characters?param1=value1&param2=value2&param3=value3&param4=value4&special=!@#$%^&*()'
+    ]
     df = pd.DataFrame({
-        'url': [
-            'https://example1.com',
-            'https://example2.com',
-            'https://example3.com'
-        ]
-    })
+        'url': urls * (n_rows // len(urls) + 1)
+    }).head(n_rows)
 
-    # Encode the 'url' column
+    # Measure encoding time
+    start_time = time.time()
     df_encoded = encode_dataframe_column(df, 'url', key_manager)
+    encode_time = time.time() - start_time
+    print(f"Encoding time for {n_rows} rows: {encode_time:.2f} seconds")
 
-    print("Encoded DataFrame:")
-    print(df_encoded)
-
-    # Demonstrate decoding
-    print("\nDecoded URLs:")
+    # Measure decoding time
+    start_time = time.time()
     df_decoded = decode_dataframe_column(df_encoded, 'url_encoded', key_manager)
+    decode_time = time.time() - start_time
+    print(f"Decoding time for {n_rows} rows: {decode_time:.2f} seconds")
+
+    # Verify that the decoded URLs match the original
+    print("\nVerification:")
+    print(df['url'].equals(df_decoded['url']))
+
+    # Calculate and print rows processed per second
+    print(f"\nEncoding speed: {n_rows / encode_time:.2f} rows/second")
+    print(f"Decoding speed: {n_rows / decode_time:.2f} rows/second")
+
+
+if __name__ == "__main__":
+    main()
