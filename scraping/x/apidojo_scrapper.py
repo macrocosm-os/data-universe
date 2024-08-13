@@ -339,8 +339,6 @@ class ApiDojoTwitterScraper(Scraper):
     def _best_effort_parse_hf_dataset(self, dataset: List[dict]) -> List[dict]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
         Any errors are logged and ignored."""
-        print('Hey')
-
         if dataset == [{"zero_result": True}] or not dataset:  # Todo remove first statement if it's not necessary
             return []
         results: List[dict] = []
@@ -378,8 +376,6 @@ async def test_scrape():
             labels=[DataLabel(value="#bittgergnergerojngoierjgensor")],
         )
     )
-
-    print(f"Scraped {len(entities)} entities: {entities}")
 
     return entities
 
@@ -470,7 +466,6 @@ async def test_validate():
         ),
     ]
     results = await scraper.validate(entities=true_entities)
-    print(f"Validation results: {results}")
 
 
 async def test_multi_thread_validate():
