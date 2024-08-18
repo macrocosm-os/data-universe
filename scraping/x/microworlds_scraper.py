@@ -2,7 +2,7 @@ import asyncio
 import threading
 import traceback
 import bittensor as bt
-from typing import List
+from typing import List, Tuple
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
@@ -89,14 +89,13 @@ class MicroworldsTwitterScraper(Scraper):
                         )
 
                 # Parse the response
-                tweets = self._best_effort_parse_dataset(dataset)
-
+                tweets, is_retweets = self._best_effort_parse_dataset(dataset)
                 actual_tweet = None
-                for tweet in tweets:
-                    if utils.normalize_url(tweet.url) == utils.normalize_url(
-                        entity.uri
-                    ):
+
+                for index, tweet in enumerate(tweets):
+                    if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
                         actual_tweet = tweet
+                        is_retweet = is_retweets[index]
                         break
                 if actual_tweet is None:
                     # Only append a failed result if on final attempt.
@@ -109,6 +108,7 @@ class MicroworldsTwitterScraper(Scraper):
                 else:
                     return utils.validate_tweet_content(
                         actual_tweet=actual_tweet,
+                        is_retweet=is_retweet,
                         entity=entity,
                     )
 
@@ -183,54 +183,38 @@ class MicroworldsTwitterScraper(Scraper):
 
         return data_entities
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
+    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
 
         Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}]:
-            return []
+        if not dataset or dataset == [{"zero_result": True}]:
+            return [], []
 
+        bt.logging.info(f"dataset: {dataset}")
         results: List[XContent] = []
+        is_retweets: List[bool] = []
+
         for data in dataset:
             try:
-                # Check that we have the required fields.
-                if (
-                    ("full_text" not in data and "truncated_full_text" not in data)
-                    or "url" not in data
-                    or "created_at" not in data
-                ):
+                # Check that we have the required fields
+                if "full_text" not in data or "url" not in data or "created_at" not in data:
+                    bt.logging.warning("Missing required fields in data")
                     continue
 
-                # Truncated_full_text is only populated if "full_text" is truncated.
-                text = (
-                    data["truncated_full_text"]
-                    if "truncated_full_text" in data and data["truncated_full_text"]
-                    else data["full_text"]
-                )
+                text = data['full_text']
 
-                # Microworlds returns cashtags separately under symbols.
-                # These are returned as list of dicts where the indices key is the first/last index and text is the tag.
-                # If there are no hashtags or cashtags they are empty lists.
-                hashtags = (
-                    data["entities"]["hashtags"]
-                    if "entities" in data and "hashtags" in data["entities"]
-                    else []
-                )
-                cashtags = (
-                    data["entities"]["symbols"]
-                    if "entities" in data and "symbols" in data["entities"]
-                    else []
-                )
+                # Extract hashtags
+                hashtags = data.get('entities', {}).get('hashtags', [])
+                tags = ["#" + item['text'] for item in hashtags]
 
-                sorted_tags = sorted(hashtags + cashtags, key=lambda x: x["indices"][0])
-
-                tags = ["#" + item["text"] for item in sorted_tags]
+                is_retweet = data.get('retweeted', False)
+                is_retweets.append(is_retweet)
 
                 results.append(
                     XContent(
-                        username=utils.extract_user(data["url"]),
+                        username=data['user']['screen_name'],
                         text=utils.sanitize_scraped_tweet(text),
-                        url=utils.normalize_url(data["url"]),
+                        url=data["url"],
                         timestamp=dt.datetime.strptime(
                             data["created_at"], "%a %b %d %H:%M:%S %z %Y"
                         ),
@@ -242,7 +226,7 @@ class MicroworldsTwitterScraper(Scraper):
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
 
-        return results
+        return results, is_retweets
 
 
 async def test_scrape():
@@ -268,71 +252,85 @@ async def test_validate():
     scraper = MicroworldsTwitterScraper()
 
     true_entities = [
+        # DataEntity(
+        #     uri="https://twitter.com/0xedeon/status/1790788053960667309",
+        #     datetime=dt.datetime(2024, 5, 15, 16, 55, 17, tzinfo=dt.timezone.utc),
+        #     source=DataSource.X,
+        #     label=DataLabel(value="#cryptocurrency"),
+        #     content='{"username": "@0xedeon", "text": "Deux frères ont manipulé les protocoles Ethereum pour voler 25M $ selon le Département de la Justice 🕵️‍♂️💰 #Cryptocurrency #JusticeDept", "url": "https://twitter.com/0xedeon/status/1790788053960667309", "timestamp": "2024-05-15T16:55:00+00:00", "tweet_hashtags": ["#Cryptocurrency", "#JusticeDept"]}',
+        #     content_size_bytes=391
+        # ),
         DataEntity(
-            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
-            datetime=dt.datetime(2024, 1, 20, 5, 56, 45, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/100Xpotential/status/1790785842967101530",
+            datetime=dt.datetime(2024, 5, 15, 16, 46, 30, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=DataLabel(value="#Bittensor"),
-            content='{"username":"@bittensor_alert","text":"🚨 #Bittensor Alert: 500 $TAO ($122,655) deposited into #MEXC","url":"https://twitter.com/bittensor_alert/status/1748585332935622672","timestamp":"2024-01-20T5:56:00Z","tweet_hashtags":["#Bittensor", "#TAO", "#MEXC"]}',
-            content_size_bytes=281,
+            label=DataLabel(value="#catcoin"),
+            content='{"username": "@100Xpotential", "text": "As i said green candles incoming 🚀🫡👇👇\\n\\nAround 15% price surge in #CatCoin 📊💸🚀🚀\\n\\n𝐂𝐨𝐦𝐦𝐞𝐧𝐭 |  𝐋𝐢𝐤𝐞 |  𝐑𝐞𝐭𝐰𝐞𝐞𝐭 |  𝐅𝐨𝐥𝐥𝐨𝐰\\n\\n#Binance #Bitcoin #PiNetwork #Blockchain #NFT #BabyDoge #Solana #PEPE #Crypto #1000x #cryptocurrency #Catcoin #100x", "url": "https://twitter.com/100Xpotential/status/1790785842967101530", "timestamp": "2024-05-15T16:46:00+00:00", "tweet_hashtags": ["#CatCoin", "#Binance", "#Bitcoin", "#PiNetwork", "#Blockchain", "#NFT", "#BabyDoge", "#Solana", "#PEPE", "#Crypto", "#1000x", "#cryptocurrency", "#Catcoin", "#100x"]}',
+            content_size_bytes=933
         ),
         DataEntity(
-            uri="https://twitter.com/HadsonNery/status/1752011223330124021",
-            datetime=dt.datetime(2024, 1, 29, 16, 50, 1, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/20nineCapitaL/status/1789488160688541878",
+            datetime=dt.datetime(2024, 5, 12, 2, 49, 59, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=DataLabel(value="#faleitoleve"),
-            content='{"username":"@HadsonNery","text":"Se ele fosse brabo mesmo e eu estaria aqui defendendo ele, pq ele não foi direto no Davi já que a intenção dele era fazer o Davi comprar o barulho dela 🤷🏻\u200d♂️ MC fofoqueiro foi macetado pela CUNHÃ #faleitoleve","url":"https://twitter.com/HadsonNery/status/1752011223330124021","timestamp":"2024-01-29T16:50:00Z","tweet_hashtags":["#faleitoleve"]}',
-            content_size_bytes=455,
+            label=DataLabel(value="#bitcoin"),
+            content='{"username": "@20nineCapitaL", "text": "Yup! We agreed to. \\n\\n@MetaMaskSupport #Bitcoin #Investors #DigitalAssets #EthereumETF #Airdrops", "url": "https://twitter.com/20nineCapitaL/status/1789488160688541878", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin", "#Investors", "#DigitalAssets", "#EthereumETF", "#Airdrops"]}',
+            content_size_bytes=345
         ),
         DataEntity(
-            uri="https://twitter.com/TcMMTsTc/status/1733441357090545731",
-            datetime=dt.datetime(2023, 12, 9, 10, 59, 59, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/AAAlviarez/status/1790787185047658838",
+            datetime=dt.datetime(2024, 5, 15, 16, 51, 50, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=None,
-            content=b'{"username":"@TcMMTsTc","text":"\xe3\x81\xbc\xe3\x81\x8f\xe7\x9c\xa0\xe3\x81\x84\xe3\x81\xa7\xe3\x81\x99","url":"https://twitter.com/TcMMTsTc/status/1733441357090545731","timestamp":"2023-12-09T10:59:00Z","tweet_hashtags":[]}',
-            content_size_bytes=203,
+            label=DataLabel(value="#web3‌‌"),
+            content='{"username": "@AAAlviarez", "text": "1/3🧵\\n\\nOnce a month dozens of #web3‌‌  users show our support to one of the projects that is doing an excellent job in services and #cryptocurrency adoption.\\n\\nDo you know what Leo Power Up Day is all about?", "url": "https://twitter.com/AAAlviarez/status/1790787185047658838", "timestamp": "2024-05-15T16:51:00+00:00", "tweet_hashtags": ["#web3‌‌", "#cryptocurrency"]}',
+            content_size_bytes=439
         ),
         DataEntity(
-            uri="https://twitter.com/mdniy/status/1743249601925185642",
-            datetime=dt.datetime(2024, 1, 5, 12, 34, 27, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/AGariaparra/status/1789488091453091936",
+            datetime=dt.datetime(2024, 5, 12, 2, 49, 42, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=None,
-            content='{"username":"@mdniy","text":"🗓January 6, 2024\\n0️⃣8️⃣ Days to Makar Sankranti 2024\\n📍Sun Temple, Surya Pahar, Goalpura, Assam\\n \\nDepartment of Yogic Science and Naturopathy, Mahapurusha Srimanta Sankaradeva Viswavidyalaya, Assam in collaboration with MDNIY is organizing mass Surya Namaskar Demonstration tomorrow.","url":"https://twitter.com/mdniy/status/1743249601925185642","timestamp":"2024-01-05T12:34:00Z","tweet_hashtags":[]}',
-            content_size_bytes=485,
+            label=DataLabel(value="#bitcoin"),
+            content='{"username": "@AGariaparra", "text": "J.P Morgan, Wells Fargo hold #Bitcoin now: Why are they interested in BTC? - AMBCrypto", "url": "https://twitter.com/AGariaparra/status/1789488091453091936", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
+            content_size_bytes=269
         ),
         DataEntity(
-            uri="https://twitter.com/rEQjoewd6WfNFL3/status/1743187684422799519",
-            datetime=dt.datetime(2024, 1, 5, 8, 28, 25, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/AGariaparra/status/1789488427546939525",
+            datetime=dt.datetime(2024, 5, 12, 2, 51, 2, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=None,
-            content='{"username":"@rEQjoewd6WfNFL3","text":"ありがとうございます\\n\\nそうなんです\\nほんと偶然です\\n聞いたときはビックリしました\\n\\nいえいえ、私の記念日だなんて\\nもったいないです\\n妹の記念日にしてください\\nぷぷっ","url":"https://twitter.com/rEQjoewd6WfNFL3/status/1743187684422799519","timestamp":"2024-01-05T08:28:00Z","tweet_hashtags":[]}',
-            content_size_bytes=643,
+            label=DataLabel(value="#bitcoin"),
+            content='{"username": "@AGariaparra", "text": "We Asked ChatGPT if #Bitcoin Will Enter a Massive Bull Run in 2024", "url": "https://twitter.com/AGariaparra/status/1789488427546939525", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
+            content_size_bytes=249
         ),
         DataEntity(
-            uri="https://twitter.com/Sid14290237375/status/1760088426400162274",
-            datetime=dt.datetime(2024, 2, 20, 23, 45, 56, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/AMikulanecs/status/1784324497895522673",
+            datetime=dt.datetime(2024, 4, 27, 20, 51, 26, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=DataLabel(value="#HowlongcanImakeahashtaganywayIg"),
-            content='{"username":"@Sid14290237375","text":"Testing hashtags\\n\\n#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest","url":"https://twitter.com/Sid14290237375/status/1760088426400162274","timestamp":"2024-02-20T23:45:00Z","tweet_hashtags":["#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest"]}',
-            content_size_bytes=319,
+            label=DataLabel(value="#felix"),
+            content='{"username": "@AMikulanecs", "text": "$FELIX The new Dog with OG Vibes... \\nWe have a clear vision for success.\\nNew Dog $FELIX \\n➡️Follow @FelixInuETH \\n➡️Join➡️Visit#memecoins #BTC #MemeCoinSeason #Bullrun2024 #Ethereum #altcoin #Crypto #meme #SOL #BaseChain #Binance", "url": "https://twitter.com/AMikulanecs/status/1784324497895522673", "timestamp": "2024-04-27T20:51:00+00:00", "tweet_hashtags": ["#FELIX", "#FELIX", "#memecoins", "#BTC", "#MemeCoinSeason", "#Bullrun2024", "#Ethereum", "#altcoin", "#Crypto", "#meme", "#SOL", "#BaseChain", "#Binance"]}',
+            content_size_bytes=588
         ),
-        # Entity with a latin capital I with a dot above that becomes 2 characters when .lower() is used on it.
         DataEntity(
-            uri="https://twitter.com/DervisMusa/status/1761758719941988688",
-            datetime=dt.datetime(2024, 2, 25, 14, 23, 5, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/AdamEShelton/status/1789490040751411475",
+            datetime=dt.datetime(2024, 5, 12, 2, 57, 27, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=DataLabel(value="#i̇srailleticaretfilistinei̇hane"),
-            content='{"username": "@DervisMusa", "text": "\\"\\u0130srail\'le ticaret, Filistin\'e ihanet!\\"\\n(\\u0627\\u0644\\u062a\\u062c\\u0627\\u0631\\u0629 \\u0645\\u0639 \\u0625\\u0633\\u0631\\u0627\\u0626\\u064a\\u0644 \\u062a\\u062e\\u0648\\u0646 \\u0641\\u0644\\u0633\\u0637\\u064a\\u0646)\\n\\nAllah kabul etsin. Aya\\u011f\\u0131n\\u0131za / y\\u00fcre\\u011finize sa\\u011fl\\u0131k. Herkese \\u00f6rnek olur in\\u015fallah.\\n\\n#\\u0130srailleTicaretFilistine\\u0130hanet\\n\\n#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649 \\n#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646 \\n#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631 \\n#\\u0627\\u0644\\u064a\\u0645\\u0646\\n#Hamas\\n#deprem", "url": "https://twitter.com/DervisMusa/status/1761758719941988688", "timestamp": "2024-02-25T14:23:00+00:00", "tweet_hashtags": ["#\\u0130srailleTicaretFilistine\\u0130hanet", "#\\u0637\\u0648\\u0641\\u0627\\u0646_\\u0627\\u0644\\u0623\\u0642\\u0635\\u0649", "#\\u0641\\u0644\\u0633\\u0637\\u064a\\u0646", "#\\u063a\\u0632\\u0629_\\u062a\\u0646\\u062a\\u0635\\u0631", "#\\u0627\\u0644\\u064a\\u0645\\u0646", "#Hamas", "#deprem"]}',
-            content_size_bytes=1035,
+            label=DataLabel(value="#bitcoin"),
+            content='{"username": "@AdamEShelton", "text": "#bitcoin  love", "url": "https://twitter.com/AdamEShelton/status/1789490040751411475", "timestamp": "2024-05-12T02:57:00+00:00", "tweet_hashtags": ["#bitcoin"]}',
+            content_size_bytes=199
         ),
-        # x.com domain.
         DataEntity(
-            uri="https://x.com/Sid14290237375/status/1760088426400162274",
-            datetime=dt.datetime(2024, 2, 20, 23, 45, tzinfo=dt.timezone.utc),
+            uri="https://twitter.com/AfroWestor/status/1789488798406975580",
+            datetime=dt.datetime(2024, 5, 12, 2, 52, 31, tzinfo=dt.timezone.utc),
             source=DataSource.X,
-            label=DataLabel(value="#HowlongcanImakeahashtaganywayIg"),
-            content='{"username":"@Sid14290237375","text":"Testing hashtags\\n\\n#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest","url":"https://x.com/Sid14290237375/status/1760088426400162274","timestamp":"2024-02-20T23:45:00Z","tweet_hashtags":["#HowlongcanImakeahashtaganywayIguessthatthiswillbeagoodtest"]}',
-            content_size_bytes=356,
+            label=DataLabel(value="#bitcoin"),
+            content='{"username": "@AfroWestor", "text": "Given is for Prince and princess form inheritances  to kingdom. \\n\\nWe the #BITCOIN family we Gain profits for ever. \\n\\nSo if you embrace #BTC that means you have a Kingdom to pass on for ever.", "url": "https://twitter.com/AfroWestor/status/1789488798406975580", "timestamp": "2024-05-12T02:52:00+00:00", "tweet_hashtags": ["#BITCOIN", "#BTC"]}',
+            content_size_bytes=383
+        ),
+        DataEntity(
+            uri="https://twitter.com/AlexEmidio7/status/1789488453979189327",
+            datetime=dt.datetime(2024, 5, 12, 2, 51, 9, tzinfo=dt.timezone.utc),
+            source=DataSource.X,
+            label=DataLabel(value="#bitcoin"),
+            content='{"username": "@AlexEmidio7", "text": "Bip47 V3 V4 #Bitcoin", "url": "https://twitter.com/AlexEmidio7/status/1789488453979189327", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
+            content_size_bytes=203
         ),
     ]
 
