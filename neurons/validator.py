@@ -132,6 +132,11 @@ class Validator:
         except subprocess.CalledProcessError as e:
             print(f"Couldn't fetch latest version tag: {e}")
             return "error"
+        
+    def get_scraper_providers(self):
+        """Fetches a validator's scraper providers to display in WandB logs."""
+        scrapers = self.evaluator.scraper_provider.factories
+        return scrapers
 
     def new_wandb_run(self):
         """Creates a new wandb run to save information to."""
@@ -141,6 +146,7 @@ class Validator:
         run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
         name = "validator-" + str(self.uid) + "-" + run_id
         version_tag = self.get_version_tag()
+        scraper_providers = self.get_scraper_providers()
 
         self.wandb_run = wandb.init(
             name=name,
@@ -152,6 +158,7 @@ class Validator:
                 "run_name": run_id,
                 "type": "validator",
                 "version": version_tag,
+                "scrapers": scraper_providers
             },
             allow_val_change=True,
             anonymous="allow",
