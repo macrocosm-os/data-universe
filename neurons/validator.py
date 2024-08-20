@@ -135,7 +135,7 @@ class Validator:
         
     def get_scraper_providers(self):
         """Fetches a validator's scraper providers to display in WandB logs."""
-        scrapers = self.evaluator.scraper_provider.factories
+        scrapers = self.evaluator.PREFERRED_SCRAPERS
         return scrapers
 
     def new_wandb_run(self):
