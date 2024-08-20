@@ -208,7 +208,6 @@ class MicroworldsTwitterScraper(Scraper):
         if not dataset or dataset == [{"zero_result": True}]:
             return [], []
 
-        bt.logging.info(f"dataset: {dataset}")
         results: List[XContent] = []
         is_retweets: List[bool] = []
 
