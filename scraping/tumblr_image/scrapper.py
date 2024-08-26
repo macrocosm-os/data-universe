@@ -46,6 +46,7 @@ class TumblrCustomScrapper(Scraper):
         if match:
             return match.group(1), match.group(2)
         return None, None
+
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URL."""
         if not entities:
@@ -152,8 +153,8 @@ class TumblrCustomScrapper(Scraper):
         #     normalize_label(scrape_config.labels[0]) if scrape_config.labels else "all"
         # )
         tumblr_tag_name = scrape_config.labels[0]
-        bt.logging.trace(
-            f"Running custom Reddit scraper with search: {tumblr_tag_name}."
+        bt.logging.success(
+            f"Running custom Tumblr scraper with search: {tumblr_tag_name}."
         )
 
         # Randomize between fetching submissions and comments to reduce api calls.
@@ -172,8 +173,10 @@ class TumblrCustomScrapper(Scraper):
                 self.TUMBLR_USER_KEY,
                 self.TUMBLR_USER_SECRET_KEY
             )
-            tumblr_image_dataset: List = tumblr_client.tagged(tag='mountains', limit=10, filter='image')
+            tumblr_image_dataset: List = tumblr_client.tagged(tag='sear', limit=10, filter='image')
             contents = self._best_effort_parse_tumblr_image(tumblr_image_dataset)
+            data_entities = [TumblrContent.to_data_entity(content) for content in contents]
+
         except Exception:
             bt.logging.error(
                 f"Failed to scrape tumbr."
@@ -186,7 +189,7 @@ class TumblrCustomScrapper(Scraper):
         # for content in parsed_contents:
         #     data_entities.append(RedditContent.to_data_entity(content=content))
 
-        return contents
+        return data_entities
 
     def _best_effort_parse_tumblr_image(self, tumblr_image_dataset: List[dict]):
         results = []
@@ -204,30 +207,19 @@ class TumblrCustomScrapper(Scraper):
             if not image_url:
                 continue
 
-            # Extract tags
-            tags = tumblr_image.get('tags', [])
-
-            # Extract description (summary)
-            description = tumblr_image.get('summary', '')
-
-            # Extract post URL
-            post_url = tumblr_image.get('post_url', '')
-
-            # Extract blog name (creator)
-            blog_name = tumblr_image.get('blog_name', '')
-
             # get date
-            timestamp = tumblr_image.get('timestamp')
-            created_date_gmt = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc) if timestamp else None
+            # created_date_gmt = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc) if timestamp else None
 
-            results.append({
-                'timestamp': created_date_gmt,
-                'image_bytes': image_bytes,
-                'tags': tags,
-                'description': description,
-                'post_url': post_url,
-                'creator': blog_name
-            })
+            # Create TumblrContent object
+            content = TumblrContent(
+                timestamp=dt.datetime.fromtimestamp(tumblr_image['timestamp'], tz=dt.timezone.utc),
+                image_bytes=image_bytes,
+                tags=tumblr_image.get('tags', []),
+                description=tumblr_image.get('summary', ''),
+                post_url=tumblr_image.get('post_url', ''),
+                creator=tumblr_image.get('blog_name', '')
+            )
+            results.append(content)
 
         return results
 
