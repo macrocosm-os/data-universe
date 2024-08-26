@@ -42,6 +42,7 @@ class MinerEvaluator:
     PREFERRED_SCRAPERS = {
         DataSource.X: ScraperId.X_APIDOJO,
         DataSource.REDDIT: ScraperId.REDDIT_CUSTOM,
+        DataSource.TUMBLR: ScraperId.TUMBLR_CUSTOM
     }
 
     def __init__(self, config: bt.config, uid: int, metagraph_syncer: MetagraphSyncer):
