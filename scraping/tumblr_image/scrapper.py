@@ -72,8 +72,15 @@ class TumblrCustomScrapper(Scraper):
                     )
                     continue
 
-                # Use the Tumblr API to fetch the post TODO TRANSFER IT FROM THE SCRAPPER?
-                post = self.tumblr_client.posts(blog_name, id=post_id)
+                # Use the Tumblr API to fetch the post
+                tumblr_client = pytumblr.TumblrRestClient(
+                    self.TUMBLR_API,
+                    self.TUMBLR_SECRET,
+                    self.TUMBLR_USER_KEY,
+                    self.TUMBLR_USER_SECRET_KEY
+                )
+
+                post = tumblr_client.posts(blog_name, id=post_id)
 
                 if not post or 'posts' not in post or len(post['posts']) == 0:
                     results.append(
@@ -107,16 +114,16 @@ class TumblrCustomScrapper(Scraper):
                     is_valid = False
                     reason += "Tags mismatch. "
 
-                post_timestamp = datetime.fromtimestamp(tumblr_post['timestamp'], tz=timezone.utc)
-                if content['timestamp'].replace(tzinfo=timezone.utc) != post_timestamp:
+                post_timestamp = dt.datetime.fromtimestamp(tumblr_post['timestamp'], tz=dt.timezone.utc)
+                if content['timestamp'].replace(tzinfo=dt.timezone.utc) != post_timestamp:
                     is_valid = False
                     reason += "Timestamp mismatch. "
 
                 # Validate image URL (if applicable)
                 if 'photos' in tumblr_post and tumblr_post['photos']:
                     tumblr_image_url = tumblr_post['photos'][0]['original_size']['url']
-                    # Note: We don't have image_url in our content, so we skip this check
-                    # You might want to add a way to compare image_bytes if needed
+                    # TODO: We don't have image_url in our content, so we skip this check
+                    # WE might want to add a way to compare image_bytes if needed
 
                 results.append(
                     ValidationResult(
