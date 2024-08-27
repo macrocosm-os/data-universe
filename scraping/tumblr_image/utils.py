@@ -10,6 +10,19 @@ import random
 import requests
 
 
+def convert_timestamp_to_utc(timestamp: float) -> dt.datetime:
+    """
+    Convert a UNIX timestamp to a UTC datetime object.
+
+    Args:
+    timestamp (float): UNIX timestamp (seconds since epoch)
+
+    Returns:
+    dt.datetime: UTC datetime object
+    """
+    return dt.datetime.utcfromtimestamp(timestamp).replace(tzinfo=dt.timezone.utc)
+
+
 def download_image_url_to_bytes(url: str):
     req = requests.get(url)
     if req.status_code == 200:
