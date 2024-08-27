@@ -7,7 +7,7 @@ import bittensor as bt
 from common.data import DataEntity, DataLabel, DataSource
 from typing import List
 import asyncpraw
-from scraping.tumblr_image.utils import download_image_url_to_bytes
+from scraping.tumblr_image.utils import download_image_url_to_bytes, convert_timestamp_to_utc
 # from scraping.reddit.utils import ( TODO DEVELOP AN FUNCTION TO VALIDATE THE TUMBLER IMAGES
 #     is_valid_reddit_url,
 #     validate_reddit_content,
@@ -57,10 +57,11 @@ class TumblrCustomScrapper(Scraper):
         for entity in entities:
             try:
                 # Parse the content of the entity
-                content = json.loads(entity.content)
+                content = TumblrContent.from_data_entity(entity)
+
 
                 # Extract blog name and post ID from URL
-                blog_name, post_id = self._extract_blog_name_and_post_id(content['post_url'])
+                blog_name, post_id = self._extract_blog_name_and_post_id(content.post_url)
 
                 if not blog_name or not post_id:
                     results.append(
@@ -92,38 +93,50 @@ class TumblrCustomScrapper(Scraper):
                     )
                     continue
 
-                tumblr_post = post['posts'][0]
+                # Use _best_effort_parse_tumblr_image to parse the fetched post
+                parsed_contents = self._best_effort_parse_tumblr_image(post['posts'])
+
+                if not parsed_contents:
+                    results.append(
+                        ValidationResult(
+                            is_valid=False,
+                            reason="Failed to parse Tumblr post content.",
+                            content_size_bytes_validated=entity.content_size_bytes,
+                        )
+                    )
+                    continue
+
+                tumblr_post = parsed_contents[0]
 
                 # Validate the post details
                 is_valid = True
                 reason = ""
 
-                if content['creator'] != tumblr_post['blog_name']:
+                if content.creator != tumblr_post.creator:
                     is_valid = False
                     reason += "Creator mismatch. "
 
-                if content['post_url'] != tumblr_post['post_url']:
+                if content.post_url != tumblr_post.post_url:
                     is_valid = False
                     reason += "Post URL mismatch. "
 
-                if content['description'] != tumblr_post.get('summary', ''):
+                if content.description != tumblr_post.description:
                     is_valid = False
                     reason += "Description mismatch. "
 
-                if set(content['tags']) != set(tumblr_post.get('tags', [])):
+                if set(content.tags) != set(tumblr_post.tags):
                     is_valid = False
                     reason += "Tags mismatch. "
 
-                post_timestamp = dt.datetime.fromtimestamp(tumblr_post['timestamp'], tz=dt.timezone.utc)
-                if content['timestamp'].replace(tzinfo=dt.timezone.utc) != post_timestamp:
-                    is_valid = False
-                    reason += "Timestamp mismatch. "
+                # if content.timestamp != tumblr_post.post_url:
+                #     is_valid = False
+                #     reason += "Timestamp mismatch. "
 
-                # Validate image URL (if applicable)
-                if 'photos' in tumblr_post and tumblr_post['photos']:
-                    tumblr_image_url = tumblr_post['photos'][0]['original_size']['url']
-                    # TODO: We don't have image_url in our content, so we skip this check
-                    # WE might want to add a way to compare image_bytes if needed
+
+                # Validate image contents
+                if content.image_bytes != tumblr_post.image_bytes:
+                    is_valid = False
+                    reason += "Image bytes doesn't match"
 
                 results.append(
                     ValidationResult(
@@ -147,19 +160,12 @@ class TumblrCustomScrapper(Scraper):
 
     async def scrape(self, scrape_config) -> List[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
-        bt.logging.trace(
-            f" Tumblr custom scraper peforming scrape with config: {scrape_config}."
+        bt.logging.info(
+            f" Tumblr custom scraper performing scrape with config: {scrape_config}."
         )
 
-        # assert ( # TODO do we need something like this?
-        #     not scrape_config.labels or len(scrape_config.labels) <= 1
-        # ), "Can only scrape 1 subreddit at a time."
-
-        # Strip the r/ from the config or use 'all' if no label is provided.
-        # subreddit_name = (
-        #     normalize_label(scrape_config.labels[0]) if scrape_config.labels else "all"
-        # )
         tumblr_tag_name = scrape_config.labels[0]
+
         bt.logging.success(
             f"Running custom Tumblr scraper with search: {tumblr_tag_name}."
         )
@@ -173,30 +179,28 @@ class TumblrCustomScrapper(Scraper):
 
         # In either case we parse the response into a list of RedditContents.
         contents = None
-        try:
-            tumblr_client = pytumblr.TumblrRestClient(
-                self.TUMBLR_API,
-                self.TUMBLR_SECRET,
-                self.TUMBLR_USER_KEY,
-                self.TUMBLR_USER_SECRET_KEY
-            )
-            tumblr_image_dataset: List = tumblr_client.tagged(tag='sear', limit=10, filter='image')
-            contents = self._best_effort_parse_tumblr_image(tumblr_image_dataset)
-            data_entities = [TumblrContent.to_data_entity(content) for content in contents]
+        #try: todo uncomment try expect
+        tumblr_client = pytumblr.TumblrRestClient(
+            self.TUMBLR_API,
+            self.TUMBLR_SECRET,
+            self.TUMBLR_USER_KEY,
+            self.TUMBLR_USER_SECRET_KEY
+        )
+        # TODO ADD before parameter in tagged tumblr method!
+        tumblr_image_dataset: List = tumblr_client.tagged(tag=tumblr_tag_name.value, limit=search_limit, filter='image')
+        # print(tumblr_image_dataset)
+        contents = self._best_effort_parse_tumblr_image(tumblr_image_dataset)
+        data_entities = [TumblrContent.to_data_entity(content) for content in contents]
 
-        except Exception:
-            bt.logging.error(
-                f"Failed to scrape tumbr."
-            )
-            # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
-            return []
-
-        # TODO CONVERT IT INTO DATA ENTITIES
-        # data_entities = []
-        # for content in parsed_contents:
-        #     data_entities.append(RedditContent.to_data_entity(content=content))
+        # except Exception as exp:
+        #     bt.logging.error(
+        #         f"Failed to scrape tumbr. {exp}"
+        #     )
+        #     # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
+        #     return []
 
         return data_entities
+
 
     def _best_effort_parse_tumblr_image(self, tumblr_image_dataset: List[dict]):
         results = []
@@ -209,17 +213,21 @@ class TumblrCustomScrapper(Scraper):
                 if match:
                     image_url = match.group(1)
 
+
+            if image_url:
+                print(image_url)
+            else:
+                print('no url:(')
+                continue
+
             image_bytes, image_content_size = download_image_url_to_bytes(image_url)
             # Check if image isn't empty
             if not image_url:
                 continue
 
-            # get date
-            # created_date_gmt = dt.datetime.fromtimestamp(timestamp, tz=dt.timezone.utc) if timestamp else None
-
             # Create TumblrContent object
             content = TumblrContent(
-                timestamp=dt.datetime.fromtimestamp(tumblr_image['timestamp'], tz=dt.timezone.utc),
+                timestamp=convert_timestamp_to_utc(tumblr_image['timestamp']),
                 image_bytes=image_bytes,
                 tags=tumblr_image.get('tags', []),
                 description=tumblr_image.get('summary', ''),
@@ -231,115 +239,33 @@ class TumblrCustomScrapper(Scraper):
         return results
 
 
+
 async def test_scrape():
     scraper = TumblrCustomScrapper()
 
-    entities = await scraper.scrape()
+    entities = await scraper.scrape(ScrapeConfig(
+        entity_limit=4,
+        date_range=DateRange(
+            start=dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=2),
+            end=dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=2),
+        ),
+        labels=[DataLabel(value="space")],
+    ))
 
-    print(f"Scraped r/bittensor_. Got entities: {len(entities)}")
+    print(f"Scraped Tumblr. Got entities: {len(entities)}")
+    return entities
 
-
-
-async def test_validate():
+async def test_validate(entities):
     scraper = TumblrCustomScrapper()
 
-    # This test covers a top level comment, a submission, and a nested comment with both the correct parent id and the submission id in order.
-    # Previous versions of the custom scraper incorrectly got the submission id as the parent id for nested comments.
-    true_entities = [
-        DataEntity(
-            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3vd3n/",
-            datetime=dt.datetime(2023, 12, 5, 16, 29, 27, tzinfo=dt.timezone.utc),
-            source=DataSource.REDDIT,
-            label=DataLabel(value="r/bittensor_"),
-            content=b'{"id": "t1_kc3vd3n", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3vd3n/", "username": "one-bad-dude", "communityName": "r/bittensor_", "body": "Its not an EVM chain or ERC-20 token. Its a subnet/substrate of Polkadot ecosystem. So you need the polkadot.js wallet.", "createdAt": "2023-12-05T16:29:27+00:00", "dataType": "comment", "title": null, "parentId": "t3_18bf67l"}',
-            content_size_bytes=476,
-        ),
-        DataEntity(
-            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/",
-            datetime=dt.datetime(2023, 12, 5, 15, 59, 13, tzinfo=dt.timezone.utc),
-            source=DataSource.REDDIT,
-            label=DataLabel(value="r/bittensor_"),
-            content=b'{"id": "t3_18bf67l", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Hey all!!\\n\\nHow do we add TAO to MetaMask? Online gives me these network configurations and still doesn\\u2019t work? \\n\\nHow are you all storing TAO? I wanna purchase on MEXC, but holding off until I can store it!  \\ud83d\\ude11 \\n\\nThanks in advance!!!\\n\\n=====\\n\\nhere is a manual way.\\nNetwork Name\\nTao Network\\n\\nRPC URL\\nhttp://rpc.testnet.tao.network\\n\\nChain ID\\n558\\n\\nCurrency Symbol\\nTAO", "createdAt": "2023-12-05T15:59:13+00:00", "dataType": "post", "title": "How do you add TAO to MetaMask?", "parentId": null}',
-            content_size_bytes=775,
-        ),
-        DataEntity(
-            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/",
-            datetime=dt.datetime(2023, 12, 5, 16, 35, 16, tzinfo=dt.timezone.utc),
-            source=DataSource.REDDIT,
-            label=DataLabel(value="r/bittensor_"),
-            content=b'{"id": "t1_kc3w8lk", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?", "createdAt": "2023-12-05T16:35:16+00:00", "dataType": "comment", "parentId": "t1_kc3vd3n"}',
-            content_size_bytes=392,
-        ),
-        DataEntity(
-            uri="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/",
-            datetime=dt.datetime(2023, 12, 5, 16, 35, 16, tzinfo=dt.timezone.utc),
-            source=DataSource.REDDIT,
-            label=DataLabel(value="r/bittensor_"),
-            content=b'{"id": "t1_kc3w8lk", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?", "createdAt": "2023-12-05T16:35:16+00:00", "dataType": "comment", "parentId": "t3_18bf67l"}',
-            content_size_bytes=392,
-        ),
-    ]
-    results = await scraper.validate(entities=true_entities)
-    print(f"Expecting Pass. Validation results: {results}")
-
-    # Now modify the entities to make them invalid and check validation fails.
-    good_entity = true_entities[1]
-    good_comment_entity = true_entities[2]
-    bad_entities = [
-        # Change url.
-        good_entity.copy(
-            update={
-                "uri": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask-abc123/"
-            }
-        ),
-        # Change title.
-        good_entity.copy(
-            update={
-                "content": b'{"id": "t3_18bf67l", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Hey all!!\\n\\nHow do we add TAO to MetaMask? Online gives me these network configurations and still doesn\\u2019t work? \\n\\nHow are you all storing TAO? I wanna purchase on MEXC, but holding off until I can store it!  \\ud83d\\ude11 \\n\\nThanks in advance!!!\\n\\n=====\\n\\nhere is a manual way.\\nNetwork Name\\nTao Network\\n\\nRPC URL\\nhttp://rpc.testnet.tao.network\\n\\nChain ID\\n558\\n\\nCurrency Symbol\\nTAO", "createdAt": "2023-12-05T15:59:13+00:00", "dataType": "post", "title": "How do you add TAO to MetaMask??!!?", "parent_id": null}',
-            }
-        ),
-        # Change created_at.
-        good_entity.copy(
-            update={"datetime": good_entity.datetime + dt.timedelta(seconds=1)}
-        ),
-        # Change label.
-        good_entity.copy(update={"label": DataLabel(value="bittensor_")}),
-        # Change comment parent id.
-        good_comment_entity.copy(
-            update={
-                "content": b'{"id": "t1_kc3w8lk", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Thanks for responding. Do you recommend a wallet or YT video on setting this up? What do you use?", "createdAt": "2023-12-05T16:35:16+00:00", "dataType": "comment", "parentId": "extra-long-parent-id"}'
-            }
-        ),
-        # Change submission parent id.
-        good_entity.copy(
-            update={
-                "content": b'{"id": "t3_18bf67l", "url": "https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/", "username": "KOOLBREEZE144", "communityName": "r/bittensor_", "body": "Hey all!!\\n\\nHow do we add TAO to MetaMask? Online gives me these network configurations and still doesn\\u2019t work? \\n\\nHow are you all storing TAO? I wanna purchase on MEXC, but holding off until I can store it!  \\ud83d\\ude11 \\n\\nThanks in advance!!!\\n\\n=====\\n\\nhere is a manual way.\\nNetwork Name\\nTao Network\\n\\nRPC URL\\nhttp://rpc.testnet.tao.network\\n\\nChain ID\\n558\\n\\nCurrency Symbol\\nTAO", "createdAt": "2023-12-05T15:59:13+00:00", "dataType": "post", "title": "How do you add TAO to MetaMask?", "parentId": "extra-long-parent-id"}'
-            }
-        ),
-    ]
-
-    for entity in bad_entities:
-        results = await scraper.validate(entities=[entity])
-        print(f"Expecting a failed validation. Result={results}")
+    print("Testing validation with original entities:")
+    results = await scraper.validate(entities=entities)
+    print(f"Validation results: {results}")
 
 
-async def test_u_deleted():
-    """Verifies that the RedditCustomScraper can handle deleted users."""
-    comment = DataEntity(
-        uri="https://www.reddit.com/r/AskReddit/comments/ablzuq/people_who_havent_pooped_in_2019_yet_why_are_you/ed1j7is/",
-        datetime=dt.datetime(2019, 1, 1, 22, 59, 9, tzinfo=dt.timezone.utc),
-        source=1,
-        label=DataLabel(value="r/askreddit"),
-        content=b'{"id": "t1_ed1j7is", "url": "https://www.reddit.com/r/AskReddit/comments/ablzuq/people_who_havent_pooped_in_2019_yet_why_are_you/ed1j7is/", "username": "[deleted]", "communityName": "r/AskReddit", "body": "Aw man what a terrible way to spend NYE! I hope you feel better soon bud!", "createdAt": "2019-01-01T22:59:09+00:00", "dataType": "comment", "title": null, "parentId": "t1_ed1dqvy"}',
-        content_size_bytes=387,
-    )
-
-    scraper = RedditCustomScraper()
-    result = await scraper.validate(entities=[comment])
-    print(f"Expecting a passed validation: {result}")
-
+async def main():
+    entities = await test_scrape()
+    await test_validate(entities)
 
 if __name__ == "__main__":
-    asyncio.run(test_scrape())
-    #asyncio.run(test_validate())
-    #asyncio.run(test_u_deleted())
+    asyncio.run(main())
