@@ -30,8 +30,7 @@ def preprocess_twitter_df(df: pd.DataFrame, key_manager: EncodingKeyManager) -> 
     df['username'] = df['content'].apply(lambda x: x.get('username'))
     df['url'] = df['content'].apply(lambda x: x.get('url', ''))
     df = df.drop(columns=['content'])
-
-    df['datetime'] = pd.to_datetime(df['datetime']).dt.strftime('%Y-%d-%m')
+    df['datetime'] = pd.to_datetime(df['datetime']).dt.strftime('%Y-%m-%d')
 
     fernet = key_manager.get_fernet()
     df['url_encoded'] = df['url'].apply(lambda url: encode_url(url, fernet))
@@ -50,7 +49,7 @@ def preprocess_reddit_df(df: pd.DataFrame, key_manager: EncodingKeyManager) -> p
     df['url'] = df['content'].apply(lambda x: x.get('url', ''))
     df = df.drop(columns=['content'])
 
-    df['datetime'] = pd.to_datetime(df['datetime']).dt.strftime('%Y-%d-%m')
+    df['datetime'] = pd.to_datetime(df['datetime']).dt.strftime('%Y-%m-%d')
 
     fernet = key_manager.get_fernet()
     df['url_encoded'] = df['url'].apply(lambda url: encode_url(url, fernet))
