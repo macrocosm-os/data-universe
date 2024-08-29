@@ -18,6 +18,7 @@ import datetime as dt
 import sqlite3
 import contextlib
 import bittensor as bt
+import pandas as pd
 
 
 # Use a timezone aware adapter for timestamp columns.
@@ -218,6 +219,39 @@ class SqliteMinerStorage(MinerStorage):
             # Commit the insert.
             connection.commit()
 
+    def get_data_for_huggingface_upload(self, source, last_upload, chunk_size):
+        if last_upload is None:
+            # For the first upload, get all data limited to 400 million rows
+            query = """
+                       SELECT datetime, label, content
+                       FROM DataEntity
+                       WHERE source = ?
+                       ORDER BY datetime ASC
+                       LIMIT 400000000
+                   """
+            params = [source]
+        else:
+            query = """
+                       SELECT datetime, label, content
+                       FROM DataEntity
+                       WHERE source = ?
+                       AND datetime > ?
+                       ORDER BY datetime ASC
+                   """
+            params = [source, last_upload]
+
+        connection = self._create_connection()
+        df_iterator = pd.read_sql_query(query, connection, params=params, chunksize=chunk_size, parse_dates=['datetime'])
+        return connection, df_iterator
+
+    def get_earliest_data_datetime(self, source):
+        query = "SELECT MIN(datetime) as earliest_date FROM DataEntity WHERE source = ?"
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(query, (source,))
+            result = cursor.fetchone()
+            return result['earliest_date'] if result and result['earliest_date'] else None
+
     def should_upload_hf_data(self) -> bool:
         sql_query = """
             SELECT datetime(AVG(strftime('%s', UpdatedAt)), 'unixepoch') AS AvgUpdatedAt
@@ -235,7 +269,7 @@ class SqliteMinerStorage(MinerStorage):
                 result = cursor.fetchone()
 
                 if result is None or result[0] is None:
-                    return True  # No data found
+                    return True  # No data found, should upload
 
                 average_datetime = dt.datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
                 average_datetime = average_datetime.replace(tzinfo=dt.timezone.utc)
@@ -248,9 +282,8 @@ class SqliteMinerStorage(MinerStorage):
 
                 return threshold_datetime > average_datetime
         except sqlite3.Error as e:
-            print(f"An error occurred: {e}")
+            bt.logging.error(f"An error occurred: {e}")
             return False
-
     def get_hf_metadata(self) -> List[HuggingFaceMetadata]:
         sql_query = """
             SELECT * FROM HFMetaData

@@ -153,6 +153,9 @@ class RedditCustomScraper(Scraper):
 
         return results
 
+    async def validate_hf(self, entities) -> bool:
+        raise NotImplementedError("This method is not implemented yet")
+
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
         bt.logging.trace(
@@ -169,7 +172,7 @@ class RedditCustomScraper(Scraper):
         )
 
         bt.logging.trace(
-            f"Running custom Reddit scraper with search: {subreddit_name}."
+             f"Running custom Reddit scraper with search: {subreddit_name}."
         )
 
         # Randomize between fetching submissions and comments to reduce api calls.

@@ -146,6 +146,14 @@ def add_args(neuron_type: NeuronType, parser):
         default_file = os.path.join(
             os.path.join(root_dir, "scraping/config/scraping_config.json"),
         )
+        encoding_default_file = os.path.join(
+            os.path.join(root_dir, "huggingface_utils/encoding_key.json"),
+        )
+
+        state_default_file = os.path.join(
+            os.path.join(root_dir, "huggingface_utils/state_file.json"),
+        )
+
         parser.add_argument(
             "--neuron.scraping_config_file",
             type=str,
@@ -158,6 +166,20 @@ def add_args(neuron_type: NeuronType, parser):
             action="store_true",
             help="Set this flag to true to upload your data into HF dataset",
             default=False
+        )
+
+        parser.add_argument(
+            "--encoding_key_json_file",
+            type=str,
+            help="The location of the encoding keys JSON file to use",
+            default=encoding_default_file
+        )
+
+        parser.add_argument(
+            "--miner_upload_state_file",
+            type=str,
+            help="The location of the state uploading JSON file to use",
+            default=state_default_file
         )
 
         parser.add_argument(
