@@ -58,8 +58,10 @@ class Miner:
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
             self.uid = 0  # Offline mode so assume it's == 0
+            self.use_hf_uploader = False
 
         else:
+            self.use_hf_uploader = self.config.huggingface
             # The wallet holds the cryptographic key pairs for the miner.
             self.wallet = bt.wallet(config=self.config)
             bt.logging.info(f"Wallet: {self.wallet}.")
@@ -124,13 +126,12 @@ class Miner:
         self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
         bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
 
-        # Instantiate HF
-        self.use_hf_uploader = self.config.huggingface
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
                 miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
-                encoding_key_manager=self.encoding_key_manager
+                encoding_key_manager=self.encoding_key_manager,
+                state_file=self.config.miner_upload_state_file
             )
 
         # Instantiate storage.
@@ -192,7 +193,7 @@ class Miner:
             bt.logging.info("HuggingFace Uploader is not enabled.")
             return
 
-        time_sleep_val = dt.timedelta(minutes=1).total_seconds()
+        time_sleep_val = dt.timedelta(minutes=30).total_seconds()
         time.sleep(time_sleep_val)
 
         while not self.should_exit:

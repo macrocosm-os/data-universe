@@ -26,15 +26,19 @@ def remove_all_files_in_directory(directory):
 
 
 class HuggingFaceUploader:
-    def __init__(self, db_path: str, miner_hotkey: str, encoding_key_manager: EncodingKeyManager, output_dir: str = 'hf_storage'):
+    def __init__(self, db_path: str,
+                 miner_hotkey: str,
+                 encoding_key_manager: EncodingKeyManager,
+                 state_file: str,
+                 output_dir: str = 'hf_storage'):
         self.db_path = db_path
         self.output_dir = output_dir
         self.hf_api = HfApi()
         self.miner_hotkey = miner_hotkey
-        self.unique_id = '0102'# generate_static_integer(self.miner_hotkey)
+        self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
-        self.state_file = f'hf_uploader_state_{self.unique_id}.json'
+        self.state_file = state_file
 
     def load_state(self):
         if os.path.exists(self.state_file):
