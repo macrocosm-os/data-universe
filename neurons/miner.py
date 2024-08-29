@@ -40,6 +40,7 @@ from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
+from huggingface_utils.encoding_system import EncodingKeyManager
 
 
 class Miner:
@@ -56,7 +57,11 @@ class Miner:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
+            self.uid = 0  # Offline mode so assume it's == 0
+            self.use_hf_uploader = False
+
         else:
+            self.use_hf_uploader = self.config.huggingface
             # The wallet holds the cryptographic key pairs for the miner.
             self.wallet = bt.wallet(config=self.config)
             bt.logging.info(f"Wallet: {self.wallet}.")
@@ -117,12 +122,16 @@ class Miner:
         self.hugging_face_thread: threading.Thread = None
         self.lock = threading.RLock()
 
-        # Instantiate HF
-        self.use_hf_uploader = self.config.huggingface
+        # Instantiate encoding keys
+        self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
+        bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
+
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
-                miner_uid=self.uid
+                miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
+                encoding_key_manager=self.encoding_key_manager,
+                state_file=self.config.miner_upload_state_file
             )
 
         # Instantiate storage.
@@ -191,7 +200,9 @@ class Miner:
             try:
                 if self.storage.should_upload_hf_data():
                     bt.logging.info("Trying to upload the data into HuggingFace.")
-                    self.hf_uploader.upload_sql_to_huggingface(self.storage)
+                    hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface(self.storage)
+                    if hf_metadata_list:
+                        self.storage.store_hf_dataset_info(hf_metadata_list)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
                 bt.logging.error(traceback.format_exc())
