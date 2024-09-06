@@ -78,7 +78,7 @@ def select_random_rows_from_parquet(repo_id: str, num_rows: int = 10, buffer_siz
     df = pd.DataFrame(selected_rows)
 
     # Decode encrypted columns
-    key_manager = EncodingKeyManager(key_path='/Users/volodymyrtruba/data-universe/huggingface_utils/encoding_key.json')
+    key_manager = EncodingKeyManager(key_path='/Users/volodymyrtruba/data-universe/tests/hf_validation/test_encoding_key.json')
     fernet = key_manager.get_fernet()
 
     for column in ['url_encoded', 'username_encoded']:
@@ -93,15 +93,15 @@ def select_random_rows_from_parquet(repo_id: str, num_rows: int = 10, buffer_siz
 
 async def main():
     """Main function to demonstrate the usage of the script."""
-    repo_id = "arrmlet/x_dataset_218"
+    repo_id = "arrmlet/x_dataset_123456"
 
     try:
         selected_rows = select_random_rows_from_parquet(repo_id)
         s = selected_rows.to_dict(orient='records')
         scrapper = ApiDojoTwitterScraper()
         valid = await scrapper.validate_hf(entities=s)
-        bt.logging.trace(f"Number of rows: {len(selected_rows)}")
-        bt.logging.trace(valid)
+        bt.logging.info(f"Number of rows: {len(selected_rows)}")
+        bt.logging.info(valid)
 
     except (requests.RequestException, ValueError) as e:
         bt.logging.trace(f"An error occurred: {e}")
