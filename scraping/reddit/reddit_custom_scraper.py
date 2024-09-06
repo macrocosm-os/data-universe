@@ -154,7 +154,76 @@ class RedditCustomScraper(Scraper):
         return results
 
     async def validate_hf(self, entities) -> bool:
-        raise NotImplementedError("This method is not implemented yet")
+        """Validate the correctness of HFEntities by URL, focusing on username, date (hour), and text."""
+        if not entities:
+            return True
+
+        validation_results = []
+
+        for entity in entities:
+            # Check if the URL is a valid Reddit URL
+            if not is_valid_reddit_url(entity.get('url')):
+                validation_results.append(False)
+                continue
+
+            # Retrieve the Reddit Post/Comment from PRAW
+            content = None
+            try:
+                async with asyncpraw.Reddit(
+                        client_id=os.getenv("REDDIT_CLIENT_ID"),
+                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                        username=os.getenv("REDDIT_USERNAME"),
+                        password=os.getenv("REDDIT_PASSWORD"),
+                        user_agent=RedditCustomScraper.USER_AGENT,
+                ) as reddit:
+                    if 'comments' in entity.get('url'):
+                        comment = await reddit.comment(url=entity.get('url'))
+                        content = self._best_effort_parse_comment(comment)
+                    else:
+                        submission = await reddit.submission(url=entity.get('url'))
+                        content = self._best_effort_parse_submission(submission)
+            except Exception as e:
+                bt.logging.error(
+                    f"Failed to validate entity ({entity.get('url')}): {traceback.format_exc()}."
+                )
+                validation_results.append(False)
+                continue
+
+            if not content:
+                validation_results.append(False)
+                continue
+
+            # Validate the content
+            validation_result = self._validate_hf_reddit_content(content, entity)
+            validation_results.append(validation_result)
+
+        # Check if all validations passed
+        is_valid = all(validation_results)
+        return is_valid
+
+    def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
+        """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""
+
+        # Compare username
+        if actual_content.username != entity_to_validate.get('author'):
+            return False
+
+        # Compare date (only hour)
+        entity_datetime = dt.datetime.fromisoformat(entity_to_validate.get('datetime'))
+        if actual_content.createdAt.hour != entity_datetime.hour:
+            return False
+
+        # Compare text content
+        if actual_content.dataType == RedditDataType.POST:
+            # For posts, combine title and body
+            actual_text = f"{actual_content.title}\n\n{actual_content.body}".strip()
+        else:
+            actual_text = actual_content.body.strip()
+
+        if actual_text != entity_to_validate.get('text', '').strip():
+            return False
+
+        return True
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
