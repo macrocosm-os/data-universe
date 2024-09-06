@@ -200,7 +200,7 @@ class Miner:
             try:
                 if self.storage.should_upload_hf_data():
                     bt.logging.info("Trying to upload the data into HuggingFace.")
-                    hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface(self.storage)
+                    hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
                     if hf_metadata_list:
                         self.storage.store_hf_dataset_info(hf_metadata_list)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
