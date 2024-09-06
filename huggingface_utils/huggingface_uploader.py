@@ -23,7 +23,7 @@ class HuggingFaceUploader:
         self.output_dir = output_dir
         self.hf_api = HfApi()
         self.miner_hotkey = miner_hotkey
-        self.unique_id = generate_static_integer(self.miner_hotkey)
+        self.unique_id = '12345'# generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
         self.state_file = state_file
@@ -97,7 +97,14 @@ class HuggingFaceUploader:
             params = [source, last_upload]
 
         with self.get_db_connection() as conn:
-            for chunk in pd.read_sql_query(query, conn, params=params, chunksize=self.chunk_size, parse_dates=['datetime']):
+            # Use pandas to read the query in chunks
+            for chunk in pd.read_sql_query(
+                    sql=query,
+                    con=conn,
+                    params=params,
+                    chunksize=self.chunk_size,
+                    parse_dates=['datetime']
+            ):
                 yield chunk
 
     def preprocess_data(self, df, source):
@@ -170,6 +177,7 @@ class HuggingFaceUploader:
 
                         chunk_count += 1
                         total_rows += len(df)
+                        print(f'total rows. {len(df)}')
 
                         if chunk_count == 10:
                             self.upload_parquet_to_hf(repo_id)
@@ -178,7 +186,7 @@ class HuggingFaceUploader:
                             chunk_count = 0
                     else:
                         bt.logging.info(f"No new data for source {source}. Skipping.")
-                        break
+                        continue
 
                 if chunk_count > 0:
                     self.upload_parquet_to_hf(repo_id)
