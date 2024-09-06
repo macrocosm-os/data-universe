@@ -219,31 +219,6 @@ class SqliteMinerStorage(MinerStorage):
             # Commit the insert.
             connection.commit()
 
-    def get_data_for_huggingface_upload(self, source, last_upload, chunk_size):
-        if last_upload is None:
-            # For the first upload, get all data limited to 400 million rows
-            query = """
-                       SELECT datetime, label, content
-                       FROM DataEntity
-                       WHERE source = ?
-                       ORDER BY datetime ASC
-                       LIMIT 400000000
-                   """
-            params = [source]
-        else:
-            query = """
-                       SELECT datetime, label, content
-                       FROM DataEntity
-                       WHERE source = ?
-                       AND datetime > ?
-                       ORDER BY datetime ASC
-                   """
-            params = [source, last_upload]
-
-        connection = self._create_connection()
-        df_iterator = pd.read_sql_query(query, connection, params=params, chunksize=chunk_size, parse_dates=['datetime'])
-        return connection, df_iterator
-
     def get_earliest_data_datetime(self, source):
         query = "SELECT MIN(datetime) as earliest_date FROM DataEntity WHERE source = ?"
         with contextlib.closing(self._create_connection()) as connection:
