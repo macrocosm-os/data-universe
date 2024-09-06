@@ -26,7 +26,7 @@ class HuggingFaceUploader:
         self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
-        self.state_file = state_file
+        self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
         self.chunk_size = chunk_size
 
     @contextmanager
