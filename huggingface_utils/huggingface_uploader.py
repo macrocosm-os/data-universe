@@ -177,7 +177,6 @@ class HuggingFaceUploader:
 
                         chunk_count += 1
                         total_rows += len(df)
-                        print(f'total rows. {len(df)}')
 
                         if chunk_count == 10:
                             self.upload_parquet_to_hf(repo_id)
