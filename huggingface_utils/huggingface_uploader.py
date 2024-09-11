@@ -8,7 +8,7 @@ from contextlib import contextmanager
 from huggingface_hub import HfApi
 from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
 from huggingface_utils.encoding_system import EncodingKeyManager
-from common.data import HuggingFaceMetadata
+from common.data import HuggingFaceMetadata, DataSource
 from typing import List
 
 
@@ -139,8 +139,8 @@ class HuggingFaceUploader:
         state = self.load_state()
         hf_metadata_list = []
 
-        for source in [1, 2]:
-            dataset_name = f'{"reddit" if source == 1 else "x"}_dataset_{self.unique_id}'
+        for source in [DataSource.REDDIT.value, DataSource.X.value]:
+            dataset_name = f'{"reddit" if source == DataSource.REDDIT.value else "x"}_dataset_{self.unique_id}'
             repo_id = f"{self.hf_api.whoami(self.hf_token)['name']}/{dataset_name}"
 
             try:
@@ -198,7 +198,8 @@ class HuggingFaceUploader:
                 hf_metadata = HuggingFaceMetadata(
                     repo_name=repo_id,
                     source=source,
-                    updated_at=dt.datetime.now(dt.timezone.utc)
+                    updated_at=dt.datetime.now(dt.timezone.utc),
+                    encoding_key=self.encoding_key_manager.sym_key.decode()  # Use sym_key and decode it to string
                 )
                 hf_metadata_list.append(hf_metadata)
 
