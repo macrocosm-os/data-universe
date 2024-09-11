@@ -408,8 +408,7 @@ class MinerEvaluator:
                 return None
 
             response = responses[0]
-            bt.logging.success(f"{hotkey}: Got HuggingFace metadata with {len(response.metadata)} entries. Entries:"
-                               f" {response.metadata}")
+            bt.logging.success(f"{hotkey}: Got HuggingFace metadata with {len(response.metadata)} entries")
             return response.metadata
         except Exception:
             bt.logging.error(
