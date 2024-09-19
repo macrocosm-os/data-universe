@@ -4,13 +4,12 @@ import datetime as dt
 import pandas as pd
 import bittensor as bt
 import sqlite3
-import tempfile
 from contextlib import contextmanager
 from huggingface_hub import HfApi
 from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
 from huggingface_utils.encoding_system import EncodingKeyManager
 from common.data import HuggingFaceMetadata, DataSource
-from typing import List, Dict, Literal, Union, Any
+from typing import List, Dict, Union, Any
 from huggingface_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
 
 
@@ -203,36 +202,36 @@ class HuggingFaceUploader:
                         bt.logging.info(f"No new data for source {source}. Skipping.")
                         continue
 
-                    if chunk_count > 0:
-                        self.upload_parquet_to_hf(repo_id)
-                        bt.logging.info(f'Uploaded final {chunk_count} chunks to {repo_id}')
+                if chunk_count > 0:
+                    self.upload_parquet_to_hf(repo_id)
+                    bt.logging.info(f'Uploaded final {chunk_count} chunks to {repo_id}')
 
-                    state['last_upload'][str(source)] = last_upload
-                    state['total_rows'][str(source)] = total_rows
-                    self.save_state(state)
+                state['last_upload'][str(source)] = last_upload
+                state['total_rows'][str(source)] = total_rows
+                self.save_state(state)
 
-                    # Update stats and README
-                    platform = 'reddit' if source == DataSource.REDDIT.value else 'x'
-                    updated_stats = self.save_stats_json(all_stats, platform, new_rows, repo_id)
+                # Update stats and README
+                platform = 'reddit' if source == DataSource.REDDIT.value else 'x'
+                updated_stats = self.save_stats_json(all_stats, platform, new_rows, repo_id)
 
-                    # Generate and upload new README
-                    update_history = [(item['date'], item['rows_added'],
-                                       sum(h['rows_added'] for h in updated_stats['update_history'][:i + 1]))
-                                      for i, item in enumerate(updated_stats['update_history'])]
-                    card_generator.update_or_create_card(platform, updated_stats, update_history)
+                # Generate and upload new README
+                update_history = [(item['date'], item['rows_added'],
+                                   sum(h['rows_added'] for h in updated_stats['update_history'][:i + 1]))
+                                  for i, item in enumerate(updated_stats['update_history'])]
+                card_generator.update_or_create_card(platform, updated_stats, update_history)
 
 
-                    # Save metadata
-                    hf_metadata = HuggingFaceMetadata(
-                        repo_name=repo_id,
-                        source=source,
-                        updated_at=dt.datetime.now(dt.timezone.utc),
-                        encoding_key=self.encoding_key_manager.sym_key.decode()  # Use sym_key and decode it to string
-                    )
-                    hf_metadata_list.append(hf_metadata)
+                # Save metadata
+                hf_metadata = HuggingFaceMetadata(
+                    repo_name=repo_id,
+                    source=source,
+                    updated_at=dt.datetime.now(dt.timezone.utc),
+                    encoding_key=self.encoding_key_manager.sym_key.decode()  # Use sym_key and decode it to string
+                )
+                hf_metadata_list.append(hf_metadata)
 
-                    bt.logging.success(
-                        f"Finished uploading data for source {source} to {repo_id}. Total rows uploaded: {total_rows}")
+                bt.logging.success(
+                    f"Finished uploading data for source {source} to {repo_id}. Total rows uploaded: {total_rows}")
 
             except Exception as e:
                 bt.logging.error(f"Error during upload for source {source}: {e}")

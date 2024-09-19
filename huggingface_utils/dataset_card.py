@@ -3,6 +3,7 @@ import json
 import tempfile
 import numpy as np
 import datetime as dt
+import bittensor as bt
 from datetime import datetime
 from typing import Dict, List, Tuple, Literal, Any, Union
 from huggingface_hub import HfApi, hf_hub_download
@@ -441,11 +442,6 @@ task_ids:
         with tempfile.NamedTemporaryFile(mode='w', delete=False, encoding='utf-8') as temp_file:
             temp_file.write(updated_card)
 
-        self.hf_api.delete_file(
-            repo_type='dataset',
-            repo_id=self.repo_id,
-            path_in_repo="README.md"
-        )
         self.hf_api.upload_file(
             path_or_fileobj=temp_file.name,
             path_in_repo="README.md",
@@ -458,7 +454,7 @@ task_ids:
 
         self.save_stats_json(stats, platform)
 
-        print(f"Dataset card for {platform} updated successfully.")
+        bt.logging.info(f"Dataset card for {platform} updated successfully.")
 
 
 
