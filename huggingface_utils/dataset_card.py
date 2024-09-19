@@ -387,7 +387,6 @@ task_ids:
     def save_stats_json(self, stats: Dict[str, Any], platform: str):
         filename = f"{platform}_stats.json"
 
-        print(self.hf_api.whoami())
         with tempfile.NamedTemporaryFile(mode='w', delete=False) as temp_file:
             json.dump(stats, temp_file, indent=2, cls=NumpyEncoder)
 
