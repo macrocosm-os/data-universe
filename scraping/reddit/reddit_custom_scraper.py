@@ -170,6 +170,7 @@ class RedditCustomScraper(Scraper):
                 continue
 
             # Validate the content
+            # print(f"Content: {content}")
             validation_result = self._validate_hf_reddit_content(content, entity)
             validation_results.append(validation_result)
 
@@ -181,16 +182,23 @@ class RedditCustomScraper(Scraper):
         """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""
 
         # Compare username
-        if actual_content.username != entity_to_validate.get('author'):
+        if actual_content.username != entity_to_validate.get('username'):
             return False
 
-        # Compare date (only hour)
+        # Compare date (year, month, day)
         entity_datetime = dt.datetime.fromisoformat(entity_to_validate.get('datetime'))
-        if actual_content.createdAt.hour != entity_datetime.hour:
+        actual_datetime = actual_content.created_at
+
+        if isinstance(actual_datetime, str):
+            actual_datetime = dt.datetime.fromisoformat(actual_datetime)
+
+        if (entity_datetime.year != actual_datetime.year or
+                entity_datetime.month != actual_datetime.month or
+                entity_datetime.day != actual_datetime.day):
             return False
 
         # Compare text content
-        if actual_content.dataType == RedditDataType.POST:
+        if actual_content.data_type == RedditDataType.POST:
             # For posts, combine title and body
             actual_text = f"{actual_content.title}\n\n{actual_content.body}".strip()
         else:

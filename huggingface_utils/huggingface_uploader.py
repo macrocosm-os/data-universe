@@ -8,8 +8,9 @@ from contextlib import contextmanager
 from huggingface_hub import HfApi
 from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
 from huggingface_utils.encoding_system import EncodingKeyManager
-from common.data import HuggingFaceMetadata
-from typing import List
+from common.data import HuggingFaceMetadata, DataSource
+from typing import List, Dict, Union, Any
+from huggingface_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
 
 
 class HuggingFaceUploader:
@@ -139,9 +140,16 @@ class HuggingFaceUploader:
         state = self.load_state()
         hf_metadata_list = []
 
-        for source in [1, 2]:
-            dataset_name = f'{"reddit" if source == 1 else "x"}_dataset_{self.unique_id}'
+        for source in [DataSource.REDDIT.value, DataSource.X.value]:
+            dataset_name = f'{"reddit" if source == DataSource.REDDIT.value else "x"}_dataset_{self.unique_id}'
             repo_id = f"{self.hf_api.whoami(self.hf_token)['name']}/{dataset_name}"
+
+            # Create DatasetCardGenerator instance
+            card_generator = DatasetCardGenerator(
+                miner_hotkey=self.miner_hotkey,
+                repo_id=repo_id,
+                token=self.hf_token
+            )
 
             try:
                 self.hf_api.repo_info(repo_id=repo_id, repo_type="dataset")
@@ -155,6 +163,9 @@ class HuggingFaceUploader:
             last_upload = state['last_upload'].get(str(source))
             total_rows = state['total_rows'].get(str(source), 0)
             chunk_count = 0
+
+            all_stats = {}
+            new_rows = 0
 
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
@@ -175,8 +186,12 @@ class HuggingFaceUploader:
                                                     f"train-DataEntity_chunk_{next_chunk_id + chunk_count}.parquet")
                         df.to_parquet(parquet_path)
 
+                        chunk_stats = self.collect_statistics(df, source)
+                        all_stats = self.merge_statistics(all_stats, chunk_stats)
+
                         chunk_count += 1
                         total_rows += len(df)
+                        new_rows += len(df)
 
                         if chunk_count == 10:
                             self.upload_parquet_to_hf(repo_id)
@@ -195,10 +210,23 @@ class HuggingFaceUploader:
                 state['total_rows'][str(source)] = total_rows
                 self.save_state(state)
 
+                # Update stats and README
+                platform = 'reddit' if source == DataSource.REDDIT.value else 'x'
+                updated_stats = self.save_stats_json(all_stats, platform, new_rows, repo_id)
+
+                # Generate and upload new README
+                update_history = [(item['date'], item['rows_added'],
+                                   sum(h['rows_added'] for h in updated_stats['update_history'][:i + 1]))
+                                  for i, item in enumerate(updated_stats['update_history'])]
+                card_generator.update_or_create_card(platform, updated_stats, update_history)
+
+
+                # Save metadata
                 hf_metadata = HuggingFaceMetadata(
                     repo_name=repo_id,
                     source=source,
-                    updated_at=dt.datetime.now(dt.timezone.utc)
+                    updated_at=dt.datetime.now(dt.timezone.utc),
+                    encoding_key=self.encoding_key_manager.sym_key.decode()  # Use sym_key and decode it to string
                 )
                 hf_metadata_list.append(hf_metadata)
 
@@ -210,7 +238,184 @@ class HuggingFaceUploader:
 
         return hf_metadata_list
 
-# Usage example:
+    def merge_top_items(self, old_items: Dict[str, Dict[str, Union[int, float]]],
+                        new_items: Dict[str, Dict[str, Union[int, float]]]) -> Dict[str, Dict[str, Union[int, float]]]:
+        """
+        Merge two dictionaries of items, updating counts and percentages, and return the top 100 items by count.
+
+        Args:
+            old_items (Dict[str, Dict[str, Union[int, float]]]): A dictionary of existing items,
+                where each key is an item identifier and the value is a dictionary containing
+                'count' and 'percentage' keys.
+            new_items (Dict[str, Dict[str, Union[int, float]]]): A dictionary of new items to be merged,
+                following the same structure as old_items.
+
+        Returns:
+            Dict[str, Dict[str, Union[int, float]]]: A dictionary of the top 100 merged items,
+                sorted by count in descending order. Each item contains updated 'count' and
+                'percentage' values based on the merged totals.
+
+        The method performs the following steps:
+        1. Merges the two input dictionaries, summing the counts for common items.
+        2. Recalculates the percentage for each item based on the new total count.
+        3. Sorts the merged items by count in descending order.
+        4. Returns the top 100 items from the sorted list.
+        """
+
+        merged = {k: v.copy() for k, v in old_items.items()}
+        for k, v in new_items.items():
+            if k in merged:
+                merged[k]['count'] += v['count']
+            else:
+                merged[k] = v.copy()
+
+        total_count = sum(item['count'] for item in merged.values())
+        for item in merged.values():
+            item['percentage'] = (item['count'] / total_count) * 100
+
+        return dict(sorted(merged.items(), key=lambda x: x[1]['count'], reverse=True)[:100])
+
+    def merge_statistics(self, old_stats: Dict[str, Any], new_stats: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Merge two sets of statistics.
+
+        Args:
+            old_stats (Dict[str, Any]): The existing statistics.
+            new_stats (Dict[str, Any]): The new statistics to merge.
+
+        Returns:
+            Dict[str, Any]: The merged statistics.
+        """
+        merged = old_stats.copy()
+        for key, value in new_stats.items():
+            if key in ['total_rows', 'posts_count', 'comments_count', 'tweets_with_hashtags_count']:
+                merged[key] = merged.get(key, 0) + value
+            elif key in ['start_date', 'end_date']:
+                merged[key] = min(merged.get(key, value), value) if key == 'start_date' else max(merged.get(key, value),
+                                                                                                 value)
+            elif key in ['subreddits', 'hashtags']:
+                merged[key] = self.merge_top_items(merged.get(key, {}), value)
+        return merged
+
+    def collect_statistics(self, df: pd.DataFrame, source: int) -> Dict[str, Any]:
+        """
+        Collect statistics from a DataFrame chunk.
+
+        Args:
+            df (pd.DataFrame): The DataFrame chunk to analyze.
+            source (int): The data source (Reddit or X).
+
+        Returns:
+            Dict[str, Any]: A dictionary containing the collected statistics.
+        """
+        df['datetime'] = pd.to_datetime(df['datetime'])
+        stats = {
+            'total_rows': len(df),
+            'start_date': df['datetime'].min().strftime('%Y-%m-%d'),
+            'end_date': df['datetime'].max().strftime('%Y-%m-%d'),
+        }
+
+        if source == DataSource.REDDIT.value:
+            stats['posts_count'] = df[df['dataType'] == 'post'].shape[0]
+            stats['comments_count'] = df[df['dataType'] == 'comment'].shape[0]
+            subreddit_counts = df['communityName'].value_counts().to_dict()
+            stats['subreddits'] = {subreddit: {'count': count, 'percentage': (count / len(df)) * 100}
+                                   for subreddit, count in subreddit_counts.items()}
+        else:  # X (Twitter)
+            # Count tweets with hashtags (non-NULL and non-NaN labels)
+            has_hashtags = df[df['label'].notna() & (df['label'] != 'NULL')]
+            stats['tweets_with_hashtags_count'] = len(has_hashtags)
+
+            # Extract and count hashtags
+            all_hashtags = df['label'].fillna('').str.split().explode()
+            hashtag_counts = all_hashtags[all_hashtags != ''].value_counts().to_dict()
+
+            # Calculate hashtag statistics
+            total_tweets = len(df)
+            stats['hashtags'] = {
+                hashtag: {
+                    'count': count,
+                    'percentage': (count / total_tweets) * 100
+                }
+                for hashtag, count in hashtag_counts.items()
+            }
+
+        return stats
+
+    def save_stats_json(self, stats: Dict[str, Any], platform: str, new_rows: int, repo_id: str) -> Dict[str, Any]:
+        """
+        Save the full statistics to a JSON file and upload it to the Hugging Face repository.
+
+        This function merges new statistics with existing ones, updates counts and percentages,
+        and maintains an update history. It then saves this data to a JSON file and uploads it
+        to the specified Hugging Face repository.
+
+        Args:
+            stats (Dict[str, Any]): The new statistics to save.
+            platform (str): The platform for which to save statistics ('reddit' or 'x').
+            new_rows (int): The number of new rows added in this update.
+            repo_id (str): repo_id
+        Returns:
+            Dict[str, Any]: The updated full statistics after merging and calculations.
+        """
+        filename = f"{platform}_stats.json"
+
+        # Try to load existing stats
+        try:
+            existing_stats_file = self.hf_api.hf_hub_download(repo_id=repo_id, filename=filename,
+                                                              repo_type="dataset")
+            with open(existing_stats_file, 'r') as f:
+                full_stats = json.load(f)
+        except Exception:
+            full_stats = {'total_rows': 0, 'last_update': None, 'update_history': []}
+
+        # Update the stats
+        full_stats['total_rows'] += new_rows
+        full_stats['last_update'] = dt.datetime.utcnow().strftime("%Y-%m-%d")
+        full_stats['update_history'].append({
+            'date': full_stats['last_update'],
+            'rows_added': new_rows
+        })
+
+        # Merge new statistics
+        if platform == 'reddit':
+            full_stats['subreddits'] = self.merge_top_items(full_stats.get('subreddits', {}),
+                                                            stats.get('subreddits', {}))
+            full_stats['posts_count'] = full_stats.get('posts_count', 0) + stats.get('posts_count', 0)
+            full_stats['comments_count'] = full_stats.get('comments_count', 0) + stats.get('comments_count', 0)
+        else:  # X (Twitter)
+            full_stats['hashtags'] = self.merge_top_items(full_stats.get('hashtags', {}), stats.get('hashtags', {}))
+            full_stats['tweets_with_hashtags_count'] = full_stats.get('tweets_with_hashtags_count', 0) + stats.get(
+                'tweets_with_hashtags_count', 0)
+
+        # Recalculate percentages
+        if platform == 'reddit':
+            full_stats['posts_percentage'] = (full_stats['posts_count'] / full_stats['total_rows']) * 100
+            full_stats['comments_percentage'] = (full_stats['comments_count'] / full_stats['total_rows']) * 100
+        else:  # X (Twitter)
+            full_stats['tweets_with_hashtags_percentage'] = (full_stats['tweets_with_hashtags_count'] / full_stats[
+                'total_rows']) * 100
+
+        # Update date range
+        full_stats['start_date'] = min(full_stats.get('start_date', stats['start_date']), stats['start_date'])
+        full_stats['end_date'] = max(full_stats.get('end_date', stats['end_date']), stats['end_date'])
+
+        # Revert order of update history to display it correctly from latest to earliest in README.md
+
+        full_stats['update_history'] = full_stats['update_history'][::-1]
+
+        stats_json = json.dumps(full_stats, indent=2, cls=NumpyEncoder)
+
+        self.hf_api.upload_file(
+            token=self.hf_token,
+            path_or_fileobj=stats_json.encode(),
+            path_in_repo=filename,
+            repo_id=repo_id,
+            repo_type="dataset",
+        )
+
+        return full_stats
+    # Usage example:
 # uploader = OptimizedHuggingFaceUploader(
 #     db_path='path/to/your/database.sqlite',
 #     miner_hotkey='your_miner_hotkey',

@@ -42,6 +42,36 @@ class EncodingKeyManager:
         return self.fernet
 
 
+class SymKeyEncodingKeyManager(EncodingKeyManager):
+    """A subclass of EncodingKeyManager that uses a symmetric key directly."""
+
+    def __init__(self, sym_key: str):
+        """
+        Initialize the SymKeyEncodingKeyManager with a symmetric key.
+
+        Args:
+            sym_key (str): A base64-encoded symmetric key string.
+        """
+        self.sym_key = self._validate_and_encode_key(sym_key)
+        self.fernet = Fernet(self.sym_key)
+
+    def _validate_and_encode_key(self, sym_key: str) -> bytes:
+        """Validate the provided key and return it as bytes."""
+        try:
+            # Attempt to create a Fernet instance to validate the key
+            Fernet(sym_key.encode())
+            return sym_key.encode()
+        except Exception as e:
+            raise ValueError(f"Invalid symmetric key provided: {str(e)}")
+
+    def _load_or_generate_key(self) -> bytes:
+        """Override to return the provided symmetric key."""
+        return self.sym_key
+
+    def _save_key(self, sym_key: bytes) -> None:
+        """Override to do nothing, as we don't want to save the key to a file."""
+        pass
+
 def encode_url(url: str, fernet: Fernet) -> Optional[str]:
     """Encode a URL using Fernet encryption."""
     try:

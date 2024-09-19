@@ -122,12 +122,7 @@ class MinerEvaluator:
         # Query HuggingFace metadata
         if dt.datetime.now(dt.timezone.utc) >= HF_METADATA_QUERY_DATE:
             hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-            if hf_metadata is not None:
-                bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
-                # You can process or store this metadata as needed
-                # For now, we're just logging it
-            else:
-                bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
+            # TODO ADD VALIDATION FOR EVERY MINER.
         ##########
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
@@ -408,8 +403,7 @@ class MinerEvaluator:
                 return None
 
             response = responses[0]
-            bt.logging.success(f"{hotkey}: Got HuggingFace metadata with {len(response.metadata)} entries. Entries:"
-                               f" {response.metadata}")
+            bt.logging.success(f"{hotkey}: Got HuggingFace metadata with {len(response.metadata)} entries")
             return response.metadata
         except Exception:
             bt.logging.error(
