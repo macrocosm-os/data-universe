@@ -25,7 +25,7 @@ class HuggingFaceUploader:
         self.output_dir = output_dir
         self.hf_api = HfApi()
         self.miner_hotkey = miner_hotkey
-        self.unique_id = '1234' # generate_static_integer(self.miner_hotkey)
+        self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
         self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
