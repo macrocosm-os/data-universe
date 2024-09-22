@@ -50,7 +50,7 @@ This document outlines the key components of the Bittensor miner evaluation syst
 ### Incentive → Credibility (indirect)
 - While incentives don't directly affect credibility, they motivate miners to maintain high credibility to maximize rewards
 
-System Flow:
+## System Flow
 
 1. Credibility
    |
@@ -70,9 +70,30 @@ Key:
 ---> Direct influence
 <--- Indirect influence
 
-Relationships:
-- Credibility multiplies Raw Score to produce Final Score
-- Data Value determines Raw Score
-- Final Score determines share of Incentive/Reward
-- Total Network Score influences overall Incentive/Reward distribution
-- Incentive/Reward motivates miners to maintain high Credibility
+## Key Parameters
+
+- Starting Credibility: 0
+- Credibility Exponent: 2.5
+- Credibility Alpha (α): 0.15
+- Max Data Entity Bucket Size: 128 MB
+- Max Data Entity Bucket Count per Miner Index: 350,000
+- Data Age Limit: 30 days
+- Min Evaluation Period: 60 minutes
+
+## Data Source Weights
+- Reddit: 60% (weight: 0.6)
+- X (Twitter): 40% (weight: 0.4)
+
+## Desirable Data
+
+For the list of desirable data sources and their scale factors, please refer to the [data_desirability_lookup.py](./rewards/data_desirability_lookup.py) file.
+
+## Important Notes
+
+- Scores are relative to other miners in the network
+- Credibility builds over time, rewarding consistent good performance
+- Recent data is valued more highly than older data
+- The system adapts to changes in data desirability through configurable lookup tables
+- Negative scale factors can penalize undesirable data
+
+This scoring system is designed to be fair while also being resistant to gaming attempts, encouraging miners to consistently provide high-quality, relevant, and timely data to the Bittensor network.
