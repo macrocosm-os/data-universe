@@ -4,9 +4,11 @@
 
 Dynamic Desirability is an in-progress feature and will be added to the subnet soon! We welcome questions, comments and feedback on Discord - message @arrmlet or @ewekazoo, or file a GitHub issue. 
 
+
 ## Overview
 
 Dynamic Desirability takes the previous system of manually setting subnet preferences for data scraping at scale to an organic, democratic mechanism. This introduces a voting system for both the subnet owner and participating validators, where each will set their own weight preferences through an adaptable list of incentivized labels. Validators choose weights and submit them as JSONs into the Macrocosmos Desirabilities Github. These weights are then committed to the chain, where they can be later read and used to create an aggregate DataDesirabilityLookup object used for scoring. 
+
 
 ## Overall Process
 
@@ -19,6 +21,7 @@ The overall process of Dynamic Desirability is as follows:
 5. The overall label weights landscape is reconstructed according to validators’ voting power and their JSON submissions.
 6. This aggregated desirability lookup is used to score Miner scraped data. 
 
+
 ## Implementation Details
 
 ### Validator Voting
@@ -30,16 +33,17 @@ There is a provided JSON creation tool (json_maker.ipynb) located in the Data De
 Validators will split their votes in JSON format according to the following conditions: 
 
 1. Label weights must be between (0,1]. 
-  - The label weight now represents the percentage of the validator’s own voting power that they would like to place on the given label. For instance, a validator with 20% stake in the subnet for 14% total voting power placing 0.9 weight on a label would result in that label getting 12.6% of the total vote. 
+    - The label weight now represents the percentage of the validator’s own voting power that they would like to place on the given label. For instance, a validator with 20% stake in the subnet for 14% total voting power placing 0.9 weight on a label would result in that label getting 12.6% of the total vote. 
 
 2. Label weights must sum to between 0 and 1. 
-  - This comes as a consequence of the previous condition: at most a validator can choose to use 100% of their voting power to specify labels and associated label weights. 
+    - This comes as a consequence of the previous condition: at most a validator can choose to use 100% of their voting power to specify labels and associated label weights. 
 
 3. Each label weight must be in an increment of 0.1.
-  - This is done to incentivize maximization of validator voting power - spreading weight across too many labels weakens the strength of each individual label choice. 
-  - As a byproduct of this rule, the maximum number of incentivized labels a validator can specify is 10. 
+    - This is done to incentivize maximization of validator voting power - spreading weight across too many labels weakens the strength of each individual label choice. 
+    - As a byproduct of this rule, the maximum number of incentivized labels a validator can specify is 10. 
 
 4. Weights must be from subnet data sources: Reddit or X.
+
 
 
 An example of a valid JSON submission is given below:
@@ -67,6 +71,7 @@ An example of a valid JSON submission is given below:
     }
 ]
 ```
+
 
 ### Validator Uploading
 
