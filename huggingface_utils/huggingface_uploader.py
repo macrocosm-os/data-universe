@@ -417,8 +417,10 @@ class HuggingFaceUploader:
         )
 
         return full_stats
-    # Usage example:
-# uploader = OptimizedHuggingFaceUploader(
+
+
+# Usage example:
+# uploader = HuggingFaceUploader(
 #     db_path='path/to/your/database.sqlite',
 #     miner_hotkey='your_miner_hotkey',
 #     encoding_key_manager=your_encoding_key_manager,
