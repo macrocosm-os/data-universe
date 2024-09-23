@@ -45,7 +45,8 @@ class HuggingFaceUploader:
                 for source in state['last_upload']:
                     if state['last_upload'][source] and not isinstance(state['last_upload'][source], float):
                         try:
-                            state['last_upload'][source] = dt.datetime.strptime(state['last_upload'][source], '%Y-%m-%d %H:%M:%S')
+                            state['last_upload'][source] = dt.datetime.strptime(state['last_upload'][source],
+                                                                                '%Y-%m-%d %H:%M:%S')
                         except ValueError:
                             bt.logging.warning(f"Invalid datetime format for source {source}. Setting to None.")
                             state['last_upload'][source] = None
@@ -212,14 +213,15 @@ class HuggingFaceUploader:
 
                 # Update stats and README
                 platform = 'reddit' if source == DataSource.REDDIT.value else 'x'
-                updated_stats = self.save_stats_json(all_stats, platform, new_rows, repo_id)
 
-                # Generate and upload new README
-                update_history = [(item['date'], item['rows_added'],
-                                   sum(h['rows_added'] for h in updated_stats['update_history'][:i + 1]))
-                                  for i, item in enumerate(updated_stats['update_history'])]
-                card_generator.update_or_create_card(platform, updated_stats, update_history)
+                if new_rows > 0:
+                    updated_stats = self.save_stats_json(all_stats, platform, new_rows, repo_id)
 
+                    # Generate and upload new README
+                    update_history = [(item['date'], item['rows_added'],
+                                       sum(h['rows_added'] for h in updated_stats['update_history'][:i + 1]))
+                                      for i, item in enumerate(updated_stats['update_history'])]
+                    card_generator.update_or_create_card(platform, updated_stats, update_history)
 
                 # Save metadata
                 hf_metadata = HuggingFaceMetadata(
@@ -415,8 +417,10 @@ class HuggingFaceUploader:
         )
 
         return full_stats
-    # Usage example:
-# uploader = OptimizedHuggingFaceUploader(
+
+
+# Usage example:
+# uploader = HuggingFaceUploader(
 #     db_path='path/to/your/database.sqlite',
 #     miner_hotkey='your_miner_hotkey',
 #     encoding_key_manager=your_encoding_key_manager,
