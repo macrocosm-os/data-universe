@@ -28,7 +28,7 @@ async def _query_huggingface_metadata(self, hotkey: str, uid: int, miner_axon: b
 
 ### 2. Selecting Random Files from the Latest Data Commit
 
-Validators select **10 random files** from the latest data commit of the miner's Hugging Face dataset. This selection ensures that the validation covers recent data and that miners are continually updating their datasets.
+Validators select **10 random rows** from the latest data commit of the miner's Hugging Face dataset. This selection ensures that the validation covers recent data and that miners are continually updating their datasets.
 
 ```python
 # Function to select random rows from a dataset
