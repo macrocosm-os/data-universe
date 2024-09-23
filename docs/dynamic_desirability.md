@@ -43,7 +43,7 @@ Validators will split their votes in JSON format according to the following cond
 
 
 An example of a valid JSON submission is given below:
-
+```
 [
     {
         "source_name": "reddit",
@@ -66,7 +66,7 @@ An example of a valid JSON submission is given below:
         }
     }
 ]
-
+```
 
 ### Validator Uploading
 
