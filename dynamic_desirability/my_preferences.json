@@ -1,0 +1,14 @@
+[
+    {
+        "source_name": "reddit",
+        "label_weights": {
+            "r/test": 0.3
+        }
+    },
+    {
+        "source_name": "x",
+        "label_weights": {
+            "#test": 0.7
+        }
+    }
+]
