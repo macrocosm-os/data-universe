@@ -6,13 +6,13 @@ import time
 from typing import Dict, Optional, Any
 
 import bittensor as bt
-from chain_utils import ChainPreferenceStore
+from dynamic_desirability.chain_utils import ChainPreferenceStore
 from common import constants
 from common.data import DataLabel, DataSource
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
-from constants import NETWORK, NETUID, REPO_URL, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
-from constants import TOTAL_VALI_WEIGHT, REDDIT_SOURCE_WEIGHT, X_SOURCE_WEIGHT
-from chain_config import WALLET_NAME, HOTKEY_NAME
+from dynamic_desirability.constants import NETWORK, NETUID, REPO_URL, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
+from dynamic_desirability.constants import TOTAL_VALI_WEIGHT, REDDIT_SOURCE_WEIGHT, X_SOURCE_WEIGHT
+from dynamic_desirability.chain_config import WALLET_NAME, HOTKEY_NAME
 
 
 def get_validator_data(metagraph: bt.metagraph) -> Dict[str, Dict[str, Any]]:
@@ -81,7 +81,6 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     try:
         with open(default_json_path, 'r') as f:
             default_preferences = json.load(f)
-        
         for source in default_preferences:
             source_name = source['source_name']
             if source_name not in total_weights:
@@ -92,11 +91,13 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     except FileNotFoundError:
         print(f"Warning: {default_json_path} not found. Proceeding without default weights.")
 
+    # Calculating the sum of percent_stake for validators that have voted. Non-voting validators are excluded.
+    total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('json'))
+
     for hotkey, data in validator_data.items():
         if data['json']:
-            stake_percentage = data.get('percent_stake', 1) / sum(v.get('percent_stake', 1) for v in validator_data.values())
+            stake_percentage = data.get('percent_stake', 1) / total_stake
             vali_weight = total_vali_weight * stake_percentage
-            
             for source in data['json']:
                 source_name = source['source_name']
                 if source_name not in total_weights:
@@ -114,20 +115,20 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
         }
         for source_name, label_weights in total_weights.items()
     ]
+
     script_dir = os.path.dirname(os.path.abspath(__file__))
     total_path = os.path.join(script_dir, AGGREGATE_JSON_PATH)
     with open(total_path, 'w') as f:
-        json.dump(total_json, f, indent=2)
-    
+        json.dump(total_json, f, indent=4)
+
     print(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
-
+#TODO CREATE TEST SCRIPT FOR THIS (few test cases)
 def to_lookup(json_file: str) -> DataDesirabilityLookup:
     """Converts a json format to a LOOKUP format."""
     with open(json_file, 'r') as file:
         data = json.load(file)
     
-    print(data)
     distribution = {}
     
     for source in data:
@@ -138,18 +139,18 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
         weight = REDDIT_SOURCE_WEIGHT if source_name == "reddit" else X_SOURCE_WEIGHT
         
         label_scale_factors = {
-            DataLabel(value=label): min(weight, 1.0)  # Ensure weight doesn't exceed 1.0
+            DataLabel(value=label): min(weight, 1.0)  # so weight doesn't exceed 1.0
             for label, weight in label_weights.items()
         }
         
         distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
             weight=weight,
-            default_scale_factor=0.5,
+            #TODO: dynamic default scale factor based on something...
+            default_scale_factor=0.4,               # number is subject to change
             label_scale_factors=label_scale_factors
         )
     
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
-    print(distribution)
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
 async def run_retrieval() -> DataDesirabilityLookup:
