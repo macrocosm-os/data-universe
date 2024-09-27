@@ -123,7 +123,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
 
     print(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
-#TODO CREATE TEST SCRIPT FOR THIS (few test cases)
+
 def to_lookup(json_file: str) -> DataDesirabilityLookup:
     """Converts a json format to a LOOKUP format."""
     with open(json_file, 'r') as file:
