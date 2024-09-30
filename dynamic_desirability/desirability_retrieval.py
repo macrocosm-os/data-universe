@@ -4,7 +4,8 @@ import os
 import subprocess
 import time
 from typing import Dict, Optional, Any
-
+import logging
+import shutil
 import bittensor as bt
 from dynamic_desirability.chain_utils import ChainPreferenceStore
 from common import constants
@@ -70,6 +71,8 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
         return None
     finally:
         os.chdir(original_dir)
+        logging.info(f"Deleting the cloned repository folder: {repo_name}")
+        shutil.rmtree(repo_name)
 
 
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH, total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:

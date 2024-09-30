@@ -32,9 +32,9 @@ import common.utils as utils
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
-
+from dynamic_desirability.desirability_retrieval import run_retrieval
 from neurons import __spec_version__ as spec_version
-
+from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
 
@@ -119,6 +119,19 @@ class Validator:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
         self.is_setup = True
+
+    def get_updated_lookup(self):
+        while not self.should_exit:
+            try:
+                # Updates every night at midnight.
+                if dt.datetime.now(dt.timezone.utc) == 0:
+                    bt.logging.info("Retrieving the latest dynamic lookup...")
+                    # QUESTION: should add new function to change value calculator's lookup? or reinstantiate new one every time?
+                    model = run_retrieval()
+                    self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
+            # In case of unforeseen errors, the refresh thread will log the error and continue operations.
+            except Exception:
+                bt.logging.error("Couldn't fetch latest updated lookup.")
 
     def get_version_tag(self):
         """Fetches version tag"""
@@ -260,6 +273,8 @@ class Validator:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+            self.lookup_thread = threading.Thread(
+                target=self.get_updated_lookup, daemon=True)
             self.is_running = True
             bt.logging.debug("Started.")
 

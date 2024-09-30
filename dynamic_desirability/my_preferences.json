@@ -2,13 +2,13 @@
     {
         "source_name": "reddit",
         "label_weights": {
-            "r/test": 0.3
+            "r/test": 0.1
         }
     },
     {
         "source_name": "x",
         "label_weights": {
-            "#test": 0.7
+            "#test9": 0.9
         }
     }
 ]
