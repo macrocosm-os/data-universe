@@ -4,8 +4,7 @@ import os
 
 class HFValidationStorage:
     def __init__(self, storage_path):
-        self.storage_path = storage_path
-        self.file_path = os.path.join(storage_path, 'hf_validation.parquet')
+        self.file_path = storage_path
         self._ensure_file_exists()
 
     def _ensure_file_exists(self):

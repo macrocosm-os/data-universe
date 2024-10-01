@@ -92,9 +92,6 @@ def select_random_rows_from_parquet(repo_id: str, num_rows: int = 10, buffer_siz
     return df
 
 
-def validate_hf_dataset(hf_metadata):
-
-
 async def validate_hf_dataset(hf_metadata, scraper):
     """Main function to demonstrate the usage of the script."""
     repo_id = "arrmlet/x_dataset_218"
