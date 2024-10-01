@@ -162,9 +162,14 @@ class MinerEvaluator:
         validation_info = self.hf_storage.get_validation_info(hotkey)
         if validation_info is None or (current_block - validation_info['block']) > 55000:
             hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
+            bt.logging.info(f'HF METADATAS: {hf_metadatas}') # TODO REMOVE THIS DEBUG LINE
             if hf_metadatas:
                 for hf_metadata in hf_metadatas:
-                    validation_result = await validate_hf_dataset(hf_metadata, self.scraping_coordinator)
+                    scraper = self.scraper_provider.get(
+                        MinerEvaluator.PREFERRED_SCRAPERS[hf_metadata.source]
+                    )
+
+                    validation_result = await validate_hf_dataset(hf_metadata, scraper)
 
                     # Store the validation result regardless of success status
                     repo_name = validation_result.get("repo_name", "unknown")
