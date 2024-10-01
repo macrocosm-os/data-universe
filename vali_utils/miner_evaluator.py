@@ -134,7 +134,7 @@ class MinerEvaluator:
                     bt.logging.info(f'{hotkey}: Trying to validate {hf_metadata.repo_name}')
 
                     validation_result = await validate_huggingface_dataset(hf_metadata)
-                    bt.logging.info(f'{hotkey}: HuggingFace validation result: {validation_result}')
+                    bt.logging.info(f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
 
                     # Store the validation result regardless of success status
                     self.hf_storage.update_validation_info(
