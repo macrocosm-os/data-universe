@@ -112,7 +112,7 @@ async def run_uploader(preference_file: str):
         github_commit = upload_to_github(json_content, my_hotkey)
         await chain_store.store_preferences(github_commit)
         result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
-        print(f"Stored {result} on chain commit hash. ")
+        bt.logging.info(f"Stored {result} on chain commit hash.")
         return result
     except Exception as e:
         logging.error(f"An error occurred: {str(e)}")

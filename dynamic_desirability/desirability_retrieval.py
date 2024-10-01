@@ -44,30 +44,30 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
     
     try:
         if not os.path.exists(repo_name):
-            print(f"Cloning repository: {REPO_URL}")
+            bt.logging.info(f"Cloning repository: {REPO_URL}")
             subprocess.run(['git', 'clone', REPO_URL], check=True, capture_output=True)
         os.chdir(repo_name)
 
-        print("Fetching latest changes")
+        bt.logging.info("Fetching latest changes")
         subprocess.run(['git', 'fetch', '--all'], check=True, capture_output=True)
 
-        print(f"Checking out commit: {commit_sha}")
+        bt.logging.info(f"Checking out commit: {commit_sha}")
         subprocess.run(['git', 'checkout', commit_sha], check=True, capture_output=True)
 
         if os.path.exists(filename):
-            print(f"File '{filename}' found. Reading contents...")
+            bt.logging.info(f"File '{filename}' found. Reading contents...")
             with open(filename, 'r') as file:
                 content = json.load(file)
             return content
         else:
-            print(f"File '{filename}' not found in this commit.")
+            bt.logging.error(f"File '{filename}' not found in this commit.")
             return None
 
     except subprocess.CalledProcessError as e:
-        print(f"An error occurred during Git operations: {e}")
+        bt.logging.error(f"An error occurred during Git operations: {e}")
         return None
     except IOError as e:
-        print(f"An error occurred while reading the file: {e}")
+        bt.logging.error(f"An error occurred while reading the file: {e}")
         return None
     finally:
         os.chdir(original_dir)
@@ -92,7 +92,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 normalizer = subnet_weight * weight
                 total_weights[source_name][label] = subnet_weight * weight / normalizer
     except FileNotFoundError:
-        print(f"Warning: {default_json_path} not found. Proceeding without default weights.")
+        bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default weights.")
 
     # Calculating the sum of percent_stake for validators that have voted. Non-voting validators are excluded.
     total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('json'))
@@ -124,7 +124,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     with open(total_path, 'w') as f:
         json.dump(total_json, f, indent=4)
 
-    print(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
+    bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
 
 def to_lookup(json_file: str) -> DataDesirabilityLookup:
@@ -162,11 +162,10 @@ async def run_retrieval() -> DataDesirabilityLookup:
     chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=NETUID)
     metagraph = bt.metagraph(netuid=NETUID, network=NETWORK, lite=True, sync=True)
 
-    print("\nGetting validator weights from the metagraph...\n")
+    bt.logging.info("\nGetting validator weights from the metagraph...\n")
     validator_data = get_validator_data(metagraph)
 
-    print("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
-    start_time = time.time()
+    bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
     for hotkey in validator_data.keys():
         validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
@@ -174,8 +173,7 @@ async def run_retrieval() -> DataDesirabilityLookup:
         if validator_data[hotkey]['github_hash']:
             validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'], filename=f"{hotkey}.json")
 
-    print(f"Time taken: {time.time()-start_time}")
-    print("\nCalculating total weights...\n")
+    bt.logging.info("\nCalculating total weights...\n")
 
     script_dir = os.path.dirname(os.path.abspath(__file__))
     default_path = os.path.join(script_dir, DEFAULT_JSON_PATH)
