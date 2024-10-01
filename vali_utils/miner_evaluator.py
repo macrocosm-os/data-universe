@@ -18,7 +18,6 @@ from common.data import (
     HuggingFaceMetadata,
 )
 from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata
-from common.constants import HF_METADATA_QUERY_DATE
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
