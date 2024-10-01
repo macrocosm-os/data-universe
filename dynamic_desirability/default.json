@@ -1,0 +1,22 @@
+[
+    {
+        "source_name": "reddit",
+        "label_weights": {
+            "r/Bitcoin": 0.1,
+            "r/BitcoinCash": 0.1,
+            "r/Bittensor_": 0.1,
+            "r/Btc": 0.1,
+            "r/Cryptocurrency": 0.1,
+            "r/Cryptomarkets": 0.1,
+            "r/EthereumClassic": 0.1
+        }
+    },
+    {
+        "source_name": "x",
+        "label_weights": {
+            "#bitcoin": 0.1,
+            "#bitcoincharts": 0.1,
+            "#bitcoiner": 0.1
+        }
+    }
+]

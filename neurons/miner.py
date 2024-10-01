@@ -52,16 +52,14 @@ class Miner:
 
         bt.logging(config=self.config, logging_dir=self.config.full_path)
         bt.logging.info(self.config)
-
+        self.use_hf_uploader = self.config.huggingface
         if self.config.offline:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
             self.uid = 0  # Offline mode so assume it's == 0
-            self.use_hf_uploader = False
 
         else:
-            self.use_hf_uploader = self.config.huggingface
             # The wallet holds the cryptographic key pairs for the miner.
             self.wallet = bt.wallet(config=self.config)
             bt.logging.info(f"Wallet: {self.wallet}.")

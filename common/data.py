@@ -135,10 +135,18 @@ class DataEntity(StrictBaseModel):
 class HuggingFaceMetadata(StrictBaseModel):
     # The name of repo
     repo_name: str
-    # The datetime of the data entity, usually its creation time.
-    # Should be in UTC.
+    # The source of the data
     source: DataSource
+    # The datetime of the last update. Should be in UTC.
     updated_at: dt.datetime
+    # The encoding key used for this dataset (optional)
+    encoding_key: Optional[str] = None
+
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            dt.datetime: lambda v: v.isoformat(),
+        }
 
 
 class DataEntityBucketId(StrictBaseModel):
