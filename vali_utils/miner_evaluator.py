@@ -27,6 +27,9 @@ from scraping.scraper import ScraperId, ValidationResult
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
+
+from storage.validator.hf_validator_storage import HFValidationStorage
+
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
 from storage.validator.validator_storage import (
@@ -35,6 +38,8 @@ from storage.validator.validator_storage import (
 from storage.validator.mysql_databox_storage import MysqlDataboxStorage
 
 from typing import List, Optional
+
+from vali_utils.hf_dataset_validation import validate_hf_dataset
 
 from rewards.miner_scorer import MinerScorer
 from datadog import statsd
@@ -71,6 +76,7 @@ class MinerEvaluator:
         )
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
+<<<<<<< HEAD
         self.databox_storage: MysqlDataboxStorage = MysqlDataboxStorage(
             host=os.getenv("MYSQL_DATABOX_HOST"),
             user=os.getenv("MYSQL_DATABOX_USER"),
@@ -80,6 +86,9 @@ class MinerEvaluator:
 
         self.last_seen_38_datetime = None
 
+=======
+        self.hf_storage = HFValidationStorage(self.config.hf_results_path)
+>>>>>>> hf_validation
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
@@ -140,7 +149,6 @@ class MinerEvaluator:
         # Query HuggingFace metadata
         if dt.datetime.now(dt.timezone.utc) >= HF_METADATA_QUERY_DATE:
             hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-<<<<<<< HEAD
             if hf_metadata is not None:
                 bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
                 if len(hf_metadata):
@@ -149,9 +157,25 @@ class MinerEvaluator:
                 # For now, we're just logging it
             else:
                 bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
-=======
-            # TODO ADD VALIDATION FOR EVERY MINER.
->>>>>>> gravity
+
+        current_block = int(self.metagraph.block)
+        validation_info = self.hf_storage.get_validation_info(hotkey)
+        if validation_info is None or (current_block - validation_info['block']) > 55000:
+            hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
+            if hf_metadatas:
+                for hf_metadata in hf_metadatas:
+                    validation_result = await validate_hf_dataset(hf_metadata, self.scraping_coordinator)
+
+                    # Store the validation result regardless of success status
+                    repo_name = validation_result.get("repo_name", "unknown")
+                    self.hf_storage.update_validation_info(
+                        hotkey,
+                        repo_name,
+                        current_block,
+                    )
+
+
+>>>>>>> hf_validation
         ##########
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (

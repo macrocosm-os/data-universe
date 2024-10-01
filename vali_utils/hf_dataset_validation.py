@@ -10,6 +10,7 @@ import pandas as pd
 from datasets import load_dataset
 import itertools
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
+from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
 
 def get_parquet_files(repo_id: str) -> List[str]:
@@ -91,20 +92,23 @@ def select_random_rows_from_parquet(repo_id: str, num_rows: int = 10, buffer_siz
     return df
 
 
-async def main():
+def validate_hf_dataset(hf_metadata):
+
+
+async def validate_hf_dataset(hf_metadata, scraper):
     """Main function to demonstrate the usage of the script."""
     repo_id = "arrmlet/x_dataset_218"
 
     try:
         selected_rows = select_random_rows_from_parquet(repo_id)
         s = selected_rows.to_dict(orient='records')
-        scrapper = ApiDojoTwitterScraper()
-        valid = await scrapper.validate_hf(entities=s)
+        valid = await scraper.validate_hf(entities=s)
         bt.logging.trace(f"Number of rows: {len(selected_rows)}")
         bt.logging.trace(valid)
 
     except (requests.RequestException, ValueError) as e:
         bt.logging.trace(f"An error occurred: {e}")
 
-if __name__ == "__main__":
-    asyncio.run(main())
+
+# if __name__ == "__main__":
+#     asyncio.run(validate_hf_dataset())
