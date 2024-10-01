@@ -39,7 +39,7 @@ from storage.validator.mysql_databox_storage import MysqlDataboxStorage
 
 from typing import List, Optional
 
-from vali_utils.hf_dataset_validation import validate_hf_dataset
+from vali_utils.hf_utlis import validate_huggingface_dataset
 
 from rewards.miner_scorer import MinerScorer
 from datadog import statsd
@@ -162,22 +162,25 @@ class MinerEvaluator:
         validation_info = self.hf_storage.get_validation_info(hotkey)
         if validation_info is None or (current_block - validation_info['block']) > 55000:
             hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-            bt.logging.info(f'HF METADATAS: {hf_metadatas}') # TODO REMOVE THIS DEBUG LINE
             if hf_metadatas:
                 for hf_metadata in hf_metadatas:
-                    scraper = self.scraper_provider.get(
-                        MinerEvaluator.PREFERRED_SCRAPERS[hf_metadata.source]
-                    )
+                    bt.logging.info(f'{hotkey}: Trying to validate {hf_metadata.repo_name}')
 
-                    validation_result = await validate_hf_dataset(hf_metadata, scraper)
+                    validation_result = await validate_huggingface_dataset(hf_metadata)
+                    bt.logging.info(f'{hotkey}: HuggingFace validation result: {validation_result}')
 
                     # Store the validation result regardless of success status
-                    repo_name = validation_result.get("repo_name", "unknown")
                     self.hf_storage.update_validation_info(
                         hotkey,
-                        repo_name,
+                        str(hf_metadata.repo_name),
                         current_block,
                     )
+            else:
+                self.hf_storage.update_validation_info(
+                    hotkey,
+                    'no_dataset_provided',
+                    current_block,
+                )
 
 
 >>>>>>> hf_validation

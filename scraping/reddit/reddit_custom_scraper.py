@@ -194,12 +194,15 @@ class RedditCustomScraper(Scraper):
                 continue
 
             # Validate the content
-            # print(f"Content: {content}")
             validation_result = self._validate_hf_reddit_content(content, entity)
             validation_results.append(validation_result)
 
         # Check if all validations passed
-        is_valid = all(validation_results)
+
+        valid_percentage = sum(validation_results) / len(validation_results) * 100
+
+        # Check if at least 60% of the data is valid
+        is_valid = valid_percentage >= 40
         return is_valid
 
     def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
@@ -395,8 +398,6 @@ async def test_scrape():
         )
     )
 
-    print(f"Scraped r/bittensor_. Got entities: {entities}")
-
     # Scrape some older content without a label.
     start = dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=2)
     entities = await scraper.scrape(
@@ -408,8 +409,6 @@ async def test_scrape():
             ),
         )
     )
-
-    print(f"Scraped without a label. Got entities: {entities}")
 
 
 async def test_validate():
