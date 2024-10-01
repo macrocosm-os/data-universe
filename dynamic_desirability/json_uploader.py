@@ -9,11 +9,9 @@ from typing import List
 from decimal import Decimal
 from chain_utils import ChainPreferenceStore
 from constants import REPO_URL, BRANCH_NAME, NETWORK, NETUID
-from chain_config import WALLET_NAME, HOTKEY_NAME
+from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME, MY_JSON_PATH
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
-
-MY_JSON_NAME = 'my_preferences.json'
 
 def run_command(command: List[str]) -> str:
     """Runs a subprocess command."""
@@ -119,6 +117,4 @@ async def run_uploader(preference_file: str):
         raise
 
 if __name__ == "__main__":
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    pref_file = os.path.join(script_dir, MY_JSON_NAME)
-    asyncio.run(run_uploader(preference_file=pref_file))
+    asyncio.run(run_uploader(preference_file=MY_JSON_PATH))

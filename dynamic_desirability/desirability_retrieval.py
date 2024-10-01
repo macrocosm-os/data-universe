@@ -13,7 +13,7 @@ from common.data import DataLabel, DataSource
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from dynamic_desirability.constants import NETWORK, NETUID, REPO_URL, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
 from dynamic_desirability.constants import TOTAL_VALI_WEIGHT, REDDIT_SOURCE_WEIGHT, X_SOURCE_WEIGHT
-from dynamic_desirability.chain_config import WALLET_NAME, HOTKEY_NAME
+from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME
 
 
 def get_validator_data(metagraph: bt.metagraph) -> Dict[str, Dict[str, Any]]:
@@ -148,7 +148,6 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
         
         distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
             weight=weight,
-            #TODO: dynamic default scale factor based on something...
             default_scale_factor=0.4,               # number is subject to change
             label_scale_factors=label_scale_factors
         )
