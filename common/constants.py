@@ -33,6 +33,3 @@ MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
 # Miner compressed index cache freshness.
 MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
 
-HF_METADATA_QUERY_DATE = datetime.datetime(
-    year=2024, month=8, day=1, tzinfo=datetime.timezone.utc
-)
