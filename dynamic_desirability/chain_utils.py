@@ -90,7 +90,7 @@ class ChainPreferenceStore():
             wait_for_inclusion,
             wait_for_finalization,
         )
-        print("writing to chain...")
+        bt.logging.info("Writing to chain...")
         run_in_subprocess(partial, 60)
 
     async def retrieve_preferences(self, hotkey: str) -> str:
