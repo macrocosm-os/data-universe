@@ -75,7 +75,6 @@ class MinerEvaluator:
         )
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
-<<<<<<< HEAD
         self.databox_storage: MysqlDataboxStorage = MysqlDataboxStorage(
             host=os.getenv("MYSQL_DATABOX_HOST"),
             user=os.getenv("MYSQL_DATABOX_USER"),
@@ -85,9 +84,7 @@ class MinerEvaluator:
 
         self.last_seen_38_datetime = None
 
-=======
         self.hf_storage = HFValidationStorage(self.config.hf_results_path)
->>>>>>> hf_validation
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
@@ -145,18 +142,6 @@ class MinerEvaluator:
 
 
         ##########
-        # Query HuggingFace metadata
-        if dt.datetime.now(dt.timezone.utc) >= HF_METADATA_QUERY_DATE:
-            hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-            if hf_metadata is not None:
-                bt.logging.info(f"{hotkey}: Retrieved HuggingFace metadata with {len(hf_metadata)} entries.")
-                if len(hf_metadata):
-                    self.storage.upsert_hf_metadata(hotkey, hf_metadata)
-                # You can process or store this metadata as needed
-                # For now, we're just logging it
-            else:
-                bt.logging.info(f"{hotkey}: No HuggingFace metadata available for miner.")
-
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
         if validation_info is None or (current_block - validation_info['block']) > 55000:
@@ -182,7 +167,6 @@ class MinerEvaluator:
                 )
 
 
->>>>>>> hf_validation
         ##########
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
