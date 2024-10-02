@@ -124,11 +124,13 @@ class Validator:
         while not self.should_exit:
             try:
                 # Updates every night at midnight.
-                if dt.datetime.now(dt.timezone.utc) == 0:
+                current_datetime = dt.datetime.now(dt.timezone.utc)
+                if current_datetime.time() == dt.time(0,0,0):
                     bt.logging.info("Retrieving the latest dynamic lookup...")
                     # QUESTION: should add new function to change value calculator's lookup? or reinstantiate new one every time?
                     model = run_retrieval()
                     self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
+                    time.sleep(3600)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
                 bt.logging.error("Couldn't fetch latest updated lookup.")

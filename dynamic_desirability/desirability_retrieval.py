@@ -41,6 +41,7 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
     """Retrieve JSON content from a specific commit in the repository."""
     original_dir = os.getcwd()
     repo_name = REPO_URL.split('/')[-1].replace('.git', '')
+    repo_path = os.path.join(original_dir, repo_name)
     
     try:
         if not os.path.exists(repo_name):
@@ -56,8 +57,10 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
 
         if os.path.exists(filename):
             bt.logging.info(f"File '{filename}' found. Reading contents...")
+            print(f"File '{filename}' found. Reading contents...") #DELETE LATER
             with open(filename, 'r') as file:
                 content = json.load(file)
+            print(content) #DELETE LATER
             return content
         else:
             bt.logging.error(f"File '{filename}' not found in this commit.")
@@ -71,8 +74,9 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
         return None
     finally:
         os.chdir(original_dir)
-        logging.info(f"Deleting the cloned repository folder: {repo_name}")
-        shutil.rmtree(repo_name)
+        if os.path.exists(repo_path):
+            logging.info(f"Deleting the cloned repository folder: {repo_name}")
+            shutil.rmtree(repo_name)
 
 
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH, total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
