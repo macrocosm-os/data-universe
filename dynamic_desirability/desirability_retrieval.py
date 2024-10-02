@@ -57,10 +57,8 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
 
         if os.path.exists(filename):
             bt.logging.info(f"File '{filename}' found. Reading contents...")
-            print(f"File '{filename}' found. Reading contents...") #DELETE LATER
             with open(filename, 'r') as file:
                 content = json.load(file)
-            print(content) #DELETE LATER
             return content
         else:
             bt.logging.error(f"File '{filename}' not found in this commit.")
