@@ -32,7 +32,7 @@ import common.utils as utils
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
-from dynamic_desirability.desirability_retrieval import run_retrieval
+from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
@@ -127,8 +127,7 @@ class Validator:
                 current_datetime = dt.datetime.now(dt.timezone.utc)
                 if current_datetime.time() == dt.time(0,0,0):
                     bt.logging.info("Retrieving the latest dynamic lookup...")
-                    # QUESTION: should add new function to change value calculator's lookup? or reinstantiate new one every time?
-                    model = await run_retrieval()
+                    model = sync_run_retrieval()
                     self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
                     time.sleep(3600)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.

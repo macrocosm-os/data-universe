@@ -182,5 +182,8 @@ async def run_retrieval() -> DataDesirabilityLookup:
 
     return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
 
+def sync_run_retrieval():
+    return asyncio.get_event_loop().run_until_complete(run_retrieval())
+
 if __name__ == "__main__":
     asyncio.run(run_retrieval())
