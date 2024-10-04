@@ -6,7 +6,7 @@ import subprocess
 import logging
 import bittensor as bt
 from typing import List
-from decimal import Decimal
+from decimal import Decimal, ROUND_HALF_UP
 from chain_utils import ChainPreferenceStore
 from constants import REPO_URL, BRANCH_NAME, NETWORK, NETUID
 from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME, MY_JSON_PATH
@@ -22,6 +22,67 @@ def run_command(command: List[str]) -> str:
         logging.error(f"Error executing command: {' '.join(command)}")
         logging.error(f"Error message: {e.stderr.strip()}")
         raise
+
+def normalize_preferences_json(file_path: str) -> str:
+    """
+    Normalize potentially invalid preferences JSONs
+    """
+    with open(file_path, 'r') as f:
+        data = json.load(f)
+
+    all_label_weights = {}
+    
+    # Taking all positive label weights across all sources
+    for source in data:
+        for label, weight in source["label_weights"].items():
+            weight_decimal = Decimal(str(weight))
+            if weight_decimal > Decimal('0'):
+                all_label_weights[label] = all_label_weights.get(label, Decimal('0')) + weight_decimal
+    sorted_labels = sorted(all_label_weights.items(), key=lambda x: x[1], reverse=True)[:10]
+
+    total_weight = sum(weight for _, weight in sorted_labels)
+    if total_weight <= 0:
+        bt.logging.error(f"Cannot normalize preferences file. Please see docs for correct preferences format.")
+        return
+
+    # Normalize weights to sum between 0.1 and 1
+    target_sum = min(max(total_weight, Decimal('0.1')), Decimal('1'))
+    scale_factor = target_sum / total_weight
+
+    normalized_weights = {
+        label: (weight * scale_factor).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
+        for label, weight in sorted_labels
+    }
+
+    # Remove labels that round to 0.0
+    normalized_weights = {label: weight for label, weight in normalized_weights.items() if weight > Decimal('0')}
+
+    # Final adjustment to ensure sum is 1
+    weight_sum = sum(normalized_weights.values())
+    if weight_sum < Decimal('1'):
+        deficit = Decimal('1') - weight_sum
+        while deficit > Decimal('0'):
+            for label in sorted(normalized_weights, key=normalized_weights.get):
+                if normalized_weights[label] < Decimal('1'):
+                    increase = min(deficit, Decimal('0.1'))
+                    normalized_weights[label] += increase
+                    deficit -= increase
+                    if deficit <= Decimal('0'):
+                        break
+
+    # Remove sources with no label weights
+    updated_data = []
+    for source in data:
+        updated_label_weights = {
+            label: float(normalized_weights[label])
+            for label in source["label_weights"]
+            if label in normalized_weights
+        }
+        if updated_label_weights:
+            source["label_weights"] = updated_label_weights
+            updated_data.append(source)
+
+    return json.dumps(updated_data, indent=4)
 
 def load_and_validate_preferences(file_path: str) -> str:
     """Load preferences from a JSON file and validate the label weights."""
@@ -52,16 +113,19 @@ def load_and_validate_preferences(file_path: str) -> str:
     if total_weight > Decimal('1'):
         raise ValueError(f"Error: Total weight {total_weight} exceeds 1")
     
-    return json.dumps(data)
+    return json.dumps(data, indent=4)
 
 
 def upload_to_github(json_content: str, hotkey: str) -> str:
     """Uploads the preferences json to Github."""
 
-    logging.info(f"Cloning repository: {REPO_URL}")
-    run_command(["git", "clone", REPO_URL])
-
     repo_name = REPO_URL.split("/")[-1].replace(".git", "")
+    if os.path.exists(repo_name):
+        logging.info(f"Repo already exists: {repo_name}.")
+    else:
+        logging.info(f"Cloning repository: {REPO_URL}")
+        run_command(["git", "clone", REPO_URL])
+
     os.chdir(repo_name)
 
     logging.info(f"Checking out and updating branch: {BRANCH_NAME}")
@@ -75,9 +139,13 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
         f.write(json_content)
 
     logging.info("Staging, committing, and pushing changes")
-    run_command(["git", "add", file_name])
-    run_command(["git", "commit", "-m", f"Add {hotkey} preferences JSON file"])
-    run_command(["git", "push", "origin", BRANCH_NAME])
+
+    try:    
+        run_command(["git", "add", file_name])
+        run_command(["git", "commit", "-m", f"Add {hotkey} preferences JSON file"])
+        run_command(["git", "push", "origin", BRANCH_NAME])
+    except subprocess.CalledProcessError as e:
+        bt.logging.warning("What you're currently trying to commit has no differences to your last commit. Proceeding with last commit...")
 
     logging.info("Retrieving commit hash")
     local_commit_hash = run_command(["git", "rev-parse", "HEAD"])
@@ -106,12 +174,17 @@ async def run_uploader(preference_file: str):
     chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=NETUID)
 
     try:
-        json_content = load_and_validate_preferences(preference_file)
-        github_commit = upload_to_github(json_content, my_hotkey)
-        await chain_store.store_preferences(github_commit)
-        result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
-        bt.logging.info(f"Stored {result} on chain commit hash.")
-        return result
+        #json_content = load_and_validate_preferences(preference_file)
+        json_content = normalize_preferences_json(preference_file)
+        print(json_content)
+        if json_content:
+            github_commit = upload_to_github(json_content, my_hotkey)
+            await chain_store.store_preferences(github_commit)
+            result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
+            bt.logging.info(f"Stored {result} on chain commit hash.")
+            return result
+        else:
+            bt.logging.error("Your preferences cannot be normalized to a valid format. Please see docs for info.")
     except Exception as e:
         logging.error(f"An error occurred: {str(e)}")
         raise

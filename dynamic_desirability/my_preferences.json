@@ -2,13 +2,24 @@
     {
         "source_name": "reddit",
         "label_weights": {
-            "r/test": 0.1
+            "r/bulbasaur": 0.1,
+            "r/ivysaur": 1.54,
+            "r/venasaur": 2,
+            "r/charmander": -6,
+            "r/charmeleon": -0.5,
+            "r/charizard": -3,
+            "r/squirtle": 0.1
         }
     },
     {
         "source_name": "x",
         "label_weights": {
-            "#test9": 0.9
+            "#new": 3,
+            "#york": 8.96666,
+            "#times": 3,
+            "#daily": 0.9,
+            "#mini": 0.9,
+            "#crossword": 0.9
         }
     }
 ]
