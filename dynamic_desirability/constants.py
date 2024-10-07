@@ -4,6 +4,7 @@ NETUID: int = 13        # FOR TESTING
 # The link to the github repo where preferences JSONs are uploaded.
 REPO_URL: str = 'https://github.com/macrocosm-os/dynamic-desirability-test.git'
 BRANCH_NAME: str = 'main'
+PREFERENCES_FOLDER: str = 'validator_preferences'
 
 # Total weight of all validators. Subnet (default) voting weight = 1-TOTAL_VALI_WEIGHT. 
 TOTAL_VALI_WEIGHT: float = 0.7

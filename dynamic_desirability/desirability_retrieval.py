@@ -11,7 +11,7 @@ from dynamic_desirability.chain_utils import ChainPreferenceStore
 from common import constants
 from common.data import DataLabel, DataSource
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
-from dynamic_desirability.constants import NETWORK, NETUID, REPO_URL, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
+from dynamic_desirability.constants import NETWORK, NETUID, REPO_URL, PREFERENCES_FOLDER, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
 from dynamic_desirability.constants import TOTAL_VALI_WEIGHT, REDDIT_SOURCE_WEIGHT, X_SOURCE_WEIGHT
 from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME
 
@@ -55,13 +55,15 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
         bt.logging.info(f"Checking out commit: {commit_sha}")
         subprocess.run(['git', 'checkout', commit_sha], check=True, capture_output=True)
 
-        if os.path.exists(filename):
-            bt.logging.info(f"File '{filename}' found. Reading contents...")
-            with open(filename, 'r') as file:
+        file_path = os.path.join(PREFERENCES_FOLDER, filename)
+
+        if os.path.exists(file_path):
+            bt.logging.info(f"File '{file_path}' found. Reading contents...")
+            with open(file_path, 'r') as file:
                 content = json.load(file)
             return content
         else:
-            bt.logging.error(f"File '{filename}' not found in this commit.")
+            bt.logging.error(f"File '{file_path}' not found in this commit.")
             return None
 
     except subprocess.CalledProcessError as e:

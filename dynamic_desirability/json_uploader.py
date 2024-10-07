@@ -8,7 +8,7 @@ import bittensor as bt
 from typing import List
 from decimal import Decimal, ROUND_HALF_UP
 from chain_utils import ChainPreferenceStore
-from constants import REPO_URL, BRANCH_NAME, NETWORK, NETUID
+from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, NETWORK, NETUID
 from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME, MY_JSON_PATH
 
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
@@ -132,7 +132,15 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
     run_command(["git", "checkout", BRANCH_NAME])
     run_command(["git", "pull", "origin", BRANCH_NAME])
 
-    file_name = f"{hotkey}.json"
+    # If for any reason folder was deleted, creates folder.
+    if not os.path.exists(PREFERENCES_FOLDER):
+        logging.info(f"Creating folder: {PREFERENCES_FOLDER}")
+        os.mkdir(PREFERENCES_FOLDER)
+
+    file_name = f"{PREFERENCES_FOLDER}/{hotkey}.json"
+    logging.info(f"Creating preferences file: {file_name}")
+    with open(file_name, 'w') as f:
+        f.write(json_content)
 
     logging.info(f"Creating preferences file: {file_name}")
     with open(file_name, 'w') as f:
