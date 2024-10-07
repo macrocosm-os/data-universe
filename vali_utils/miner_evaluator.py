@@ -68,7 +68,6 @@ class MinerEvaluator:
         )
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
-        self.hf_storage = HFValidationStorage(self.config.hf_results_path)
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
@@ -125,29 +124,29 @@ class MinerEvaluator:
         ##########
         # Query HuggingFace metadata
 
-        current_block = int(self.metagraph.block)
-        validation_info = self.hf_storage.get_validation_info(hotkey)
-        if validation_info is None or (current_block - validation_info['block']) > 55000:
-            hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-            if hf_metadatas:
-                for hf_metadata in hf_metadatas:
-                    bt.logging.info(f'{hotkey}: Trying to validate {hf_metadata.repo_name}')
-
-                    validation_result = await validate_huggingface_dataset(hf_metadata)
-                    bt.logging.info(f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
-
-                    # Store the validation result regardless of success status
-                    self.hf_storage.update_validation_info(
-                        hotkey,
-                        str(hf_metadata.repo_name),
-                        current_block,
-                    )
-            else:
-                self.hf_storage.update_validation_info(
-                    hotkey,
-                    'no_dataset_provided',
-                    current_block,
-                )
+        # current_block = int(self.metagraph.block)
+        # validation_info = self.hf_storage.get_validation_info(hotkey)
+        # if validation_info is None or (current_block - validation_info['block']) > 55000:
+        #     hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
+        #     if hf_metadatas:
+        #         for hf_metadata in hf_metadatas:
+        #             bt.logging.info(f'{hotkey}: Trying to validate {hf_metadata.repo_name}')
+        #
+        #             validation_result = await validate_huggingface_dataset(hf_metadata)
+        #             bt.logging.info(f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
+        #
+        #             # Store the validation result regardless of success status
+        #             self.hf_storage.update_validation_info(
+        #                 hotkey,
+        #                 str(hf_metadata.repo_name),
+        #                 current_block,
+        #             )
+        #     else:
+        #         self.hf_storage.update_validation_info(
+        #             hotkey,
+        #             'no_dataset_provided',
+        #             current_block,
+        #         )
 
 
         ##########
