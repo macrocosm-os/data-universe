@@ -191,7 +191,7 @@ class Miner:
             bt.logging.info("HuggingFace Uploader is not enabled.")
             return
 
-        time_sleep_val = dt.timedelta(seconds=30).total_seconds()
+        time_sleep_val = dt.timedelta(minutes=30).total_seconds()
         time.sleep(time_sleep_val)
 
         while not self.should_exit:
