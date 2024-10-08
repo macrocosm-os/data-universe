@@ -32,7 +32,7 @@ from vali_utils import utils as vali_utils
 
 from typing import List, Optional
 
-from vali_utils.hf_utlis import validate_huggingface_dataset
+from vali_utils.hf_utils import validate_huggingface_dataset
 
 from rewards.miner_scorer import MinerScorer
 
