@@ -27,12 +27,15 @@ import datetime as dt
 import os
 import wandb
 import subprocess
+import pandas as pd
+import tempfile
 from common.metagraph_syncer import MetagraphSyncer
 import common.utils as utils
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
-from dynamic_desirability.desirability_retrieval import run_retrieval
+from vali_utils.hf_utlis import update_dataset_names
+from dynamic_desirability.desirability_retrieval import run_retrieval, sync_run_retrieval
 from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
 import datadog
@@ -122,19 +125,20 @@ class Validator:
 
         self.is_setup = True
 
-    def get_updated_lookup(self):
+    def  get_updated_lookup(self):
         while not self.should_exit:
-            try:
-                # Updates every night at midnight.
-                if dt.datetime.now(dt.timezone.utc) == 0:
-                    bt.logging.info("Retrieving the latest dynamic lookup...")
-                    # QUESTION: should add new function to change value calculator's lookup? or reinstantiate new one every time?
-                    model = run_retrieval()
-                    self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
+            time.sleep(24 * 60 * 60)            
+            bt.logging.info("Vlad test")
+            # Updates every night at midnight.
+            current_datetime = dt.datetime.now(dt.timezone.utc)
+            #if current_datetime.time() == dt.time(0,0,0):
+            bt.logging.info("Retrieving the latest dynamic lookup...")
+            # QUESTION: should add new function to change value calculator's lookup? or reinstantiate new one every time?
+            model =  sync_run_retrieval()
+            self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
+            # time.sleep(3600)
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
-            except Exception:
-                bt.logging.error("Couldn't fetch latest updated lookup.")
-
+            
     def get_version_tag(self):
         """Fetches version tag"""
         try:
@@ -179,6 +183,32 @@ class Validator:
 
         bt.logging.debug(f"Started a new wandb run: {name}")
 
+    def log_parquet_to_artifact(self, artifact_name, artifact_type="dataset"):
+        if self.wandb_run is None:
+            bt.logging.warning("Wandb run not initialized. Skipping artifact logging.")
+            return
+
+        if not os.path.exists(self.config.hf_results_path):
+            bt.logging.warning(f"Parquet file not found at {self.config.hf_results_path}. Skipping artifact logging.")
+            return
+
+        # Read the parquet file
+        df = pd.read_parquet(self.config.hf_results_path)
+
+        # Update the dataset names
+        df = update_dataset_names(df)
+
+        # Create a temporary directory to store the updated parquet file
+        with tempfile.TemporaryDirectory() as tmpdirname:
+            updated_parquet_path = os.path.join(tmpdirname, "updated_results.parquet")
+            df.to_parquet(updated_parquet_path)
+
+            # Create and log the artifact
+            artifact = wandb.Artifact(artifact_name, type=artifact_type)
+            artifact.add_file(updated_parquet_path)
+            self.wandb_run.log_artifact(artifact)
+
+        bt.logging.info(f"Logged updated parquet file as artifact: {artifact_name}")
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
@@ -222,7 +252,8 @@ class Validator:
                 # Maybe set weights.
                 if self.should_set_weights():
                     self.set_weights()
-
+                
+                self.log_parquet_to_artifact(artifact_name='miners_datasets')
                 # Always save state.
                 self.save_state()
 
@@ -281,6 +312,7 @@ class Validator:
             self.databox_thread.start()
             self.lookup_thread = threading.Thread(
                 target=self.get_updated_lookup, daemon=True)
+            self.lookup_thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
 

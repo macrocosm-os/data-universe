@@ -2,13 +2,14 @@
     {
         "source_name": "reddit",
         "label_weights": {
-            "r/test": 0.1
+            "r/gravity": 0.1
         }
     },
     {
         "source_name": "x",
         "label_weights": {
-            "#test9": 0.9
+            "Meta": 0.1,
+            "Mistral": 0.8
         }
     }
 ]
