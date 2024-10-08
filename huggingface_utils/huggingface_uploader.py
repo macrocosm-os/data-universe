@@ -4,13 +4,36 @@ import datetime as dt
 import pandas as pd
 import bittensor as bt
 import sqlite3
+import re
+import time
+import requests
 from contextlib import contextmanager
-from huggingface_hub import HfApi
+from huggingface_hub import HfApi, hf_hub_download
 from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
 from huggingface_utils.encoding_system import EncodingKeyManager
 from common.data import HuggingFaceMetadata, DataSource
 from typing import List, Dict, Union, Any
 from huggingface_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
+from requests.exceptions import RequestException
+from functools import wraps
+
+
+def retry_upload(max_retries: int = 3, delay: int = 5):
+    """Decorator to retry uploads on failure."""
+    def decorator(func):
+        @wraps(func)
+        def wrapper(*args, **kwargs):
+            for attempt in range(max_retries):
+                try:
+                    return func(*args, **kwargs)
+                except RequestException as e:
+                    if attempt == max_retries - 1:
+                        raise
+                    bt.logging.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    time.sleep(delay)
+        return wrapper
+    return decorator
+
 
 class HuggingFaceUploader:
     def __init__(self, db_path: str,
@@ -37,10 +60,29 @@ class HuggingFaceUploader:
         finally:
             conn.close()
 
+    def sanitize_json(self, json_string: str) -> str:
+        """Remove any non-printable characters from the JSON string."""
+        return re.sub(r'[\x00-\x1F\x7F-\x9F]', '', json_string)
+
+    def ensure_unicode(self, s: Any) -> str:
+        """Ensure the input is a Unicode string."""
+        if isinstance(s, bytes):
+            return s.decode('utf-8')
+        return str(s)
+
+    def check_connection(self, url: str = "https://huggingface.co", timeout: int = 5) -> bool:
+        """Check if the connection to Hugging Face is stable."""
+        try:
+            response = requests.get(url, timeout=timeout)
+            return response.status_code == 200
+        except requests.RequestException:
+            return False
+
     def load_state(self):
         if os.path.exists(self.state_file):
             with open(self.state_file, 'r') as f:
-                state = json.load(f)
+                state_data = self.sanitize_json(f.read())
+                state = json.loads(state_data)
                 for source in state['last_upload']:
                     if state['last_upload'][source] and not isinstance(state['last_upload'][source], float):
                         try:
@@ -113,7 +155,12 @@ class HuggingFaceUploader:
         else:
             return preprocess_twitter_df(df, self.encoding_key_manager)
 
+    @retry_upload()
     def upload_parquet_to_hf(self, repo_id):
+        if not self.check_connection():
+            bt.logging.error("Network connection is unstable. Upload aborted.")
+            return
+
         self.hf_api.upload_folder(
             token=self.hf_token,
             folder_path=self.output_dir,
@@ -248,62 +295,57 @@ class HuggingFaceUploader:
         return hf_metadata_list
 
     def collect_statistics(self, df: pd.DataFrame, source: int) -> Dict[str, Any]:
-        """
-        Collect statistics from a DataFrame chunk.
-
-        Args:
-            df (pd.DataFrame): The DataFrame chunk to analyze.
-            source (int): The data source (Reddit or X).
-
-        Returns:
-            Dict[str, Any]: A dictionary containing the collected statistics.
-        """
         df['datetime'] = pd.to_datetime(df['datetime'])
         stats = {
             'total_rows': len(df),
             'start_date': df['datetime'].min().strftime('%Y-%m-%dT%H:%M:%SZ'),
             'end_date': df['datetime'].max().strftime('%Y-%m-%dT%H:%M:%SZ'),
+            'metadata': {}
         }
 
         if source == DataSource.REDDIT.value:
             stats['posts_count'] = df[df['dataType'] == 'post'].shape[0]
             stats['comments_count'] = df[df['dataType'] == 'comment'].shape[0]
+            stats['metadata']['posts_percentage'] = (stats['posts_count'] / len(df)) * 100
+            stats['metadata']['comments_percentage'] = (stats['comments_count'] / len(df)) * 100
             subreddit_counts = df['communityName'].value_counts().to_dict()
-            stats['subreddits'] = {subreddit: {'count': count, 'percentage': 0}
+            stats['subreddits'] = {subreddit: {'count': count, 'percentage': (count / len(df)) * 100}
                                    for subreddit, count in subreddit_counts.items()}
         else:  # X (Twitter)
-            # Count tweets with hashtags
-            has_hashtags = df[df['label'].notna() & (df['label'] != '')]
-            stats['tweets_with_hashtags_count'] = len(has_hashtags)
+            # Count tweets with and without hashtags
+            tweets_with_hashtags = df[df['label'] != 'NULL']
+            tweets_without_hashtags = df[df['label'] == 'NULL']
+            stats['tweets_with_hashtags_count'] = len(tweets_with_hashtags)
+            stats['tweets_without_hashtags_count'] = len(tweets_without_hashtags)
+            stats['metadata']['tweets_with_hashtags_percentage'] = (stats['tweets_with_hashtags_count'] / len(df)) * 100
+            stats['metadata']['tweets_without_hashtags_percentage'] = (stats['tweets_without_hashtags_count'] / len(
+                df)) * 100
 
             # Extract and count hashtags
-            all_hashtags = df['label'].fillna('').str.split().explode()
-            hashtag_counts = all_hashtags[all_hashtags != ''].value_counts().to_dict()
+            all_hashtags = tweets_with_hashtags['label'].str.split().explode()
+            hashtag_counts = all_hashtags.value_counts().to_dict()
 
             stats['hashtags'] = {
                 hashtag: {
                     'count': count,
-                    'percentage': 0
+                    'percentage': (count / len(df)) * 100
                 }
                 for hashtag, count in hashtag_counts.items()
+            }
+
+            # Add "NULL" for tweets without hashtags
+            stats['hashtags']['NULL'] = {
+                'count': stats['tweets_without_hashtags_count'],
+                'percentage': stats['metadata']['tweets_without_hashtags_percentage']
             }
 
         return stats
 
     def merge_statistics(self, old_stats: Dict[str, Any], new_stats: Dict[str, Any]) -> Dict[str, Any]:
-        """
-        Merge two sets of statistics.
-
-        Args:
-            old_stats (Dict[str, Any]): The existing statistics.
-            new_stats (Dict[str, Any]): The new statistics to merge.
-
-        Returns:
-            Dict[str, Any]: The merged statistics.
-        """
         merged = old_stats.copy()
         for key, value in new_stats.items():
-            if key in ['total_rows', 'posts_count', 'comments_count', 'tweets_with_hashtags_count']:
+            if key in ['total_rows', 'posts_count', 'comments_count', 'tweets_with_hashtags_count',
+                       'tweets_without_hashtags_count']:
                 merged[key] = merged.get(key, 0) + value
             elif key in ['start_date', 'end_date']:
                 if key == 'start_date':
@@ -312,20 +354,22 @@ class HuggingFaceUploader:
                     merged[key] = max(merged.get(key, value), value)
             elif key in ['subreddits', 'hashtags']:
                 merged[key] = self.merge_top_items(merged.get(key, {}), value)
+            elif key == 'metadata':
+                merged[key] = self.merge_metadata(merged.get(key, {}), value)
         return merged
+
+    def merge_metadata(self, old_metadata: Dict[str, float], new_metadata: Dict[str, float]) -> Dict[str, float]:
+        merged_metadata = old_metadata.copy()
+        for key, value in new_metadata.items():
+            if key in merged_metadata:
+                # For percentages, we take the average
+                merged_metadata[key] = (merged_metadata[key] + value) / 2
+            else:
+                merged_metadata[key] = value
+        return merged_metadata
 
     def merge_top_items(self, old_items: Dict[str, Dict[str, Union[int, float]]],
                         new_items: Dict[str, Dict[str, Union[int, float]]]) -> Dict[str, Dict[str, Union[int, float]]]:
-        """
-        Merge two dictionaries of items, updating counts and percentages.
-
-        Args:
-            old_items (Dict[str, Dict[str, Union[int, float]]]): Existing items.
-            new_items (Dict[str, Dict[str, Union[int, float]]]): New items to merge.
-
-        Returns:
-            Dict[str, Dict[str, Union[int, float]]]: Merged items.
-        """
         merged = {k: v.copy() for k, v in old_items.items()}
         for k, v in new_items.items():
             if k in merged:
@@ -335,158 +379,147 @@ class HuggingFaceUploader:
 
         total_count = sum(item['count'] for item in merged.values())
         for item in merged.values():
-            item['percentage'] = (item['count'] / total_count) * 100
+            item['percentage'] = (item['count'] / total_count) * 100 if total_count > 0 else 0
 
         return merged
 
     def update_topics(self, existing_topics: List[Dict[str, Any]], new_topics: Dict[str, Dict[str, Any]], platform: str) -> List[Dict[str, Any]]:
-        """
-        Merge existing topics with new topics and update their statistics.
-
-        Args:
-            existing_topics (List[Dict[str, Any]]): List of existing topics.
-            new_topics (Dict[str, Dict[str, Any]]): New topics to merge.
-            platform (str): The platform ('reddit' or 'x').
-
-        Returns:
-            List[Dict[str, Any]]: Updated list of topics.
-        """
         topic_type = "subreddit" if platform == "reddit" else "hashtag"
         topic_dict = {topic["topic"]: topic for topic in existing_topics if topic["topic_type"] == topic_type}
 
         for topic_name, data in new_topics.items():
             if topic_name in topic_dict:
                 topic = topic_dict[topic_name]
-                topic["update_history"].append({
-                    "timestamp": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                    "count": data["count"],
-                    "percentage": data.get('percentage', 0)
-                })
             else:
-                topic_dict[topic_name] = {
+                topic = {
                     "topic": topic_name,
                     "topic_type": topic_type,
-                    "update_history": [{
-                        "timestamp": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                        "count": data["count"],
-                        "percentage": data.get('percentage', 0)
-                    }]
+                    "update_history": [],
+                    "total_count": 0,
+                    "total_percentage": 0
                 }
+                topic_dict[topic_name] = topic
+
+            topic["update_history"].append({
+                "timestamp": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
+                "count": data["count"],
+                "percentage": data["percentage"]
+            })
+            topic["total_count"] = topic.get("total_count", 0) + data["count"]
+
+        # Recalculate total percentages
+        total_count = sum(topic.get("total_count", 0) for topic in topic_dict.values())
+        if total_count > 0:
+            for topic in topic_dict.values():
+                topic["total_percentage"] = (topic.get("total_count", 0) / total_count) * 100
+        else:
+            for topic in topic_dict.values():
+                topic["total_percentage"] = 0
 
         return list(topic_dict.values())
 
     def load_existing_stats(self, repo_id: str) -> Dict[str, Any]:
         """
-        Load existing stats from stats.json if it exists.
-
-        Args:
-            repo_id (str): The Hugging Face repository ID.
-
-        Returns:
-            Dict[str, Any]: Existing statistics or an empty structure.
+        Load and sanitize existing stats from stats.json in the HF repo.
         """
         filename = "stats.json"
         try:
-            existing_stats_file = self.hf_api.hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset")
-            with open(existing_stats_file, 'r') as f:
-                full_stats = json.load(f)
-            return full_stats
-        except Exception:
-            # If stats.json does not exist, initialize it
-            full_stats = {
-                "version": "0.0.0",
-                "data_source": None,
-                "summary": {
-                    "total_rows": 0,
-                    "last_update_dt": None,
-                    "start_dt": None,
-                    "end_dt": None,
-                    "update_history": [],
-                    "metadata": {}
-                },
-                "topics": []
-            }
+            local_path = hf_hub_download(repo_id=repo_id, filename=filename, repo_type="dataset", token=self.hf_token)
+
+            with open(local_path, 'r', encoding='utf-8') as f:
+                content = f.read()
+
+            sanitized_content = self.sanitize_json(content)
+            full_stats = json.loads(sanitized_content)
+
+            bt.logging.info(f"Successfully loaded and sanitized existing stats from {repo_id}")
             return full_stats
 
-    def save_stats_json(self, platform_stats: Dict[str, Any], platform: str, new_rows: int, repo_id: str) -> Dict[str, Any]:
-        """
-        Save the statistics to stats.json file and upload it to the Hugging Face repository.
+        except json.JSONDecodeError as e:
+            bt.logging.error(f"JSON Decode Error in existing stats file: {e}")
+            bt.logging.error(f"Error location: line {e.lineno}, column {e.colno}")
+            bt.logging.error(f"Problematic JSON snippet: {e.doc[max(0, e.pos - 20):e.pos + 20]}")
+            return self.get_default_stats_structure()
 
-        Args:
-            platform_stats (Dict[str, Any]): The new statistics collected for the current platform.
-            platform (str): The platform for which the statistics are collected ('reddit' or 'x').
-            new_rows (int): The number of new rows added in this update.
-            repo_id (str): The Hugging Face repository ID.
+        except Exception as e:
+            bt.logging.error(f"Error loading existing stats: {e}")
+            return self.get_default_stats_structure()
 
-        Returns:
-            Dict[str, Any]: The updated statistics after merging and calculations.
-        """
+    def get_default_stats_structure(self) -> Dict[str, Any]:
+        """Return a default stats structure."""
+        return {
+            "version": "1.0.0",
+            "data_source": None,
+            "summary": {
+                "total_rows": 0,
+                "last_update_dt": None,
+                "start_dt": None,
+                "end_dt": None,
+                "update_history": [],
+                "metadata": {}
+            },
+            "topics": []
+        }
+
+    @retry_upload()
+    def save_stats_json(self, platform_stats: Dict[str, Any], platform: str, new_rows: int, repo_id: str) -> Dict[
+        str, Any]:
         filename = "stats.json"
 
-        # Try to load existing stats
-        full_stats = self.load_existing_stats(repo_id)
+        try:
+            existing_stats = self.load_existing_stats(repo_id)
 
-        # Update data source
-        full_stats["data_source"] = platform
+            if existing_stats["data_source"] is None:
+                existing_stats["data_source"] = platform
 
-        # Update the summary
-        summary = full_stats["summary"]
-        summary["total_rows"] += new_rows
-        summary["last_update_dt"] = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
+            merged_stats = self.merge_statistics(existing_stats, platform_stats)
 
-        # Update start and end dates
-        if summary["start_dt"] is None or platform_stats["start_date"] < summary["start_dt"]:
-            summary["start_dt"] = platform_stats["start_date"]
+            merged_stats["summary"]["total_rows"] += new_rows
+            merged_stats["summary"]["last_update_dt"] = dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ")
 
-        if summary["end_dt"] is None or platform_stats["end_date"] > summary["end_dt"]:
-            summary["end_dt"] = platform_stats["end_date"]
+            if merged_stats["summary"]["start_dt"] is None or platform_stats["start_date"] < merged_stats["summary"][
+                "start_dt"]:
+                merged_stats["summary"]["start_dt"] = platform_stats["start_date"]
 
-        # Update update_history
-        summary["update_history"].append({
-            "timestamp": summary["last_update_dt"],
-            "count": new_rows
-        })
+            if merged_stats["summary"]["end_dt"] is None or platform_stats["end_date"] > merged_stats["summary"][
+                "end_dt"]:
+                merged_stats["summary"]["end_dt"] = platform_stats["end_date"]
 
-        # Update metadata
-        metadata = summary.get("metadata", {})
-        if platform == "reddit":
-            metadata["posts_count"] = metadata.get("posts_count", 0) + platform_stats.get("posts_count", 0)
-            metadata["comments_count"] = metadata.get("comments_count", 0) + platform_stats.get("comments_count", 0)
-            total = metadata["posts_count"] + metadata["comments_count"]
-            if total > 0:
-                metadata["posts_percentage"] = (metadata["posts_count"] / total) * 100
-                metadata["comments_percentage"] = (metadata["comments_count"] / total) * 100
-        else:  # X (Twitter)
-            metadata["tweets_with_hashtags_count"] = metadata.get("tweets_with_hashtags_count", 0) + platform_stats.get("tweets_with_hashtags_count", 0)
-            total = summary["total_rows"]
-            if total > 0:
-                metadata["tweets_with_hashtags_percentage"] = (metadata["tweets_with_hashtags_count"] / total) * 100
+            merged_stats["summary"]["update_history"].append({
+                "timestamp": merged_stats["summary"]["last_update_dt"],
+                "count": new_rows
+            })
 
-        summary["metadata"] = metadata
+            merged_stats["topics"] = self.update_topics(merged_stats.get("topics", []), platform_stats.get(
+                'subreddits' if platform == 'reddit' else 'hashtags', {}), platform)
 
-        # Update topics
-        topics = full_stats.get("topics", [])
-        platform_topics = platform_stats.get('subreddits' if platform == 'reddit' else 'hashtags', {})
-        topics = self.update_topics(topics, platform_topics, platform)
+            # Update metadata percentages
+            total_rows = merged_stats["summary"]["total_rows"]
+            if platform == 'reddit':
+                merged_stats["summary"]["metadata"]["posts_percentage"] = (merged_stats.get("posts_count",
+                                                                                            0) / total_rows) * 100
+                merged_stats["summary"]["metadata"]["comments_percentage"] = (merged_stats.get("comments_count",
+                                                                                               0) / total_rows) * 100
+            else:  # X (Twitter)
+                merged_stats["summary"]["metadata"]["tweets_with_hashtags_percentage"] = (merged_stats.get(
+                    "tweets_with_hashtags_count", 0) / total_rows) * 100
+                merged_stats["summary"]["metadata"]["tweets_without_hashtags_percentage"] = (merged_stats.get(
+                    "tweets_without_hashtags_count", 0) / total_rows) * 100
 
-        full_stats["topics"] = topics
+            stats_json = json.dumps(merged_stats, indent=2, cls=NumpyEncoder)
+            sanitized_stats_json = self.sanitize_json(stats_json)
 
-        # Save stats.json
-        stats_json = json.dumps(full_stats, indent=2, cls=NumpyEncoder)
+            self.hf_api.upload_file(
+                token=self.hf_token,
+                path_or_fileobj=sanitized_stats_json.encode(),
+                path_in_repo=filename,
+                repo_id=repo_id,
+                repo_type="dataset",
+            )
 
-        self.hf_api.upload_file(
-            token=self.hf_token,
-            path_or_fileobj=stats_json.encode(),
-            path_in_repo=filename,
-            repo_id=repo_id,
-            repo_type="dataset",
-        )
+            bt.logging.info(f"Successfully updated {filename} for {platform} dataset in {repo_id}")
+            return merged_stats
 
-        # Remove old stats files if they exist
-        for old_filename in [f"{platform}_stats.json"]:
-            try:
-                self.hf_api.delete_file(path_in_repo=old_filename, repo_id=repo_id, repo_type="dataset")
-            except Exception:
-                pass  # If the file doesn't exist, ignore
-
-        return full_stats
+        except Exception as e:
+            bt.logging.error(f"Error saving merged stats JSON: {e}")
+            raise
