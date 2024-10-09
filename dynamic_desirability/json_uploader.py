@@ -3,7 +3,6 @@ import json
 import os
 import shutil
 import subprocess
-import logging
 import bittensor as bt
 from typing import List
 from decimal import Decimal, ROUND_HALF_UP
@@ -11,7 +10,6 @@ from chain_utils import ChainPreferenceStore
 from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, NETWORK, NETUID
 from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME, MY_JSON_PATH
 
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(levelname)s - %(message)s')
 
 def run_command(command: List[str]) -> str:
     """Runs a subprocess command."""
@@ -19,8 +17,8 @@ def run_command(command: List[str]) -> str:
         result = subprocess.run(command, check=True, text=True, capture_output=True)
         return result.stdout.strip()
     except subprocess.CalledProcessError as e:
-        logging.error(f"Error executing command: {' '.join(command)}")
-        logging.error(f"Error message: {e.stderr.strip()}")
+        bt.logging.error(f"Error executing command: {' '.join(command)}")
+        bt.logging.error(f"Error message: {e.stderr.strip()}")
         raise
 
 def normalize_preferences_json(file_path: str) -> str:
@@ -121,14 +119,14 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
 
     repo_name = REPO_URL.split("/")[-1].replace(".git", "")
     if os.path.exists(repo_name):
-        logging.info(f"Repo already exists: {repo_name}.")
+        bt.logging.info(f"Repo already exists: {repo_name}.")
     else:
-        logging.info(f"Cloning repository: {REPO_URL}")
+        bt.logging.info(f"Cloning repository: {REPO_URL}")
         run_command(["git", "clone", REPO_URL])
 
     os.chdir(repo_name)
 
-    logging.info(f"Checking out and updating branch: {BRANCH_NAME}")
+    bt.logging.info(f"Checking out and updating branch: {BRANCH_NAME}")
     run_command(["git", "checkout", BRANCH_NAME])
     run_command(["git", "pull", "origin", BRANCH_NAME])
 
@@ -138,15 +136,15 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
         os.mkdir(PREFERENCES_FOLDER)
 
     file_name = f"{PREFERENCES_FOLDER}/{hotkey}.json"
-    logging.info(f"Creating preferences file: {file_name}")
+    bt.logging.info(f"Creating preferences file: {file_name}")
     with open(file_name, 'w') as f:
         f.write(json_content)
 
-    logging.info(f"Creating preferences file: {file_name}")
+    bt.logging.info(f"Creating preferences file: {file_name}")
     with open(file_name, 'w') as f:
         f.write(json_content)
 
-    logging.info("Staging, committing, and pushing changes")
+    bt.logging.info("Staging, committing, and pushing changes")
 
     try:    
         run_command(["git", "add", file_name])
@@ -155,21 +153,21 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
     except subprocess.CalledProcessError as e:
         bt.logging.warning("What you're currently trying to commit has no differences to your last commit. Proceeding with last commit...")
 
-    logging.info("Retrieving commit hash")
+    bt.logging.info("Retrieving commit hash")
     local_commit_hash = run_command(["git", "rev-parse", "HEAD"])
 
     run_command(["git", "fetch", "origin", BRANCH_NAME])
     remote_commit_hash = run_command(["git", "rev-parse", f"origin/{BRANCH_NAME}"])
 
     if local_commit_hash == remote_commit_hash:
-        logging.info(f"Successfully pushed. Commit hash: {local_commit_hash}")
+        bt.logging.info(f"Successfully pushed. Commit hash: {local_commit_hash}")
     else:
-        logging.warning("Local and remote commit hashes differ.")
-        logging.warning(f"Local commit hash: {local_commit_hash}")
-        logging.warning(f"Remote commit hash: {remote_commit_hash}")
+        bt.logging.warning("Local and remote commit hashes differ.")
+        bt.logging.warning(f"Local commit hash: {local_commit_hash}")
+        bt.logging.warning(f"Remote commit hash: {remote_commit_hash}")
 
     os.chdir("..")
-    logging.info(f"Deleting the cloned repository folder: {repo_name}")
+    bt.logging.info(f"Deleting the cloned repository folder: {repo_name}")
     shutil.rmtree(repo_name)
 
     return remote_commit_hash
@@ -194,7 +192,7 @@ async def run_uploader(preference_file: str):
         else:
             bt.logging.error("Your preferences cannot be normalized to a valid format. Please see docs for info.")
     except Exception as e:
-        logging.error(f"An error occurred: {str(e)}")
+        bt.logging.error(f"An error occurred: {str(e)}")
         raise
 
 if __name__ == "__main__":

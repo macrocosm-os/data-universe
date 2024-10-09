@@ -75,7 +75,7 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
     finally:
         os.chdir(original_dir)
         if os.path.exists(repo_path):
-            logging.info(f"Deleting the cloned repository folder: {repo_name}")
+            bt.logging.info(f"Deleting the cloned repository folder: {repo_name}")
             shutil.rmtree(repo_name)
 
 
