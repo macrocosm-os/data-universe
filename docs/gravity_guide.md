@@ -77,7 +77,7 @@ python dynamic_desirability/desirability_uploader.py --wallet YOUR_WALLET_NAME -
 
 ## desirability_retrieval.py
 
-This file provides functionality for miners and validators to retrieve the current state of aggregated validator and subnet preferences from the chain. `run_retrieval()` outputs the aggregate label weights to `total.json` and also returns them as a DataDesirabilityLookup object with a default scale factor of 0.4. 
+This file provides functionality for miners and validators to retrieve the current state of aggregated validator and subnet preferences from the chain. `run_retrieval()` outputs the aggregate label weights to `total.json` and also returns them as a DataDesirabilityLookup object with a default scale factor of 0.5. 
 
 To run the script, you will need the following arguments:
 - `--wallet`
