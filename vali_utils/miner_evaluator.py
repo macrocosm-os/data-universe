@@ -125,6 +125,7 @@ class MinerEvaluator:
         ##########
         # Query HuggingFace metadata
 
+
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
         if validation_info is None or (current_block - validation_info['block']) > 55000:
@@ -277,7 +278,7 @@ class MinerEvaluator:
         next_uid = self.miner_iterator.peek()
         hotkey = metagraph.hotkeys[next_uid]
         last_evaluated = self.storage.read_miner_last_updated(hotkey)
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         due_update = (
             last_evaluated is None
             or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
