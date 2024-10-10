@@ -29,6 +29,9 @@ def normalize_preferences_json(file_path: str) -> str:
     with open(file_path, 'r') as f:
         data = json.load(f)
 
+    if not data:
+        return {}
+
     all_label_weights = {}
     
     # Taking all positive label weights across all sources.
@@ -112,10 +115,6 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
     with open(file_name, 'w') as f:
         f.write(json_content)
 
-    bt.logging.info(f"Creating preferences file: {file_name}")
-    with open(file_name, 'w') as f:
-        f.write(json_content)
-
     bt.logging.info("Staging, committing, and pushing changes")
 
     try:    
@@ -152,16 +151,18 @@ async def run_uploader(args):
     chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=args.netuid)
 
     try:
+
         json_content = normalize_preferences_json(args.file_path)
+        if not json_content:
+            json_content = json.dumps(json_content, indent=4)
+
         bt.logging.info(f"JSON content:\n{json_content}")
-        if json_content:
-            github_commit = upload_to_github(json_content, my_hotkey)
-            await chain_store.store_preferences(github_commit)
-            result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
-            bt.logging.info(f"Stored {result} on chain commit hash.")
-            return result
-        else:
-            bt.logging.error("Your preferences cannot be normalized to a valid format. Please see docs for info.")
+        github_commit = upload_to_github(json_content, my_hotkey)
+        await chain_store.store_preferences(github_commit)
+        result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
+        bt.logging.info(f"Stored {result} on chain commit hash.")
+        return result
+
     except Exception as e:
         bt.logging.error(f"An error occurred: {str(e)}")
         raise
