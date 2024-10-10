@@ -17,7 +17,8 @@ from dynamic_desirability.constants import (REPO_URL,
     DEFAULT_JSON_PATH,
     AGGREGATE_JSON_PATH, 
     TOTAL_VALI_WEIGHT,
-    DEFAULT_SCALE_FACTOR
+    DEFAULT_SCALE_FACTOR,
+    AMPLICATION_FACTOR
     )
 
 
@@ -67,7 +68,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     """Calculate total weights and write to total.json."""
     total_weights: Dict[str, Dict[str, float]] = {}
     subnet_weight = 1 - total_vali_weight
-    normalizer = 1.0
+    normalizer = subnet_weight / AMPLICATION_FACTOR
 
     # Adding default weights to total.
     try:
@@ -78,8 +79,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
             if source_name not in total_weights:
                 total_weights[source_name] = {}
             for label, weight in source['label_weights'].items():
-                normalizer = subnet_weight * weight
-                total_weights[source_name][label] = subnet_weight * weight / normalizer
+                total_weights[source_name][label] = weight
     except FileNotFoundError:
         bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default weights.")
 
@@ -143,10 +143,10 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
 async def run_retrieval(config) -> DataDesirabilityLookup:
-    my_wallet = bt.wallet(name=config.wallet.name, hotkey=config.wallet.hotkey)
-    subtensor = bt.subtensor(network=config.subtensor.network)
-    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=config.netuid)
-    metagraph = bt.metagraph(netuid=config.netuid, network=config.subtensor.network, lite=True, sync=True)
+    my_wallet = bt.wallet(name="miney_walley", hotkey="miney_hotkey")
+    subtensor = bt.subtensor(network="finney")
+    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=13)
+    metagraph = bt.metagraph(netuid=13, network="finney", lite=True, sync=True)
 
 
     bt.logging.info("\nGetting validator weights from the metagraph...\n")
@@ -167,6 +167,31 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
     calculate_total_weights(validator_data=validator_data, default_json_path=default_path, total_vali_weight=TOTAL_VALI_WEIGHT)
 
     return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
+    
+    # my_wallet = bt.wallet(name=config.wallet.name, hotkey=config.wallet.hotkey)
+    # subtensor = bt.subtensor(network=config.subtensor.network)
+    # chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=config.netuid)
+    # metagraph = bt.metagraph(netuid=config.netuid, network=config.subtensor.network, lite=True, sync=True)
+
+
+    # bt.logging.info("\nGetting validator weights from the metagraph...\n")
+    # validator_data = get_validator_data(metagraph)
+
+    # bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
+
+    # for hotkey in validator_data.keys():
+    #     validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
+        
+    #     if validator_data[hotkey]['github_hash']:
+    #         validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'], filename=f"{hotkey}.json")
+
+    # bt.logging.info("\nCalculating total weights...\n")
+
+    # script_dir = os.path.dirname(os.path.abspath(__file__))
+    # default_path = os.path.join(script_dir, DEFAULT_JSON_PATH)
+    # calculate_total_weights(validator_data=validator_data, default_json_path=default_path, total_vali_weight=TOTAL_VALI_WEIGHT)
+
+    # return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
 
 def sync_run_retrieval(config):
     return asyncio.run(run_retrieval(config))
