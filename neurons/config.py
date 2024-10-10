@@ -127,7 +127,7 @@ def add_args(neuron_type: NeuronType, parser):
         parser.add_argument(
             "--hf_results_path",
             action="store_true",
-            help="Set this flag to disable logging to wandb.",
+            help="Set this flag to select the location where you are want to store your hf_results data",
             default=os.path.join(Path(os.path.dirname(__file__)).parent, "hf_validation.parquet"),
         )
 

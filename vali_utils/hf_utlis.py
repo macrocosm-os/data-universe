@@ -13,7 +13,20 @@ from huggingface_utils.encoding_system import SymKeyEncodingKeyManager, decode_u
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
 from common.data import DataSource, HuggingFaceMetadata
+import re
 
+def update_dataset_names(df):
+    def transform_dataset_name(name):
+        if name == 'no_dataset_provided':
+            return [name]
+        match = re.match(r'(.+)/reddit_dataset_(\d+)', name)
+        if match:
+            username, num = match.groups()
+            return [f"{username}/reddit_dataset_{num}", f"{username}/x_dataset_{num}"]
+        return [name]  # If it doesn't match the pattern, return the original name in a list
+
+    df['repo_name'] = df['repo_name'].apply(transform_dataset_name)
+    return df
 
 def get_latest_commit_files(repo_id: str) -> List[str]:
     api = HfApi()
