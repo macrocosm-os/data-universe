@@ -373,7 +373,7 @@ class HuggingFaceUploader:
 
         # Update the stats
         full_stats['total_rows'] += new_rows
-        full_stats['last_update'] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+        full_stats['last_update'] = dt.datetime.utcnow().strftime("%Y-%m-%d")
         full_stats['update_history'].append({
             'date': full_stats['last_update'],
             'rows_added': new_rows
