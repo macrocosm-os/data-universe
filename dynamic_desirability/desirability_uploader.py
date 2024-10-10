@@ -29,7 +29,6 @@ def normalize_preferences_json(file_path: str) -> str:
     with open(file_path, 'r') as f:
         data = json.load(f)
 
-    print(f"data {data}")
     if not data:
         return {}
 
