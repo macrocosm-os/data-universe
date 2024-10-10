@@ -227,7 +227,7 @@ class HuggingFaceUploader:
                 hf_metadata = HuggingFaceMetadata(
                     repo_name=repo_id,
                     source=source,
-                    updated_at=dt.datetime.now(dt.timezone.utc),
+                    updated_at=dt.datetime.utcnow(),
                     encoding_key=self.encoding_key_manager.sym_key.decode()  # Use sym_key and decode it to string
                 )
                 hf_metadata_list.append(hf_metadata)
@@ -373,7 +373,7 @@ class HuggingFaceUploader:
 
         # Update the stats
         full_stats['total_rows'] += new_rows
-        full_stats['last_update'] = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d")
+        full_stats['last_update'] = dt.datetime.utcnow().strftime("%Y-%m-%d")
         full_stats['update_history'].append({
             'date': full_stats['last_update'],
             'rows_added': new_rows

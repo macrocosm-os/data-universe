@@ -120,7 +120,7 @@ class MinerEvaluator:
 
         ##########
         # Query HuggingFace metadata
-        if dt.datetime.now(dt.timezone.utc) >= HF_METADATA_QUERY_DATE:
+        if dt.datetime.utcnow() >= HF_METADATA_QUERY_DATE:
             hf_metadata = await self._query_huggingface_metadata(hotkey, uid, axon_info)
             # TODO ADD VALIDATION FOR EVERY MINER.
         ##########
@@ -250,7 +250,7 @@ class MinerEvaluator:
         next_uid = self.miner_iterator.peek()
         hotkey = metagraph.hotkeys[next_uid]
         last_evaluated = self.storage.read_miner_last_updated(hotkey)
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         due_update = (
             last_evaluated is None
             or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
