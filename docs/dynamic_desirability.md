@@ -1,8 +1,10 @@
-# Dynamic Desirability
+# Dynamic Desirability (Gravity)
 
 ## Foreword 
 
-Dynamic Desirability is an in-progress feature and will be added to the subnet soon! We welcome questions, comments and feedback on Discord - message @arrmlet or @ewekazoo, or file a GitHub issue. 
+Dynamic Desirability (Gravity) is an in-progress feature and will be fully added to the subnet soon! We welcome questions, comments and feedback on Discord - message @arrmlet or @ewekazoo, or file a GitHub issue. 
+
+The following is a conceptual overview of Dynamic Desirability (Gravity). We recommend you read this first, then the [Gravity Guide](gravity_guide.md) for technical instructions. 
 
 
 ## Overview
