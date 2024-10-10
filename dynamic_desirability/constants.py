@@ -5,6 +5,7 @@ PREFERENCES_FOLDER: str = 'validator_preferences'
 
 # Total weight of all validators. Subnet (default) voting weight = 1-TOTAL_VALI_WEIGHT. 
 TOTAL_VALI_WEIGHT: float = 0.7
+DEFAULT_SCALE_FACTOR: float = 0.5               # number is subject to change
 
 # Paths of subnet preferences (default) and overall subnet + validator preferences.
 DEFAULT_JSON_PATH: str = 'default.json'

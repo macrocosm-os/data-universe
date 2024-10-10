@@ -1,5 +1,4 @@
 import asyncio
-import argparse
 import json
 import os
 import subprocess
@@ -13,8 +12,13 @@ from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
-from dynamic_desirability.constants import REPO_URL, PREFERENCES_FOLDER, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
-from dynamic_desirability.constants import TOTAL_VALI_WEIGHT
+from dynamic_desirability.constants import (REPO_URL, 
+    PREFERENCES_FOLDER, 
+    DEFAULT_JSON_PATH,
+    AGGREGATE_JSON_PATH, 
+    TOTAL_VALI_WEIGHT,
+    DEFAULT_SCALE_FACTOR
+    )
 
 
 def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
@@ -131,18 +135,19 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
         
         distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
             weight=source_weight,
-            default_scale_factor=0.4,               # number is subject to change
+            default_scale_factor=DEFAULT_SCALE_FACTOR,               # number is subject to change
             label_scale_factors=label_scale_factors
         )
     
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
-async def run_retrieval(args) -> DataDesirabilityLookup:
-    my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
-    subtensor = bt.subtensor(network=args.network)
-    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=args.netuid)
-    metagraph = bt.metagraph(netuid=args.netuid, network=args.network, lite=True, sync=True)
+async def run_retrieval(config) -> DataDesirabilityLookup:
+    my_wallet = bt.wallet(name=config.wallet.name, hotkey=config.wallet.hotkey)
+    subtensor = bt.subtensor(network=config.subtensor.network)
+    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=config.netuid)
+    metagraph = bt.metagraph(netuid=config.netuid, network=config.subtensor.network, lite=True, sync=True)
+
 
     bt.logging.info("\nGetting validator weights from the metagraph...\n")
     validator_data = get_validator_data(metagraph)
@@ -163,11 +168,6 @@ async def run_retrieval(args) -> DataDesirabilityLookup:
 
     return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
 
-def sync_run_retrieval():
-    return asyncio.get_event_loop().run_until_complete(run_retrieval())
+def sync_run_retrieval(config):
+    return asyncio.run(run_retrieval(config))
 
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Retrieve current desirabilities for Gravity.")
-    add_args(parser, is_upload=False)
-    args = parser.parse_args()
-    asyncio.run(run_retrieval(args))

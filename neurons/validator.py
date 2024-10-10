@@ -121,18 +121,35 @@ class Validator:
         self.is_setup = True
 
     def get_updated_lookup(self):
+        last_update = None
         while not self.should_exit:
             try:
-                # Updates every night at midnight.
                 current_datetime = dt.datetime.now(dt.timezone.utc)
-                if current_datetime.time() == dt.time(0,0,0):
+                
+                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
+                
+                # Check if it's a new day and we haven't updated yet
+                if last_update is None or current_datetime.date() > last_update.date():
                     bt.logging.info("Retrieving the latest dynamic lookup...")
-                    model = sync_run_retrieval()
+                    model = sync_run_retrieval(self.config)
+                    bt.logging.info("Model retrieved, updating value calculator...")
                     self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
-                    time.sleep(3600)
-            # In case of unforeseen errors, the refresh thread will log the error and continue operations.
-            except Exception:
-                bt.logging.error("Couldn't fetch latest updated lookup.")
+                    bt.logging.info(f"Desirable data list: {model}")
+                    bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
+                    last_update = current_datetime
+                    bt.logging.info(f"Updated dynamic lookup at {last_update}")
+                else:
+                    bt.logging.info("No update needed at this time.")
+                
+                # Sleep for 5 minutes before checking again
+                bt.logging.info("Sleeping for 5 minutes...")
+                time.sleep(300)
+            
+            except Exception as e:
+                bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
+                bt.logging.exception("Exception details:")
+                time.sleep(300)  # Wait 5 minutes before trying again
+
 
     def get_version_tag(self):
         """Fetches version tag"""
