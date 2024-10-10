@@ -244,7 +244,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         if not equal:
             self.fail(reason)
         self.assertTrue(
-            scorable_index.last_updated - dt.datetime.utcnow()
+            scorable_index.last_updated - dt.datetime.now(dt.timezone.utc)
             < dt.timedelta(seconds=30)
         )
 
@@ -285,7 +285,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         if not equal:
             self.fail(reason)
         self.assertTrue(
-            scorable_index.last_updated - dt.datetime.utcnow()
+            scorable_index.last_updated - dt.datetime.now(dt.timezone.utc)
             < dt.timedelta(seconds=30)
         )
 

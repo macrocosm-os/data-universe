@@ -4,10 +4,21 @@ import multiprocessing
 import json
 from typing import Any, Optional, Dict
 import bittensor as bt
+import argparse
 
 """
 Based off of taoverse run_in_subprocess and ChainModelMetadataStore
 """
+
+def add_args(parser: argparse.ArgumentParser, is_upload: bool):
+    parser.add_argument('--wallet', type=str, required=True, help='Name of the wallet')
+    parser.add_argument('--hotkey', type=str, required=True, help='Name of the hotkey')
+    parser.add_argument('--network', type=str, required=True, help='Name of the network')
+    parser.add_argument('--netuid', type=int, required=True, help='UID of the subnet')
+    
+    if is_upload:
+        parser.add_argument('--file_path', type=str, required=True, help='Path to the JSON file containing preferences')
+
 
 def _wrapped_func(func: functools.partial, queue: multiprocessing.Queue):
     try:

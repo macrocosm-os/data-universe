@@ -1,4 +1,5 @@
 import unittest
+import bittensor as bt
 import os
 import json
 from unittest.mock import patch, mock_open
@@ -45,20 +46,20 @@ json_data = json.dumps([
             }
         ], indent=4)
 
-print(f"\njson_data:\n\n{json_data}\n")
+bt.logging.info(f"\njson_data:\n\n{json_data}\n")
 
 file_name = 'data.json'
 file_path = os.path.join('tests/dynamic_desirability', file_name)
 with open(file_path, 'w') as json_file:
     json_file.write(json_data)
 
-print(f"JSON data has been saved to {file_name}")
+bt.logging.info(f"JSON data has been saved to {file_name}")
 
-print("Converting to DataDesirabilityLookup...")
+bt.logging.info("Converting to DataDesirabilityLookup...")
 lookup = to_lookup(file_path)
 primitive_lookup = DataDesirabilityLookup.to_primitive_data_desirability_lookup(lookup)
 
-print(f"\n{lookup}\n")
-print("Validating distribution...")
+bt.logging.info(f"\n{lookup}\n")
+bt.logging.info("Validating distribution...")
 result = lookup.validate_distribution(primitive_lookup.distribution)
-print(f"\n{formatted_print(result)}\nmax age in hours: {primitive_lookup.max_age_in_hours}")
+bt.logging.info(f"\n{formatted_print(result)}\nmax age in hours: {primitive_lookup.max_age_in_hours}")
