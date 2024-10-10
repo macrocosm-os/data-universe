@@ -24,7 +24,7 @@ class DataSourceDesirability(StrictBaseModel):
     )
 
     label_scale_factors: Dict[DataLabel, float] = Field(
-        description="The scaling factor used for each Label. If a Label is not present, the default_scale_factor is used. The values must be between -1 and 1, inclusive.",
+        description="The scaling factor used for each Label. If a Label is not present, the default_scale_factor is used. The values must be between -1 and 23.33, inclusive.",
         default_factory=lambda: {},
     )
 
@@ -35,7 +35,8 @@ class DataSourceDesirability(StrictBaseModel):
     ) -> Dict[str, float]:
         """Validates the label_scale_factors field."""
         for label, scale_factor in value.items():
-            if scale_factor < -1.0 or scale_factor > 1.0:
+            # Max label weight for one active validator putting 100% on one label = 23.333
+            if scale_factor < -1.0 or scale_factor > 23.34:
                 raise ValueError(
                     f"Label {label} scale factors must be between -1 and 1, inclusive."
                 )

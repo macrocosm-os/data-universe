@@ -149,7 +149,7 @@ class ScraperCoordinator:
         self.storage = miner_storage
         self.config = config
 
-        self.tracker = ScraperCoordinator.Tracker(self.config, dt.datetime.utcnow())
+        self.tracker = ScraperCoordinator.Tracker(self.config, dt.datetime.now(dt.timezone.utc))
         self.max_workers = 5
         self.is_running = False
         self.queue = asyncio.Queue()
@@ -184,7 +184,7 @@ class ScraperCoordinator:
             workers.append(worker)
 
         while self.is_running:
-            now = dt.datetime.utcnow()
+            now = dt.datetime.now(dt.timezone.utc)
             scraper_ids_to_scrape_now = self.tracker.get_scraper_ids_ready_to_scrape(
                 now
             )
