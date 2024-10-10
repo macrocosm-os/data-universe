@@ -7,7 +7,13 @@ Dynamic Desirability is an in-progress feature and will be added to the subnet s
 
 ## Overview
 
-Dynamic Desirability takes the previous system of manually setting subnet preferences for data scraping at scale to an organic, democratic mechanism. This introduces a voting system for both the subnet owner and participating validators, where each will set their own weight preferences through an adaptable list of incentivized labels. Validators choose weights and submit them as JSONs into the Macrocosmos Desirabilities Github. These weights are then committed to the chain, where they can be later read and used to create an aggregate DataDesirabilityLookup object used for scoring. 
+[Dynamic Desirability](../dynamic_desirability) takes the previous system of manually setting subnet preferences for data scraping at scale to an organic, democratic mechanism. This introduces a voting system for both the subnet owner and participating validators, where each will set their own weight preferences through an adaptable list of incentivized labels. Validators choose weights and submit them as JSONs into the desirability repository called [Gravity](https://github.com/macrocosm-os/gravity/tree/main). These weights are then committed to the chain, where they can be later read and used to create an aggregate DataDesirabilityLookup object used for scoring. 
+
+## Gravity Repository
+
+Dynamic Desirability uses the Gravity repo as a part of the validator preference submission pipeline. Read-access is public and encouraged! 
+
+If you are a validator and would like to have your subreddit/hashtag preferences incentivized on SN13, please check out the [**Gravity repo**](https://github.com/macrocosm-os/gravity/tree/main) and fill out a [**request form**](https://forms.gle/BzLg4SwWgmi9xVC18) for write-access. 
 
 
 ## Overall Process
@@ -83,7 +89,7 @@ Chain commit hashes are used in addition to GitHub version control because it re
 
 ### Desirability Retrieval
 
-Validators and Miners can retrieve the desirabilities committed to the chain through the desirability_retrieval.py script located in the dynamic_desirability folder [ADD LINK HERE]. This takes approximately ~90 seconds per retrieval, as each validator JSON submission must be retrieved from the chain and aggregated into a total.json, representing the total desirability lookup of the subnet. 
+Validators and Miners can retrieve the desirabilities committed to the chain through the desirability_retrieval.py script located in the [dynamic_desirability](../dynamic_desirability) folder. This takes approximately ~90 seconds per retrieval, as each validator JSON submission must be retrieved from the chain and aggregated into a total.json, representing the total desirability lookup of the subnet. 
 
 To maximize score, it is recommended that miners integrate the dynamic desirability retrieval into their scraping procedures to use an up to date version of the current subnet desirabilities. 
 
@@ -91,7 +97,7 @@ To maximize score, it is recommended that miners integrate the dynamic desirabil
 ## Action for Miners
 
 Miners are encouraged to:
-1. Stay updated with the latest desirability lists by regularly pulling from the GitHub repository (link to be provided).
+1. Stay updated with the latest desirability lists.
 2. Adjust their scraping activities based on the most recent desirability scores to maximize their rewards.
 3. Implement systems to quickly adapt to changes in desirability rankings.
 
