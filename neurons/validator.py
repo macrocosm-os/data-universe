@@ -34,7 +34,7 @@ import common.utils as utils
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
-from vali_utils.hf_utlis import update_dataset_names
+from vali_utils.hf_utils import update_dataset_names
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
