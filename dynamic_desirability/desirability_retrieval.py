@@ -1,4 +1,5 @@
 import asyncio
+import argparse
 import json
 import os
 import subprocess
@@ -7,34 +8,13 @@ from typing import Dict, Optional, Any
 import logging
 import shutil
 import bittensor as bt
-from dynamic_desirability.chain_utils import ChainPreferenceStore
+from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
+from common.utils import get_validator_data
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
-from dynamic_desirability.constants import NETWORK, NETUID, REPO_URL, PREFERENCES_FOLDER, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
-from dynamic_desirability.constants import TOTAL_VALI_WEIGHT, REDDIT_SOURCE_WEIGHT, X_SOURCE_WEIGHT
-from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME
-
-
-def get_validator_data(metagraph: bt.metagraph) -> Dict[str, Dict[str, Any]]:
-    """Retrieve validator data from metagraph."""
-    total_stake = sum(
-        stake
-        for uid, stake in enumerate(metagraph.S)
-        if metagraph.validator_permit[uid] and stake >= 10_000
-    )
-
-    validator_data = {
-        hotkey: {
-            'percent_stake': float(stake / total_stake),
-            'github_hash': None,
-            'json': None
-        }
-        for uid, (hotkey, stake) in enumerate(zip(metagraph.hotkeys, metagraph.S))
-        if metagraph.validator_permit[uid] and stake >= 10_000
-    }
-
-    return validator_data
+from dynamic_desirability.constants import REPO_URL, PREFERENCES_FOLDER, DEFAULT_JSON_PATH, AGGREGATE_JSON_PATH
+from dynamic_desirability.constants import TOTAL_VALI_WEIGHT
 
 
 def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
@@ -85,6 +65,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     subnet_weight = 1 - total_vali_weight
     normalizer = 1.0
 
+    # Adding default weights to total.
     try:
         with open(default_json_path, 'r') as f:
             default_preferences = json.load(f)
@@ -100,7 +81,6 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
 
     # Calculating the sum of percent_stake for validators that have voted. Non-voting validators are excluded.
     total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('json'))
-
     for hotkey, data in validator_data.items():
         if data['json']:
             stake_percentage = data.get('percent_stake', 1) / total_stake
@@ -142,16 +122,15 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
         source_name = source['source_name']
         label_weights = source['label_weights']
         
-        # Set predefined weights
-        weight = REDDIT_SOURCE_WEIGHT if source_name == "reddit" else X_SOURCE_WEIGHT
+        source_weight = DataSource.REDDIT.weight if source_name == "reddit" else DataSource.X.weight
         
         label_scale_factors = {
-            DataLabel(value=label): min(weight, 1.0)  # so weight doesn't exceed 1.0
+            DataLabel(value=label): weight
             for label, weight in label_weights.items()
         }
         
         distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
-            weight=weight,
+            weight=source_weight,
             default_scale_factor=0.4,               # number is subject to change
             label_scale_factors=label_scale_factors
         )
@@ -159,11 +138,11 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
-async def run_retrieval() -> DataDesirabilityLookup:
-    my_wallet = bt.wallet(name=WALLET_NAME, hotkey=HOTKEY_NAME)
-    subtensor = bt.subtensor(network=NETWORK)
-    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=NETUID)
-    metagraph = bt.metagraph(netuid=NETUID, network=NETWORK, lite=True, sync=True)
+async def run_retrieval(args) -> DataDesirabilityLookup:
+    my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
+    subtensor = bt.subtensor(network=args.network)
+    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=args.netuid)
+    metagraph = bt.metagraph(netuid=args.netuid, network=args.network, lite=True, sync=True)
 
     bt.logging.info("\nGetting validator weights from the metagraph...\n")
     validator_data = get_validator_data(metagraph)
@@ -188,4 +167,7 @@ def sync_run_retrieval():
     return asyncio.get_event_loop().run_until_complete(run_retrieval())
 
 if __name__ == "__main__":
-    asyncio.run(run_retrieval())
+    parser = argparse.ArgumentParser(description="Retrieve current desirabilities for Gravity.")
+    add_args(parser, is_upload=False)
+    args = parser.parse_args()
+    asyncio.run(run_retrieval(args))

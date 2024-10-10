@@ -1,4 +1,5 @@
 import asyncio
+import argparse
 import json
 import os
 import shutil
@@ -6,9 +7,8 @@ import subprocess
 import bittensor as bt
 from typing import List
 from decimal import Decimal, ROUND_HALF_UP
-from chain_utils import ChainPreferenceStore
-from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, NETWORK, NETUID
-from dynamic_desirability.gravity_config import WALLET_NAME, HOTKEY_NAME, MY_JSON_PATH
+from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
+from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER
 
 
 def run_command(command: List[str]) -> str:
@@ -21,6 +21,7 @@ def run_command(command: List[str]) -> str:
         bt.logging.error(f"Error message: {e.stderr.strip()}")
         raise
 
+
 def normalize_preferences_json(file_path: str) -> str:
     """
     Normalize potentially invalid preferences JSONs
@@ -30,12 +31,14 @@ def normalize_preferences_json(file_path: str) -> str:
 
     all_label_weights = {}
     
-    # Taking all positive label weights across all sources
+    # Taking all positive label weights across all sources.
     for source in data:
         for label, weight in source["label_weights"].items():
             weight_decimal = Decimal(str(weight))
             if weight_decimal > Decimal('0'):
                 all_label_weights[label] = all_label_weights.get(label, Decimal('0')) + weight_decimal
+
+    # If more than 10 label weights, only takes top 10.
     sorted_labels = sorted(all_label_weights.items(), key=lambda x: x[1], reverse=True)[:10]
 
     total_weight = sum(weight for _, weight in sorted_labels)
@@ -43,7 +46,7 @@ def normalize_preferences_json(file_path: str) -> str:
         bt.logging.error(f"Cannot normalize preferences file. Please see docs for correct preferences format.")
         return
 
-    # Normalize weights to sum between 0.1 and 1
+    # Normalize weights to sum between 0.1 and 1.
     target_sum = min(max(total_weight, Decimal('0.1')), Decimal('1'))
     scale_factor = target_sum / total_weight
 
@@ -55,7 +58,7 @@ def normalize_preferences_json(file_path: str) -> str:
     # Remove labels that round to 0.0
     normalized_weights = {label: weight for label, weight in normalized_weights.items() if weight > Decimal('0')}
 
-    # Final adjustment to ensure sum is 1
+    # Final adjustment to ensure sum is 1.
     weight_sum = sum(normalized_weights.values())
     if weight_sum < Decimal('1'):
         deficit = Decimal('1') - weight_sum
@@ -82,37 +85,6 @@ def normalize_preferences_json(file_path: str) -> str:
 
     return json.dumps(updated_data, indent=4)
 
-def load_and_validate_preferences(file_path: str) -> str:
-    """Load preferences from a JSON file and validate the label weights."""
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-    
-    label_weights = {}
-    total_weight = Decimal('0')
-    
-    for source in data:
-        for label, weight in source["label_weights"].items():
-            # Convert weight to Decimal for precise comparison.
-            weight_decimal = Decimal(str(weight))
-            
-            # Check if weight is an increment of 0.1 between 0.1 and 1.
-            if weight_decimal < Decimal('0.1') or weight_decimal > Decimal('1') or \
-               (weight_decimal * 10) % 1 != 0:
-                raise ValueError(f"Error: Weight {weight} for label '{label}' is not a valid increment of 0.1 between 0.1 and 1")
-            
-            label_weights[label] = label_weights.get(label, 0) + weight_decimal
-            total_weight += weight_decimal
-    
-    # Check if there are more than 10 total label_weights.
-    if len(label_weights) > 10:
-        raise ValueError("Error: More than 10 total label_weights")
-    
-    # Check if all weights add up to more than 1.
-    if total_weight > Decimal('1'):
-        raise ValueError(f"Error: Total weight {total_weight} exceeds 1")
-    
-    return json.dumps(data, indent=4)
-
 
 def upload_to_github(json_content: str, hotkey: str) -> str:
     """Uploads the preferences json to Github."""
@@ -132,7 +104,7 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
 
     # If for any reason folder was deleted, creates folder.
     if not os.path.exists(PREFERENCES_FOLDER):
-        logging.info(f"Creating folder: {PREFERENCES_FOLDER}")
+        bt.logging.info(f"Creating folder: {PREFERENCES_FOLDER}")
         os.mkdir(PREFERENCES_FOLDER)
 
     file_name = f"{PREFERENCES_FOLDER}/{hotkey}.json"
@@ -173,16 +145,15 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
     return remote_commit_hash
 
 
-async def run_uploader(preference_file: str):
-    my_wallet = bt.wallet(name=WALLET_NAME, hotkey=HOTKEY_NAME)
+async def run_uploader(args):
+    my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
     my_hotkey = my_wallet.hotkey.ss58_address
-    subtensor = bt.subtensor(network=NETWORK)
-    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=NETUID)
+    subtensor = bt.subtensor(network=args.network)
+    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=args.netuid)
 
     try:
-        #json_content = load_and_validate_preferences(preference_file)
-        json_content = normalize_preferences_json(preference_file)
-        print(json_content)
+        json_content = normalize_preferences_json(args.file_path)
+        bt.logging.info(f"JSON content:\n{json_content}")
         if json_content:
             github_commit = upload_to_github(json_content, my_hotkey)
             await chain_store.store_preferences(github_commit)
@@ -196,4 +167,7 @@ async def run_uploader(preference_file: str):
         raise
 
 if __name__ == "__main__":
-    asyncio.run(run_uploader(preference_file=MY_JSON_PATH))
+    parser = argparse.ArgumentParser(description="Set desirabilities for Gravity.")
+    add_args(parser, is_upload=True)
+    args = parser.parse_args()
+    asyncio.run(run_uploader(args))
