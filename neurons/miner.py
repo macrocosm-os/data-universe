@@ -53,6 +53,8 @@ class Miner:
         bt.logging(config=self.config, logging_dir=self.config.full_path)
         bt.logging.info(self.config)
         self.use_hf_uploader = self.config.huggingface
+        self.use_gravity_retrieval = self.config.gravity
+        
         if self.config.offline:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."

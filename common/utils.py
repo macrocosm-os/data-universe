@@ -7,7 +7,7 @@ import pickle
 import sys
 import time
 from math import floor
-from typing import Any, Callable, List, Optional
+from typing import Any, Callable, List, Optional, Dict
 import bittensor as bt
 from functools import lru_cache, update_wrapper
 
@@ -55,6 +55,27 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
 def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
     """Checks if a UID on the subnet is a validator."""
     return metagraph.validator_permit[uid] and metagraph.S[uid] >= 10_000
+
+
+def get_validator_data(metagraph: bt.metagraph) -> Dict[str, Dict[str, Any]]:
+    """Retrieve validator data (hotkey, percent stake) from metagraph. For use in Gravity."""
+    total_stake = sum(
+        stake
+        for uid, stake in enumerate(metagraph.S)
+        if is_validator(uid, metagraph)
+    )
+
+    validator_data = {
+        hotkey: {
+            'percent_stake': float(stake / total_stake),
+            'github_hash': None,
+            'json': None
+        }
+        for uid, (hotkey, stake) in enumerate(zip(metagraph.hotkeys, metagraph.S))
+        if is_validator(uid, metagraph)
+    }
+
+    return validator_data
 
 
 def get_miner_uids(metagraph: bt.metagraph, my_uid: int) -> List[int]:

@@ -32,9 +32,9 @@ import common.utils as utils
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
-
+from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
-
+from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
 
@@ -93,8 +93,8 @@ class Validator:
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = threading.RLock()
-        self.last_eval_time = dt.datetime.utcnow()
-        self.last_weights_set_time = dt.datetime.utcnow()
+        self.last_eval_time = dt.datetime.now(dt.timezone.utc)
+        self.last_weights_set_time = dt.datetime.now(dt.timezone.utc)
         self.is_setup = False
 
     def setup(self):
@@ -119,6 +119,37 @@ class Validator:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
         self.is_setup = True
+
+    def get_updated_lookup(self):
+        last_update = None
+        while not self.should_exit:
+            try:
+                current_datetime = dt.datetime.now(dt.timezone.utc)
+                
+                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
+                
+                # Check if it's a new day and we haven't updated yet
+                if last_update is None or current_datetime.date() > last_update.date():
+                    bt.logging.info("Retrieving the latest dynamic lookup...")
+                    model = sync_run_retrieval(self.config)
+                    bt.logging.info("Model retrieved, updating value calculator...")
+                    self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
+                    bt.logging.info(f"Desirable data list: {model}")
+                    bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
+                    last_update = current_datetime
+                    bt.logging.info(f"Updated dynamic lookup at {last_update}")
+                else:
+                    bt.logging.info("No update needed at this time.")
+                
+                # Sleep for 5 minutes before checking again
+                bt.logging.info("Sleeping for 5 minutes...")
+                time.sleep(300)
+            
+            except Exception as e:
+                bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
+                bt.logging.exception("Exception details:")
+                time.sleep(300)  # Wait 5 minutes before trying again
+
 
     def get_version_tag(self):
         """Fetches version tag"""
@@ -200,7 +231,7 @@ class Validator:
                 self._on_eval_batch_complete()
 
                 # Set the next batch start time.
-                next_batch_start_time = dt.datetime.utcnow() + dt.timedelta(
+                next_batch_start_time = dt.datetime.now(dt.timezone.utc) + dt.timedelta(
                     seconds=next_batch_delay_secs
                 )
 
@@ -217,7 +248,7 @@ class Validator:
                 # wait until the next evaluation loop.
                 wait_time = max(
                     0,
-                    (next_batch_start_time - dt.datetime.utcnow()).total_seconds(),
+                    (next_batch_start_time - dt.datetime.now(dt.timezone.utc)).total_seconds(),
                 )
                 if wait_time > 0:
                     bt.logging.info(
@@ -260,6 +291,9 @@ class Validator:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+            self.lookup_thread = threading.Thread(
+                target=self.get_updated_lookup, daemon=True)
+            self.lookup_thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
 
@@ -327,12 +361,12 @@ class Validator:
 
     def _on_eval_batch_complete(self):
         with self.lock:
-            self.last_eval_time = dt.datetime.utcnow()
+            self.last_eval_time = dt.datetime.now(dt.timezone.utc)
 
     def is_healthy(self) -> bool:
         """Returns true if the validator is healthy and is evaluating Miners."""
         with self.lock:
-            return dt.datetime.utcnow() - self.last_eval_time < dt.timedelta(minutes=35)
+            return dt.datetime.now(dt.timezone.utc) - self.last_eval_time < dt.timedelta(minutes=35)
 
     def should_set_weights(self) -> bool:
         # Check if enough epoch blocks have elapsed since the last epoch.
@@ -341,7 +375,7 @@ class Validator:
 
         with self.lock:
             # Set weights every 20 minutes.
-            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(
+            return dt.datetime.now(dt.timezone.utc) - self.last_weights_set_time > dt.timedelta(
                 minutes=20
             )
 
@@ -410,7 +444,7 @@ class Validator:
         )
 
         with self.lock:
-            self.last_weights_set_time = dt.datetime.utcnow()
+            self.last_weights_set_time = dt.datetime.now(dt.timezone.utc)
 
         bt.logging.success("Finished setting weights.")
 
