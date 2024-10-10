@@ -193,7 +193,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             f"{hotkey}: Upserting miner index with {CompressedMinerIndex.bucket_count(index)} buckets"
         )
 
-        now_str = dt.datetime.now(dt.timezone.utc).strftime("%Y-%m-%d %H:%M:%S.%f")
+        now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
         # Upsert this Validator's minerId for the specified hotkey.
         miner_id = self._upsert_miner(hotkey, now_str, credibility)

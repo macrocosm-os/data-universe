@@ -33,14 +33,14 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_upsert_miner(self):
         """Tests that we can store a newly encountered miner."""
         # Upsert a miner.
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         miner_id = self.test_storage._upsert_miner("test_hotkey", now, credibility=1.0)
 
         self.assertEqual(miner_id, 1)
 
         # Check inserting the same miner again returns the same id.
         next_id = self.test_storage._upsert_miner(
-            "test_hotkey", dt.datetime.now(dt.timezone.utc), credibility=0.5
+            "test_hotkey", dt.datetime.utcnow(), credibility=0.5
         )
         self.assertEqual(next_id, miner_id)
 
@@ -52,14 +52,14 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         # Finally, insert a new miner and make sure it has a new id.
         other_id = self.test_storage._upsert_miner(
-            "other_hotkey", dt.datetime.now(dt.timezone.utc), credibility=0.5
+            "other_hotkey", dt.datetime.utcnow(), credibility=0.5
         )
         self.assertNotEqual(other_id, miner_id)
 
     def test_upsert_compressed_miner_index_insert_index_special_characters(self):
         """Tests that we can insert a miner index, including a label with a special character."""
         # Create 3 DataEntityBuckets for the index.
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         time_bucket = TimeBucket.from_datetime(now)
 
         # Create the index containing the buckets.
@@ -134,7 +134,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_upsert_compressed_miner_index_insert_index_with_duplicates(self):
         """Tests that we can insert a miner index with duplicates, taking the last one."""
         # Create two identical DataEntityBuckets for the index.
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         time_bucket = TimeBucket.from_datetime(now)
         bucket_1 = CompressedEntityBucket(
             label="label_1",
@@ -170,7 +170,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_upsert_compressed_miner_index_update_index(self):
         """Tests that we can update a compressed miner index"""
         # Create three DataEntityBuckets for the index.
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         time_bucket = TimeBucket.from_datetime(now)
         time_bucket2 = TimeBucket.from_datetime(now + dt.timedelta(days=1))
         compressed_index_1 = CompressedMinerIndex(
@@ -293,7 +293,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
                 for label in labels
                 for time_bucket_id in time_bucket_ids
             ],
-            last_updated=dt.datetime.now(dt.timezone.utc),
+            last_updated=dt.datetime.utcnow(),
         )
 
         # We can't assert equality because of the last_updated time.
@@ -316,13 +316,13 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         self.assertTrue(
             scorable_index.last_updated
-            > (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1))
+            > (dt.datetime.utcnow() - dt.timedelta(minutes=1))
         )
 
     def test_read_miner_index_with_duplicate_data_entity_buckets(self):
         """Tests that we can read (and score) a miner index when other miners have duplicate buckets."""
         # Create two DataEntityBuckets for the index.
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         hotkey1 = "hotkey1"
         hotkey2 = "hotkey2"
         bucket_1_miner_1 = CompressedEntityBucket(
@@ -375,7 +375,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_delete_miner(self):
         """Tests that we can delete a miner."""
         # Create two DataEntityBuckets for the indexes.
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         index = CompressedMinerIndex(
             sources={
                 DataSource.REDDIT.value: [
@@ -411,7 +411,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_read_miner_last_updated(self):
         """Tests getting the last time a miner was updated."""
         # Insert a miner
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")
         self.test_storage._upsert_miner("test_hotkey", now_str, 1)
 
@@ -424,7 +424,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_read_miner_last_updated_never_updated(self):
         """Tests getting the last time a miner was updated when it has never been updated."""
         # Insert a miner
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         now_str = now.strftime("%Y-%m-%d %H:%M:%S.%f")
         self.test_storage._upsert_miner("test_hotkey", now_str, 1)
 
