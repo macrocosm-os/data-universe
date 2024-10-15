@@ -196,18 +196,17 @@ class Miner:
 
         while not self.should_exit:
             try:
-                if self.storage.should_upload_hf_data():
+                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the HuggingFaceUploader
+                if self.storage.should_upload_hf_data(unique_id):
                     bt.logging.info("Trying to upload the data into HuggingFace.")
                     hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
                     if hf_metadata_list:
                         self.storage.store_hf_dataset_info(hf_metadata_list)
-            # In case of unforeseen errors, the refresh thread will log the error and continue operations.
             except Exception:
                 bt.logging.error(traceback.format_exc())
 
             time_sleep_val = dt.timedelta(minutes=90).total_seconds()
             time.sleep(time_sleep_val)
-
     def run(self):
         """
         Initiates and manages the main loop for the miner.

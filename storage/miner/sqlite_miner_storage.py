@@ -244,12 +244,13 @@ class SqliteMinerStorage(MinerStorage):
             result = cursor.fetchone()
             return result['earliest_date'] if result and result['earliest_date'] else None
 
-    def should_upload_hf_data(self) -> bool:
+    def should_upload_hf_data(self, unique_id: str) -> bool:
         sql_query = """
             SELECT datetime(AVG(strftime('%s', UpdatedAt)), 'unixepoch') AS AvgUpdatedAt
             FROM (
                 SELECT UpdatedAt
                 FROM HFMetaData
+                WHERE uri LIKE ?
                 ORDER BY UpdatedAt DESC
                 LIMIT 2
             );
@@ -257,7 +258,7 @@ class SqliteMinerStorage(MinerStorage):
         try:
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
-                cursor.execute(sql_query)
+                cursor.execute(sql_query, (f"%_{unique_id}",))
                 result = cursor.fetchone()
 
                 if result is None or result[0] is None:
@@ -277,18 +278,19 @@ class SqliteMinerStorage(MinerStorage):
             bt.logging.error(f"An error occurred: {e}")
             return False
 
-    def get_hf_metadata(self) -> List[HuggingFaceMetadata]:
+    def get_hf_metadata(self, unique_id: str) -> List[HuggingFaceMetadata]:
         sql_query = """
             SELECT uri, source, updatedAt, 
                    CASE WHEN encodingKey IS NULL THEN '' ELSE encodingKey END as encodingKey
             FROM HFMetaData
+            WHERE uri LIKE ?
             ORDER BY updatedAt DESC
             LIMIT 2;
         """
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
-            cursor.execute(sql_query)
+            cursor.execute(sql_query, (f"%_{unique_id}",))
             hf_metadatas = []
 
             for row in cursor:

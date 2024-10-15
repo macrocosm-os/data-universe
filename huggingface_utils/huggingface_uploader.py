@@ -49,7 +49,7 @@ class HuggingFaceUploader:
         self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
         self.hf_api = HfApi(token=self.hf_token)
-        self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json" # TODO
+        self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
         self.chunk_size = chunk_size
 
     @contextmanager
@@ -220,7 +220,7 @@ class HuggingFaceUploader:
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
                     bt.logging.info(f"Processing new DataFrame for source {source}")
-                    print(df)
+
                     if df.empty:
                         bt.logging.info(f"Encountered empty DataFrame for source {source}. Skipping.")
                         continue
