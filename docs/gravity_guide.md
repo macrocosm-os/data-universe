@@ -79,19 +79,7 @@ python dynamic_desirability/desirability_uploader.py --wallet YOUR_WALLET_NAME -
 
 This file provides functionality for miners and validators to retrieve the current state of aggregated validator and subnet preferences from the chain. `run_retrieval()` outputs the aggregate label weights to `total.json` and also returns them as a DataDesirabilityLookup object with a default scale factor of 0.5. 
 
-To run the script, you will need the following arguments:
-- `--wallet`
-    - The name of your selected Bittensor wallet. 
-- `--hotkey`
-    - The name of your selected Bittensor hotkey.
-- `--network`
-    - The subtensor network.
-- `--netuid`
-    - For all uses on SN13, 13.
- 
-Example Input:
-```
-python dynamic_desirability/desirability_retrieval.py --wallet YOUR_WALLET_NAME --hotkey YOUR_HOTKEY_NAME  --network finney --netuid 13
-```
+This script is called from [`validator.py`](https://github.com/macrocosm-os/data-universe/blob/gravity/neurons/validator.py#L123) once every 24 hours at 12 am UTC. The update frequency will be increased in later versions. 
 
+Miners can also choose to retrieve the updated desirability lookup every day. This is done by setting the `--gravity` flag. See [`neurons/config.py`](../neurons/config.py) and [`neurons/miner.py`](../neurons/miner.py) for code references. 
 
