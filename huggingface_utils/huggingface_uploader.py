@@ -26,10 +26,11 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
             for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
-                except RequestException as e:
+                except Exception as e:
                     if attempt == max_retries - 1:
+                        bt.logging.error(f"Upload failed after {max_retries} attempts. Final error: {str(e)}")
                         raise
-                    bt.logging.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    bt.logging.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
                     time.sleep(delay)
         return wrapper
     return decorator
@@ -155,25 +156,34 @@ class HuggingFaceUploader:
         else:
             return preprocess_twitter_df(df, self.encoding_key_manager)
 
-    @retry_upload()
+
+    @retry_upload(max_retries=5)
     def upload_parquet_to_hf(self, repo_id):
         if not self.check_connection():
             bt.logging.error("Network connection is unstable. Upload aborted.")
             return
 
-        self.hf_api.upload_folder(
-            token=self.hf_token,
-            folder_path=self.output_dir,
-            repo_id=repo_id,
-            repo_type="dataset",
-            path_in_repo='data/',
-            allow_patterns="*.parquet",
-        )
+        try:
 
-        # Clean up local parquet files after upload
-        for filename in os.listdir(self.output_dir):
-            if filename.endswith(".parquet"):
-                os.remove(os.path.join(self.output_dir, filename))
+            self.hf_api.upload_folder(
+                token=self.hf_token,
+                folder_path=self.output_dir,
+                repo_id=repo_id,
+                repo_type="dataset",
+                path_in_repo='data/',
+                allow_patterns="*.parquet",
+            )
+            bt.logging.info(f"Successfully uploaded files to {repo_id}")
+
+        except Exception as e:
+            bt.logging.error(f"Error during upload: {str(e)}")
+            raise  # Re-raise the exception to trigger the retry
+
+        finally:
+            # Clean up local parquet files after upload attempt
+            for filename in os.listdir(self.output_dir):
+                if filename.endswith(".parquet"):
+                    os.remove(os.path.join(self.output_dir, filename))
 
     def upload_sql_to_huggingface(self) -> List[HuggingFaceMetadata]:
         if not self.hf_token:
