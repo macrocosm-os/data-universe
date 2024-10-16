@@ -98,8 +98,8 @@ class Validator:
         self.thread: threading.Thread = None
         self.databox_thread: threading.Thread = None
         self.lock = threading.RLock()
-        self.last_eval_time = dt.datetime.now(dt.timezone.utc)
-        self.last_weights_set_time = dt.datetime.now(dt.timezone.utc)
+        self.last_eval_time = dt.datetime.utcnow()
+        self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
 
     def setup(self):
@@ -129,7 +129,7 @@ class Validator:
         last_update = None
         while not self.should_exit:
             try:
-                current_datetime = dt.datetime.now(dt.timezone.utc)
+                current_datetime = dt.datetime.utcnow()
                 
                 bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
                 
@@ -262,7 +262,7 @@ class Validator:
                 self._on_eval_batch_complete()
 
                 # Set the next batch start time.
-                next_batch_start_time = dt.datetime.now(dt.timezone.utc) + dt.timedelta(
+                next_batch_start_time = dt.datetime.utcnow() + dt.timedelta(
                     seconds=next_batch_delay_secs
                 )
 
@@ -280,7 +280,7 @@ class Validator:
                 # wait until the next evaluation loop.
                 wait_time = max(
                     0,
-                    (next_batch_start_time - dt.datetime.now(dt.timezone.utc)).total_seconds(),
+                    (next_batch_start_time - dt.datetime.utcnow()).total_seconds(),
                 )
                 if wait_time > 0:
                     bt.logging.info(
@@ -399,12 +399,12 @@ class Validator:
 
     def _on_eval_batch_complete(self):
         with self.lock:
-            self.last_eval_time = dt.datetime.now(dt.timezone.utc)
+            self.last_eval_time = dt.datetime.utcnow()
 
     def is_healthy(self) -> bool:
         """Returns true if the validator is healthy and is evaluating Miners."""
         with self.lock:
-            return dt.datetime.now(dt.timezone.utc) - self.last_eval_time < dt.timedelta(minutes=35)
+            return dt.datetime.utcnow() - self.last_eval_time < dt.timedelta(minutes=35)
 
     def should_set_weights(self) -> bool:
         # Check if enough epoch blocks have elapsed since the last epoch.
@@ -413,7 +413,7 @@ class Validator:
 
         with self.lock:
             # Set weights every 20 minutes.
-            return dt.datetime.now(dt.timezone.utc) - self.last_weights_set_time > dt.timedelta(
+            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(
                 minutes=20
             )
 
@@ -482,7 +482,7 @@ class Validator:
         )
 
         with self.lock:
-            self.last_weights_set_time = dt.datetime.now(dt.timezone.utc)
+            self.last_weights_set_time = dt.datetime.utcnow()
 
         bt.logging.success("Finished setting weights.")
 

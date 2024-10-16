@@ -107,7 +107,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         )
 
     def _insert_test_hf_metadata(self, storage: MinerStorage) -> List[HuggingFaceMetadata]:
-        now = dt.datetime.now(dt.timezone.utc)
+        now = dt.datetime.utcnow()
         test_metadata = [
             HuggingFaceMetadata(
                 repo_name="test_repo_1",
@@ -244,7 +244,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         if not equal:
             self.fail(reason)
         self.assertTrue(
-            scorable_index.last_updated - dt.datetime.now(dt.timezone.utc)
+            scorable_index.last_updated - dt.datetime.utcnow()
             < dt.timedelta(seconds=30)
         )
 
@@ -285,7 +285,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         if not equal:
             self.fail(reason)
         self.assertTrue(
-            scorable_index.last_updated - dt.datetime.now(dt.timezone.utc)
+            scorable_index.last_updated - dt.datetime.utcnow()
             < dt.timedelta(seconds=30)
         )
 
@@ -296,9 +296,9 @@ class IntegrationTestProtocol(unittest.TestCase):
         # Test upserting metadata
         metadata_to_upsert = [
             HuggingFaceMetadata(repo_name="test_repo_1", source=DataSource.REDDIT,
-                                updated_at=dt.datetime.now(dt.timezone.utc)),
+                                updated_at=dt.datetime.utcnow()),
             HuggingFaceMetadata(repo_name="test_repo_2", source=DataSource.X,
-                                updated_at=dt.datetime.now(dt.timezone.utc))
+                                updated_at=dt.datetime.utcnow())
         ]
         self.vali_storage.upsert_hf_metadata("test_hotkey", metadata_to_upsert)
 
