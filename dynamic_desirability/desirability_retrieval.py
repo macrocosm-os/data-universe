@@ -143,31 +143,37 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
 async def run_retrieval(config) -> DataDesirabilityLookup:
-    my_wallet = bt.wallet(name=config.wallet.name, hotkey=config.wallet.hotkey)
-    subtensor = bt.subtensor(network=config.subtensor.network)
-    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=config.netuid)
-    metagraph = bt.metagraph(netuid=config.netuid, network=config.subtensor.network, lite=True, sync=True)
+    try:
+        my_wallet = bt.wallet(config=config)
+        subtensor = bt.subtensor(config=config)
+        chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=config.netuid)
+        metagraph = subtensor.metagraph(netuid=config.netuid)
 
+        bt.logging.info("\nGetting validator weights from the metagraph...\n")
+        validator_data = get_validator_data(metagraph)
 
-    bt.logging.info("\nGetting validator weights from the metagraph...\n")
-    validator_data = get_validator_data(metagraph)
+        bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
-    bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
+        for hotkey in validator_data.keys():
+            validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
+            if validator_data[hotkey]['github_hash']:
+                validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'], filename=f"{hotkey}.json")
 
-    for hotkey in validator_data.keys():
-        validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
-        
-        if validator_data[hotkey]['github_hash']:
-            validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'], filename=f"{hotkey}.json")
+        bt.logging.info("\nCalculating total weights...\n")
 
-    bt.logging.info("\nCalculating total weights...\n")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        default_path = os.path.join(script_dir, DEFAULT_JSON_PATH)
+        calculate_total_weights(validator_data=validator_data, default_json_path=default_path, total_vali_weight=TOTAL_VALI_WEIGHT)
 
-    script_dir = os.path.dirname(os.path.abspath(__file__))
-    default_path = os.path.join(script_dir, DEFAULT_JSON_PATH)
-    calculate_total_weights(validator_data=validator_data, default_json_path=default_path, total_vali_weight=TOTAL_VALI_WEIGHT)
-
-    return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
+        return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
+    
+    except Exception as e:
+        bt.logging.error(f"Could not retrieve dynamic preferences. Using default.json to build lookup: {str(e)}")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        return to_lookup(os.path.join(script_dir, DEFAULT_JSON_PATH))
 
 def sync_run_retrieval(config):
     return asyncio.run(run_retrieval(config))
 
+if __name__ == "__main__":
+    asyncio.run(run_retrieval(config=None))

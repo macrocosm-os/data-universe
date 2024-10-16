@@ -26,10 +26,11 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
             for attempt in range(max_retries):
                 try:
                     return func(*args, **kwargs)
-                except RequestException as e:
+                except Exception as e:
                     if attempt == max_retries - 1:
+                        bt.logging.error(f"Upload failed after {max_retries} attempts. Final error: {str(e)}")
                         raise
-                    bt.logging.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {e}")
+                    bt.logging.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
                     time.sleep(delay)
         return wrapper
     return decorator
@@ -43,12 +44,12 @@ class HuggingFaceUploader:
                  output_dir: str = 'hf_storage',
                  chunk_size: int = 1_000_000):
         self.db_path = db_path
-        self.output_dir = output_dir
-        self.hf_api = HfApi()
         self.miner_hotkey = miner_hotkey
+        self.output_dir = os.path.join(output_dir, self.miner_hotkey)
         self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
+        self.hf_api = HfApi(token=self.hf_token)
         self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
         self.chunk_size = chunk_size
 
@@ -155,25 +156,34 @@ class HuggingFaceUploader:
         else:
             return preprocess_twitter_df(df, self.encoding_key_manager)
 
-    @retry_upload()
+
+    @retry_upload(max_retries=5)
     def upload_parquet_to_hf(self, repo_id):
         if not self.check_connection():
             bt.logging.error("Network connection is unstable. Upload aborted.")
             return
 
-        self.hf_api.upload_folder(
-            token=self.hf_token,
-            folder_path=self.output_dir,
-            repo_id=repo_id,
-            repo_type="dataset",
-            path_in_repo='data/',
-            allow_patterns="*.parquet",
-        )
+        try:
 
-        # Clean up local parquet files after upload
-        for filename in os.listdir(self.output_dir):
-            if filename.endswith(".parquet"):
-                os.remove(os.path.join(self.output_dir, filename))
+            self.hf_api.upload_folder(
+                token=self.hf_token,
+                folder_path=self.output_dir,
+                repo_id=repo_id,
+                repo_type="dataset",
+                path_in_repo='data/',
+                allow_patterns="*.parquet",
+            )
+            bt.logging.info(f"Successfully uploaded files to {repo_id}")
+
+        except Exception as e:
+            bt.logging.error(f"Error during upload: {str(e)}")
+            raise  # Re-raise the exception to trigger the retry
+
+        finally:
+            # Clean up local parquet files after upload attempt
+            for filename in os.listdir(self.output_dir):
+                if filename.endswith(".parquet"):
+                    os.remove(os.path.join(self.output_dir, filename))
 
     def upload_sql_to_huggingface(self) -> List[HuggingFaceMetadata]:
         if not self.hf_token:
@@ -199,9 +209,6 @@ class HuggingFaceUploader:
                 token=self.hf_token
             )
 
-            # Load existing stats for each platform
-            full_stats = self.load_existing_stats(repo_id)
-
             try:
                 # Check if repository exists
                 self.hf_api.repo_info(repo_id=repo_id, repo_type="dataset")
@@ -222,38 +229,46 @@ class HuggingFaceUploader:
 
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
+                    bt.logging.info(f"Processing new DataFrame for source {source}")
+
+                    if df.empty:
+                        bt.logging.info(f"Encountered empty DataFrame for source {source}. Skipping.")
+                        continue
+
+                    bt.logging.info(f"Current total rows: {total_rows}")
                     if total_rows >= 400_000_000:
                         bt.logging.info(f"Reached 400 million rows limit for source {source}. Stopping upload.")
                         break
 
-                    if not df.empty:
-                        last_upload = df['datetime'].max()
+                    last_upload = df['datetime'].max()
 
-                        df = self.preprocess_data(df, source)
-                        rows_to_upload = min(len(df), 400_000_000 - total_rows)
+                    bt.logging.info(f"Starting preprocessing for DataFrame with {len(df)} rows")
+                    df = self.preprocess_data(df, source)
+                    rows_to_upload = min(len(df), 400_000_000 - total_rows)
 
-                        if rows_to_upload < len(df):
-                            df = df.iloc[:rows_to_upload]  # Trim the dataframe if necessary
+                    if rows_to_upload < len(df):
+                        df = df.iloc[:rows_to_upload]  # Trim the dataframe if necessary
 
-                        parquet_path = os.path.join(self.output_dir,
-                                                    f"train-DataEntity_chunk_{next_chunk_id + chunk_count}.parquet")
-                        df.to_parquet(parquet_path)
+                    parquet_path = os.path.join(self.output_dir,
+                                                f"train-DataEntity_chunk_{next_chunk_id + chunk_count}.parquet")
+                    df.to_parquet(parquet_path)
 
-                        chunk_stats = self.collect_statistics(df, source)
-                        all_stats = self.merge_statistics(all_stats, chunk_stats)
+                    bt.logging.info(f"Saving chunk to Parquet file: {parquet_path}")
 
-                        chunk_count += 1
-                        total_rows += len(df)
-                        new_rows += len(df)
 
-                        if chunk_count == 10:
-                            self.upload_parquet_to_hf(repo_id)
-                            bt.logging.info(f'Uploaded {chunk_count} chunks to {repo_id}')
-                            next_chunk_id += chunk_count
-                            chunk_count = 0
-                    else:
-                        bt.logging.info(f"No new data for source {source}. Skipping.")
-                        continue
+                    bt.logging.info("Collecting statistics for the current chunk")
+                    chunk_stats = self.collect_statistics(df, source)
+                    all_stats = self.merge_statistics(all_stats, chunk_stats)
+
+                    chunk_count += 1
+                    total_rows += len(df)
+                    new_rows += len(df)
+
+                    if chunk_count == 10:
+                        self.upload_parquet_to_hf(repo_id)
+                        bt.logging.info(f'Uploaded {chunk_count} chunks to {repo_id}')
+                        next_chunk_id += chunk_count
+                        chunk_count = 0
 
                 if chunk_count > 0:
                     self.upload_parquet_to_hf(repo_id)
