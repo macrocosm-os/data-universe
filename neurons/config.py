@@ -177,7 +177,7 @@ def add_args(neuron_type: NeuronType, parser):
         parser.add_argument(
             "--gravity",
             action="store_true",
-            help="Set this flag to true to upload your data into HF dataset",
+            help="Set this flag to true to retrieve updated desirabilities, stored in total.json",
             default=False
         )
 

@@ -41,6 +41,7 @@ from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 from huggingface_utils.encoding_system import EncodingKeyManager
+from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 
 class Miner:
@@ -188,6 +189,37 @@ class Miner:
                 # Sleep 5 minutes to avoid constant refresh attempts if they are consistently erroring.
                 time.sleep(60 * 5)
 
+    def get_updated_lookup(self):
+        if not self.use_gravity_retrieval:
+            bt.logging.info("Gravity lookup retrieval is not enabled.")
+            return  
+
+        last_update = None
+        while not self.should_exit:
+            try:
+                current_datetime = dt.datetime.utcnow()
+                
+                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
+                
+                # Check if it's a new day and we haven't updated yet
+                if last_update is None or current_datetime.date() > last_update.date():
+                    bt.logging.info("Retrieving the latest dynamic lookup...")
+                    sync_run_retrieval(self.config)
+                    bt.logging.info(f"New desirable data list has been written to total.json")
+                    last_update = current_datetime
+                    bt.logging.info(f"Updated dynamic lookup at {last_update}")
+                else:
+                    bt.logging.info("No update needed at this time.")
+                
+                # Sleep for 5 minutes before checking again
+                bt.logging.info("Sleeping for 5 minutes...")
+                time.sleep(300)
+            
+            except Exception as e:
+                bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
+                bt.logging.exception("Exception details:")
+                time.sleep(300)  # Wait 5 minutes before trying again
+
     def upload_hugging_face(self):
         if not self.use_hf_uploader:
             bt.logging.info("HuggingFace Uploader is not enabled.")
@@ -290,9 +322,13 @@ class Miner:
             )
             self.compressed_index_refresh_thread.start()
             self.hugging_face_thread = threading.Thread(
-                target=self.upload_hugging_face, daemon=True)
-
+                target=self.upload_hugging_face, daemon=True
+            )
             self.hugging_face_thread.start()
+            self.lookup_thread = threading.Thread(
+                target=self.get_updated_lookup, daemon=True
+            )
+            self.lookup_thread.start()
             self.is_running = True
             bt.logging.debug("Started")
 
