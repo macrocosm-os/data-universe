@@ -81,4 +81,5 @@ This file provides functionality for miners and validators to retrieve the curre
 
 This script is called from [`validator.py`](https://github.com/macrocosm-os/data-universe/blob/gravity/neurons/validator.py#L123) once every 24 hours at 12 am UTC. The update frequency will be increased in later versions. 
 
+Miners can also choose to retrieve the updated desirability lookup every day. This is done by setting the `--gravity` flag. See [`neurons/config.py`](../neurons/config.py) and [`neurons/miner.py`](../neurons/miner.py) for code references. 
 
