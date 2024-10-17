@@ -455,7 +455,7 @@ class Miner:
         bt.logging.info(f"Got a GetHuggingFaceMetadata request from {synapse.dendrite.hotkey}.")
 
         # Query the HuggingFace metadata from the database
-        synapse.metadata = self.storage.get_hf_metadata()
+        synapse.metadata = self.storage.get_hf_metadata(unique_id=self.hf_uploader.unique_id)
 
         if not synapse.metadata:
             bt.logging.info(f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
