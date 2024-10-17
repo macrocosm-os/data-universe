@@ -118,3 +118,8 @@ class Scraper(abc.ABC):
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of data based on the specified ScrapeConfig."""
         pass
+
+    @abc.abstractmethod
+    async def validate_hf(self, entities) -> bool:
+        """Validate the correctness of a list of HF retrieved data"""
+        pass

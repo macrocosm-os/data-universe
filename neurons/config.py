@@ -124,6 +124,12 @@ def add_args(neuron_type: NeuronType, parser):
             action="store_true",
             help="Set this flag to disable setting the weights to network."
         )
+        parser.add_argument(
+            "--hf_results_path",
+            action="store_true",
+            help="Set this flag to select the location where you are want to store your hf_results data",
+            default=os.path.join(Path(os.path.dirname(__file__)).parent, "hf_validation.parquet"),
+        )
 
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(
@@ -146,6 +152,14 @@ def add_args(neuron_type: NeuronType, parser):
         default_file = os.path.join(
             os.path.join(root_dir, "scraping/config/scraping_config.json"),
         )
+        encoding_default_file = os.path.join(
+            os.path.join(root_dir, "huggingface_utils/encoding_key.json"),
+        )
+
+        state_default_file = os.path.join(
+            os.path.join(root_dir, "huggingface_utils/state_file.json"),
+        )
+
         parser.add_argument(
             "--neuron.scraping_config_file",
             type=str,
@@ -158,6 +172,27 @@ def add_args(neuron_type: NeuronType, parser):
             action="store_true",
             help="Set this flag to true to upload your data into HF dataset",
             default=False
+        )
+
+        parser.add_argument(
+            "--gravity",
+            action="store_true",
+            help="Set this flag to true to retrieve updated desirabilities, stored in total.json",
+            default=False
+        )
+
+        parser.add_argument(
+            "--encoding_key_json_file",
+            type=str,
+            help="The location of the encoding keys JSON file to use",
+            default=encoding_default_file
+        )
+
+        parser.add_argument(
+            "--miner_upload_state_file",
+            type=str,
+            help="The location of the state uploading JSON file to use",
+            default=state_default_file
         )
 
         parser.add_argument(

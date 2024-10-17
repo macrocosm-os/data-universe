@@ -99,6 +99,43 @@ def are_hashtags_valid(tweet_to_verify_hashtags: List, actual_tweet_hashtags: Li
         len(tweet_to_verify_hashtags) <= 2.5 * len(actual_tweet_hashtags)
 
 
+def hf_tweet_validation(validation_results: List[ValidationResult]) -> bool:
+    total_count = len(validation_results)
+    true_count = sum(1 for item in validation_results if item.is_valid)
+
+    true_percentage = (true_count / total_count) * 100
+
+    return true_percentage >= 50
+
+
+def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> ValidationResult:
+    """Validates the tweet based on URL, text, and date."""
+    # Check URL
+    if not is_valid_twitter_url(tweet_to_verify.get('url')):
+        return ValidationResult(is_valid=False, reason="Invalid Twitter URL", content_size_bytes_validated=0)
+
+    if normalize_url(tweet_to_verify.get('url')) != normalize_url(actual_tweet.get('url')):
+        return ValidationResult(is_valid=False, reason="Tweet URLs do not match", content_size_bytes_validated=0)
+
+
+    # Check text
+    if tweet_to_verify.get('text') != actual_tweet.get('text'):
+        return ValidationResult(is_valid=False, reason="Tweet texts do not match", content_size_bytes_validated=0)
+
+    # Check date (without time) TODO obfuscate and validate.
+    # try:
+    #     actual_date = dt.datetime.strptime(actual_tweet.get('datetime'), "%Y-%m-%d %H:%M:%S").date()
+    #     verify_date = dt.datetime.strptime(tweet_to_verify.get('datetime'), "%Y-%m-%d").date() # TODO
+    #
+    #     if actual_date != verify_date:
+    #         return {"is_valid": False, "reason": "Tweet dates do not match"}
+    # except ValueError:
+    #     return {"is_valid": False, "reason": "Invalid date format"}
+
+    # All checks passed
+    return ValidationResult(is_valid=True, reason="Tweet is valid", content_size_bytes_validated=0)
+
+
 def validate_tweet_content(
         actual_tweet: XContent, entity: DataEntity, is_retweet: bool
 ) -> ValidationResult:

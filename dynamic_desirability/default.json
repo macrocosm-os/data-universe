@@ -1,0 +1,36 @@
+[
+    {
+        "source_name": "reddit",
+        "label_weights": {
+            "r/Bitcoin": 1.0,
+            "r/BitcoinCash": 1.0,
+            "r/Bittensor_": 1.0,
+            "r/Btc": 1.0,
+            "r/Cryptocurrency": 1.0,
+            "r/Cryptomarkets": 1.0,
+            "r/worldpolitics": 0.8,
+            "r/worldnews": 1.0,
+            "r/WallstreetBets": 0.7,
+            "r/politics": 1.0
+        }
+    },
+    {
+        "source_name": "x",
+        "label_weights": {
+            "#bitcoin": 1.0,
+            "#bitcoiner": 1.0,
+            "#bitcoinnews": 1.0,
+            "#btc": 1.0,
+            "#crypto": 1.0,
+            "#defi": 1.0,
+            "#decentralizedfinance": 1.0,
+            "#tao": 1.0,
+            "#Israel": 1.0,
+            "#Ukraine": 1.0,
+            "#Trump": 1.0,
+            "#Harris": 1.0,
+            "#macrocosmos": 1.0,
+            "#MacrocosmosAI": 1.0
+        }
+    }
+]

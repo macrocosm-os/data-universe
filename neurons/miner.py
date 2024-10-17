@@ -40,6 +40,8 @@ from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
+from huggingface_utils.encoding_system import EncodingKeyManager
+from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 
 class Miner:
@@ -51,11 +53,15 @@ class Miner:
 
         bt.logging(config=self.config, logging_dir=self.config.full_path)
         bt.logging.info(self.config)
-
+        self.use_hf_uploader = self.config.huggingface
+        self.use_gravity_retrieval = self.config.gravity
+        
         if self.config.offline:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
+            self.uid = 0  # Offline mode so assume it's == 0
+
         else:
             # The wallet holds the cryptographic key pairs for the miner.
             self.wallet = bt.wallet(config=self.config)
@@ -117,12 +123,16 @@ class Miner:
         self.hugging_face_thread: threading.Thread = None
         self.lock = threading.RLock()
 
-        # Instantiate HF
-        self.use_hf_uploader = self.config.huggingface
+        # Instantiate encoding keys
+        self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
+        bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
+
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
                 db_path=self.config.neuron.database_name,
-                miner_uid=self.uid
+                miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
+                encoding_key_manager=self.encoding_key_manager,
+                state_file=self.config.miner_upload_state_file
             )
 
         # Instantiate storage.
@@ -179,6 +189,37 @@ class Miner:
                 # Sleep 5 minutes to avoid constant refresh attempts if they are consistently erroring.
                 time.sleep(60 * 5)
 
+    def get_updated_lookup(self):
+        if not self.use_gravity_retrieval:
+            bt.logging.info("Gravity lookup retrieval is not enabled.")
+            return  
+
+        last_update = None
+        while not self.should_exit:
+            try:
+                current_datetime = dt.datetime.utcnow()
+                
+                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
+                
+                # Check if it's a new day and we haven't updated yet
+                if last_update is None or current_datetime.date() > last_update.date():
+                    bt.logging.info("Retrieving the latest dynamic lookup...")
+                    sync_run_retrieval(self.config)
+                    bt.logging.info(f"New desirable data list has been written to total.json")
+                    last_update = current_datetime
+                    bt.logging.info(f"Updated dynamic lookup at {last_update}")
+                else:
+                    bt.logging.info("No update needed at this time.")
+                
+                # Sleep for 5 minutes before checking again
+                bt.logging.info("Sleeping for 5 minutes...")
+                time.sleep(300)
+            
+            except Exception as e:
+                bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
+                bt.logging.exception("Exception details:")
+                time.sleep(300)  # Wait 5 minutes before trying again
+
     def upload_hugging_face(self):
         if not self.use_hf_uploader:
             bt.logging.info("HuggingFace Uploader is not enabled.")
@@ -189,16 +230,17 @@ class Miner:
 
         while not self.should_exit:
             try:
-                if self.storage.should_upload_hf_data():
+                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the HuggingFaceUploader
+                if self.storage.should_upload_hf_data(unique_id):
                     bt.logging.info("Trying to upload the data into HuggingFace.")
-                    self.hf_uploader.upload_sql_to_huggingface(self.storage)
-            # In case of unforeseen errors, the refresh thread will log the error and continue operations.
+                    hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
+                    if hf_metadata_list:
+                        self.storage.store_hf_dataset_info(hf_metadata_list)
             except Exception:
                 bt.logging.error(traceback.format_exc())
 
             time_sleep_val = dt.timedelta(minutes=90).total_seconds()
             time.sleep(time_sleep_val)
-
     def run(self):
         """
         Initiates and manages the main loop for the miner.
@@ -279,9 +321,13 @@ class Miner:
             )
             self.compressed_index_refresh_thread.start()
             self.hugging_face_thread = threading.Thread(
-                target=self.upload_hugging_face, daemon=True)
-
+                target=self.upload_hugging_face, daemon=True
+            )
             self.hugging_face_thread.start()
+            self.lookup_thread = threading.Thread(
+                target=self.get_updated_lookup, daemon=True
+            )
+            self.lookup_thread.start()
             self.is_running = True
             bt.logging.debug("Started")
 

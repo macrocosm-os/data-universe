@@ -18,6 +18,7 @@ import datetime as dt
 import sqlite3
 import contextlib
 import bittensor as bt
+import pandas as pd
 
 
 # Use a timezone aware adapter for timestamp columns.
@@ -78,7 +79,8 @@ class SqliteMinerStorage(MinerStorage):
     HF_METADATA_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS HFMetaData (
                                 uri                 TEXT            PRIMARY KEY,
                                 source              INTEGER         NOT NULL,
-                                updatedAt           TIMESTAMP(6)    NOT NULL
+                                updatedAt           TIMESTAMP(6)    NOT NULL,
+                                encodingKey         TEXT
                                 ) WITHOUT ROWID"""
 
     def __init__(
@@ -111,6 +113,8 @@ class SqliteMinerStorage(MinerStorage):
             # Use Write Ahead Logging to avoid blocking reads.
             cursor.execute("pragma journal_mode=wal")
 
+        # Update the HFMetaData for miners who created this table in previous versions
+        self._ensure_hf_metadata_schema()
         # Lock to avoid concurrency issues on clearing space when full.
         self.clearing_space_lock = threading.Lock()
 
@@ -132,6 +136,21 @@ class SqliteMinerStorage(MinerStorage):
         connection.row_factory = sqlite3.Row
 
         return connection
+
+    def _ensure_hf_metadata_schema(self):
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+
+            # Check if the encodingKey column exists
+            cursor.execute("PRAGMA table_info(HFMetaData)")
+            columns = [column[1] for column in cursor.fetchall()]
+
+            if 'encodingKey' not in columns:
+                # Add the new column
+                cursor.execute("ALTER TABLE HFMetaData ADD COLUMN encodingKey TEXT")
+                bt.logging.info("Added encodingKey column to HFMetaData table")
+
+            connection.commit()
 
     def store_data_entities(self, data_entities: List[DataEntity]):
         """Stores any number of DataEntities, making space if necessary."""
@@ -201,29 +220,37 @@ class SqliteMinerStorage(MinerStorage):
     def store_hf_dataset_info(self, hf_metadatas: List[HuggingFaceMetadata]):
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
-            # Parse every HFMetadata into a list of value lists for inserting.
             values = []
             for hf_metadata in hf_metadatas:
                 values.append(
                     [
                         hf_metadata.repo_name,
                         hf_metadata.source,
-                        hf_metadata.updated_at
+                        hf_metadata.updated_at,
+                        getattr(hf_metadata, 'encoding_key', None)  # Use getattr to handle cases where encoding_key might not exist
                     ]
                 )
 
-            # Insert overwriting duplicate keys (in case of updated content).
-            cursor.executemany("REPLACE INTO HFMetaData VALUES (?,?,?)", values)
+            cursor.executemany(
+                "REPLACE INTO HFMetaData (uri, source, updatedAt, encodingKey) VALUES (?,?,?,?)", values)
 
-            # Commit the insert.
             connection.commit()
 
-    def should_upload_hf_data(self) -> bool:
+    def get_earliest_data_datetime(self, source):
+        query = "SELECT MIN(datetime) as earliest_date FROM DataEntity WHERE source = ?"
+        with contextlib.closing(self._create_connection()) as connection:
+            cursor = connection.cursor()
+            cursor.execute(query, (source,))
+            result = cursor.fetchone()
+            return result['earliest_date'] if result and result['earliest_date'] else None
+
+    def should_upload_hf_data(self, unique_id: str) -> bool:
         sql_query = """
             SELECT datetime(AVG(strftime('%s', UpdatedAt)), 'unixepoch') AS AvgUpdatedAt
             FROM (
                 SELECT UpdatedAt
                 FROM HFMetaData
+                WHERE uri LIKE ?
                 ORDER BY UpdatedAt DESC
                 LIMIT 2
             );
@@ -231,16 +258,16 @@ class SqliteMinerStorage(MinerStorage):
         try:
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
-                cursor.execute(sql_query)
+                cursor.execute(sql_query, (f"%_{unique_id}",))
                 result = cursor.fetchone()
 
                 if result is None or result[0] is None:
-                    return True  # No data found
+                    return True  # No data found, should upload
 
                 average_datetime = dt.datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
                 average_datetime = average_datetime.replace(tzinfo=dt.timezone.utc)
 
-                current_datetime = dt.datetime.now(dt.timezone.utc)
+                current_datetime = dt.datetime.utcnow()
 
                 # Calculate time difference for 25000 blocks (300,000 seconds (~4 days))
                 time_difference = dt.timedelta(seconds=300000)
@@ -248,29 +275,31 @@ class SqliteMinerStorage(MinerStorage):
 
                 return threshold_datetime > average_datetime
         except sqlite3.Error as e:
-            print(f"An error occurred: {e}")
+            bt.logging.error(f"An error occurred: {e}")
             return False
 
-    def get_hf_metadata(self) -> List[HuggingFaceMetadata]:
+    def get_hf_metadata(self, unique_id: str) -> List[HuggingFaceMetadata]:
         sql_query = """
-            SELECT * FROM HFMetaData
-            ORDER BY UpdatedAt DESC
+            SELECT uri, source, updatedAt, 
+                   CASE WHEN encodingKey IS NULL THEN '' ELSE encodingKey END as encodingKey
+            FROM HFMetaData
+            WHERE uri LIKE ?
+            ORDER BY updatedAt DESC
             LIMIT 2;
         """
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
-            cursor.execute(sql_query)
+            cursor.execute(sql_query, (f"%_{unique_id}",))
             hf_metadatas = []
 
-            i = 0
             for row in cursor:
                 hf_metadata = HuggingFaceMetadata(
                     repo_name=row['uri'],
                     source=row['source'],
-                    updated_at=row['updatedAt']
+                    updated_at=row['updatedAt'],
+                    encoding_key=row['encodingKey'] if row['encodingKey'] != '' else None
                 )
-
                 hf_metadatas.append(hf_metadata)
 
         return hf_metadatas

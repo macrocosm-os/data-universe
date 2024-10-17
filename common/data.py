@@ -74,6 +74,19 @@ class DataSource(IntEnum):
     UNKNOWN_6 = 6
     UNKNOWN_7 = 7
 
+    @property
+    def weight(self):
+        weights = {
+            DataSource.REDDIT: 0.6,
+            DataSource.X: 0.4,
+            DataSource.UNKNOWN_3: 0,
+            DataSource.UNKNOWN_4: 0,
+            DataSource.UNKNOWN_5: 0,
+            DataSource.UNKNOWN_6: 0,
+            DataSource.UNKNOWN_7: 0
+        }
+        return weights[self]
+
 
 class DataLabel(StrictBaseModel):
     """An optional label to classify a data entity. Each data source will have its own definition and interpretation of labels.
@@ -135,10 +148,18 @@ class DataEntity(StrictBaseModel):
 class HuggingFaceMetadata(StrictBaseModel):
     # The name of repo
     repo_name: str
-    # The datetime of the data entity, usually its creation time.
-    # Should be in UTC.
+    # The source of the data
     source: DataSource
+    # The datetime of the last update. Should be in UTC.
     updated_at: dt.datetime
+    # The encoding key used for this dataset (optional)
+    encoding_key: Optional[str] = None
+
+    class Config:
+        arbitrary_types_allowed = True
+        json_encoders = {
+            dt.datetime: lambda v: v.isoformat(),
+        }
 
 
 class DataEntityBucketId(StrictBaseModel):
