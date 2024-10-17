@@ -267,7 +267,7 @@ class SqliteMinerStorage(MinerStorage):
                 average_datetime = dt.datetime.strptime(result[0], "%Y-%m-%d %H:%M:%S")
                 average_datetime = average_datetime.replace(tzinfo=dt.timezone.utc)
 
-                current_datetime = dt.datetime.utcnow()
+                current_datetime = dt.datetime.now(dt.timezone.utc)
 
                 # Calculate time difference for 25000 blocks (300,000 seconds (~4 days))
                 time_difference = dt.timedelta(seconds=300000)
