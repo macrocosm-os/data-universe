@@ -51,6 +51,30 @@
                     "max_data_entities": 100
                 }
             ]
+        },
+        {
+            "scraper_id": "Tumblr.custom",
+            "cadence_seconds": 1,
+            "labels_to_scrape": [
+                {
+                    "label_choices": [
+                        "#bitcoin",
+                        "#cryptocurrency",
+                        "#crypto",
+                        "#blockchain",
+                        "#ethereum",
+                        "#btc",
+                        "#defi",
+                        "#nft",
+                        "#trading",
+                        "#investment",
+                        "#finance",
+                        "#money",
+                        "#technology"
+                    ],
+                    "max_data_entities": 50
+                }
+            ]
         }
     ]
 }
