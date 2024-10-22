@@ -52,11 +52,16 @@ class HuggingFaceUploader:
         self.hf_api = HfApi(token=self.hf_token)
         self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
         self.chunk_size = chunk_size
+        self.wal_size_limit_mb = 2000  # 2 GB WAL size limit
 
     @contextmanager
     def get_db_connection(self):
         conn = sqlite3.connect(self.db_path)
         try:
+            # Add optimization settings
+            conn.execute("PRAGMA synchronous=NORMAL")
+            conn.execute("PRAGMA temp_store=MEMORY")
+            conn.execute("PRAGMA cache_size=-100000")  # 100MB cache
             yield conn
         finally:
             conn.close()
@@ -71,7 +76,7 @@ class HuggingFaceUploader:
             return s.decode('utf-8')
         return str(s)
 
-    def check_connection(self, url: str = "https://huggingface.co", timeout: int = 5) -> bool:
+    def check_hf_connection(self, url: str = "https://huggingface.co", timeout: int = 5) -> bool:
         """Check if the connection to Hugging Face is stable."""
         try:
             response = requests.get(url, timeout=timeout)
@@ -159,7 +164,7 @@ class HuggingFaceUploader:
 
     @retry_upload(max_retries=5)
     def upload_parquet_to_hf(self, repo_id):
-        if not self.check_connection():
+        if not self.check_hf_connection():
             bt.logging.error("Network connection is unstable. Upload aborted.")
             return
 
@@ -269,6 +274,7 @@ class HuggingFaceUploader:
                         bt.logging.info(f'Uploaded {chunk_count} chunks to {repo_id}')
                         next_chunk_id += chunk_count
                         chunk_count = 0
+                        self.manage_wal(conn)
 
                 if chunk_count > 0:
                     self.upload_parquet_to_hf(repo_id)
@@ -538,3 +544,19 @@ class HuggingFaceUploader:
         except Exception as e:
             bt.logging.error(f"Error saving merged stats JSON: {e}")
             raise
+
+    def check_wal_size(self):
+        wal_file = f"{self.db_path}-wal"
+        if os.path.exists(wal_file):
+            size_mb = os.path.getsize(wal_file) / (1024 * 1024)
+            bt.logging.info(f"Current WAL file size: {size_mb:.2f} MB")
+            return size_mb
+        return 0
+
+    def manage_wal(self, conn):
+        wal_size = self.check_wal_size()
+        if wal_size > self.wal_size_limit_mb:
+            bt.logging.warning(f"WAL file exceeded {self.wal_size_limit_mb} MB. Performing checkpoint.")
+            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
+            new_size = self.check_wal_size()
+            bt.logging.info(f"After checkpoint, WAL size: {new_size:.2f} MB")
