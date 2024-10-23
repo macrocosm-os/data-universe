@@ -11,3 +11,8 @@ AMPLICATION_FACTOR: int = 10
 # Paths of subnet preferences (default) and overall subnet + validator preferences.
 DEFAULT_JSON_PATH: str = 'default.json'
 AGGREGATE_JSON_PATH: str = 'total.json'
+
+VALID_SOURCES: dict[str, str] = {
+    "reddit": "r/",
+    "x": "#",
+}
