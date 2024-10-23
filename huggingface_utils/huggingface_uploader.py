@@ -39,7 +39,8 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
 class HuggingFaceUploader:
     def __init__(self, db_path: str,
                  miner_hotkey: str,
-                 encoding_key_manager: EncodingKeyManager,
+                 encoding_key_manager: EncodingKeyManager,  # USED FOR ENCODING USERNAMES
+                 private_encoding_key_manager: EncodingKeyManager,   # USED FOR ENCODING URLS
                  state_file: str,
                  output_dir: str = 'hf_storage',
                  chunk_size: int = 1_000_000):
@@ -48,6 +49,7 @@ class HuggingFaceUploader:
         self.output_dir = os.path.join(output_dir, self.miner_hotkey)
         self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
+        self.private_encoding_key_manager = private_encoding_key_manager
         self.hf_token = os.getenv("HUGGINGFACE_TOKEN")
         self.hf_api = HfApi(token=self.hf_token)
         self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
@@ -157,9 +159,9 @@ class HuggingFaceUploader:
 
     def preprocess_data(self, df, source):
         if source == DataSource.REDDIT.value:
-            return preprocess_reddit_df(df, self.encoding_key_manager)
+            return preprocess_reddit_df(df, self.encoding_key_manager, self.private_encoding_key_manager)
         else:
-            return preprocess_twitter_df(df, self.encoding_key_manager)
+            return preprocess_twitter_df(df, self.encoding_key_manager, self.private_encoding_key_manager)
 
 
     @retry_upload(max_retries=5)
