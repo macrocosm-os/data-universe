@@ -26,7 +26,7 @@ def serialize_like_dendrite(synapse: bt.Synapse) -> str:
 
 def serialize_like_axon(synapse: bt.Synapse) -> str:
     """Serializes a synapse like an Axon would."""
-    return serialize_like_dendrite(synapse)
+    return synapse.json()
 
 
 def deserialize(json_str: str, cls: Type) -> bt.Synapse:
@@ -133,7 +133,20 @@ class TestGetDataEntityBucket(unittest.TestCase):
         # Also check that the headers can be constructed.
         request.to_headers()
 
-        # TODO: Add a test for the response.
+        response = request.copy()
+        response.data_entities = [
+            DataEntity(
+                uri=f"http://uri/{i}",
+                content=b"Hello, world!",
+                datetime=dt.datetime.utcnow(),
+                label=DataLabel(value="r/bittensor_"),
+                source=DataSource.REDDIT,
+                content_size_bytes=13,
+            )
+            for i in range(350_000)
+        ]
+        response_json = serialize_like_axon(response)
+        print(len(response_json))
 
 
 if __name__ == "__main__":
