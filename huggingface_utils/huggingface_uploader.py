@@ -58,12 +58,15 @@ class HuggingFaceUploader:
 
     @contextmanager
     def get_db_connection(self):
-        conn = sqlite3.connect(self.db_path)
+        conn = sqlite3.connect(self.db_path, timeout=60.0)  # Added timeout
         try:
-            # Add optimization settings
+            # Enhanced optimization settings
+            conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA temp_store=MEMORY")
-            conn.execute("PRAGMA cache_size=-100000")  # 100MB cache
+            conn.execute("PRAGMA cache_size=-2000000")  # Increased to 2GB
+            conn.execute("PRAGMA page_size=16384")  # Optimized page size
+            conn.execute("PRAGMA mmap_size=30000000000")  # 30GB memory mapping
             yield conn
         finally:
             conn.close()
@@ -258,10 +261,9 @@ class HuggingFaceUploader:
 
                     parquet_path = os.path.join(self.output_dir,
                                                 f"train-DataEntity_chunk_{next_chunk_id + chunk_count}.parquet")
-                    df.to_parquet(parquet_path)
+                    df.to_parquet(parquet_path, index=False)
 
                     bt.logging.info(f"Saving chunk to Parquet file: {parquet_path}")
-
 
                     bt.logging.info("Collecting statistics for the current chunk")
                     chunk_stats = self.collect_statistics(df, source)
@@ -276,10 +278,13 @@ class HuggingFaceUploader:
                         bt.logging.info(f'Uploaded {chunk_count} chunks to {repo_id}')
                         next_chunk_id += chunk_count
                         chunk_count = 0
-                        self.manage_wal(conn)
+                        with self.get_db_connection() as conn:
+                            self.manage_wal(conn)
 
                 if chunk_count > 0:
                     self.upload_parquet_to_hf(repo_id)
+                    with self.get_db_connection() as conn:
+                        self.manage_wal(conn)
                     bt.logging.info(f'Uploaded final {chunk_count} chunks to {repo_id}')
 
                 state['last_upload'][str(source)] = last_upload
