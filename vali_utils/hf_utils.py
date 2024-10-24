@@ -8,7 +8,9 @@ from datasets import load_dataset
 import itertools
 import asyncio
 import datetime as dt
-from huggingface_hub import HfApi
+import json
+import os 
+from huggingface_hub import HfApi, hf_hub_download
 from huggingface_utils.encoding_system import SymKeyEncodingKeyManager, decode_url
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
@@ -27,6 +29,36 @@ def update_dataset_names(df):
 
     df['repo_name'] = df['repo_name'].apply(transform_dataset_name)
     return df
+
+
+
+def download_stats_file(repo_id: str) -> dict:
+    temp_file_path = None
+    try:
+        temp_file_path = hf_hub_download(repo_id=repo_id, filename="stats.json", repo_type="dataset")
+        with open(temp_file_path, 'r') as file:
+            return json.load(file)
+    except Exception as e:
+        bt.logging.error(f"Error downloading stats.json from {repo_id}: {str(e)}")
+        return {}
+    finally:
+        if temp_file_path and os.path.exists(temp_file_path):
+            try:
+                os.remove(temp_file_path)
+            except Exception as e:
+                bt.logging.warning(f"Failed to remove temporary file {temp_file_path}: {str(e)}")
+
+
+def add_stats_file(df: pd.DataFrame) -> pd.DataFrame:
+    def get_stats_for_repos(repo_names):
+        if len(repo_names) == 1:
+            return []
+        return [download_stats_file(repo) for repo in repo_names]
+
+    df['stats_data'] = df['repo_name'].apply(get_stats_for_repos)
+    return df
+
+
 
 def get_latest_commit_files(repo_id: str) -> List[str]:
     api = HfApi()
