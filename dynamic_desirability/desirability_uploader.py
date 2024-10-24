@@ -5,10 +5,10 @@ import os
 import shutil
 import subprocess
 import bittensor as bt
-from typing import List
+from typing import List, Optional
 from decimal import Decimal, ROUND_HALF_UP
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
-from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER
+from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
 
 
 def run_command(command: List[str]) -> str:
@@ -22,24 +22,41 @@ def run_command(command: List[str]) -> str:
         raise
 
 
-def normalize_preferences_json(file_path: str) -> str:
+def normalize_preferences_json(file_path: str) -> Optional[str]:
     """
     Normalize potentially invalid preferences JSONs
     """
-    with open(file_path, 'r') as f:
-        data = json.load(f)
-
-    if not data:
-        return {}
+    try:
+        with open(file_path, 'r') as f:
+            if os.path.getsize(file_path) == 0:
+                bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
+                return {}
+            data = json.load(f)  
+    except FileNotFoundError:
+        bt.logging.error(f"File not found: {file_path}.")
+        return None
+    except Exception as e:
+        bt.logging.error(f"Unexpected error while reading file: {e}.")
+        return None
 
     all_label_weights = {}
+    valid_keys = {"source_name", "label_weights"}
     
-    # Taking all positive label weights across all sources.
-    for source in data:
-        for label, weight in source["label_weights"].items():
-            weight_decimal = Decimal(str(weight))
-            if weight_decimal > Decimal('0'):
-                all_label_weights[label] = all_label_weights.get(label, Decimal('0')) + weight_decimal
+    # Taking all positive label weights across all sources that are valid.
+    try:
+        for source_dict in data:
+            source_dict["source_name"] = source_dict["source_name"].lower()
+            source_name = source_dict["source_name"]
+            source_prefix = VALID_SOURCES[source_name]
+
+            if source_dict.keys() == valid_keys and source_name in VALID_SOURCES.keys(): 
+                for label, weight in source_dict["label_weights"].items():
+                    weight_decimal = Decimal(str(weight))
+                    if weight_decimal > Decimal('0') and label.startswith(source_prefix):
+                        all_label_weights[label] = all_label_weights.get(label, Decimal('0')) + weight_decimal
+    except Exception as e:
+        bt.logging.error(f"Error while parsing your JSON file: {e}.")
+        return None
 
     # If more than 10 label weights, only takes top 10.
     sorted_labels = sorted(all_label_weights.items(), key=lambda x: x[1], reverse=True)[:10]
@@ -47,7 +64,7 @@ def normalize_preferences_json(file_path: str) -> str:
     total_weight = sum(weight for _, weight in sorted_labels)
     if total_weight <= 0:
         bt.logging.error(f"Cannot normalize preferences file. Please see docs for correct preferences format.")
-        return
+        return None
 
     # Normalize weights to sum between 0.1 and 1.
     target_sum = min(max(total_weight, Decimal('0.1')), Decimal('1'))
@@ -153,8 +170,12 @@ async def run_uploader(args):
     try:
 
         json_content = normalize_preferences_json(args.file_path)
-        if not json_content:
+        if isinstance(json_content, dict):
             json_content = json.dumps(json_content, indent=4)
+
+        if not json_content:
+            bt.logging.error("Please see docs for correct format. Not pushing to Github or chain.")
+            return
 
         bt.logging.info(f"JSON content:\n{json_content}")
         github_commit = upload_to_github(json_content, my_hotkey)
@@ -162,7 +183,6 @@ async def run_uploader(args):
         result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
         bt.logging.info(f"Stored {result} on chain commit hash.")
         return result
-
     except Exception as e:
         bt.logging.error(f"An error occurred: {str(e)}")
         raise
