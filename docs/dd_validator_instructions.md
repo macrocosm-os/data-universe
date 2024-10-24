@@ -2,6 +2,9 @@
 
 ## Overview
 
+### To view this guide in video walkthrough form, see:
+[Video Walkthrough](https://www.youtube.com/watch?v=rna6JOS8Weg)
+
 ### To learn more about Dynamic Desirability (Gravity), see:
 [Dynamic Desirability Doc](https://github.com/macrocosm-os/data-universe/blob/gravity/docs/dynamic_desirability.md)
 
