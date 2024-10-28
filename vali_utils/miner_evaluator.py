@@ -17,7 +17,7 @@ from common.data import (
     DataSource,
     HuggingFaceMetadata,
 )
-from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata
+from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata, DecodeURLRequest
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -439,6 +439,44 @@ class MinerEvaluator:
                 traceback.format_exc(),
             )
             return None
+
+    async def validate_encoded_urls(self, hotkey: str, uid: int, axon_info: bt.AxonInfo,
+                                    encoded_urls: List[str]) -> bool:
+        """Validates that a miner can correctly decode URLs."""
+        try:
+            # Send decode request to miner
+            async with bt.dendrite(wallet=self.wallet) as dendrite:
+                responses = await dendrite.forward(
+                    axons=[axon_info],
+                    synapse=DecodeURLRequest(
+                        encoded_urls=encoded_urls[:10],  # Limit to 10 URLs
+                        version=constants.PROTOCOL_VERSION
+                    ),
+                    timeout=30
+                )
+
+            response = vali_utils.get_single_successful_response(responses, DecodeURLRequest)
+            if not response:
+                bt.logging.info(f"{hotkey}: Failed to get URL decode response")
+                return False
+
+            # Verify decoded URLs match expected patterns
+            decoded_urls = response.decoded_urls
+            if len(decoded_urls) != len(encoded_urls):
+                bt.logging.info(f"{hotkey}: Mismatch in number of decoded URLs")
+                return False
+
+            # Add validation logic specific to your URL format
+            for decoded_url in decoded_urls:
+                if not decoded_url.startswith('http'):
+                    bt.logging.info(f"{hotkey}: Invalid decoded URL format: {decoded_url}")
+                    return False
+
+            return True
+
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: Error validating URLs: {str(e)}")
+            return False
 
     def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
         """Handles an update to a metagraph."""

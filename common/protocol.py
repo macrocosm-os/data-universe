@@ -127,12 +127,41 @@ class GetHuggingFaceMetadata(BaseProtocol):
         default_factory=list
     )
 
-# TODO Protocol for Users to Query Data which will accept query parameters such as a startDatetime, endDatetime.
+
+class DecodeURLRequest(BaseProtocol):
+    """
+    Protocol by which Validators can request URL decoding from a Miner.
+
+    Attributes:
+    - encoded_urls: A list of encoded URL strings to be decoded
+    - decoded_urls: A list of decoded URL strings returned by the miner
+    """
+
+    # Required request input, filled by sending dendrite caller
+    encoded_urls: List[str] = pydantic.Field(
+        title="encoded_urls",
+        description="List of encoded URLs that need to be decoded",
+        max_length=10,  # Limit to 10 URLs per request
+        frozen=True,
+        repr=False,
+        default_factory=list,
+    )
+
+    # Required request output, filled by receiving axon
+    decoded_urls: List[str] = pydantic.Field(
+        title="decoded_urls",
+        description="List of decoded URLs corresponding to the encoded URLs",
+        frozen=False,
+        repr=False,
+        default_factory=list,
+    )
+
 
 # How many times validators can send requests per validation period.
 REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
     GetMinerIndex: 1,
     GetDataEntityBucket: 1,
     GetContentsByBuckets: 5,
-    GetHuggingFaceMetadata: 1, # New entry for HuggingFace metadata requests
+    DecodeURLRequest: 2,
+    GetHuggingFaceMetadata: 1,  # New entry for HuggingFace metadata requests
 }

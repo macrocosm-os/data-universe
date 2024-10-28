@@ -31,6 +31,7 @@ from common.protocol import (
     GetMinerIndex,
     GetContentsByBuckets,
     GetHuggingFaceMetadata,
+    DecodeURLRequest,
     REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
 )
 from neurons.config import NeuronType
@@ -112,6 +113,10 @@ class Miner:
                 forward_fn=self.get_huggingface_metadata,
                 blacklist_fn=self.get_huggingface_metadata_blacklist,
                 priority_fn=self.get_huggingface_metadata_priority,
+            ).attach(
+                forward_fn=self.decode_urls,
+                blacklist_fn=self.decode_urls_blacklist,
+                priority_fn=self.decode_urls_priority
             )
             bt.logging.success(f"Axon created: {self.axon}.")
 
@@ -467,6 +472,42 @@ class Miner:
                 f"Returning {len(synapse.metadata)} HuggingFace metadata entries to {synapse.dendrite.hotkey}.")
 
         return synapse
+
+    async def decode_urls(self, synapse: DecodeURLRequest) -> DecodeURLRequest:
+        """Handles requests to decode URLs using the miner's encoding key."""
+        bt.logging.info(f"Got DecodeURLRequest from {synapse.dendrite.hotkey} for {len(synapse.encoded_urls)} URLs")
+
+        try:
+            # Use the encoding key manager to decode each URL
+            decoded_urls = []
+            for encoded_url in synapse.encoded_urls:
+                try:
+                    # Try private key first, fall back to public key
+                    try:
+                        decoded_url = self.private_encoding_key_manager.decode_url(encoded_url) # TODO
+                    except:
+                        decoded_url = self.encoding_key_manager.decode_url(encoded_url) # TODO
+                    decoded_urls.append(decoded_url)
+                except Exception as e:
+                    bt.logging.error(f"Failed to decode URL {encoded_url}: {str(e)}")
+                    decoded_urls.append("")  # Add empty string for failed decodes
+
+            synapse.decoded_urls = decoded_urls
+            bt.logging.success(f"Successfully decoded {len(decoded_urls)} URLs for {synapse.dendrite.hotkey}")
+
+        except Exception as e:
+            bt.logging.error(f"Error processing DecodeURLRequest: {str(e)}")
+            synapse.decoded_urls = [""] * len(synapse.encoded_urls)
+
+        return synapse
+
+    async def decode_urls_blacklist(self, synapse: DecodeURLRequest) -> Tuple[bool, str]:
+        """The blacklist function for decode URL requests."""
+        return self.default_blacklist(synapse)
+
+    async def decode_urls_priority(self, synapse: DecodeURLRequest) -> float:
+        """The priority function for decode URL requests."""
+        return self.default_priority(synapse)
 
     async def get_huggingface_metadata_blacklist(self, synapse: GetHuggingFaceMetadata) -> typing.Tuple[bool, str]:
         return self.default_blacklist(synapse)
