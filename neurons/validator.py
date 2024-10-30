@@ -27,12 +27,14 @@ import datetime as dt
 import os
 import wandb
 import subprocess
+import argparse
 from common.metagraph_syncer import MetagraphSyncer
 import common.utils as utils
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
-from dynamic_desirability.desirability_retrieval import sync_run_retrieval
+from dynamic_desirability.desirability_retrieval import sync_run_retrieval, has_previous_commit
+from dynamic_desirability.desirability_uploader import sync_run_uploader
 from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
@@ -119,6 +121,21 @@ class Validator:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
         self.is_setup = True
+
+    def setup_preferences(self):
+        """If the validator doesn't have a preference vote yet, use default preferences as their vote. """
+        if has_previous_commit(self.config):
+            return
+        
+        args = argparse.Namespace(
+            wallet=self.wallet,
+            hotkey=self.wallet.hotkey.ss58_address,
+            network=self.config.subtensor.chain_endpoint,
+            netuid=self.config.netuid,
+            file_path="dynamic_desirability/default.json"
+        )
+
+        sync_run_uploader(args=args)
 
     def get_updated_lookup(self):
         last_update = None
@@ -285,6 +302,7 @@ class Validator:
 
         # Setup the Validator.
         self.setup()
+        self.setup_preferences()
 
         if not self.is_running:
             bt.logging.debug("Starting validator in background thread.")

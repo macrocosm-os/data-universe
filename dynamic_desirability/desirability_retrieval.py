@@ -22,6 +22,15 @@ from dynamic_desirability.constants import (REPO_URL,
     )
 
 
+def has_previous_commit(config) -> bool:
+    wallet = bt.wallet(config=config)
+    subtensor = bt.subtensor(config=config)
+    chain_store = ChainPreferenceStore(wallet=wallet, subtensor=subtensor, netuid=config.netuid)
+    if asyncio.run(chain_store.retrieve_preferences(hotkey=wallet.hotkey.ss58_address)):
+        return True
+    return False
+
+
 def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
     """Retrieve JSON content from a specific commit in the repository."""
     original_dir = os.getcwd()

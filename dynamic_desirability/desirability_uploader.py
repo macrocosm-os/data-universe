@@ -187,6 +187,11 @@ async def run_uploader(args):
         bt.logging.error(f"An error occurred: {str(e)}")
         raise
 
+
+def sync_run_uploader(args):
+    return asyncio.run(run_uploader(args))
+
+
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Set desirabilities for Gravity.")
     add_args(parser, is_upload=True)
