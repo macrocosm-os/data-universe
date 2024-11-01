@@ -125,8 +125,10 @@ class Validator:
     def setup_preferences(self):
         """If the validator doesn't have a preference vote yet, use default preferences as their vote. """
         if has_previous_commit(self.config):
+            bt.logging.info("Validator already has dynamic preferences. Continuing...")
             return
         
+        bt.logging.info("Validator does not have any dynamic preferences. Voting for default.json...")
         args = argparse.Namespace(
             wallet=self.wallet,
             hotkey=self.wallet.hotkey.ss58_address,
@@ -136,6 +138,7 @@ class Validator:
         )
 
         sync_run_uploader(args=args)
+        bt.logging.info("Completed vote for default.json.")
 
     def get_updated_lookup(self):
         last_update = None

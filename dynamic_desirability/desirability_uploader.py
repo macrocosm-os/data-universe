@@ -8,7 +8,7 @@ import bittensor as bt
 from typing import List, Optional
 from decimal import Decimal, ROUND_HALF_UP
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
-from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
+from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
 
 
 def run_command(command: List[str]) -> str:
