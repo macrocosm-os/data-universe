@@ -2,11 +2,13 @@ import asyncio
 import argparse
 import json
 import os
+import time
 import shutil
 import subprocess
 import bittensor as bt
 from typing import List, Optional
 from decimal import Decimal, ROUND_HALF_UP
+from substrateinterface.exceptions import SubstrateRequestException
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
 
@@ -188,8 +190,22 @@ async def run_uploader(args):
         raise
 
 
-def sync_run_uploader(args):
-    return asyncio.run(run_uploader(args))
+def sync_run_uploader(args, retries=5, delay=2):
+    attempt = 0
+    while attempt < retries:
+        try:
+            asyncio.run(run_uploader(args))
+            break
+        except SubstrateRequestException as e:
+            if "Priority is too low" in str(e):
+                attempt += 1
+                bt.logging.error(f"Attempt {attempt} failed: {e}. Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                # Re-raise if the error isn't about priority
+                raise
+    else:
+        bt.logging.error("Max retries reached. Transaction failed.")
 
 
 if __name__ == "__main__":

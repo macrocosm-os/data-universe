@@ -130,8 +130,8 @@ class Validator:
         
         bt.logging.info("Validator does not have any dynamic preferences. Voting for default.json...")
         args = argparse.Namespace(
-            wallet=self.wallet,
-            hotkey=self.wallet.hotkey.ss58_address,
+            wallet=self.wallet.name,
+            hotkey=self.wallet.hotkey_str,
             network=self.config.subtensor.chain_endpoint,
             netuid=self.config.netuid,
             file_path="dynamic_desirability/default.json"
