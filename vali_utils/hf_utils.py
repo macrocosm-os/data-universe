@@ -86,19 +86,22 @@ def get_validation_data(repo_id: str, files: List[str], num_rows: int = 10) -> T
 
 
 def decode_dataframe(df: pd.DataFrame, encoding_key: str) -> pd.DataFrame:
-    """Decode encoded fields in DataFrame."""
+    """
+    Decode only username fields, leave URLs encoded for miner validation.
+    """
     decoded_df = df.copy()
     key_manager = SymKeyEncodingKeyManager(encoding_key)
     key_manager.sym_key = encoding_key.encode()
     fernet = key_manager.get_fernet()
 
-    for column in ['url_encoded', 'username_encoded']:
-        if column in decoded_df.columns:
-            decoded_df[column.replace('_encoded', '')] = decoded_df[column].apply(
-                lambda x: decode_url(x, fernet) if x else None
-            )
-            decoded_df = decoded_df.drop(columns=[column])
+    # Only decode username, leave url_encoded as is
+    if 'username_encoded' in decoded_df.columns:
+        decoded_df['username'] = decoded_df['username_encoded'].apply(
+            lambda x: decode_url(x, fernet) if x else None
+        )
+        decoded_df = decoded_df.drop(columns=['username_encoded'])
 
+    # Keep url_encoded column for miner validation
     return decoded_df
 
 
