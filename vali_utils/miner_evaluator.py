@@ -32,7 +32,13 @@ from vali_utils import utils as vali_utils
 
 from typing import List, Optional
 
-from vali_utils.hf_utils import validate_huggingface_dataset
+from vali_utils.hf_utils import (
+    get_latest_commit_files,
+    get_validation_data,
+    decode_dataframe,
+    validate_hf_content
+)
+
 
 from rewards.miner_scorer import MinerScorer
 
@@ -124,8 +130,6 @@ class MinerEvaluator:
 
         ##########
         # Query HuggingFace metadata
-
-
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
         if validation_info is None or (current_block - validation_info['block']) > 55000:
@@ -134,10 +138,32 @@ class MinerEvaluator:
                 for hf_metadata in hf_metadatas:
                     bt.logging.info(f'{hotkey}: Trying to validate {hf_metadata.repo_name}')
 
-                    validation_result = await validate_huggingface_dataset(hf_metadata)
-                    bt.logging.info(f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
+                    # Get parquet files
+                    new_parquet_files = get_latest_commit_files(hf_metadata.repo_name)
+                    if not new_parquet_files:
+                        bt.logging.warning(f"No new parquet files found for {hf_metadata.repo_name}")
+                        continue
 
-                    # Store the validation result regardless of success status
+                    # Get both encoded URLs and full DataFrame
+                    encoded_urls, encoded_df = get_validation_data(hf_metadata.repo_name, new_parquet_files)
+
+                    if encoded_urls:
+                        # Validate URLs with miner
+                        urls_valid = await self.validate_encoded_urls(hotkey, uid, axon_info, encoded_urls)
+                        if urls_valid:
+                            # Decode and validate content
+                            decoded_df = decode_dataframe(encoded_df, hf_metadata.encoding_key)
+                            validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
+                            bt.logging.info(
+                                f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
+                        else:
+                            bt.logging.error(f"{hotkey}: URL validation failed for {hf_metadata.repo_name}")
+                            validation_result = False
+                    else:
+                        bt.logging.warning(f"{hotkey}: No encoded URLs found in {hf_metadata.repo_name}")
+                        validation_result = False
+
+                    # Store validation result
                     self.hf_storage.update_validation_info(
                         hotkey,
                         str(hf_metadata.repo_name),
@@ -149,7 +175,7 @@ class MinerEvaluator:
                     'no_dataset_provided',
                     current_block,
                 )
-
+        ##########
 
         ##########
         # From that index, find a data entity bucket to sample and get it from the miner.

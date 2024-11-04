@@ -141,7 +141,6 @@ class DecodeURLRequest(BaseProtocol):
     encoded_urls: List[str] = pydantic.Field(
         title="encoded_urls",
         description="List of encoded URLs that need to be decoded",
-        max_length=10,  # Limit to 10 URLs per request
         frozen=True,
         repr=False,
         default_factory=list,
@@ -155,6 +154,12 @@ class DecodeURLRequest(BaseProtocol):
         repr=False,
         default_factory=list,
     )
+
+    @pydantic.validator('encoded_urls')
+    def validate_urls_length(cls, v):
+        if len(v) > 10:
+            raise ValueError('Maximum 10 URLs allowed per request')
+        return v
 
 
 # How many times validators can send requests per validation period.
