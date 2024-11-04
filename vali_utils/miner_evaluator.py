@@ -30,7 +30,7 @@ from storage.validator.hf_validator_storage import HFValidationStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
 from vali_utils.hf_utils import (
     get_latest_commit_files,
@@ -144,24 +144,23 @@ class MinerEvaluator:
                         bt.logging.warning(f"No new parquet files found for {hf_metadata.repo_name}")
                         continue
 
-                    # Get both encoded URLs and full DataFrame
+                    # Get encoded URLs and DataFrame
                     encoded_urls, encoded_df = get_validation_data(hf_metadata.repo_name, new_parquet_files)
 
                     if encoded_urls:
-                        # Validate URLs with miner
-                        urls_valid = await self.validate_encoded_urls(hotkey, uid, axon_info, encoded_urls)
-                        if urls_valid:
-                            # Decode and validate content
-                            decoded_df = decode_dataframe(encoded_df, hf_metadata.encoding_key)
+                        # Get decoded URLs from miner
+                        success, decoded_urls = await self._get_decoded_urls(hotkey, uid, axon_info, encoded_urls)
+                        if success:
+                            # Replace encoded URLs with decoded ones for validation
+                            decoded_df = encoded_df.copy()
+                            decoded_df['url'] = decoded_urls
+                            # Now do content validation with decoded URLs
                             validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
                             bt.logging.info(
                                 f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
                         else:
-                            bt.logging.error(f"{hotkey}: URL validation failed for {hf_metadata.repo_name}")
+                            bt.logging.error(f"{hotkey}: Failed to get decoded URLs")
                             validation_result = False
-                    else:
-                        bt.logging.warning(f"{hotkey}: No encoded URLs found in {hf_metadata.repo_name}")
-                        validation_result = False
 
                     # Store validation result
                     self.hf_storage.update_validation_info(
@@ -466,43 +465,33 @@ class MinerEvaluator:
             )
             return None
 
-    async def validate_encoded_urls(self, hotkey: str, uid: int, axon_info: bt.AxonInfo,
-                                    encoded_urls: List[str]) -> bool:
-        """Validates that a miner can correctly decode URLs."""
+    async def _get_decoded_urls(self, hotkey: str, uid: int, axon_info: bt.AxonInfo,
+                                encoded_urls: List[str]) -> Tuple[bool, List[str]]:
+        """
+        Gets decoded URLs from miner for validation.
+        Returns:
+            Tuple[bool, List[str]]: (success, decoded_urls)
+        """
         try:
-            # Send decode request to miner
             async with bt.dendrite(wallet=self.wallet) as dendrite:
                 responses = await dendrite.forward(
                     axons=[axon_info],
                     synapse=DecodeURLRequest(
-                        encoded_urls=encoded_urls[:10],  # Limit to 10 URLs
+                        encoded_urls=encoded_urls[:10],
                         version=constants.PROTOCOL_VERSION
                     ),
                     timeout=30
                 )
 
-            response = vali_utils.get_single_successful_response(responses, DecodeURLRequest)
-            if not response:
-                bt.logging.info(f"{hotkey}: Failed to get URL decode response")
-                return False
+            if not responses or len(responses) == 0:
+                bt.logging.info(f"{hotkey}: No response received for URL decode request")
+                return False, []
 
-            # Verify decoded URLs match expected patterns
-            decoded_urls = response.decoded_urls
-            if len(decoded_urls) != len(encoded_urls):
-                bt.logging.info(f"{hotkey}: Mismatch in number of decoded URLs")
-                return False
-
-            # Add validation logic specific to your URL format
-            for decoded_url in decoded_urls:
-                if not decoded_url.startswith('http'):
-                    bt.logging.info(f"{hotkey}: Invalid decoded URL format: {decoded_url}")
-                    return False
-
-            return True
+            return True, responses[0].decoded_urls
 
         except Exception as e:
             bt.logging.error(f"{hotkey}: Error validating URLs: {str(e)}")
-            return False
+            return False, []
 
     def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
         """Handles an update to a metagraph."""

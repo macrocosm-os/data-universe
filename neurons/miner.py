@@ -41,7 +41,7 @@ from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
-from huggingface_utils.encoding_system import EncodingKeyManager
+from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 
@@ -56,7 +56,7 @@ class Miner:
         bt.logging.info(self.config)
         self.use_hf_uploader = self.config.huggingface
         self.use_gravity_retrieval = self.config.gravity
-        
+
         if self.config.offline:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
@@ -200,15 +200,15 @@ class Miner:
     def get_updated_lookup(self):
         if not self.use_gravity_retrieval:
             bt.logging.info("Gravity lookup retrieval is not enabled.")
-            return  
+            return
 
         last_update = None
         while not self.should_exit:
             try:
                 current_datetime = dt.datetime.utcnow()
-                
+
                 bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
-                
+
                 # Check if it's a new day and we haven't updated yet
                 if last_update is None or current_datetime.date() > last_update.date():
                     bt.logging.info("Retrieving the latest dynamic lookup...")
@@ -218,11 +218,11 @@ class Miner:
                     bt.logging.info(f"Updated dynamic lookup at {last_update}")
                 else:
                     bt.logging.info("No update needed at this time.")
-                
+
                 # Sleep for 5 minutes before checking again
                 bt.logging.info("Sleeping for 5 minutes...")
                 time.sleep(300)
-            
+
             except Exception as e:
                 bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
                 bt.logging.exception("Exception details:")
@@ -474,34 +474,30 @@ class Miner:
         return synapse
 
     async def decode_urls(self, synapse: DecodeURLRequest) -> DecodeURLRequest:
-        """Handles requests to decode URLs using the miner's encoding key."""
-        bt.logging.info(f"Got DecodeURLRequest from {synapse.dendrite.hotkey} for {len(synapse.encoded_urls)} URLs")
+        """Handle URL decoding requests using miner's keys."""
+        bt.logging.info(f"Processing URL decode request from {synapse.dendrite.hotkey}")
 
-        try:
-            # Use the encoding key manager to decode each URL
-            decoded_urls = []
-            for encoded_url in synapse.encoded_urls:
+        # Try decoding with both private and public keys
+        decoded_urls = []
+        # todo improve it a bit
+        for url in synapse.encoded_urls:
+            # Try private key first, then public key if private fails
+            try:
+                result = decode_url(url, self.private_encoding_key_manager.get_fernet())
+                if not result:
+                    result = decode_url(url, self.encoding_key_manager.get_fernet())
+                decoded_urls.append(result if result else "")
+            except:
                 try:
-                    # Try private key first, fall back to public key
-                    try:
-                        decoded_url = self.private_encoding_key_manager.decode_url(encoded_url) # TODO
-                    except:
-                        decoded_url = self.encoding_key_manager.decode_url(encoded_url) # TODO
-                    decoded_urls.append(decoded_url)
-                except Exception as e:
-                    bt.logging.error(f"Failed to decode URL {encoded_url}: {str(e)}")
-                    decoded_urls.append("")  # Add empty string for failed decodes
+                    result = decode_url(url, self.encoding_key_manager.get_fernet())
+                    decoded_urls.append(result if result else "")
+                except:
+                    decoded_urls.append("")
 
-            synapse.decoded_urls = decoded_urls
-            bt.logging.success(f"Successfully decoded {len(decoded_urls)} URLs for {synapse.dendrite.hotkey}")
-
-        except Exception as e:
-            bt.logging.error(f"Error processing DecodeURLRequest: {str(e)}")
-            synapse.decoded_urls = [""] * len(synapse.encoded_urls)
-
+        synapse.decoded_urls = decoded_urls
         return synapse
 
-    async def decode_urls_blacklist(self, synapse: DecodeURLRequest) -> Tuple[bool, str]:
+    async def decode_urls_blacklist(self, synapse: DecodeURLRequest) -> typing.Tuple[bool, str]:
         """The blacklist function for decode URL requests."""
         return self.default_blacklist(synapse)
 
