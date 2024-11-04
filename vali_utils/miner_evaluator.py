@@ -153,6 +153,7 @@ class MinerEvaluator:
                         if success:
                             # Replace encoded URLs with decoded ones for validation
                             decoded_df = encoded_df.copy()
+                            del encoded_df  # clean up memory
                             decoded_df['url'] = decoded_urls
                             # Now do content validation with decoded URLs
                             validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
