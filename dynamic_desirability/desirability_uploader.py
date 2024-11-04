@@ -10,7 +10,7 @@ from typing import List, Optional
 from decimal import Decimal, ROUND_HALF_UP
 from substrateinterface.exceptions import SubstrateRequestException
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
-from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
+from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES, DEFAULT_COMMIT_HASH
 
 
 def run_command(command: List[str]) -> str:
@@ -191,6 +191,7 @@ async def run_uploader(args):
 
 
 def sync_run_uploader(args, retries=5, delay=2):
+    """Synchronous version of the async run_uploader. Retires 5 times if priority too low for transaction to complete. """
     attempt = 0
     while attempt < retries:
         try:
@@ -206,6 +207,30 @@ def sync_run_uploader(args, retries=5, delay=2):
                 raise
     else:
         bt.logging.error("Max retries reached. Transaction failed.")
+
+
+def sync_default_uploader(args, retries=5, delay=2):
+    """Uploads default preferences list (normalized) for a validator. """
+    attempt = 0
+    while attempt < retries:
+        try:
+            my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
+            my_hotkey = my_wallet.hotkey.ss58_address
+            subtensor = bt.subtensor(network=args.network)
+            chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=args.netuid)
+
+            asyncio.run(chain_store.store_preferences(DEFAULT_COMMIT_HASH))
+            result = asyncio.run(chain_store.retrieve_preferences(hotkey=my_hotkey))
+            bt.logging.info(f"Stored {result} on chain commit hash.")
+
+        except SubstrateRequestException as e:
+            if "Priority is too low" in str(e):
+                attempt += 1
+                bt.logging.error(f"Attempt {attempt} failed: {e}. Retrying in {delay} seconds...")
+                time.sleep(delay)
+            else:
+                # Re-raise if the error isn't about priority
+                raise
 
 
 if __name__ == "__main__":

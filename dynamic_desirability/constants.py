@@ -12,6 +12,9 @@ AMPLICATION_FACTOR: int = 10
 DEFAULT_JSON_PATH: str = 'default.json'
 AGGREGATE_JSON_PATH: str = 'total.json'
 
+# Github commit hash of the current default preferences. 
+DEFAULT_COMMIT_HASH: str = "04622e80cf00415e8592a5e244db7c0e875ef922"
+
 VALID_SOURCES: dict[str, str] = {
     "reddit": "r/",
     "x": "#",

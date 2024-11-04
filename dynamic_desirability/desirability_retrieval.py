@@ -18,17 +18,20 @@ from dynamic_desirability.constants import (REPO_URL,
     AGGREGATE_JSON_PATH, 
     TOTAL_VALI_WEIGHT,
     DEFAULT_SCALE_FACTOR,
-    AMPLICATION_FACTOR
+    AMPLICATION_FACTOR,
+    DEFAULT_COMMIT_HASH
     )
 
 
-def has_previous_commit(config) -> bool:
+def has_voted(config) -> bool:
+    """Returns True if validator has committed their own preferences before. Otherwise false."""
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
     chain_store = ChainPreferenceStore(wallet=wallet, subtensor=subtensor, netuid=config.netuid)
-    if asyncio.run(chain_store.retrieve_preferences(hotkey=wallet.hotkey.ss58_address)):
-        return True
-    return False
+    previous_commit = asyncio.run(chain_store.retrieve_preferences(hotkey=wallet.hotkey.ss58_address))
+    if not previous_commit or previous_commit == DEFAULT_COMMIT_HASH:
+        return False
+    return True
 
 
 def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:

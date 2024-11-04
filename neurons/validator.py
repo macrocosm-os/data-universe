@@ -124,7 +124,7 @@ class Validator:
 
     def setup_preferences(self):
         """If the validator doesn't have a preference vote yet, use default preferences as their vote. """
-        if has_previous_commit(self.config):
+        if has_voted(self.config):
             bt.logging.info("Validator already has dynamic preferences. Continuing...")
             return
         
