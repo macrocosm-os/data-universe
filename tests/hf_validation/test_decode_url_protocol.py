@@ -158,6 +158,52 @@ class TestDecodeURLRequest(unittest.TestCase):
         deserialized = deserialize(serialized, DecodeURLRequest)
         self.assertEqual(response, deserialized)
 
+    def test_mixed_key_decoding(self):
+        """Tests handling of URLs encoded with different keys."""
+        # Create URLs encoded with both private and public keys
+        test_url1 = "https://example.com/private/123"
+        test_url2 = "https://example.com/public/456"
+
+        # Encode same URLs with different keys
+        encoded_private = encode_url(test_url1, self.private_key_manager.get_fernet())
+        encoded_public = encode_url(test_url2, self.public_key_manager.get_fernet())
+
+        # Create request with mix of private and public encoded URLs
+        request = DecodeURLRequest(
+            encoded_urls=[encoded_private, encoded_public]
+        )
+
+        # Test request serialization
+        serialized = serialize_like_dendrite(request)
+        deserialized = deserialize(serialized, DecodeURLRequest)
+        self.assertEqual(request, deserialized)
+
+        # Create response with correctly decoded URLs
+        response = DecodeURLRequest(
+            encoded_urls=[encoded_private, encoded_public],
+            decoded_urls=[test_url1, test_url2]
+        )
+
+        # Test response serialization
+        serialized = serialize_like_axon(response)
+        deserialized = deserialize(serialized, DecodeURLRequest)
+        self.assertEqual(response, deserialized)
+
+    def test_real_encoded_urls(self):
+        """Tests with actual encoded URLs from production."""
+        # Example of real encoded URLs from your system
+        real_encoded_private = "Z0FBQUFBQm5HWHVLMnU1T2pqTlc5bXY0dnZ3c0ZPQUZzbHZuQlRMMWdiSzI2MF9RUURIbWNyWS0xSU9tenRsbkxfMU9XRTZxU21ZRkltUXlfcXd6c1U5VS1wdTJLdHBZX2lOOXVoUy03dDAzSHpWMm42U2piS1pEMzF5RHVFQkp3dW1XWDZPMGFFbHR3M3lFMGRhYko4QU11a29IaDk3dDdPNWdrWFpUZ1VSRFhpRGQ0QUtiUUIwPQ=="
+        real_encoded_public = "Z0FBQUFBQm5HWHVLMnU1T2pqTlc5bXY0dnZ3c0ZPQUZzbHZuQlRMMWdiSzI2MF9RUURIbWNyWS0xSU9tenRsbkxfMU9XRTZxU21ZRkltUXlfcXd6c1U5VS1wdTJLdHBZX2lOOXVoUy03dDAzSHpWMm42U2piS1pEMzF5RHVFQkp3dW1XWDZPMGFFbHR3M3lFMGRhYko4QU11a29IaDk3dDdPNWdrWFpUZ1VSRFhpRGQ0QUtiUUIwPQ=="
+
+        request = DecodeURLRequest(
+            encoded_urls=[real_encoded_private, real_encoded_public]
+        )
+
+        # Test full serialization
+        serialized = serialize_like_dendrite(request)
+        deserialized = deserialize(serialized, DecodeURLRequest)
+        self.assertEqual(request, deserialized)
+
 
 if __name__ == "__main__":
     unittest.main()
