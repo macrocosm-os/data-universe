@@ -1,5 +1,5 @@
 """Module for HuggingFace dataset utilities and validation."""
-
+import os
 import random
 from typing import List, Dict, Any, Tuple
 import bittensor as bt
@@ -58,10 +58,13 @@ def add_stats_file(df: pd.DataFrame) -> pd.DataFrame:
     df['stats_data'] = df['repo_name'].apply(get_stats_for_repos)
     return df
 
+from dotenv import load_dotenv
+
+load_dotenv()
 
 
 def get_latest_commit_files(repo_id: str) -> List[str]:
-    api = HfApi()
+    api = HfApi(token=os.getenv('HUGGINGFACE_TOKEN', ''))
     try:
         # Get the commit history
         commits = api.list_repo_commits(repo_id=repo_id, repo_type="dataset")
@@ -152,6 +155,12 @@ async def validate_huggingface_dataset(hf_metadata: HuggingFaceMetadata) -> bool
             bt.logging.warning(f"No new parquet files found for {repo_id}")
             return False
 
+        api = HfApi(token=os.getenv('HUGGINGFACE_TOKEN', ''))
+        files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
+
+        if "stats.json" not in files:
+            bt.logging.warning(f"stats.json not found in {repo_id}")
+            return False
         # Select random rows from the dataset
         selected_rows = select_random_rows_from_parquet(repo_id, new_parquet_files, encoding_key)
 

@@ -156,6 +156,10 @@ def add_args(neuron_type: NeuronType, parser):
             os.path.join(root_dir, "huggingface_utils/encoding_key.json"),
         )
 
+        private_encoding_default_file = os.path.join(
+            os.path.join(root_dir, "huggingface_utils/private_encoding_key.json"),
+        )
+
         state_default_file = os.path.join(
             os.path.join(root_dir, "huggingface_utils/state_file.json"),
         )
@@ -186,6 +190,13 @@ def add_args(neuron_type: NeuronType, parser):
             type=str,
             help="The location of the encoding keys JSON file to use",
             default=encoding_default_file
+        )
+
+        parser.add_argument(
+            "--private_encoding_key_json_file",
+            type=str,
+            help="The location of the encoding keys JSON file to use",
+            default=private_encoding_default_file
         )
 
         parser.add_argument(

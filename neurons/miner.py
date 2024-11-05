@@ -125,6 +125,8 @@ class Miner:
 
         # Instantiate encoding keys
         self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
+        self.private_encoding_key_manager = EncodingKeyManager(key_path=self.config.private_encoding_key_json_file)
+
         bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
 
         if self.use_hf_uploader:
@@ -132,6 +134,7 @@ class Miner:
                 db_path=self.config.neuron.database_name,
                 miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
                 encoding_key_manager=self.encoding_key_manager,
+                private_encoding_key_manager=self.private_encoding_key_manager,
                 state_file=self.config.miner_upload_state_file
             )
 
@@ -455,7 +458,7 @@ class Miner:
         bt.logging.info(f"Got a GetHuggingFaceMetadata request from {synapse.dendrite.hotkey}.")
 
         # Query the HuggingFace metadata from the database
-        synapse.metadata = self.storage.get_hf_metadata()
+        synapse.metadata = self.storage.get_hf_metadata(unique_id=self.hf_uploader.unique_id)
 
         if not synapse.metadata:
             bt.logging.info(f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
