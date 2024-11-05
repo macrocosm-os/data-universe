@@ -97,16 +97,19 @@ def get_latest_commit_files(repo_id: str) -> List[str]:
         return []
 
 
-def select_random_rows_from_parquet(repo_id: str, files: List[str], encoding_key: str, num_rows: int = 10, buffer_size: int = 10_000) -> pd.DataFrame:
-    """Efficiently select random rows from randomly chosen parquet files in a Hugging Face dataset."""
+def get_validation_data(repo_id: str, files: List[str], num_rows: int = 10) -> Tuple[List[str], pd.DataFrame]:
+    """
+    Get both encoded URLs and complete DataFrame (with encoded values) for validation.
+
+    Returns:
+        Tuple[List[str], pd.DataFrame]: (encoded_urls, complete_dataframe)
+    """
     if not files:
         raise ValueError("No parquet files found in the dataset.")
 
-    # Select a random file
     selected_file = random.choice(files)
     bt.logging.trace(f"Selected file: {selected_file}")
 
-    # Load the dataset in streaming mode
     dataset = load_dataset(
         repo_id,
         data_files={'train': selected_file},
@@ -114,71 +117,54 @@ def select_random_rows_from_parquet(repo_id: str, files: List[str], encoding_key
         streaming=True
     )
 
-    # Generate random seed and shuffle the dataset
     random_seed = random.randint(0, 2 ** 32 - 1)
-    shuffled_dataset = dataset.shuffle(buffer_size=buffer_size, seed=random_seed)
+    shuffled_dataset = dataset.shuffle(buffer_size=10_000, seed=random_seed)
 
-    # Select the specified number of rows
     selected_rows = list(itertools.islice(shuffled_dataset, num_rows))
-
-    # Convert to DataFrame
     df = pd.DataFrame(selected_rows)
-    # Decode encrypted columns
+
+    encoded_urls = []
+    if 'url_encoded' in df.columns:
+        encoded_urls = df['url_encoded'].dropna().tolist()[:10]
+
+    return encoded_urls, df
+
+
+def decode_dataframe(df: pd.DataFrame, encoding_key: str) -> pd.DataFrame:
+    """
+    Decode only username fields, leave URLs encoded for miner validation.
+    """
+    decoded_df = df.copy()
     key_manager = SymKeyEncodingKeyManager(encoding_key)
     key_manager.sym_key = encoding_key.encode()
     fernet = key_manager.get_fernet()
 
-    for column in ['url_encoded', 'username_encoded']:
-        if column in df.columns:
-            df[column.replace('_encoded', '')] = df[column].apply(lambda x: decode_url(x, fernet))
-            df = df.drop(columns=[column])
+    # Only decode username, leave url_encoded as is
+    if 'username_encoded' in decoded_df.columns:
+        decoded_df['username'] = decoded_df['username_encoded'].apply(
+            lambda x: decode_url(x, fernet) if x else None
+        )
+        decoded_df = decoded_df.drop(columns=['username_encoded'])
 
-    bt.logging.trace(df)
+    # Keep url_encoded column for miner validation
+    return decoded_df
 
-    return df
 
-
-async def validate_huggingface_dataset(hf_metadata: HuggingFaceMetadata) -> bool:
-    """Validate a HuggingFace dataset."""
-    repo_id = hf_metadata.repo_name
-    encoding_key = hf_metadata.encoding_key
-
-    if not encoding_key:
-        bt.logging.error(f"No encoding key provided for dataset {repo_id}")
-        return False
-
+async def validate_hf_content(df: pd.DataFrame, source: DataSource) -> bool:
+    """Validate DataFrame content using appropriate scraper."""
     try:
-        # Get new parquet files and commit info
-        new_parquet_files = get_latest_commit_files(repo_id)
-
-        if not new_parquet_files:
-            bt.logging.warning(f"No new parquet files found for {repo_id}")
-            return False
-
-        api = HfApi(token=os.getenv('HUGGINGFACE_TOKEN', ''))
-        files = api.list_repo_files(repo_id=repo_id, repo_type="dataset")
-
-        if "stats.json" not in files:
-            bt.logging.warning(f"stats.json not found in {repo_id}")
-            return False
-        # Select random rows from the dataset
-        selected_rows = select_random_rows_from_parquet(repo_id, new_parquet_files, encoding_key)
-
-        # Determine which scraper to use based on the data source todo replace with scraper_provider
-        if hf_metadata.source == DataSource.REDDIT:
+        if source == DataSource.REDDIT:
             scraper = RedditCustomScraper()
-        elif hf_metadata.source == DataSource.X:
+        elif source == DataSource.X:
             scraper = ApiDojoTwitterScraper()
         else:
-            bt.logging.error(f"Unknown data source {hf_metadata.source}")
+            bt.logging.error(f"Unknown data source {source}")
             return False
 
-        # Validate the selected rows
-        validation_result = await scraper.validate_hf(entities=selected_rows.to_dict(orient='records'))
-        return validation_result
+        return await scraper.validate_hf(entities=df.to_dict(orient='records'))
 
     except Exception as e:
-        bt.logging.error(f"Error validating dataset {repo_id}: {str(e)}")
+        bt.logging.error(f"Error validating content: {str(e)}")
         return False
 
 
@@ -202,25 +188,32 @@ async def test_hf(repo_id: str):
     new_parquet_files = await run_test("get_latest_commit_files", get_latest_commit_files, repo_id)
 
     if new_parquet_files:
+        # Test get_validation_data
+        encoded_urls, encoded_df = await run_test("get_validation_data", get_validation_data, repo_id,
+                                                  new_parquet_files)
 
-        # Test select_random_rows_from_parquet
-        df = await run_test("select_random_rows_from_parquet", select_random_rows_from_parquet, repo_id, new_parquet_files, test_encoding_key)
+        if encoded_urls and not encoded_df.empty:
+            # Test decoding
+            decoded_df = await run_test("decode_dataframe", decode_dataframe, encoded_df, test_encoding_key)
 
-        if isinstance(df, pd.DataFrame) and not df.empty:
-
-            # Test validate_huggingface_dataset
-            test_metadata = HuggingFaceMetadata(
-                repo_name=repo_id,
-                source=DataSource.X,  # or DataSource.X
-                updated_at=dt.datetime.now(),
-                encoding_key=test_encoding_key
-            )
-            result = await run_test("validate_huggingface_dataset", validate_huggingface_dataset, test_metadata)
-            print(f"validation result: {result}")
+            if isinstance(decoded_df, pd.DataFrame) and not decoded_df.empty:
+                # Test content validation
+                test_metadata = HuggingFaceMetadata(
+                    repo_name=repo_id,
+                    source=DataSource.X,
+                    updated_at=dt.datetime.now(),
+                    encoding_key=test_encoding_key
+                )
+                validation_result = await run_test("validate_hf_content", validate_hf_content, decoded_df,
+                                                   test_metadata.source)
+                print(f"validation result: {validation_result}")
+            else:
+                print("Could not proceed with validation due to decoding failure.")
         else:
-            print("Could not proceed with validation due to empty or invalid dataframe.")
+            print("Could not proceed with validation due to empty or invalid data.")
     else:
         print("No new parquet files found.")
+
 
 if __name__ == "__main__":
     # You can change this to any repository you have access to

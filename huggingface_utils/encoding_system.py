@@ -72,6 +72,7 @@ class SymKeyEncodingKeyManager(EncodingKeyManager):
         """Override to do nothing, as we don't want to save the key to a file."""
         pass
 
+
 def encode_url(url: str, fernet: Fernet) -> Optional[str]:
     """Encode a URL using Fernet encryption."""
     try:

@@ -31,6 +31,7 @@ from common.protocol import (
     GetMinerIndex,
     GetContentsByBuckets,
     GetHuggingFaceMetadata,
+    DecodeURLRequest,
     REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
 )
 from neurons.config import NeuronType
@@ -40,7 +41,7 @@ from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
-from huggingface_utils.encoding_system import EncodingKeyManager
+from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 
@@ -55,7 +56,7 @@ class Miner:
         bt.logging.info(self.config)
         self.use_hf_uploader = self.config.huggingface
         self.use_gravity_retrieval = self.config.gravity
-        
+
         if self.config.offline:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
@@ -112,6 +113,10 @@ class Miner:
                 forward_fn=self.get_huggingface_metadata,
                 blacklist_fn=self.get_huggingface_metadata_blacklist,
                 priority_fn=self.get_huggingface_metadata_priority,
+            ).attach(
+                forward_fn=self.decode_urls,
+                blacklist_fn=self.decode_urls_blacklist,
+                priority_fn=self.decode_urls_priority
             )
             bt.logging.success(f"Axon created: {self.axon}.")
 
@@ -195,15 +200,15 @@ class Miner:
     def get_updated_lookup(self):
         if not self.use_gravity_retrieval:
             bt.logging.info("Gravity lookup retrieval is not enabled.")
-            return  
+            return
 
         last_update = None
         while not self.should_exit:
             try:
                 current_datetime = dt.datetime.utcnow()
-                
+
                 bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
-                
+
                 # Check if it's a new day and we haven't updated yet
                 if last_update is None or current_datetime.date() > last_update.date():
                     bt.logging.info("Retrieving the latest dynamic lookup...")
@@ -213,11 +218,11 @@ class Miner:
                     bt.logging.info(f"Updated dynamic lookup at {last_update}")
                 else:
                     bt.logging.info("No update needed at this time.")
-                
+
                 # Sleep for 5 minutes before checking again
                 bt.logging.info("Sleeping for 5 minutes...")
                 time.sleep(300)
-            
+
             except Exception as e:
                 bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
                 bt.logging.exception("Exception details:")
@@ -467,6 +472,38 @@ class Miner:
                 f"Returning {len(synapse.metadata)} HuggingFace metadata entries to {synapse.dendrite.hotkey}.")
 
         return synapse
+
+    async def decode_urls(self, synapse: DecodeURLRequest) -> DecodeURLRequest:
+        """Handle URL decoding requests using miner's keys."""
+        bt.logging.info(f"Processing URL decode request from {synapse.dendrite.hotkey}")
+
+        # Try decoding with both private and public keys
+        decoded_urls = []
+        # todo improve it a bit
+        for url in synapse.encoded_urls:
+            # Try private key first, then public key if private fails
+            try:
+                result = decode_url(url, self.private_encoding_key_manager.get_fernet())
+                if not result:
+                    result = decode_url(url, self.encoding_key_manager.get_fernet())
+                decoded_urls.append(result if result else "")
+            except:
+                try:
+                    result = decode_url(url, self.encoding_key_manager.get_fernet())
+                    decoded_urls.append(result if result else "")
+                except:
+                    decoded_urls.append("")
+
+        synapse.decoded_urls = decoded_urls
+        return synapse
+
+    async def decode_urls_blacklist(self, synapse: DecodeURLRequest) -> typing.Tuple[bool, str]:
+        """The blacklist function for decode URL requests."""
+        return self.default_blacklist(synapse)
+
+    async def decode_urls_priority(self, synapse: DecodeURLRequest) -> float:
+        """The priority function for decode URL requests."""
+        return self.default_priority(synapse)
 
     async def get_huggingface_metadata_blacklist(self, synapse: GetHuggingFaceMetadata) -> typing.Tuple[bool, str]:
         return self.default_blacklist(synapse)
