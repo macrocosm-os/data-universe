@@ -121,6 +121,7 @@ class MinerScorer:
         uid: int,
         index: Optional[ScorableMinerIndex],
         validation_results: List[ValidationResult],
+        hf_validation_result: Optional[bool]
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
 
