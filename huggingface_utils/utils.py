@@ -16,6 +16,85 @@ from huggingface_utils.encoding_system import EncodingKeyManager, encode_url
 TWEET_DATASET_COLUMNS = ['text', 'label', 'tweet_hashtags', 'datetime', 'username_encoded', 'url_encoded']
 REDDIT_DATASET_COLUMNS = ['text', 'label', 'dataType', 'communityName', 'datetime', 'username_encoded', 'url_encoded']
 
+# Stats Related Constants
+STATS_VERSION = "2.0.0"
+DEFAULT_STATS_STRUCTURE = {
+    "version": STATS_VERSION,
+    "data_source": None,
+    "summary": {
+        "total_rows": 0,
+        "last_update_dt": None,
+        "start_dt": None,
+        "end_dt": None,
+        "update_history": [],
+        "metadata": {}
+    },
+    "topics": []
+}
+
+
+def get_default_stats_structure() -> Dict[str, Any]:
+    """
+    Return a default stats structure with current version
+
+    Returns:
+        Dict[str, Any]: Default stats structure
+    """
+    return DEFAULT_STATS_STRUCTURE.copy()
+
+
+def migrate_stats_to_v2(stats: Dict[str, Any]) -> Dict[str, Any]:
+    """
+    Migrate stats from v1.0.0 to v2.0.0 format by removing update_history from topics
+    and maintaining the simplified structure.
+
+    Args:
+        stats (Dict[str, Any]): Original stats dictionary
+
+    Returns:
+        Dict[str, Any]: Migrated stats in v2.0.0 format
+    """
+    if stats.get("version") == STATS_VERSION:
+        return stats
+
+    # Create new v2.0.0 structure
+    new_stats = get_default_stats_structure()
+
+    # Migrate basic fields
+    new_stats["data_source"] = stats.get("data_source")
+
+    # Migrate summary
+    summary = stats.get("summary", {})
+    new_stats["summary"].update({
+        "total_rows": summary.get("total_rows", 0),
+        "last_update_dt": summary.get("last_update_dt"),
+        "start_dt": summary.get("start_dt"),
+        "end_dt": summary.get("end_dt"),
+        "update_history": summary.get("update_history", []),
+        "metadata": summary.get("metadata", {})
+    })
+
+    # Migrate topics (removing update_history from topics)
+    old_topics = stats.get("topics", [])
+    new_topics = []
+
+    for topic in old_topics:
+        if not isinstance(topic, dict):
+            continue
+
+        new_topic = {
+            "topic": topic.get("topic"),
+            "topic_type": topic.get("topic_type"),
+            "total_count": topic.get("total_count", 0),
+            "total_percentage": topic.get("total_percentage", 0)
+        }
+        # Only add topic if it has valid data
+        if all(new_topic.values()):
+            new_topics.append(new_topic)
+
+    new_stats["topics"] = new_topics
+    return new_stats
+
 
 def get_optimal_threads() -> int:
     """
