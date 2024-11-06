@@ -479,20 +479,12 @@ class Miner:
 
         # Try decoding with both private and public keys
         decoded_urls = []
-        # todo improve it a bit
         for url in synapse.encoded_urls:
-            # Try private key first, then public key if private fails
-            try:
-                result = decode_url(url, self.private_encoding_key_manager.get_fernet())
-                if not result:
-                    result = decode_url(url, self.encoding_key_manager.get_fernet())
-                decoded_urls.append(result if result else "")
-            except:
-                try:
-                    result = decode_url(url, self.encoding_key_manager.get_fernet())
-                    decoded_urls.append(result if result else "")
-                except:
-                    decoded_urls.append("")
+            # Try private key first, then public key if no result
+            result = decode_url(url, self.private_encoding_key_manager.get_fernet())
+            if not result:
+                result = decode_url(url, self.encoding_key_manager.get_fernet())
+            decoded_urls.append(result if result else "")
 
         synapse.decoded_urls = decoded_urls
         return synapse
