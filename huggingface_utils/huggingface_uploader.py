@@ -9,7 +9,13 @@ import time
 import requests
 from contextlib import contextmanager
 from huggingface_hub import HfApi, hf_hub_download
-from huggingface_utils.utils import preprocess_reddit_df, preprocess_twitter_df, generate_static_integer
+from huggingface_utils.utils import(
+    preprocess_reddit_df,
+    preprocess_twitter_df,
+    generate_static_integer,
+    migrate_stats_to_v2,
+    get_default_stats_structure
+)
 from huggingface_utils.encoding_system import EncodingKeyManager
 from common.data import HuggingFaceMetadata, DataSource
 from typing import List, Dict, Union, Any
@@ -411,35 +417,32 @@ class HuggingFaceUploader:
 
         return merged
 
-    def update_topics(self, existing_topics: List[Dict[str, Any]], new_topics: Dict[str, Dict[str, Any]], platform: str) -> List[Dict[str, Any]]:
+    def update_topics(self, existing_topics: List[Dict[str, Any]], new_topics: Dict[str, Dict[str, Any]],
+                      platform: str) -> List[Dict[str, Any]]:
+        """
+        Updated method to handle topics without update history
+        """
         topic_type = "subreddit" if platform == "reddit" else "hashtag"
         topic_dict = {topic["topic"]: topic for topic in existing_topics if topic["topic_type"] == topic_type}
 
         for topic_name, data in new_topics.items():
             if topic_name in topic_dict:
-                topic = topic_dict[topic_name]
+                # Update existing topic counts
+                topic_dict[topic_name]["total_count"] += data["count"]
             else:
-                topic = {
+                # Create new topic
+                topic_dict[topic_name] = {
                     "topic": topic_name,
                     "topic_type": topic_type,
-                    "update_history": [],
-                    "total_count": 0,
-                    "total_percentage": 0
+                    "total_count": data["count"],
+                    "total_percentage": 0  # Will be calculated below
                 }
-                topic_dict[topic_name] = topic
-
-            topic["update_history"].append({
-                "timestamp": dt.datetime.utcnow().strftime("%Y-%m-%dT%H:%M:%SZ"),
-                "count": data["count"],
-                "percentage": data["percentage"]
-            })
-            topic["total_count"] = topic.get("total_count", 0) + data["count"]
 
         # Recalculate total percentages
-        total_count = sum(topic.get("total_count", 0) for topic in topic_dict.values())
+        total_count = sum(topic["total_count"] for topic in topic_dict.values())
         if total_count > 0:
             for topic in topic_dict.values():
-                topic["total_percentage"] = (topic.get("total_count", 0) / total_count) * 100
+                topic["total_percentage"] = (topic["total_count"] / total_count) * 100
         else:
             for topic in topic_dict.values():
                 topic["total_percentage"] = 0
@@ -458,44 +461,39 @@ class HuggingFaceUploader:
                 content = f.read()
 
             sanitized_content = self.sanitize_json(content)
-            full_stats = json.loads(sanitized_content)
+            stats = json.loads(sanitized_content)
+
+            # Check if migration is needed
+            if stats.get("version") != "2.0.0":
+                bt.logging.info(f"Migrating stats from version {stats.get('version', '1.0.0')} to 2.0.0")
+                stats = migrate_stats_to_v2(stats)
 
             bt.logging.info(f"Successfully loaded and sanitized existing stats from {repo_id}")
-            return full_stats
+            return stats
 
         except json.JSONDecodeError as e:
             bt.logging.error(f"JSON Decode Error in existing stats file: {e}")
             bt.logging.error(f"Error location: line {e.lineno}, column {e.colno}")
             bt.logging.error(f"Problematic JSON snippet: {e.doc[max(0, e.pos - 20):e.pos + 20]}")
-            return self.get_default_stats_structure()
+            return get_default_stats_structure()
 
         except Exception as e:
             bt.logging.error(f"Error loading existing stats: {e}")
-            return self.get_default_stats_structure()
-
-    def get_default_stats_structure(self) -> Dict[str, Any]:
-        """Return a default stats structure."""
-        return {
-            "version": "1.0.0",
-            "data_source": None,
-            "summary": {
-                "total_rows": 0,
-                "last_update_dt": None,
-                "start_dt": None,
-                "end_dt": None,
-                "update_history": [],
-                "metadata": {}
-            },
-            "topics": []
-        }
+            return get_default_stats_structure()
 
     @retry_upload()
     def save_stats_json(self, platform_stats: Dict[str, Any], platform: str, new_rows: int, repo_id: str) -> Dict[
         str, Any]:
+        """
+        Updated method to save stats with the new structure
+        """
         filename = "stats.json"
 
         try:
             existing_stats = self.load_existing_stats(repo_id)
+
+            # Ensure version is set to 2.0.0
+            existing_stats["version"] = "2.0.0"
 
             if existing_stats["data_source"] is None:
                 existing_stats["data_source"] = platform
@@ -518,21 +516,25 @@ class HuggingFaceUploader:
                 "count": new_rows
             })
 
-            merged_stats["topics"] = self.update_topics(merged_stats.get("topics", []), platform_stats.get(
-                'subreddits' if platform == 'reddit' else 'hashtags', {}), platform)
+            # Update topics with simplified structure
+            merged_stats["topics"] = self.update_topics(
+                merged_stats.get("topics", []),
+                platform_stats.get('subreddits' if platform == 'reddit' else 'hashtags', {}),
+                platform
+            )
 
             # Update metadata percentages
             total_rows = merged_stats["summary"]["total_rows"]
             if platform == 'reddit':
-                merged_stats["summary"]["metadata"]["posts_percentage"] = (merged_stats.get("posts_count",
-                                                                                            0) / total_rows) * 100
-                merged_stats["summary"]["metadata"]["comments_percentage"] = (merged_stats.get("comments_count",
-                                                                                               0) / total_rows) * 100
+                merged_stats["summary"]["metadata"]["posts_percentage"] = (
+                                merged_stats.get("posts_count", 0) / total_rows) * 100 if total_rows > 0 else 0
+                merged_stats["summary"]["metadata"]["comments_percentage"] = (
+                                merged_stats.get("comments_count", 0) / total_rows) * 100 if total_rows > 0 else 0
             else:  # X (Twitter)
-                merged_stats["summary"]["metadata"]["tweets_with_hashtags_percentage"] = (merged_stats.get(
-                    "tweets_with_hashtags_count", 0) / total_rows) * 100
-                merged_stats["summary"]["metadata"]["tweets_without_hashtags_percentage"] = (merged_stats.get(
-                    "tweets_without_hashtags_count", 0) / total_rows) * 100
+                merged_stats["summary"]["metadata"]["tweets_with_hashtags_percentage"] = (
+                                merged_stats.get("tweets_with_hashtags_count", 0) / total_rows) * 100 if total_rows > 0 else 0
+                merged_stats["summary"]["metadata"]["tweets_without_hashtags_percentage"] = (
+                                merged_stats.get("tweets_without_hashtags_count", 0) / total_rows) * 100 if total_rows > 0 else 0
 
             stats_json = json.dumps(merged_stats, indent=2, cls=NumpyEncoder)
             sanitized_stats_json = self.sanitize_json(stats_json)
@@ -551,7 +553,6 @@ class HuggingFaceUploader:
         except Exception as e:
             bt.logging.error(f"Error saving merged stats JSON: {e}")
             raise
-
     def check_wal_size(self):
         wal_file = f"{self.db_path}-wal"
         if os.path.exists(wal_file):
