@@ -156,12 +156,12 @@ class MinerEvaluator:
                             del encoded_df  # clean up memory
                             decoded_df['url'] = decoded_urls
                             # Now do content validation with decoded URLs
-                            validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
+                            hf_validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
                             bt.logging.info(
-                                f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
+                                f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {hf_validation_result}')
                         else:
                             bt.logging.error(f"{hotkey}: Failed to get decoded URLs")
-                            validation_result = False
+                            hf_validation_result = False
 
                     # Store validation result
                     self.hf_storage.update_validation_info(
