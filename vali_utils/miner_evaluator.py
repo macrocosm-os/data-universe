@@ -17,7 +17,7 @@ from common.data import (
     DataSource,
     HuggingFaceMetadata,
 )
-from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata
+from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata, DecodeURLRequest
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -30,9 +30,15 @@ from storage.validator.hf_validator_storage import HFValidationStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
 
-from typing import List, Optional
+from typing import List, Optional, Tuple
 
-from vali_utils.hf_utils import validate_huggingface_dataset
+from vali_utils.hf_utils import (
+    get_latest_commit_files,
+    get_validation_data,
+    decode_dataframe,
+    validate_hf_content
+)
+
 
 from rewards.miner_scorer import MinerScorer
 
@@ -124,8 +130,6 @@ class MinerEvaluator:
 
         ##########
         # Query HuggingFace metadata
-
-
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
         if validation_info is None or (current_block - validation_info['block']) > 55000:
@@ -134,10 +138,32 @@ class MinerEvaluator:
                 for hf_metadata in hf_metadatas:
                     bt.logging.info(f'{hotkey}: Trying to validate {hf_metadata.repo_name}')
 
-                    validation_result = await validate_huggingface_dataset(hf_metadata)
-                    bt.logging.info(f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
+                    # Get parquet files
+                    new_parquet_files = get_latest_commit_files(hf_metadata.repo_name)
+                    if not new_parquet_files:
+                        bt.logging.warning(f"No new parquet files found for {hf_metadata.repo_name}")
+                        continue
 
-                    # Store the validation result regardless of success status
+                    # Get encoded URLs and DataFrame
+                    encoded_urls, encoded_df = get_validation_data(hf_metadata.repo_name, new_parquet_files)
+
+                    if encoded_urls:
+                        # Get decoded URLs from miner
+                        success, decoded_urls = await self._get_decoded_urls(hotkey, uid, axon_info, encoded_urls)
+                        if success:
+                            # Replace encoded URLs with decoded ones for validation
+                            decoded_df = encoded_df.copy()
+                            del encoded_df  # clean up memory
+                            decoded_df['url'] = decoded_urls
+                            # Now do content validation with decoded URLs
+                            validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
+                            bt.logging.info(
+                                f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
+                        else:
+                            bt.logging.error(f"{hotkey}: Failed to get decoded URLs")
+                            validation_result = False
+
+                    # Store validation result
                     self.hf_storage.update_validation_info(
                         hotkey,
                         str(hf_metadata.repo_name),
@@ -149,7 +175,7 @@ class MinerEvaluator:
                     'no_dataset_provided',
                     current_block,
                 )
-
+        ##########
 
         ##########
         # From that index, find a data entity bucket to sample and get it from the miner.
@@ -439,6 +465,34 @@ class MinerEvaluator:
                 traceback.format_exc(),
             )
             return None
+
+    async def _get_decoded_urls(self, hotkey: str, uid: int, axon_info: bt.AxonInfo,
+                                encoded_urls: List[str]) -> Tuple[bool, List[str]]:
+        """
+        Gets decoded URLs from miner for validation.
+        Returns:
+            Tuple[bool, List[str]]: (success, decoded_urls)
+        """
+        try:
+            async with bt.dendrite(wallet=self.wallet) as dendrite:
+                responses = await dendrite.forward(
+                    axons=[axon_info],
+                    synapse=DecodeURLRequest(
+                        encoded_urls=encoded_urls[:10],
+                        version=constants.PROTOCOL_VERSION
+                    ),
+                    timeout=30
+                )
+
+            if not responses or len(responses) == 0:
+                bt.logging.info(f"{hotkey}: No response received for URL decode request")
+                return False, []
+
+            return True, responses[0].decoded_urls
+
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: Error validating URLs: {str(e)}")
+            return False, []
 
     def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
         """Handles an update to a metagraph."""
