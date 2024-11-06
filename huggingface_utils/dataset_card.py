@@ -393,7 +393,7 @@ For full statistics, please refer to the `stats.json` file in the repository.
         Format the top topics into a markdown table.
 
         Args:
-            topics (List[Dict[str, Any]]): List of topics with update history.
+            topics (List[Dict[str, Any]]): List of topics with total counts.
             topic_type (str): Type of topics ('subreddit' or 'hashtag').
             limit (int): Number of top items to include.
 
@@ -403,26 +403,15 @@ For full statistics, please refer to the `stats.json` file in the repository.
         # Filter topics of the specified type
         filtered_topics = [topic for topic in topics if topic['topic_type'] == topic_type]
 
-        # Aggregate counts over the update history
-        topic_counts = {}
-        for topic in filtered_topics:
-            total_count = sum(item['count'] for item in topic['update_history'])
-            total_percentage = sum(item['percentage'] for item in topic['update_history'])
-            topic_counts[topic['topic']] = {
-                'count': total_count,
-                'percentage': total_percentage / len(topic['update_history']) if topic['update_history'] else 0
-            }
-
         # Sort topics by total count
-        sorted_topics = sorted(topic_counts.items(), key=lambda x: x[1]['count'], reverse=True)[:limit]
+        sorted_topics = sorted(filtered_topics, key=lambda x: x['total_count'], reverse=True)[:limit]
 
         # Create markdown table
-        table = "| Rank | Topic | Total Count | Average Percentage |\n|------|-------|-------------|--------------------|\n"
-        for i, (topic_name, data) in enumerate(sorted_topics, 1):
-            table += f"| {i} | {topic_name} | {data['count']} | {data['percentage']:.2f}% |\n"
+        table = "| Rank | Topic | Total Count | Percentage |\n|------|-------|-------------|-------------|\n"
+        for i, topic in enumerate(sorted_topics, 1):
+            table += f"| {i} | {topic['topic']} | {topic['total_count']} | {topic['total_percentage']:.2f}% |\n"
 
         return table
-
     def update_history(self, card: str, history: List[Tuple[str, int, int]]) -> str:
         """
         Replace the [UPDATE_HISTORY] placeholder with the update history table.
