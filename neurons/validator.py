@@ -215,7 +215,7 @@ class Validator:
 
         # Update the dataset names
         df = update_dataset_names(df)
-        df = add_stats_file(df)
+        # df = add_stats_file(df)
         bt.logging.debug(f'For WANDB artifact logs: {df}')
         # Create a temporary directory to store the updated parquet file
         with tempfile.TemporaryDirectory() as tmpdirname:
@@ -272,7 +272,7 @@ class Validator:
                 if self.should_set_weights():
                     self.set_weights()
                 
-                self.log_parquet_to_artifact(artifact_name='miner_datasets')
+                # self.log_parquet_to_artifact(artifact_name='miner_datasets')
                 # Always save state.
                 self.save_state()
 
