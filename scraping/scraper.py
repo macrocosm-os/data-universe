@@ -34,6 +34,24 @@ class ValidationResult(StrictBaseModel):
     )
 
 
+class HFValidationResult(StrictBaseModel):
+    """Data class to contain the result of a validation for a miner's Hugging Face dataset. """
+
+    class Config:
+        frozen = True
+
+    is_valid: bool
+
+    validation_ratio: float = Field(
+        description="The percentage of successfully validated HF rows, in decimal format. "
+    )
+
+    reason: str = Field(
+        description="An optional reason for the validation result. ",
+        default=""
+    )
+
+
 class ScrapeConfig(StrictBaseModel):
     """Data class to contain the configuration to be used for scraping."""
 
