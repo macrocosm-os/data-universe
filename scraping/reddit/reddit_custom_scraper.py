@@ -2,7 +2,7 @@ import time
 from common import constants, utils
 from common.date_range import DateRange
 from scraping.reddit import model
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
 import bittensor as bt
 from common.data import DataEntity, DataLabel, DataSource
 from typing import List
@@ -179,7 +179,7 @@ class RedditCustomScraper(Scraper):
 
         # Check if at least 60% of the data is valid
         is_valid = valid_percentage >= 40
-        return is_valid
+        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percentage)
 
     def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
         """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""

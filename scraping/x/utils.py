@@ -105,7 +105,7 @@ def hf_tweet_validation(validation_results: List[ValidationResult]) -> bool:
 
     true_percentage = (true_count / total_count) * 100
 
-    return true_percentage >= 50
+    return true_percentage >= 50, true_percentage
 
 
 def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> ValidationResult:

@@ -7,7 +7,7 @@ from common.data import TimeBucket
 
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
-from scraping.scraper import ValidationResult
+from scraping.scraper import ValidationResult, HFValidationResult
 
 
 class MinerScorer:
@@ -121,7 +121,7 @@ class MinerScorer:
         uid: int,
         index: Optional[ScorableMinerIndex],
         validation_results: List[ValidationResult],
-        hf_validation_result: Optional[bool]
+        hf_validation_result: Optional[HFValidationResult]
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
 
@@ -129,6 +129,7 @@ class MinerScorer:
             uid (int): The miner's UID.
             index (ScorableMinerIndex): The latest index of the miner.
             validation_results (List[ValidationResult]): The results of data validation performed on the data provided by the miner.
+            hf_validation_result (Optional, HFValidationResult): The overall result from a validation process on a 10,000 row sample from a miner's HF dataset. 
         """
         with self.lock:
             score = 0.0
