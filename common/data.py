@@ -77,9 +77,9 @@ class DataSource(IntEnum):
     @property
     def weight(self):
         weights = {
-            DataSource.REDDIT: 0.6,
-            DataSource.X: 0.4,
-            DataSource.UNKNOWN_3: 0,
+            DataSource.REDDIT: 0.55,
+            DataSource.X: 0.35,
+            DataSource.TUMBLR: 0.10,
             DataSource.UNKNOWN_4: 0,
             DataSource.UNKNOWN_5: 0,
             DataSource.UNKNOWN_6: 0,
