@@ -6,7 +6,7 @@ from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.scraper import Scraper, ScraperId
 from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
 from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
-from scraping.tumblr_image.scrapper import TumblrCustomScrapper
+from scraping.tumblr_image.scrapper import TumblrCustomScraper
 
 
 DEFAULT_FACTORIES = {
@@ -16,7 +16,7 @@ DEFAULT_FACTORIES = {
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
     ScraperId.X_MICROWORLDS: MicroworldsTwitterScraper,
     ScraperId.X_APIDOJO: ApiDojoTwitterScraper,
-    ScraperId.TUMBLR_CUSTOM: TumblrCustomScrapper
+    ScraperId.TUMBLR_CUSTOM: TumblrCustomScraper
 }
 
 
