@@ -102,6 +102,7 @@ class Validator:
         self.last_eval_time = dt.datetime.utcnow()
         self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
+        self.last_artifact_log_time = None
 
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
@@ -200,6 +201,12 @@ class Validator:
         )
 
         bt.logging.debug(f"Started a new wandb run: {name}")
+    
+    def should_log_artifact(self) -> bool:
+        """Check if it's time to log a new artifact based on 24h interval or initial startup"""
+        if self.last_artifact_log_time is None:
+            return True
+        return (dt.datetime.now() - self.last_artifact_log_time) >= dt.timedelta(days=1)
 
     def log_parquet_to_artifact(self, artifact_name, artifact_type="dataset"):
         if self.wandb_run is None:
@@ -228,6 +235,29 @@ class Validator:
             self.wandb_run.log_artifact(artifact)
 
         bt.logging.info(f"Logged updated parquet file as artifact: {artifact_name}")
+
+    def log_daily_artifacts(self):
+        """Log daily artifacts and update the timestamp"""
+        try:
+            if self.wandb_run is None:
+                bt.logging.warning("Wandb run not initialized. Skipping artifact logging.")
+                return
+
+            # Generate a timestamp-based artifact name
+            timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            artifact_name = f"miner_datasets"
+            
+            # Log the parquet data as artifact
+            self.log_parquet_to_artifact(artifact_name=artifact_name)
+            
+            # Update the last logging time
+            self.last_artifact_log_time = dt.datetime.now()
+            
+            bt.logging.info(f"Successfully logged artifact: {artifact_name}")
+        except Exception as e:
+            bt.logging.error(f"Failed to log artifact: {str(e)}")
+            bt.logging.exception(e)  # This will log the full stack trace
+
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
@@ -272,6 +302,10 @@ class Validator:
                 if self.should_set_weights():
                     self.set_weights()
                 
+                # Check if we should log artifacts (every 24h)
+                if self.should_log_artifact():
+                    bt.logging.info("Logging daily artifact based on 24h interval...")
+                    self.log_daily_artifacts()
                 # self.log_parquet_to_artifact(artifact_name='miner_datasets')
                 # Always save state.
                 self.save_state()
