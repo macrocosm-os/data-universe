@@ -19,3 +19,5 @@ mysql-connector-python
 datadog
 pyarrow==17.0.0
 psutil==5.9.8
+pytumblr==0.1.2
+Pillow==11.0.0
