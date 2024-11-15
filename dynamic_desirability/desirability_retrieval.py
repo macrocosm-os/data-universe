@@ -12,14 +12,14 @@ from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
-from dynamic_desirability.constants import (REPO_URL, 
-    PREFERENCES_FOLDER, 
-    DEFAULT_JSON_PATH,
-    AGGREGATE_JSON_PATH, 
-    TOTAL_VALI_WEIGHT,
-    DEFAULT_SCALE_FACTOR,
-    AMPLICATION_FACTOR
-    )
+from dynamic_desirability.constants import (REPO_URL,
+                                            PREFERENCES_FOLDER,
+                                            DEFAULT_JSON_PATH,
+                                            AGGREGATE_JSON_PATH,
+                                            TOTAL_VALI_WEIGHT,
+                                            DEFAULT_SCALE_FACTOR,
+                                            AMPLICATION_FACTOR
+                                            )
 
 
 def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
@@ -27,7 +27,7 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
     original_dir = os.getcwd()
     repo_name = REPO_URL.split('/')[-1].replace('.git', '')
     repo_path = os.path.join(original_dir, repo_name)
-    
+
     try:
         if not os.path.exists(repo_name):
             bt.logging.info(f"Cloning repository: {REPO_URL}")
@@ -64,7 +64,8 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
             shutil.rmtree(repo_name)
 
 
-def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH, total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
+def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
+                            total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
     """Calculate total weights and write to total.json."""
     total_weights: Dict[str, Dict[str, float]] = {}
     subnet_weight = 1 - total_vali_weight
@@ -119,32 +120,29 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     """Converts a json format to a LOOKUP format."""
     with open(json_file, 'r') as file:
         data = json.load(file)
-    
+
     distribution = {}
 
-    source_weights = {
-        'reddit': DataSource.REDDIT.weight,
-        'x': DataSource.X.weight,
-        'tumblr': DataSource.TUMBLR.weight
-    }
     for source in data:
         source_name = source['source_name']
         label_weights = source['label_weights']
-        
-        source_weight = source_weights.get(source_name.lower())
+
+        source_weight = DataSource.REDDIT.weight if source_name.lower() == "reddit" else DataSource.X.weight
+
         label_scale_factors = {
             DataLabel(value=label): weight
             for label, weight in label_weights.items()
         }
-        
+
         distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
             weight=source_weight,
-            default_scale_factor=DEFAULT_SCALE_FACTOR,               # number is subject to change
+            default_scale_factor=DEFAULT_SCALE_FACTOR,  # number is subject to change
             label_scale_factors=label_scale_factors
         )
-    
+
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
+
 
 async def run_retrieval(config) -> DataDesirabilityLookup:
     try:
@@ -161,16 +159,18 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         for hotkey in validator_data.keys():
             validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
             if validator_data[hotkey]['github_hash']:
-                validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'], filename=f"{hotkey}.json")
+                validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'],
+                                                          filename=f"{hotkey}.json")
 
         bt.logging.info("\nCalculating total weights...\n")
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         default_path = os.path.join(script_dir, DEFAULT_JSON_PATH)
-        calculate_total_weights(validator_data=validator_data, default_json_path=default_path, total_vali_weight=TOTAL_VALI_WEIGHT)
+        calculate_total_weights(validator_data=validator_data, default_json_path=default_path,
+                                total_vali_weight=TOTAL_VALI_WEIGHT)
 
         return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
-    
+
     except Exception as e:
         bt.logging.error(f"Could not retrieve dynamic preferences. Using default.json to build lookup: {str(e)}")
         script_dir = os.path.dirname(os.path.abspath(__file__))
