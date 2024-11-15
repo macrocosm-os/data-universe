@@ -5,13 +5,10 @@ from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 import bittensor as bt
 from common.data import DataEntity, DataLabel, DataSource
 from typing import List, Optional
-import aiohttp
 from scraping.tumblr_image.model import TumblrContent
-import traceback
 import datetime as dt
 import asyncio
 import pytumblr
-import json
 import requests
 import re
 from dotenv import load_dotenv
