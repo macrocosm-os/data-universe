@@ -32,11 +32,5 @@
             "#macrocosmos": 1.0,
             "#MacrocosmosAI": 1.0
         }
-    },
-    {
-        "source_name": "tumblr",
-        "label_weights": {
-            "tao": 1.0
-        }
     }
 ]

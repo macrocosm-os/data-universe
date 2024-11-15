@@ -29,7 +29,7 @@
         },
         {
             "scraper_id": "Reddit.custom",
-            "cadence_seconds": 100,
+            "cadence_seconds": 60,
             "labels_to_scrape": [
                 {
                     "label_choices": [
@@ -49,23 +49,6 @@
                         "r/WallstreetBets"
                     ],
                     "max_data_entities": 100
-                }
-            ]
-        },
-        {
-            "scraper_id": "Tumblr.custom",
-            "cadence_seconds": 100,
-            "labels_to_scrape": [
-                {
-                    "label_choices": [
-                        "cryptocurrency",
-                        "AI",
-                        "finance",
-                        "money",
-                        "Ukraine",
-                        "Technology"
-                    ],
-                    "max_data_entities": 50
                 }
             ]
         }
