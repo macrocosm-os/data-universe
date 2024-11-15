@@ -33,6 +33,7 @@ class TumblrContent(BaseModel):
 
     timestamp: dt.datetime = Field(description="The date and time the post was published")
     image_bytes: bytes = Field(description="The image data in bytes")
+    image_format: str = Field(description='the image format')
     tags: List[str] = Field(description="List of tags associated with the post")
     description: str = Field(description="A short summary or caption of the post")
     post_url: str = Field(description="The full URL of the post")

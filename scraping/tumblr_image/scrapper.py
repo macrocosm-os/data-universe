@@ -16,12 +16,15 @@ import requests
 import re
 from dotenv import load_dotenv
 import os
+import base64
+
 load_dotenv()
 
 
 class TumblrCustomScraper(Scraper):
     """
     Scrapes Tumblr data using a personal tumblr account.
+    Focuses on image content with pagination support.
     """
 
     def __init__(self):
@@ -100,6 +103,14 @@ class TumblrCustomScraper(Scraper):
                     is_valid = False
                     reasons.append("Image content mismatch")
 
+                if content.image_format != parsed_content.image_format:
+                    is_valid = False
+                    reasons.append("Image format mismatch")
+
+                if abs((content.timestamp - parsed_content.timestamp).total_seconds()) > 60:
+                    is_valid = False
+                    reasons.append("Timestamp mismatch")
+
                 if content.tags != parsed_content.tags:
                     is_valid = False
                     reasons.append("Tags mismatch")
@@ -121,7 +132,7 @@ class TumblrCustomScraper(Scraper):
         return results
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
-        """Scrape Tumblr posts"""
+        """Scrape Tumblr posts with pagination"""
         bt.logging.info(f"Tumblr scraper performing scrape with config: {scrape_config}")
 
         if not scrape_config.labels:
@@ -129,56 +140,77 @@ class TumblrCustomScraper(Scraper):
 
         tag = scrape_config.labels[0].value
         entities = []
+        timestamp = int(dt.datetime.now().timestamp())
 
+        posts_processed = 0
         try:
             self._wait_rate_limit()
-            # Simple tag search with limit
+
+            # Get posts - single fetch
             posts = self.client.tagged(
                 tag=tag,
-                limit=scrape_config.entity_limit,
+                limit=20,
+                before=timestamp,
                 filter='raw'
             )
 
-            if posts:
-                for post in posts:
-                    try:
-                        print(post.get('type'))
-                        if post.get('type') != 'photo':
-                            continue
+            if not posts:
+                bt.logging.info(f"No posts available for tag: {tag}")
+                return []
 
-                        content = self._best_effort_parse_post(post)
-                        if content:
-                            entities.append(TumblrContent.to_data_entity(content))
-                    except Exception as e:
-                        bt.logging.error(f"Error processing post: {str(e)}")
-                        continue
+            bt.logging.info(f"Got {len(posts)} posts for tag: {tag}")
+
+            # Process posts
+            for post in posts:
+                try:
+                    content = self._best_effort_parse_post(post)
+                    if content:
+                        entities.append(TumblrContent.to_data_entity(content))
+                        posts_processed += 1
+
+                except Exception as e:
+                    bt.logging.error(f"Error processing post: {str(e)}")
+                    continue
 
         except Exception as e:
             bt.logging.error(f"Failed to scrape tag {tag}: {str(e)}")
-            return []
 
-        bt.logging.info(f"Scraped {len(entities)} images from tag {tag}")
+        bt.logging.info(f"Scraped {len(entities)} images from {posts_processed} processed posts")
         return entities
 
     def _best_effort_parse_post(self, post: dict) -> Optional[TumblrContent]:
-        """Parse Tumblr post, similar to Reddit's _best_effort_parse methods"""
+        """Parse Tumblr post for main image only"""
         try:
-            # Get image URL - first try photos
             image_url = None
+
+            # Get description/caption
+            description = post.get('summary', '')
+            if not description and post.get('caption'):
+                description = post.get('caption')
+            if not description and post.get('body'):
+                # Clean HTML tags for readability
+                description = re.sub(r'<[^>]+>', '', post.get('body'))
+
+            # Get main photo
             if post.get('photos'):
                 photo = post['photos'][0]
-                if photo.get('original_size'):
+                if photo.get('original_size', {}).get('url'):
                     image_url = photo['original_size']['url']
-
-            print(image_url)
-            # Fallback to body parsing
-            if not image_url and post.get('body'):
-                match = re.search(r'src="(https://64\.media\.tumblr\.com/[^"]+)"', post['body'])
-                if match:
-                    image_url = match.group(1)
+                elif photo.get('alt_sizes'):
+                    alt_sizes = sorted(
+                        photo['alt_sizes'],
+                        key=lambda x: int(x.get('width', 0)),
+                        reverse=True
+                    )
+                    if alt_sizes:
+                        image_url = alt_sizes[0]['url']
 
             if not image_url:
                 return None
+
+            # Clean URL and get format
+            image_url = image_url.split('?')[0]
+            image_format = image_url.split('.')[-1].lower()
 
             # Download image
             self._wait_rate_limit()
@@ -186,11 +218,34 @@ class TumblrCustomScraper(Scraper):
             if response.status_code != 200:
                 return None
 
+            # Verify format with PIL
+            try:
+                from PIL import Image
+                import io
+                img = Image.open(io.BytesIO(response.content))
+                actual_format = img.format.lower()
+                img_size = img.size
+            except:
+                actual_format = image_format
+                img_size = (0, 0)
+
+            bt.logging.debug(f"""
+                Found image:
+                URL: {image_url}
+                Format: {actual_format}
+                Size: {img_size}
+                Description: {description[:200]}...
+                Tags: {post.get('tags', [])}
+                Notes: {post.get('note_count', 0)}
+                Blog: {post.get('blog_name')}
+            """)
+
             return TumblrContent(
                 timestamp=dt.datetime.fromtimestamp(post['timestamp'], dt.timezone.utc),
                 image_bytes=response.content,
+                image_format=actual_format,
                 tags=post.get('tags', []),
-                description=post.get('summary', ''),
+                description=description,
                 post_url=post.get('post_url', ''),
                 creator=post.get('blog_name', '')
             )
@@ -200,40 +255,66 @@ class TumblrCustomScraper(Scraper):
             return None
 
     def _extract_blog_name_and_post_id(self, url: str) -> tuple[Optional[str], Optional[str]]:
-        """Extract blog name and post ID"""
-        match = re.match(r'https?://([^.]+)\.tumblr\.com/post/(\d+)', url)
-        if match:
-            return match.group(1), match.group(2)
-        return None, None
+        """Extract blog name and post ID from Tumblr URL"""
+        try:
+            patterns = [
+                r'https?://([^.]+)\.tumblr\.com/post/(\d+)',  # standard tumblr
+                r'https?://(?:www\.)?tumblr\.com/blog/view/([^/]+)/(\d+)',  # tumblr blog view
+                r'https?://(?:www\.)?([^/]+)/post/(\d+)',  # custom domain
+            ]
+
+            for pattern in patterns:
+                match = re.match(pattern, url)
+                if match:
+                    return match.group(1), match.group(2)
+
+            bt.logging.debug(f"Could not parse Tumblr URL: {url}")
+            return None, None
+
+        except Exception as e:
+            bt.logging.error(f"Error parsing Tumblr URL {url}: {str(e)}")
+            return None, None
 
     async def validate_hf(self, entities) -> bool:
-        """Placeholder for HF validation"""
+        """Placeholder for HuggingFace validation"""
         return True
 
 
 async def test_scrape():
-    """Test scraper"""
+    """Test scraper functionality"""
     scraper = TumblrCustomScraper()
 
     config = ScrapeConfig(
-        entity_limit=200,
+        entity_limit=50,
         date_range=DateRange(
             start=dt.datetime.now(tz=dt.timezone.utc) - dt.timedelta(days=30),
             end=dt.datetime.now(tz=dt.timezone.utc),
         ),
-        labels=[DataLabel(value="Bittensor")]
+        labels=[DataLabel(value="space")]
     )
 
     entities = await scraper.scrape(config)
-    print(f"Scraped {len(entities)} Tumblr images")
+    print(f"\nScraped {len(entities)} Tumblr images")
 
     if entities:
         print("\nTesting validation:")
         results = await scraper.validate(entities)
         print(f"Validation results: {results}")
 
-    return entities
+        # Print detailed info for each post
+        for i, entity in enumerate(entities):
+            content = TumblrContent.from_data_entity(entity)
+            print(f"\n=== Post {i+1} ===")
+            print(f"URL: {content.post_url}")
+            print(f"Creator: {content.creator}")
+            print(f"Format: {content.image_format}")
+            print(f"Image size: {len(content.image_bytes):,} bytes")
+            print(f"Tags: {content.tags}")
+            print("Description:")
+            print(f"{content.description[:500]}...")
+            print("-" * 80)
 
+    return entities
 
 if __name__ == "__main__":
     asyncio.run(test_scrape())
