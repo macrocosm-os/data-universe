@@ -58,8 +58,7 @@ class MinerEvaluator:
     # Mapping of scrapers to use based on the data source to validate.
     PREFERRED_SCRAPERS = {
         DataSource.X: ScraperId.X_APIDOJO,
-        DataSource.REDDIT: ScraperId.REDDIT_CUSTOM,
-        DataSource.TUMBLR: ScraperId.TUMBLR_CUSTOM
+        DataSource.REDDIT: ScraperId.REDDIT_CUSTOM
     }
 
     def __init__(self, config: bt.config, uid: int, metagraph_syncer: MetagraphSyncer):

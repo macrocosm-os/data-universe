@@ -18,7 +18,6 @@ class ScraperId(str, Enum):
     REDDIT_CUSTOM = "Reddit.custom"
     X_MICROWORLDS = "X.microworlds"
     X_APIDOJO = "X.apidojo"
-    TUMBLR_CUSTOM = "Tumblr.custom"
 
 
 class ValidationResult(StrictBaseModel):
