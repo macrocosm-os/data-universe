@@ -121,13 +121,17 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
         data = json.load(file)
     
     distribution = {}
-    
+
+    source_weights = {
+        'reddit': DataSource.REDDIT.weight,
+        'x': DataSource.X.weight,
+        'tumblr': DataSource.TUMBLR.weight
+    }
     for source in data:
         source_name = source['source_name']
         label_weights = source['label_weights']
         
-        source_weight = DataSource.REDDIT.weight if source_name.lower() == "reddit" else DataSource.X.weight
-        
+        source_weight = source_weights.get(source_name.lower())
         label_scale_factors = {
             DataLabel(value=label): weight
             for label, weight in label_weights.items()
