@@ -337,6 +337,11 @@ class SqliteMinerStorage(MinerStorage):
                 if running_size >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
                     return data_entities
                 else:
+                    # Add the optional Label field if not null.
+                    label = None
+                    if row["label"] != "NULL":
+                        label = DataLabel(value=row["label"])
+
                     # Construct the new DataEntity with all non null columns.
                     data_entity = DataEntity(
                         uri=row["uri"],
@@ -344,11 +349,8 @@ class SqliteMinerStorage(MinerStorage):
                         source=DataSource(row["source"]),
                         content=row["content"],
                         content_size_bytes=row["contentSizeBytes"],
+                        label=label,
                     )
-
-                    # Add the optional Label field if not null.
-                    if row["label"] != "NULL":
-                        data_entity.label = DataLabel(value=row["label"])
 
                     data_entities.append(data_entity)
                     running_size += row["contentSizeBytes"]
