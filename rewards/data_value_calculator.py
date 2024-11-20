@@ -17,8 +17,7 @@ class DataValueCalculator:
     def get_score_for_data_entity_bucket(
         self,
         scorable_data_entity_bucket: ScorableDataEntityBucket,
-        current_time_bucket: TimeBucket,
-        hf_result: HFValidationResult
+        current_time_bucket: TimeBucket
     ) -> float:
         """Returns the score for the given data entity bucket.
 
@@ -34,14 +33,10 @@ class DataValueCalculator:
         time_scalar = self._scale_factor_for_age(
             scorable_data_entity_bucket.time_bucket_id, current_time_bucket.id
         )
-        hf_scalar = 1
-        if hf_result.is_valid:
-            hf_scalar = hf_result.validation_percentage * scorable_data_entity_bucket.scorable_bytes * 0.1
 
         return (
             data_type_scale_factor
             * time_scalar
-            * hf_scalar
             * scorable_data_entity_bucket.scorable_bytes
         )
 
