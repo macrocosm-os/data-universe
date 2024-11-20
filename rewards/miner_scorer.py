@@ -116,12 +116,21 @@ class MinerScorer:
                 [self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)]
             )
 
+    def apply_hf_boost(self, uid: int, hf_vali_percentage: float) -> None:
+        """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
+        max_boost = 3 * 10**6
+        miner_bonus = hf_vali_percentage/100 * max_boost
+        self.scores[uid] += miner_bonus
+
+        bt.logging.success(
+            f"Awarded Miner {uid} a bonus of {miner_bonus} for passing HF validation. Score={self.scores[uid].item()}."
+        )
+
     def on_miner_evaluated(
         self,
         uid: int,
         index: Optional[ScorableMinerIndex],
-        validation_results: List[ValidationResult],
-        hf_validation_result: Optional[HFValidationResult]
+        validation_results: List[ValidationResult]
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
 

@@ -131,7 +131,7 @@ class ApiDojoTwitterScraper(Scraper):
 
         return results
 
-    async def validate_hf(self, entities) -> bool:
+    async def validate_hf(self, entities) -> HFValidationResult:
         """Validate the correctness of a HFEntities by URL."""
 
         async def validate_hf_entity(entity) -> ValidationResult:
@@ -223,7 +223,7 @@ class ApiDojoTwitterScraper(Scraper):
             )
 
         is_valid, valid_percent = utils.hf_tweet_validation(validation_results=results)
-        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent)
+        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent, reason=f"Validation Percentage = {valid_percent}" )
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""

@@ -11,7 +11,8 @@ import datetime as dt
 from huggingface_hub import HfApi
 from huggingface_utils.encoding_system import SymKeyEncodingKeyManager, decode_url
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
-from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
+from scraping.scraper import HFValidationResult
 from common.data import DataSource, HuggingFaceMetadata
 from dotenv import load_dotenv
 
@@ -105,7 +106,7 @@ def decode_dataframe(df: pd.DataFrame, encoding_key: str) -> pd.DataFrame:
     return decoded_df
 
 
-async def validate_hf_content(df: pd.DataFrame, source: DataSource) -> bool:
+async def validate_hf_content(df: pd.DataFrame, source: DataSource) -> HFValidationResult:
     """Validate DataFrame content using appropriate scraper."""
     try:
         if source == DataSource.REDDIT:
@@ -114,13 +115,21 @@ async def validate_hf_content(df: pd.DataFrame, source: DataSource) -> bool:
             scraper = ApiDojoTwitterScraper()
         else:
             bt.logging.error(f"Unknown data source {source}")
-            return False
+            return HFValidationResult(
+                is_valid=False,
+                reason=f"Unknown data source {source}",
+                validation_percentage=0
+            )
 
         return await scraper.validate_hf(entities=df.to_dict(orient='records'))
 
     except Exception as e:
         bt.logging.error(f"Error validating content: {str(e)}")
-        return False
+        return HFValidationResult(
+            is_valid=False,
+            reason=f"Error validating content: {str(e)}",
+            validation_percentage=0
+        )
 
 
 async def test_hf(repo_id: str):

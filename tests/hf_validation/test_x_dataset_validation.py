@@ -10,7 +10,7 @@ import pandas as pd
 from datasets import load_dataset
 import itertools
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
-from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 
 def get_parquet_files(repo_id: str) -> List[str]:
     """
