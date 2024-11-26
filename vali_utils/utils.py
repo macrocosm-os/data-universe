@@ -175,4 +175,4 @@ def get_miner_index_from_response(response: GetMinerIndex) -> CompressedMinerInd
     if not response.compressed_index_serialized:
         raise ValueError("GetMinerIndex response has no index.")
 
-    return CompressedMinerIndex.parse_raw(response.compressed_index_serialized)
+    return CompressedMinerIndex.model_validate_json(response.compressed_index_serialized)

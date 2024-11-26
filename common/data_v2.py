@@ -13,12 +13,11 @@ because pydantic know how to serialize dataclasses, as long as all fields are th
 
 As a rule of thumb:
 1. If the class needs to perform validation on fields, use a class with a custom __init__, __eq__, and __hash__.
-2. Always use __slots__. T
+2. Always use __slots__.
 """
 
-
 import datetime as dt
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
 
 from common import constants
@@ -35,10 +34,12 @@ class ScorableDataEntityBucket:
     """Composes both a DataEntityBucket and additional information required for scoring.
 
     Attributes:
-        scorable_bytes: Scorable bytes are the bytes that can be credited to this miner for scoring. This is always less than or equal to the total size of the chunk.
-            This scorable bytes are computed as:
-                1 byte for every byte in size_bytes that no other miner has in their index.
-                1 byte / # of miners that have this chunk in their index for every byte in size_bytes that at least one other miner has in their index.
+        scorable_bytes: Scorable bytes are the bytes that can be credited to this miner for scoring.
+        This is always less than or equal to the total size of the chunk.
+        This scorable bytes are computed as:
+            1 byte for every byte in size_bytes that no other miner has in their index.
+            1 byte / # of miners that have this chunk in their index for every byte in size_bytes
+            that at least one other miner has in their index.
     """
 
     __slots__ = "time_bucket_id", "source", "label", "size_bytes", "scorable_bytes"
@@ -109,15 +110,17 @@ class ScorableDataEntityBucket:
 class ScorableMinerIndex(BaseModel):
     """The Miner index, with additional information required for scoring.
 
-    Use a pydantic model for this class, because we only create 1 per miner, so the additional overhead is acceptable.
+    Use a pydantic model for this class, because we only create 1 per miner,
+    so the additional overhead is acceptable.
     """
 
-    class Config:
-        arbitrary_types_allowed = True
-        frozen = True
+    model_config = ConfigDict(
+        arbitrary_types_allowed=True,
+        frozen=True
+    )
 
     scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
         description="DataEntityBuckets the miner is serving, scored on uniqueness.",
-        max_items=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
+        max_length=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
     )
     last_updated: dt.datetime = Field(description="Time last updated in UTC.")

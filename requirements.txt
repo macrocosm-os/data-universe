@@ -1,17 +1,16 @@
 apify-client==1.6.1
 asyncpraw==7.7.1
-bittensor==6.9.4
+bittensor==8.3.1
 jupyter==1.0.0
 numpy==1.26.2
-# Bittensor require pydantic < 2.0.0
-pydantic==1.10.0
+pydantic==2.10.1
 python-dotenv==1.0.0
 pytz==2023.3.post1
 rich==13.7.0
 torch==2.1.2
 wandb==0.16.2
 pandas~=2.2.2
-cryptography==42.0.0
+cryptography==43.0.3
 requests==2.32.3
 huggingface-hub~=0.23.3
 datasets~=2.20.0

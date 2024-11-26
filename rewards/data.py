@@ -1,5 +1,5 @@
 from typing import Dict
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, validator
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
 
 from common.data import DataLabel, DataSource, StrictBaseModel
 
@@ -7,7 +7,6 @@ from common.data import DataLabel, DataSource, StrictBaseModel
 class DataSourceDesirability(StrictBaseModel):
     """The Desirability for a data source."""
 
-    # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
     weight: float = Field(
@@ -28,8 +27,7 @@ class DataSourceDesirability(StrictBaseModel):
         default_factory=lambda: {},
     )
 
-    @validator("label_scale_factors")
-    @classmethod
+    @field_validator("label_scale_factors")
     def validate_label_scale_factors(
         cls, value: Dict[DataLabel, float]
     ) -> Dict[str, float]:
@@ -59,7 +57,6 @@ class DataSourceDesirability(StrictBaseModel):
 class DataDesirabilityLookup(StrictBaseModel):
     """Information about data desirability across data sources."""
 
-    # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
     distribution: Dict[DataSource, DataSourceDesirability] = Field(
@@ -70,8 +67,7 @@ class DataDesirabilityLookup(StrictBaseModel):
         description="The maximum age of data that will receive rewards. Data older than this will score 0",
     )
 
-    @validator("distribution")
-    @classmethod
+    @field_validator("distribution")
     def validate_distribution(
         cls, distribution: Dict[DataSource, DataSourceDesirability]
     ) -> Dict[DataSource, DataSourceDesirability]:
@@ -104,7 +100,6 @@ class DataDesirabilityLookup(StrictBaseModel):
 class PrimitiveDataSourceDesirability(StrictBaseModel):
     """The Desirability for a data source, using primitive objects for performance"""
 
-    # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
     weight: float = Field(
@@ -129,7 +124,6 @@ class PrimitiveDataSourceDesirability(StrictBaseModel):
 class PrimitiveDataDesirabilityLookup(StrictBaseModel):
     """A DataDesirabilityLookup using primitives, for performance."""
 
-    # Makes the object "Immutable" once created.
     model_config = ConfigDict(frozen=True)
 
     distribution: Dict[DataSource, PrimitiveDataSourceDesirability] = Field(

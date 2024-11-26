@@ -1,7 +1,11 @@
 import datetime as dt
 from enum import Enum
 from typing import Optional
-from pydantic import BaseModel, Field
+
+# Use v1 for these models to keep serialization consistent.
+# Pydantic v2 doesn't include spaces in its serialization.
+from pydantic.v1 import BaseModel, Field
+
 
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource

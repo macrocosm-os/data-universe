@@ -10,10 +10,8 @@ in scraping/scraper.py. These classes are only intended to be used for deseriali
 the scraping_config JSON file.
 """
 
-
 from typing import List, Optional
-
-from pydantic import BaseModel, Field, PositiveInt, ValidationError
+from pydantic import BaseModel, Field, PositiveInt, ConfigDict
 from common import constants
 from common.data import DataLabel, StrictBaseModel
 from scraping import coordinator
@@ -22,6 +20,8 @@ from scraping.scraper import ScraperId
 
 class LabelScrapingConfig(StrictBaseModel):
     """Describes what labels to scrape."""
+
+    model_config = ConfigDict()
 
     label_choices: Optional[List[str]] = Field(
         description="""The collection of labels to choose from when performing a scrape.
@@ -47,11 +47,7 @@ class LabelScrapingConfig(StrictBaseModel):
     )
 
     def to_coordinator_label_scrape_config(self) -> coordinator.LabelScrapingConfig:
-        """Returns the internal LabelScrapingConfig representation
-
-        Raises:
-            ValidationError: if the conversion fails.
-        """
+        """Returns the internal LabelScrapingConfig representation"""
         labels = (
             [DataLabel(value=val) for val in self.label_choices]
             if self.label_choices
@@ -67,6 +63,8 @@ class LabelScrapingConfig(StrictBaseModel):
 class ScraperConfig(StrictBaseModel):
     """Configures a specific scraper."""
 
+    model_config = ConfigDict()
+
     scraper_id: ScraperId = Field(description="The scraper being configured.")
 
     cadence_seconds: PositiveInt = Field(
@@ -81,12 +79,7 @@ class ScraperConfig(StrictBaseModel):
     )
 
     def to_coordinator_scraper_config(self) -> coordinator.ScraperConfig:
-        """Returns the internal ScraperConfig representation
-
-        Raises:
-            ValueError: if the conversion fails.
-            ValidationError: if the conversion fails.
-        """
+        """Returns the internal ScraperConfig representation"""
         return coordinator.ScraperConfig(
             cadence_seconds=self.cadence_seconds,
             labels_to_scrape=[
@@ -97,16 +90,16 @@ class ScraperConfig(StrictBaseModel):
 
 
 class ScrapingConfig(StrictBaseModel):
+    """Configuration for all scrapers."""
+
+    model_config = ConfigDict()
+
     scraper_configs: List[ScraperConfig] = Field(
         description="The list of scrapers (and their scraping config) this miner should scrape from. Only scrapers in this list will be used."
     )
 
     def to_coordinator_config(self) -> coordinator.CoordinatorConfig:
-        """Returns the CoordinatorConfig.
-
-        Raises:
-            ValidationError: if the conversion fails
-        """
+        """Returns the CoordinatorConfig."""
         ids_and_configs = [
             [config.scraper_id, config.to_coordinator_scraper_config()]
             for config in self.scraper_configs

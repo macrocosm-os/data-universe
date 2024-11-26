@@ -488,14 +488,10 @@ class SqliteMinerStorage(MinerStorage):
 
             for row in cursor:
                 if running_size < constants.BULK_CONTENTS_SIZE_LIMIT_BYTES:
-                    data_entity_bucket_id = DataEntityBucketId.construct(
-                        time_bucket=TimeBucket.construct(id=row["timeBucketId"]),
+                    data_entity_bucket_id = DataEntityBucketId(
+                        time_bucket=TimeBucket(id=row["timeBucketId"]),
                         source=DataSource(row["source"]),
-                        label=(
-                            DataLabel.construct(value=row["label"])
-                            if row["label"] != "NULL"
-                            else None
-                        ),
+                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None
                     )
                     buckets_ids_to_contents[data_entity_bucket_id].append(
                         row["content"]
