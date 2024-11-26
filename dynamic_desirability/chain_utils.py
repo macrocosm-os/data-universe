@@ -92,7 +92,7 @@ class ChainPreferenceStore():
 
         # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
         partial = functools.partial(
-            bt.extrinsics.serving.publish_metadata,
+            bt.core.extrinsics.serving.publish_metadata,
             self.subtensor,
             self.wallet,
             self.netuid,
@@ -109,7 +109,7 @@ class ChainPreferenceStore():
 
         # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
         partial = functools.partial(
-            bt.extrinsics.serving.get_metadata, self.subtensor, self.netuid, hotkey
+            bt.core.extrinsics.serving.get_metadata, self.subtensor, self.netuid, hotkey
         )
 
         metadata = run_in_subprocess(partial, 60)
