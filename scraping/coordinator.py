@@ -7,7 +7,7 @@ import bittensor as bt
 import datetime as dt
 from typing import Dict, List, Optional
 import numpy
-from pydantic import Field, PositiveInt
+from pydantic import Field, PositiveInt, ConfigDict
 
 from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
 from scraping.provider import ScraperProvider
@@ -21,7 +21,7 @@ class LabelScrapingConfig(StrictBaseModel):
     label_choices: Optional[List[DataLabel]] = Field(
         description="""The collection of labels to choose from when performing a scrape.
         On a given scrape, 1 label will be chosen at random from this list.
-        
+
         If the list is None, the scraper will scrape "all".
         """
     )
@@ -30,7 +30,7 @@ class LabelScrapingConfig(StrictBaseModel):
         description="""The maximum age of data that this scrape should fetch. A random TimeBucket (currently hour block),
         will be chosen within the time frame (now - max_age_hint_minutes, now), using a probality distribution aligned
         with how validators score data freshness.
-        
+
         Note: not all data sources provide date filters, so this property should be thought of as a hint to the scraper, not a rule.
         """,
     )
@@ -50,7 +50,7 @@ class ScraperConfig(StrictBaseModel):
 
     labels_to_scrape: List[LabelScrapingConfig] = Field(
         description="""Describes the type of data to scrape with this scraper.
-        
+
         The scraper will perform one scrape per entry in this list every 'cadence_seconds'.
         """
     )
