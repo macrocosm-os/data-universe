@@ -109,6 +109,7 @@ class ChainPreferenceStore():
         """Retrieves latest github commit hash on this subnet for specific hotkey"""
 
         # Wrap calls to the subtensor in a subprocess with a timeout to handle potential hangs.
+        logger.info(f"Parameters for chain retrieval: {self.subtensor}, netuid: {self.netuid}, hotkey: {hotkey}")# TODO REMOVE
         partial = functools.partial(
             bt.core.extrinsics.serving.get_metadata, self.subtensor, self.netuid, hotkey
         )
