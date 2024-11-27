@@ -118,8 +118,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
-
-        self.continuous_connection_do_not_reuse = self._create_connection()
         self.label_dict = AutoIncrementDict()
 
         with contextlib.closing(self._create_connection()) as connection:
@@ -143,8 +141,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         # Create the database if it doesn't exist, defaulting to the local directory.
         # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
         connection = sqlite3.connect(
-            "file::memory:?cache=shared",
-            uri=True,
+            "validator_storage.db",  # switched to file-based db
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=120.0,
         )
@@ -154,27 +151,28 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         return connection
 
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
-        miner_id = 0
+        try:
+            with self.lock:
+                with contextlib.closing(self._create_connection()) as connection:
+                    cursor = connection.cursor()
 
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
+                    cursor.execute(
+                        "UPDATE OR IGNORE Miner SET lastUpdated=?, credibility=? WHERE hotkey=?",
+                        [now_str, credibility, hotkey],
+                    )
+                    cursor.execute(
+                        """INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)""",
+                        [hotkey, now_str, credibility],
+                    )
+                    connection.commit()
 
-                cursor.execute(
-                    "UPDATE OR IGNORE Miner SET lastUpdated=?, credibility=? WHERE hotkey=?",
-                    [now_str, credibility, hotkey],
-                )
-                cursor.execute(
-                    """INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)""",
-                    [hotkey, now_str, credibility],
-                )
-                connection.commit()
-
-                # Then we get the existing or newly created minerId
-                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
-                miner_id = cursor.fetchone()[0]
-
-        return miner_id
+                    # Then we get the existing or newly created minerId
+                    cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
+                    result = cursor.fetchone()
+                    return result[0] if result else None
+        except sqlite3.Error as e:
+            bt.logging.error(f"Database error in _upsert_miner: {e}")
+            raise
 
     def _label_value_parse(self, label: Optional[DataLabel]) -> str:
         """Parses the value to store in the database out of an Optional DataLabel."""
