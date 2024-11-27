@@ -112,6 +112,7 @@ def add_args(neuron_type: NeuronType, parser):
             help="Set this flag to not attempt to serve an Axon.",
             default=False,
         )
+
         parser.add_argument(
             "--wandb.off",
             action="store_true",
@@ -124,11 +125,19 @@ def add_args(neuron_type: NeuronType, parser):
             action="store_true",
             help="Set this flag to disable setting the weights to network."
         )
+
         parser.add_argument(
             "--hf_results_path",
             action="store_true",
             help="Set this flag to select the location where you are want to store your hf_results data",
             default=os.path.join(Path(os.path.dirname(__file__)).parent, "hf_validation.parquet"),
+        )
+
+        parser.add_argument(
+            "--db_storage_path",
+            type=str,
+            help="Set this flag to specify the file path in which your validator db information will be saved to.",
+            default="validator_storage.db"
         )
 
     elif neuron_type == NeuronType.MINER:

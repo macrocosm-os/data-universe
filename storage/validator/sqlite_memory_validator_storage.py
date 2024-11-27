@@ -116,7 +116,8 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                         PRIMARY KEY (minerId, repo_name)
                                         )"""
 
-    def __init__(self):
+    def __init__(self, db_storage_path: str):
+        self.db_storage_path = db_storage_path
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
         self.label_dict = AutoIncrementDict()
 
@@ -141,7 +142,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         # Create the database if it doesn't exist, defaulting to the local directory.
         # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
         connection = sqlite3.connect(
-            "validator_storage.db",  # switched to file-based db
+            self.db_storage_path,  # switched to file-based db
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=120.0,
         )

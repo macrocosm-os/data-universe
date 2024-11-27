@@ -73,7 +73,7 @@ class MinerEvaluator:
             utils.get_miner_uids(self.metagraph, self.uid)
         )
         self.scraper_provider = ScraperProvider()
-        self.storage = SqliteMemoryValidatorStorage()
+        self.storage = SqliteMemoryValidatorStorage(self.config.db_storage_path)
         self.hf_storage = HFValidationStorage(self.config.hf_results_path)
         # Instantiate runners
         self.should_exit: bool = False
