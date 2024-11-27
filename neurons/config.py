@@ -137,7 +137,7 @@ def add_args(neuron_type: NeuronType, parser):
             "--db_storage_path",
             type=str,
             help="Set this flag to specify the file path in which your validator db information will be saved to.",
-            default="validator_storage.db"
+            default=os.path.join(Path(os.path.dirname(__file__)).parent, "SN13ValidatorDB.sqlite")
         )
 
     elif neuron_type == NeuronType.MINER:
