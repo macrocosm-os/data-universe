@@ -265,8 +265,25 @@ def validate_tweet_content(
         # Normalize the URI to allow either x.com or twitter.com URIs.
         tweet_entity.uri = normalize_url(tweet_entity.uri)
         entity.uri = normalize_url(entity.uri)
+        normalized_tweet_entity = DataEntity(
+            uri=normalize_url(tweet_entity.uri),
+            datetime=tweet_entity.datetime,
+            source=tweet_entity.source,
+            label=tweet_entity.label,
+            content=tweet_entity.content,
+            content_size_bytes=tweet_entity.content_size_bytes
+        )
 
-        if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
+        normalized_entity = DataEntity(
+            uri=normalize_url(entity.uri),
+            datetime=entity.datetime,
+            source=entity.source,
+            label=entity.label,
+            content=entity.content,
+            content_size_bytes=entity.content_size_bytes
+        )
+
+        if not DataEntity.are_non_content_fields_equal(normalized_tweet_entity, normalized_entity):
             return ValidationResult(
                 is_valid=False,
                 reason="The DataEntity fields are incorrect based on the tweet.",
