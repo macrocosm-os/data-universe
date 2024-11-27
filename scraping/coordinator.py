@@ -91,9 +91,10 @@ def _choose_scrape_configs(
         if oldest_bucket.id < current_bucket.id:
             # Use a triangular distribution to choose a bucket in this range. We choose a triangular distribution because
             # this roughly aligns with the linear depreciation scoring that the validators use for data freshness.
-            chosen_id = numpy.random.default_rng().triangular(
+            chosen_id = int(numpy.random.default_rng().triangular(
                 left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
-            )
+            ))
+
             chosen_bucket = TimeBucket(id=chosen_id)
 
         results.append(
