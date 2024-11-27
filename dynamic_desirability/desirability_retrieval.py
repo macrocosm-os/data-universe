@@ -2,15 +2,14 @@ import asyncio
 import json
 import os
 import subprocess
-import time
 from typing import Dict, Optional, Any
-import logging
 import shutil
 import bittensor as bt
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data
+from common.logger import logger
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
@@ -30,37 +29,37 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
 
     try:
         if not os.path.exists(repo_name):
-            bt.logging.info(f"Cloning repository: {REPO_URL}")
+            logger.info(f"Cloning repository: {REPO_URL}")
             subprocess.run(['git', 'clone', REPO_URL], check=True, capture_output=True)
         os.chdir(repo_name)
 
-        bt.logging.info("Fetching latest changes")
+        logger.info("Fetching latest changes")
         subprocess.run(['git', 'fetch', '--all'], check=True, capture_output=True)
 
-        bt.logging.info(f"Checking out commit: {commit_sha}")
+        logger.info(f"Checking out commit: {commit_sha}")
         subprocess.run(['git', 'checkout', commit_sha], check=True, capture_output=True)
 
         file_path = os.path.join(PREFERENCES_FOLDER, filename)
 
         if os.path.exists(file_path):
-            bt.logging.info(f"File '{file_path}' found. Reading contents...")
+            logger.info(f"File '{file_path}' found. Reading contents...")
             with open(file_path, 'r') as file:
                 content = json.load(file)
             return content
         else:
-            bt.logging.error(f"File '{file_path}' not found in this commit.")
+            logger.error(f"File '{file_path}' not found in this commit.")
             return None
 
     except subprocess.CalledProcessError as e:
-        bt.logging.error(f"An error occurred during Git operations: {e}")
+        logger.error(f"An error occurred during Git operations: {e}")
         return None
     except IOError as e:
-        bt.logging.error(f"An error occurred while reading the file: {e}")
+        logger.error(f"An error occurred while reading the file: {e}")
         return None
     finally:
         os.chdir(original_dir)
         if os.path.exists(repo_path):
-            bt.logging.info(f"Deleting the cloned repository folder: {repo_name}")
+            logger.info(f"Deleting the cloned repository folder: {repo_name}")
             shutil.rmtree(repo_name)
 
 
@@ -82,7 +81,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
             for label, weight in source['label_weights'].items():
                 total_weights[source_name][label] = weight
     except FileNotFoundError:
-        bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default weights.")
+        logger.error(f"Warning: {default_json_path} not found. Proceeding without default weights.")
 
     # Calculating the sum of percent_stake for validators that have voted. Non-voting validators are excluded.
     total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('json'))
@@ -113,7 +112,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     with open(total_path, 'w') as f:
         json.dump(total_json, f, indent=4)
 
-    bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
+    logger.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
 
 def to_lookup(json_file: str) -> DataDesirabilityLookup:
@@ -151,10 +150,10 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=config.netuid)
         metagraph = subtensor.metagraph(netuid=config.netuid)
 
-        bt.logging.info("\nGetting validator weights from the metagraph...\n")
+        logger.info("\nGetting validator weights from the metagraph...\n")
         validator_data = get_validator_data(metagraph)
 
-        bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
+        logger.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
         for hotkey in validator_data.keys():
             validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
@@ -162,7 +161,7 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
                 validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'],
                                                           filename=f"{hotkey}.json")
 
-        bt.logging.info("\nCalculating total weights...\n")
+        logger.info("\nCalculating total weights...\n")
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
         default_path = os.path.join(script_dir, DEFAULT_JSON_PATH)
@@ -172,7 +171,7 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
 
     except Exception as e:
-        bt.logging.error(f"Could not retrieve dynamic preferences. Using default.json to build lookup: {str(e)}")
+        logger.error(f"Could not retrieve dynamic preferences. Using default.json to build lookup: {str(e)}")
         script_dir = os.path.dirname(os.path.abspath(__file__))
         return to_lookup(os.path.join(script_dir, DEFAULT_JSON_PATH))
 

@@ -9,7 +9,7 @@ import threading
 import traceback
 
 from common import utils
-
+from common.logger import logger
 
 class MetagraphSyncer:
     @dataclasses.dataclass
@@ -34,14 +34,14 @@ class MetagraphSyncer:
         self.done_initial_sync = False
         self.lock = threading.RLock()
 
-        bt.logging.info(f"MetagraphSyncer created with config: {config}")
+        logger.info(f"MetagraphSyncer created with config: {config}")
 
     def do_initial_sync(self):
         """Performs an initial sync of all metagraphs.
 
         Unlike regular syncs, this will not notify listeners of the updated metagraph.
         """
-        bt.logging.debug("Metagraph syncer do_initial_sync called")
+        logger.debug("Metagraph syncer do_initial_sync called")
 
         for netuid in self.config.keys():
             fn = functools.partial(self.subtensor.metagraph, netuid)
@@ -51,12 +51,12 @@ class MetagraphSyncer:
                 state.metagraph = metagraph
                 state.last_synced_time = datetime.now()
 
-            bt.logging.debug(f"Successfully loaded metagraph for {netuid}")
+            logger.debug(f"Successfully loaded metagraph for {netuid}")
 
         self.done_initial_sync = True
 
     def start(self):
-        bt.logging.debug("Metagraph syncer start called")
+        logger.debug("Metagraph syncer start called")
 
         assert self.done_initial_sync, "Must call do_initial_sync before starting"
 
@@ -67,19 +67,19 @@ class MetagraphSyncer:
     async def _sync_metagraph_loop(self, netuid: int, cadence: int):
         while self.is_running:
             # On start, wait cadence before the first sync.
-            bt.logging.trace(f"Syncing metagraph for {netuid} in {cadence} seconds.")
+            logger.trace(f"Syncing metagraph for {netuid} in {cadence} seconds.")
             await asyncio.sleep(cadence)
 
             try:
                 # Intentionally block the shared thread so that we only
                 # sync 1 metagraph at a time.
-                bt.logging.trace(f"Syncing metagraph for {netuid}.")
+                logger.trace(f"Syncing metagraph for {netuid}.")
                 metagraph = utils.run_in_thread(
                     functools.partial(self.subtensor.metagraph, netuid),
                     ttl=120,
                     name=f"Sync-{netuid}",
                 )
-                bt.logging.trace(f"Successfully synced metagraph for {netuid}.")
+                logger.trace(f"Successfully synced metagraph for {netuid}.")
                 state = None
                 with self.lock:
                     # Store metagraph and sync time
@@ -89,7 +89,7 @@ class MetagraphSyncer:
 
                 self._notify_listeners(state, netuid)
             except (BaseException, Exception) as e:
-                bt.logging.error(
+                logger.error(
                     f"Error when syncing metagraph for {netuid}: {e}. Retrying in 60 seconds."
                 )
                 await asyncio.sleep(60)
@@ -108,7 +108,7 @@ class MetagraphSyncer:
         try:
             asyncio.run(self._run_async())
         finally:
-            bt.logging.info("MetagraphSyncer _run complete.")
+            logger.info("MetagraphSyncer _run complete.")
 
     def register_listener(
         self, listener: Callable[[bt.metagraph, int], None], netuids: List[int]
@@ -142,12 +142,12 @@ class MetagraphSyncer:
 
     def _notify_listeners(self, state: _State, netuid: int):
         """Notifies listeners of a new metagraph for netuid."""
-        bt.logging.debug(f"Notifying listeners of update to metagraph for {netuid}.")
+        logger.debug(f"Notifying listeners of update to metagraph for {netuid}.")
 
         for listener in state.listeners:
             try:
                 listener(state.metagraph, netuid)
             except Exception:
-                bt.logging.error(
+                logger.error(
                     f"Exception caught notifying {netuid} listener of metagraph update.\n{traceback.format_exc()}"
                 )

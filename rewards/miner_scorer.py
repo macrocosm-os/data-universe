@@ -6,6 +6,7 @@ import datetime as dt
 from common.data import TimeBucket
 
 from common.data_v2 import ScorableMinerIndex
+from common.logger import logger
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult
 
@@ -94,7 +95,7 @@ class MinerScorer:
                 0
             ), f"Tried to downsize the number of neurons from {self.scores.size(0)} to {num_neurons}"
 
-            bt.logging.trace(
+            logger.trace(
                 f"Resizing MinerScorer from {self.scores.size(0)} to {num_neurons}"
             )
 
@@ -156,7 +157,7 @@ class MinerScorer:
                         1 / MinerScorer._CREDIBILITY_EXP
                     )
                     self.miner_credibility[uid] *= cred_scalar
-                    bt.logging.debug(
+                    logger.debug(
                         f"Miner {uid}'s scorable bytes changed from {previous_raw_score} to {score}. Credibility changed from {previous_cred} to {self.miner_credibility[uid].item()}."
                     )
 
@@ -171,7 +172,7 @@ class MinerScorer:
 
             self.scores[uid] = score
 
-            bt.logging.success(
+            logger.success(
                 f"Evaluated Miner {uid}. Score={self.scores[uid].item()}. Credibility={self.miner_credibility[uid].item()}."
             )
 
@@ -205,7 +206,7 @@ class MinerScorer:
             + (1 - self.cred_alpha) * self.miner_credibility[uid]
         )
 
-        bt.logging.trace(
+        logger.trace(
             f"""Evaluated Miner {uid}. Percent of bytes validated succesfully this attempt={credibility * 100}. 
                 Previous Credibility={previous_credibility}. New Credibility={self.miner_credibility[uid].item()}."""
         )

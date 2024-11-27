@@ -5,6 +5,7 @@ import json
 from typing import Any, Optional, Dict
 import bittensor as bt
 import argparse
+from common.logger import logger
 
 """
 Based off of taoverse run_in_subprocess and ChainModelMetadataStore
@@ -101,7 +102,7 @@ class ChainPreferenceStore():
             wait_for_inclusion,
             wait_for_finalization,
         )
-        bt.logging.info("Writing to chain...")
+        logger.info("Writing to chain...")
         run_in_subprocess(partial, 60)
 
     async def retrieve_preferences(self, hotkey: str) -> str:

@@ -16,6 +16,7 @@ from huggingface_utils.utils import(
     migrate_stats_to_v2,
     get_default_stats_structure
 )
+from common.logger import logger
 from huggingface_utils.encoding_system import EncodingKeyManager
 from common.data import HuggingFaceMetadata, DataSource
 from typing import List, Dict, Union, Any
@@ -34,9 +35,9 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
                     return func(*args, **kwargs)
                 except Exception as e:
                     if attempt == max_retries - 1:
-                        bt.logging.error(f"Upload failed after {max_retries} attempts. Final error: {str(e)}")
+                        logger.error(f"Upload failed after {max_retries} attempts. Final error: {str(e)}")
                         raise
-                    bt.logging.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
+                    logger.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
                     time.sleep(delay)
         return wrapper
     return decorator
@@ -106,7 +107,7 @@ class HuggingFaceUploader:
                             state['last_upload'][source] = dt.datetime.strptime(state['last_upload'][source],
                                                                                 '%Y-%m-%d %H:%M:%S')
                         except ValueError:
-                            bt.logging.warning(f"Invalid datetime format for source {source}. Setting to None.")
+                            logger.warning(f"Invalid datetime format for source {source}. Setting to None.")
                             state['last_upload'][source] = None
                     else:
                         state['last_upload'][source] = None
@@ -133,7 +134,7 @@ class HuggingFaceUploader:
             max_id = max([int(f.split('_')[-1].split('.')[0]) for f in parquet_files])
             return max_id + 1
         except Exception as e:
-            bt.logging.error(f"Error getting next chunk id: {e}")
+            logger.error(f"Error getting next chunk id: {e}")
             return 0
 
     def get_data_for_huggingface_upload(self, source, last_upload):
@@ -176,7 +177,7 @@ class HuggingFaceUploader:
     @retry_upload(max_retries=5)
     def upload_parquet_to_hf(self, repo_id):
         if not self.check_hf_connection():
-            bt.logging.error("Network connection is unstable. Upload aborted.")
+            logger.error("Network connection is unstable. Upload aborted.")
             return
 
         try:
@@ -189,10 +190,10 @@ class HuggingFaceUploader:
                 path_in_repo='data/',
                 allow_patterns="*.parquet",
             )
-            bt.logging.info(f"Successfully uploaded files to {repo_id}")
+            logger.info(f"Successfully uploaded files to {repo_id}")
 
         except Exception as e:
-            bt.logging.error(f"Error during upload: {str(e)}")
+            logger.error(f"Error during upload: {str(e)}")
             raise  # Re-raise the exception to trigger the retry
 
         finally:
@@ -203,7 +204,7 @@ class HuggingFaceUploader:
 
     def upload_sql_to_huggingface(self) -> List[HuggingFaceMetadata]:
         if not self.hf_token:
-            bt.logging.error("Hugging Face token not found. Please check your environment variables.")
+            logger.error("Hugging Face token not found. Please check your environment variables.")
             return []
 
         if not os.path.exists(self.output_dir):
@@ -228,12 +229,12 @@ class HuggingFaceUploader:
             try:
                 # Check if repository exists
                 self.hf_api.repo_info(repo_id=repo_id, repo_type="dataset")
-                bt.logging.info(f"Repository {repo_id} already exists.")
+                logger.info(f"Repository {repo_id} already exists.")
                 next_chunk_id = self.get_next_chunk_id(repo_id)
             except Exception:
                 # Create new repository
                 self.hf_api.create_repo(token=self.hf_token, repo_id=repo_id.split('/')[1], private=False, repo_type="dataset")
-                bt.logging.info(f"Created new repository: {repo_id}")
+                logger.info(f"Created new repository: {repo_id}")
                 next_chunk_id = 0
 
             last_upload = state['last_upload'].get(str(source))
@@ -245,20 +246,20 @@ class HuggingFaceUploader:
 
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
-                    bt.logging.info(f"Processing new DataFrame for source {source}")
+                    logger.info(f"Processing new DataFrame for source {source}")
 
                     if df.empty:
-                        bt.logging.info(f"Encountered empty DataFrame for source {source}. Skipping.")
+                        logger.info(f"Encountered empty DataFrame for source {source}. Skipping.")
                         continue
 
-                    bt.logging.info(f"Current total rows: {total_rows}")
+                    logger.info(f"Current total rows: {total_rows}")
                     if total_rows >= 400_000_000:
-                        bt.logging.info(f"Reached 400 million rows limit for source {source}. Stopping upload.")
+                        logger.info(f"Reached 400 million rows limit for source {source}. Stopping upload.")
                         break
 
                     last_upload = df['datetime'].max()
 
-                    bt.logging.info(f"Starting preprocessing for DataFrame with {len(df)} rows")
+                    logger.info(f"Starting preprocessing for DataFrame with {len(df)} rows")
                     df = self.preprocess_data(df, source)
                     rows_to_upload = min(len(df), 400_000_000 - total_rows)
 
@@ -269,9 +270,9 @@ class HuggingFaceUploader:
                                                 f"train-DataEntity_chunk_{next_chunk_id + chunk_count}.parquet")
                     df.to_parquet(parquet_path, index=False)
 
-                    bt.logging.info(f"Saving chunk to Parquet file: {parquet_path}")
+                    logger.info(f"Saving chunk to Parquet file: {parquet_path}")
 
-                    bt.logging.info("Collecting statistics for the current chunk")
+                    logger.info("Collecting statistics for the current chunk")
                     chunk_stats = self.collect_statistics(df, source)
                     all_stats = self.merge_statistics(all_stats, chunk_stats)
 
@@ -281,7 +282,7 @@ class HuggingFaceUploader:
 
                     if chunk_count == 10:
                         self.upload_parquet_to_hf(repo_id)
-                        bt.logging.info(f'Uploaded {chunk_count} chunks to {repo_id}')
+                        logger.info(f'Uploaded {chunk_count} chunks to {repo_id}')
                         next_chunk_id += chunk_count
                         chunk_count = 0
                         with self.get_db_connection() as conn:
@@ -291,7 +292,7 @@ class HuggingFaceUploader:
                     self.upload_parquet_to_hf(repo_id)
                     with self.get_db_connection() as conn:
                         self.manage_wal(conn)
-                    bt.logging.info(f'Uploaded final {chunk_count} chunks to {repo_id}')
+                    logger.info(f'Uploaded final {chunk_count} chunks to {repo_id}')
 
                 state['last_upload'][str(source)] = last_upload
                 state['total_rows'][str(source)] = total_rows
@@ -320,11 +321,11 @@ class HuggingFaceUploader:
                 )
                 hf_metadata_list.append(hf_metadata)
 
-                bt.logging.success(
+                logger.success(
                     f"Finished uploading data for source {source} to {repo_id}. Total rows uploaded: {total_rows}")
 
             except Exception as e:
-                bt.logging.error(f"Error during upload for source {source}: {e}")
+                logger.error(f"Error during upload for source {source}: {e}")
 
         return hf_metadata_list
 
@@ -465,20 +466,20 @@ class HuggingFaceUploader:
 
             # Check if migration is needed
             if stats.get("version") != "2.0.0":
-                bt.logging.info(f"Migrating stats from version {stats.get('version', '1.0.0')} to 2.0.0")
+                logger.info(f"Migrating stats from version {stats.get('version', '1.0.0')} to 2.0.0")
                 stats = migrate_stats_to_v2(stats)
 
-            bt.logging.info(f"Successfully loaded and sanitized existing stats from {repo_id}")
+            logger.info(f"Successfully loaded and sanitized existing stats from {repo_id}")
             return stats
 
         except json.JSONDecodeError as e:
-            bt.logging.error(f"JSON Decode Error in existing stats file: {e}")
-            bt.logging.error(f"Error location: line {e.lineno}, column {e.colno}")
-            bt.logging.error(f"Problematic JSON snippet: {e.doc[max(0, e.pos - 20):e.pos + 20]}")
+            logger.error(f"JSON Decode Error in existing stats file: {e}")
+            logger.error(f"Error location: line {e.lineno}, column {e.colno}")
+            logger.error(f"Problematic JSON snippet: {e.doc[max(0, e.pos - 20):e.pos + 20]}")
             return get_default_stats_structure()
 
         except Exception as e:
-            bt.logging.error(f"Error loading existing stats: {e}")
+            logger.error(f"Error loading existing stats: {e}")
             return get_default_stats_structure()
 
     @retry_upload()
@@ -547,24 +548,24 @@ class HuggingFaceUploader:
                 repo_type="dataset",
             )
 
-            bt.logging.info(f"Successfully updated {filename} for {platform} dataset in {repo_id}")
+            logger.info(f"Successfully updated {filename} for {platform} dataset in {repo_id}")
             return merged_stats
 
         except Exception as e:
-            bt.logging.error(f"Error saving merged stats JSON: {e}")
+            logger.error(f"Error saving merged stats JSON: {e}")
             raise
     def check_wal_size(self):
         wal_file = f"{self.db_path}-wal"
         if os.path.exists(wal_file):
             size_mb = os.path.getsize(wal_file) / (1024 * 1024)
-            bt.logging.info(f"Current WAL file size: {size_mb:.2f} MB")
+            logger.info(f"Current WAL file size: {size_mb:.2f} MB")
             return size_mb
         return 0
 
     def manage_wal(self, conn):
         wal_size = self.check_wal_size()
         if wal_size > self.wal_size_limit_mb:
-            bt.logging.warning(f"WAL file exceeded {self.wal_size_limit_mb} MB. Performing checkpoint.")
+            logger.warning(f"WAL file exceeded {self.wal_size_limit_mb} MB. Performing checkpoint.")
             conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
             new_size = self.check_wal_size()
-            bt.logging.info(f"After checkpoint, WAL size: {new_size:.2f} MB")
+            logger.info(f"After checkpoint, WAL size: {new_size:.2f} MB")

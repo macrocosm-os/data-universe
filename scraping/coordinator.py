@@ -10,6 +10,7 @@ import numpy
 from pydantic import Field, PositiveInt, ConfigDict
 
 from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
+from common.logger import logger
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScrapeConfig, ScraperId
 from storage.miner.miner_storage import MinerStorage
@@ -160,7 +161,7 @@ class ScraperCoordinator:
         """
         assert not self.is_running, "ScrapingCoordinator already running"
 
-        bt.logging.info("Starting ScrapingCoordinator in a background thread.")
+        logger.info("Starting ScrapingCoordinator in a background thread.")
 
         self.is_running = True
         self.thread = threading.Thread(target=self.run, daemon=True).start()
@@ -170,7 +171,7 @@ class ScraperCoordinator:
         asyncio.run(self._start())
 
     def stop(self):
-        bt.logging.info("Stopping the ScrapingCoordinator.")
+        logger.info("Stopping the ScrapingCoordinator.")
         self.is_running = False
 
     async def _start(self):
@@ -189,7 +190,7 @@ class ScraperCoordinator:
                 now
             )
             if not scraper_ids_to_scrape_now:
-                bt.logging.trace("Nothing ready to scrape yet. Trying again in 15s.")
+                logger.trace("Nothing ready to scrape yet. Trying again in 15s.")
                 # Nothing is due a scrape. Wait a few seconds and try again
                 await asyncio.sleep(15)
                 continue
@@ -203,14 +204,14 @@ class ScraperCoordinator:
                     # Use .partial here to make sure the functions arguments are copied/stored
                     # now rather than being lazily evaluated (if a lambda was used).
                     # https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/cell-var-from-loop.html#cell-var-from-loop-w0640
-                    bt.logging.trace(f"Adding scrape task for {scraper_id}: {config}.")
+                    logger.trace(f"Adding scrape task for {scraper_id}: {config}.")
                     self.queue.put_nowait(functools.partial(scraper.scrape, config))
 
                 self.tracker.on_scrape_scheduled(scraper_id, now)
 
-        bt.logging.info("Coordinator shutting down. Waiting for workers to finish.")
+        logger.info("Coordinator shutting down. Waiting for workers to finish.")
         await asyncio.gather(*workers)
-        bt.logging.info("Coordinator stopped.")
+        logger.info("Coordinator stopped.")
 
     async def _worker(self, name):
         """A worker thread"""
@@ -224,4 +225,4 @@ class ScraperCoordinator:
                 self.storage.store_data_entities(data_entities)
                 self.queue.task_done()
             except Exception as e:
-                bt.logging.error("Worker " + name + ": " + traceback.format_exc())
+                logger.error("Worker " + name + ": " + traceback.format_exc())

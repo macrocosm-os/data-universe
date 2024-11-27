@@ -2,7 +2,7 @@ import asyncio
 import traceback
 import bittensor as bt
 from typing import List
-from common import constants
+from common.logger import logger
 from common.data import DataEntity, DataLabel, DataSource
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
@@ -67,7 +67,7 @@ class QuackerUrlScraper(Scraper):
         except (
             Exception
         ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
-            bt.logging.error(f"Failed to validate entities: {traceback.format_exc()}.")
+            logger.error(f"Failed to validate entities: {traceback.format_exc()}.")
             # This is an unfortunate situation. We have no way to distinguish a genuine failure from
             # one caused by malicious input. In my own testing I was able to make the Actor timeout by
             # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
@@ -133,7 +133,7 @@ class QuackerUrlScraper(Scraper):
                     )
                 )
             except Exception:
-                bt.logging.warning(
+                logger.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
 
@@ -221,7 +221,7 @@ async def test_validate():
 
 
 if __name__ == "__main__":
-    bt.logging.set_trace(True)
+    logger.set_trace(True)
     entities = asyncio.run(test_scrape())
     print(asyncio.run(QuackerUrlScraper().validate(entities)))
     # asyncio.run(test_validate())

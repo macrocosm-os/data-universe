@@ -1,6 +1,7 @@
 from collections import defaultdict
 import threading
 from common import constants, utils
+from common.logger import logger
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
@@ -18,7 +19,6 @@ import datetime as dt
 import sqlite3
 import contextlib
 import bittensor as bt
-import pandas as pd
 
 
 # Use a timezone aware adapter for timestamp columns.
@@ -148,7 +148,7 @@ class SqliteMinerStorage(MinerStorage):
             if 'encodingKey' not in columns:
                 # Add the new column
                 cursor.execute("ALTER TABLE HFMetaData ADD COLUMN encodingKey TEXT")
-                bt.logging.info("Added encodingKey column to HFMetaData table")
+                logger.info("Added encodingKey column to HFMetaData table")
 
             connection.commit()
 
@@ -275,7 +275,7 @@ class SqliteMinerStorage(MinerStorage):
 
                 return threshold_datetime > average_datetime
         except sqlite3.Error as e:
-            bt.logging.error(f"An error occurred: {e}")
+            logger.error(f"An error occurred: {e}")
             return False
 
     def get_hf_metadata(self, unique_id: str) -> List[HuggingFaceMetadata]:
@@ -354,7 +354,7 @@ class SqliteMinerStorage(MinerStorage):
                     running_size += row["contentSizeBytes"]
 
             # If we reach the end of the cursor then return all of the data entities for this DataEntityBucket.
-            bt.logging.trace(
+            logger.trace(
                 f"Returning {len(data_entities)} data entities for bucket {data_entity_bucket_id}"
             )
             return data_entities
@@ -366,12 +366,12 @@ class SqliteMinerStorage(MinerStorage):
         # Refresh thread using a 20 minute freshness period and calling this method every 21 minutes.
         with self.cached_index_lock:
             if dt.datetime.now() - self.cached_index_updated <= time_delta:
-                bt.logging.trace(
+                logger.trace(
                     f"Skipping updating cached index. It is already fresher than {time_delta}."
                 )
                 return
             else:
-                bt.logging.info(
+                logger.info(
                     f"Cached index out of {time_delta} freshness period. Refreshing cached index."
                 )
 
@@ -380,7 +380,7 @@ class SqliteMinerStorage(MinerStorage):
         with self.cached_index_refresh_lock:
             with self.cached_index_lock:
                 if dt.datetime.now() - self.cached_index_updated <= time_delta:
-                    bt.logging.trace(
+                    logger.trace(
                         "After waiting on refresh lock the index was already refreshed."
                     )
                     return
@@ -430,7 +430,7 @@ class SqliteMinerStorage(MinerStorage):
                     ] = bucket
 
                 # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
-                bt.logging.trace("Creating protocol 4 cached index.")
+                logger.trace("Creating protocol 4 cached index.")
                 with self.cached_index_lock:
                     self.cached_index_4 = CompressedMinerIndex(
                         sources={
@@ -439,7 +439,7 @@ class SqliteMinerStorage(MinerStorage):
                         }
                     )
                     self.cached_index_updated = dt.datetime.now()
-                    bt.logging.success(
+                    logger.success(
                         f"Created cached index of {CompressedMinerIndex.size_bytes(self.cached_index_4)} bytes "
                         + f"across {CompressedMinerIndex.bucket_count(self.cached_index_4)} buckets."
                     )
@@ -521,7 +521,7 @@ class SqliteMinerStorage(MinerStorage):
     def clear_content_from_oldest(self, content_bytes_to_clear: int):
         """Deletes entries starting from the oldest until we have cleared the specified amount of content."""
 
-        bt.logging.debug(f"Database full. Clearing {content_bytes_to_clear} bytes.")
+        logger.debug(f"Database full. Clearing {content_bytes_to_clear} bytes.")
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()

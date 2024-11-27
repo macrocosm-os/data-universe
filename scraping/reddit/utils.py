@@ -1,12 +1,13 @@
+import bittensor as bt
+import traceback
+import datetime as dt
+import random
 from urllib.parse import urlparse
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataLabel
-import bittensor as bt
-import traceback
-import datetime as dt
-import random
+from common.logger import logger
 
 
 def is_valid_reddit_url(url: str) -> bool:
@@ -30,7 +31,7 @@ def validate_reddit_content(
     try:
         content_to_validate = RedditContent.from_data_entity(entity_to_validate)
     except Exception:
-        bt.logging.error(
+        logger.error(
             f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}"
         )
         return ValidationResult(
@@ -41,7 +42,7 @@ def validate_reddit_content(
 
     # Check Reddit id
     if content_to_validate.id != actual_content.id:
-        bt.logging.info(
+        logger.info(
             f"Reddit ids do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -52,7 +53,7 @@ def validate_reddit_content(
 
     # Check Reddit url
     if content_to_validate.url != actual_content.url:
-        bt.logging.info(
+        logger.info(
             f"Reddit urls do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -63,7 +64,7 @@ def validate_reddit_content(
 
     # Check Reddit username
     if content_to_validate.username != actual_content.username:
-        bt.logging.info(
+        logger.info(
             f"Reddit usernames do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -74,7 +75,7 @@ def validate_reddit_content(
 
     # Check Reddit community
     if content_to_validate.community != actual_content.community:
-        bt.logging.info(
+        logger.info(
             f"Reddit communities do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -85,7 +86,7 @@ def validate_reddit_content(
 
     # Check Reddit body
     if content_to_validate.body != actual_content.body:
-        bt.logging.info(
+        logger.info(
             f"Reddit bodies do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -101,7 +102,7 @@ def validate_reddit_content(
     )
     if content_to_validate.created_at != actual_content_obfuscated:
         if content_to_validate.created_at == actual_content.created_at:
-            bt.logging.info(
+            logger.info(
                 f"Provided Reddit content datetime was not obfuscated to the minute as required: {actual_content} != {content_to_validate}"
             )
             return ValidationResult(
@@ -110,7 +111,7 @@ def validate_reddit_content(
                 content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
         else:
-            bt.logging.info(
+            logger.info(
                 f"Reddit timestamps do not match: {actual_content} != {content_to_validate}"
             )
             return ValidationResult(
@@ -121,7 +122,7 @@ def validate_reddit_content(
 
     # Check Reddit data_type
     if content_to_validate.data_type != actual_content.data_type:
-        bt.logging.info(
+        logger.info(
             f"Reddit data types do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -133,7 +134,7 @@ def validate_reddit_content(
     # Post Only Fields
     # Check Reddit Title
     if content_to_validate.title != actual_content.title:
-        bt.logging.info(
+        logger.info(
             f"Reddit titles do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -152,7 +153,7 @@ def validate_reddit_content(
         and content_to_validate.parent_id is not None
     ):
         if len(content_to_validate.parent_id) > len(actual_content.parent_id):
-            bt.logging.info(
+            logger.info(
                 f"RedditContent parent id size too large: claimed {content_to_validate.parent_id} vs actual {actual_content.parent_id}."
             )
             return ValidationResult(
@@ -162,14 +163,14 @@ def validate_reddit_content(
             )
         elif content_to_validate.parent_id != actual_content.parent_id:
             # Only None out for posts that had non-matching but otherwise valid parent ids.
-            bt.logging.trace(
+            logger.trace(
                 f"RedditContent had non-matching but otherwise valid parent id: claimed {content_to_validate.parent_id} vs actual {actual_content.parent_id}."
             )
             actual_content.parent_id = None
             content_to_validate.parent_id = None
 
     if content_to_validate.parent_id != actual_content.parent_id:
-        bt.logging.info(
+        logger.info(
             f"Reddit parent ids do not match: {actual_content} != {content_to_validate}"
         )
         return ValidationResult(
@@ -206,7 +207,7 @@ def validate_reddit_content(
     except Exception:
         # This shouldn't really happen, but let's safeguard against it anyway to avoid us somehow accepting
         # corrupted or malformed data.
-        bt.logging.error(
+        logger.error(
             f"Failed to convert RedditContent to DataEntity: {traceback.format_exc()}"
         )
         return ValidationResult(

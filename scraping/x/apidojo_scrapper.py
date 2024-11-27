@@ -6,6 +6,7 @@ from typing import List, Tuple
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
+from common.logger import logger
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
@@ -75,7 +76,7 @@ class ApiDojoTwitterScraper(Scraper):
                         # Retrying.
                         continue
                     else:
-                        bt.logging.error(
+                        logger.error(
                             f"Failed to run actor: {traceback.format_exc()}."
                         )
                         # This is an unfortunate situation. We have no way to distinguish a genuine failure from
@@ -99,7 +100,7 @@ class ApiDojoTwitterScraper(Scraper):
                         is_retweet = is_retweets[index]
                         break
 
-                bt.logging.debug(actual_tweet)
+                logger.debug(actual_tweet)
                 if actual_tweet is None:
                     # Only append a failed result if on final attempt.
                     if attempt == max_attempts:
@@ -119,10 +120,10 @@ class ApiDojoTwitterScraper(Scraper):
             return []
 
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
-        bt.logging.trace("Acquiring semaphore for concurrent apidojo validations.")
+        logger.trace("Acquiring semaphore for concurrent apidojo validations.")
 
         with ApiDojoTwitterScraper.concurrent_validates_semaphore:
-            bt.logging.trace(
+            logger.trace(
                 "Acquired semaphore for concurrent apidojo validations."
             )
             results = await asyncio.gather(
@@ -174,7 +175,7 @@ class ApiDojoTwitterScraper(Scraper):
                         # Retrying.
                         continue
                     else:
-                        bt.logging.error(
+                        logger.error(
                             f"Failed to run actor: {traceback.format_exc()}."
                         )
                         # This is an unfortunate situation. We have no way to distinguish a genuine failure from
@@ -196,7 +197,7 @@ class ApiDojoTwitterScraper(Scraper):
                         actual_tweet = tweet
                         break
 
-                bt.logging.debug(actual_tweet)
+                logger.debug(actual_tweet)
                 if actual_tweet is None:
                     # Only append a failed result if on final attempt.
                     if attempt == max_attempts:
@@ -212,10 +213,10 @@ class ApiDojoTwitterScraper(Scraper):
                     )
 
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
-        bt.logging.trace("Acquiring semaphore for concurrent apidojo validations.")
+        logger.trace("Acquiring semaphore for concurrent apidojo validations.")
 
         with ApiDojoTwitterScraper.concurrent_validates_semaphore:
-            bt.logging.trace(
+            logger.trace(
                 "Acquired semaphore for concurrent apidojo validations."
             )
             results = await asyncio.gather(
@@ -255,14 +256,14 @@ class ApiDojoTwitterScraper(Scraper):
             timeout_secs=ApiDojoTwitterScraper.SCRAPE_TIMEOUT_SECS,
         )
 
-        bt.logging.success(f"Performing Twitter scrape for search terms: {query}.")
+        logger.success(f"Performing Twitter scrape for search terms: {query}.")
 
         # Run the Actor and retrieve the scraped data.
         dataset: List[dict] = None
         try:
             dataset: List[dict] = await self.runner.run(run_config, run_input)
         except Exception:
-            bt.logging.error(
+            logger.error(
                 f"Failed to scrape tweets using search terms {query}: {traceback.format_exc()}."
             )
             # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
@@ -271,7 +272,7 @@ class ApiDojoTwitterScraper(Scraper):
         # Return the parsed results, ignoring data that can't be parsed.
         x_contents, is_retweets = self._best_effort_parse_dataset(dataset)
 
-        bt.logging.success(
+        logger.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
         )
 
@@ -331,7 +332,7 @@ class ApiDojoTwitterScraper(Scraper):
                     )
                 )
             except Exception:
-                bt.logging.warning(
+                logger.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
         return results, is_retweets
@@ -506,7 +507,7 @@ async def test_multi_thread_validate():
 
 
 if __name__ == "__main__":
-    bt.logging.set_trace(True)
+    logger.set_trace(True)
     # asyncio.run(test_multi_thread_validate())
     # asyncio.run(test_scrape())
     asyncio.run(test_validate())

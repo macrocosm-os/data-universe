@@ -29,6 +29,7 @@ import wandb
 import subprocess
 from common.metagraph_syncer import MetagraphSyncer
 import common.utils as utils
+from common.logger import logger
 import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
 from vali_utils.miner_evaluator import MinerEvaluator
@@ -64,22 +65,22 @@ class Validator:
         self.config = copy.deepcopy(config or create_config(NeuronType.VALIDATOR))
         check_config(self.config)
 
-        bt.logging.info(self.config)
+        logger.info(self.config)
 
         # The wallet holds the cryptographic key pairs for the miner.
         self.wallet = bt.wallet(config=self.config)
-        bt.logging.info(f"Wallet: {self.wallet}.")
+        logger.info(f"Wallet: {self.wallet}.")
 
         # The subtensor is our connection to the Bittensor blockchain.
         self.subtensor = subtensor or bt.subtensor(config=self.config)
-        bt.logging.info(f"Subtensor: {self.subtensor}.")
+        logger.info(f"Subtensor: {self.subtensor}.")
 
         # The metagraph holds the state of the network, letting us know about other validators and miners.
         self.metagraph = self.metagraph_syncer.get_metagraph(self.config.netuid)
         self.metagraph_syncer.register_listener(
             self._on_metagraph_updated, netuids=[self.config.netuid]
         )
-        bt.logging.info(f"Metagraph: {self.metagraph}.")
+        logger.info(f"Metagraph: {self.metagraph}.")
 
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
@@ -104,9 +105,9 @@ class Validator:
         if not self.config.wandb.off:
             self.new_wandb_run()
         else:
-            bt.logging.warning("Not logging to wandb.")
+            logger.warning("Not logging to wandb.")
 
-        bt.logging.info("Setting up validator.")
+        logger.info("Setting up validator.")
 
         # Load any state from previous runs.
         self.load_state()
@@ -116,7 +117,7 @@ class Validator:
         if not self.config.neuron.axon_off:
             self.serve_axon()
         else:
-            bt.logging.warning("Axon off, not serving ip to chain.")
+            logger.warning("Axon off, not serving ip to chain.")
 
         self.is_setup = True
 
@@ -126,28 +127,28 @@ class Validator:
             try:
                 current_datetime = dt.datetime.utcnow()
                 
-                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
+                logger.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
                 
                 # Check if it's a new day and we haven't updated yet
                 if last_update is None or current_datetime.date() > last_update.date():
-                    bt.logging.info("Retrieving the latest dynamic lookup...")
+                    logger.info("Retrieving the latest dynamic lookup...")
                     model = sync_run_retrieval(self.config)
-                    bt.logging.info("Model retrieved, updating value calculator...")
+                    logger.info("Model retrieved, updating value calculator...")
                     self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
-                    bt.logging.info(f"Desirable data list: {model}")
-                    bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
+                    logger.info(f"Desirable data list: {model}")
+                    logger.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
                     last_update = current_datetime
-                    bt.logging.info(f"Updated dynamic lookup at {last_update}")
+                    logger.info(f"Updated dynamic lookup at {last_update}")
                 else:
-                    bt.logging.info("No update needed at this time.")
+                    logger.info("No update needed at this time.")
                 
                 # Sleep for 5 minutes before checking again
-                bt.logging.info("Sleeping for 5 minutes...")
+                logger.info("Sleeping for 5 minutes...")
                 time.sleep(300)
             
             except Exception as e:
-                bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
-                bt.logging.exception("Exception details:")
+                logger.error(f"Error in get_updated_lookup: {str(e)}")
+                logger.exception("Exception details:")
                 time.sleep(300)  # Wait 5 minutes before trying again
 
 
@@ -193,7 +194,7 @@ class Validator:
             anonymous="allow",
         )
 
-        bt.logging.debug(f"Started a new wandb run: {name}")
+        logger.debug(f"Started a new wandb run: {name}")
 
     def run(self):
         """
@@ -208,16 +209,16 @@ class Validator:
         # Check that validator is registered on the network.
         utils.assert_registered(self.wallet, self.metagraph)
 
-        bt.logging.info(
+        logger.info(
             f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
         )
 
-        bt.logging.info(f"Validator starting at block: {self.block}.")
+        logger.info(f"Validator starting at block: {self.block}.")
 
         # This loop maintains the validator's operations until intentionally stopped.
         while not self.should_exit:
             try:
-                bt.logging.debug(
+                logger.debug(
                     f"Validator running on step({self.step}) block({self.block})."
                 )
 
@@ -251,7 +252,7 @@ class Validator:
                     (next_batch_start_time - dt.datetime.utcnow()).total_seconds(),
                 )
                 if wait_time > 0:
-                    bt.logging.info(
+                    logger.info(
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
                     )
                     time.sleep(wait_time)
@@ -261,7 +262,7 @@ class Validator:
                     if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
                         days=1
                     ):
-                        bt.logging.info(
+                        logger.info(
                             "Current wandb run is more than 1 day old. Starting a new run."
                         )
                         self.wandb_run.finish()
@@ -270,12 +271,12 @@ class Validator:
             # If someone intentionally stops the validator, it'll safely terminate operations.
             except KeyboardInterrupt:
                 self.axon.stop()
-                bt.logging.success("Validator killed by keyboard interrupt.")
+                logger.success("Validator killed by keyboard interrupt.")
                 sys.exit()
 
             # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
-                bt.logging.error("Error during validation", str(err))
+                logger.error("Error during validation", str(err))
 
     def run_in_background_thread(self):
         """
@@ -287,7 +288,7 @@ class Validator:
         self.setup()
 
         if not self.is_running:
-            bt.logging.debug("Starting validator in background thread.")
+            logger.debug("Starting validator in background thread.")
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
@@ -295,18 +296,18 @@ class Validator:
                 target=self.get_updated_lookup, daemon=True)
             self.lookup_thread.start()
             self.is_running = True
-            bt.logging.debug("Started.")
+            logger.debug("Started.")
 
     def stop_run_thread(self):
         """
         Stops the validator's operations that are running in the background thread.
         """
         if self.is_running:
-            bt.logging.debug("Stopping validator in background thread.")
+            logger.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
-            bt.logging.debug("Stopped.")
+            logger.debug("Stopped.")
 
     def __enter__(self):
         self.run_in_background_thread()
@@ -326,13 +327,13 @@ class Validator:
                        None if the context was exited without an exception.
         """
         if self.is_running:
-            bt.logging.debug("Stopping validator in background thread.")
+            logger.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
             if self.wandb_run:
                 self.wandb_run.finish()
-            bt.logging.debug("Stopped.")
+            logger.debug("Stopped.")
 
     def serve_axon(self):
         """Serve axon to enable external connections."""
@@ -346,11 +347,11 @@ class Validator:
                 axon=self.axon,
             )
 
-            bt.logging.info(
+            logger.info(
                 f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
             )
         except Exception as e:
-            bt.logging.error(f"Failed to setup Axon: {e}.")
+            logger.error(f"Failed to setup Axon: {e}.")
             sys.exit(1)
 
     def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
@@ -383,7 +384,7 @@ class Validator:
         """
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
-        bt.logging.info("Attempting to set weights.")
+        logger.info("Attempting to set weights.")
 
         scorer = self.evaluator.get_scorer()
         scores = scorer.get_scores()
@@ -391,7 +392,7 @@ class Validator:
 
         # Check if scores contains any NaN values and log a warning if it does.
         if torch.isnan(scores).any():
-            bt.logging.warning(
+            logger.warning(
                 f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
 
@@ -446,7 +447,7 @@ class Validator:
         with self.lock:
             self.last_weights_set_time = dt.datetime.utcnow()
 
-        bt.logging.success("Finished setting weights.")
+        logger.success("Finished setting weights.")
 
     @property
     def block(self):
@@ -454,13 +455,13 @@ class Validator:
 
     def save_state(self):
         """Saves the state of the validator to a file."""
-        bt.logging.trace("Saving validator state.")
+        logger.trace("Saving validator state.")
 
         self.evaluator.save_state()
 
     def load_state(self):
         """Loads the state of the validator from a file."""
-        bt.logging.info("Loading validator state.")
+        logger.info("Loading validator state.")
 
         self.evaluator.load_state()
 
@@ -470,7 +471,7 @@ def main():
 
     config = create_config(NeuronType.VALIDATOR)
 
-    bt.logging(config=config, logging_dir=config.full_path)
+    logger(config=config, logging_dir=config.full_path)
 
     subtensor = bt.subtensor(config=config)
     metagraph = subtensor.metagraph(netuid=config.netuid)
@@ -499,11 +500,11 @@ def main():
     ) as validator:
         while True:
             if not validator.is_healthy():
-                bt.logging.error("Validator is unhealthy. Restarting.")
+                logger.error("Validator is unhealthy. Restarting.")
                 # Sys.exit() may not shutdown the process because it'll wait for other threads
                 # to complete. Use os._exit() instead.
                 os._exit(1)
-            bt.logging.trace("Validator running...", time.time())
+            logger.trace("Validator running...", time.time())
             time.sleep(60)
 
 

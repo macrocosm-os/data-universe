@@ -1,5 +1,4 @@
-import time
-from common import constants, utils
+from common.logger import logger
 from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
@@ -59,7 +58,7 @@ class RedditCustomScraper(Scraper):
             try:
                 reddit_content_to_verify = RedditContent.from_data_entity(entity)
             except Exception:
-                bt.logging.error(
+                logger.error(
                     f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}."
                 )
                 results.append(
@@ -93,7 +92,7 @@ class RedditCustomScraper(Scraper):
                         # Parse the response.
                         content = self._best_effort_parse_comment(comment)
             except Exception as e:
-                bt.logging.error(
+                logger.error(
                     f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}."
                 )
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
@@ -159,7 +158,7 @@ class RedditCustomScraper(Scraper):
                         submission = await reddit.submission(url=entity.get('url'))
                         content = self._best_effort_parse_submission(submission)
             except Exception as e:
-                bt.logging.error(
+                logger.error(
                     f"Failed to validate entity ({entity.get('url')}): {traceback.format_exc()}."
                 )
                 validation_results.append(False)
@@ -214,7 +213,7 @@ class RedditCustomScraper(Scraper):
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
-        bt.logging.trace(
+        logger.trace(
             f"Reddit custom scraper peforming scrape with config: {scrape_config}."
         )
 
@@ -227,7 +226,7 @@ class RedditCustomScraper(Scraper):
             normalize_label(scrape_config.labels[0]) if scrape_config.labels else "all"
         )
 
-        bt.logging.trace(
+        logger.trace(
              f"Running custom Reddit scraper with search: {subreddit_name}."
         )
 
@@ -275,7 +274,7 @@ class RedditCustomScraper(Scraper):
                         async for comment in comments
                     ]
         except Exception:
-            bt.logging.error(
+            logger.error(
                 f"Failed to scrape reddit using subreddit {subreddit_name}, limit {search_limit}, time {search_time}, sort {search_sort}: {traceback.format_exc()}."
             )
             # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
@@ -284,7 +283,7 @@ class RedditCustomScraper(Scraper):
         # Return the parsed results, ignoring data that can't be parsed.
         parsed_contents = [content for content in contents if content != None]
 
-        bt.logging.success(
+        logger.success(
             f"Completed scrape for subreddit {subreddit_name}. Scraped {len(parsed_contents)} items."
         )
 
@@ -321,7 +320,7 @@ class RedditCustomScraper(Scraper):
                 parentId=None,
             )
         except Exception:
-            bt.logging.trace(
+            logger.trace(
                 f"Failed to decode RedditContent from Reddit Submission: {traceback.format_exc()}."
             )
 
@@ -353,7 +352,7 @@ class RedditCustomScraper(Scraper):
                 parentId=comment.parent_id,
             )
         except Exception:
-            bt.logging.trace(
+            logger.trace(
                 f"Failed to decode RedditContent from Reddit Submission: {traceback.format_exc()}."
             )
 

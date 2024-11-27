@@ -9,6 +9,7 @@ from typing import Tuple, Optional
 import pandas as pd
 from cryptography.fernet import Fernet
 
+
 class EncodingKeyManager:
     """Manages the encryption key for URL encoding and decoding."""
 

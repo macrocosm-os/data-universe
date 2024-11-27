@@ -5,6 +5,7 @@ import sqlite3
 import threading
 from typing import Any, Dict, Optional, Set, Tuple, List
 from common.data import CompressedMinerIndex, DataLabel, HuggingFaceMetadata
+from common.logger import logger
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from storage.validator.validator_storage import ValidatorStorage
 
@@ -189,7 +190,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     ):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
-        bt.logging.trace(
+        logger.trace(
             f"{hotkey}: Upserting miner index with {CompressedMinerIndex.bucket_count(index)} buckets"
         )
 
@@ -311,7 +312,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def _delete_miner_index(self, miner_hotkey: str):
         """Removes the index for the specified miner."""
 
-        bt.logging.trace(f"{miner_hotkey}: Deleting miner index")
+        logger.trace(f"{miner_hotkey}: Deleting miner index")
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
@@ -350,7 +351,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     # Hugging face functionality
     def upsert_hf_metadata(self, hotkey: str, metadata: List[HuggingFaceMetadata]):
         """Stores or updates the HuggingFace metadata for a specific miner."""
-        bt.logging.trace(f"{hotkey}: Upserting HuggingFace metadata with {len(metadata)} entries")
+        logger.trace(f"{hotkey}: Upserting HuggingFace metadata with {len(metadata)} entries")
 
         with self.lock:
             with contextlib.closing(self._create_connection()) as connection:
@@ -358,7 +359,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
                 result = cursor.fetchone()
                 if result is None:
-                    bt.logging.warning(f"{hotkey}: Attempted to upsert HF metadata for non-existent miner")
+                    logger.warning(f"{hotkey}: Attempted to upsert HF metadata for non-existent miner")
                     return
                 miner_id = result[0]
 
@@ -394,7 +395,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
     def _delete_hf_metadata(self, miner_hotkey: str):
         """Removes the HuggingFace metadata for the specified miner."""
-        bt.logging.trace(f"{miner_hotkey}: Deleting HuggingFace metadata")
+        logger.trace(f"{miner_hotkey}: Deleting HuggingFace metadata")
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()

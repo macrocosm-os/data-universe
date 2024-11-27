@@ -3,12 +3,11 @@
 import random
 from typing import List, Dict, Any
 import asyncio
-
-import bittensor as bt
 import requests
 import pandas as pd
 from datasets import load_dataset
 import itertools
+from common.logger import logger
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 

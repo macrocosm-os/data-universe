@@ -12,6 +12,7 @@ import bittensor as bt
 from functools import lru_cache, update_wrapper
 
 from common.date_range import DateRange
+from common.logger import logger
 
 _KB = 1024
 _MB = 1024 * _KB
@@ -46,7 +47,7 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
 
     # if metagraph.coldkeys[uid] in [
     # ]:
-    #     bt.logging.trace(f"Ignoring known bad coldkey {metagraph.coldkeys[uid]}.")
+    #     logger.trace(f"Ignoring known bad coldkey {metagraph.coldkeys[uid]}.")
     #     return False
 
     return not is_validator(uid, metagraph)
@@ -100,7 +101,7 @@ def assert_registered(wallet: bt.wallet, metagraph: bt.metagraph):
     """Exits the process if wallet isn't registered in metagraph"""
     # --- Check for registration.
     if wallet.hotkey.ss58_address not in metagraph.hotkeys:
-        bt.logging.error(
+        logger.error(
             f"Wallet: {wallet} is not registered on netuid {metagraph.netuid}."
             f" Please register the hotkey using `btcli subnets register` before trying again."
         )
@@ -274,9 +275,9 @@ def run_in_thread(func: functools.partial, ttl: int, name=None) -> Any:
         future = executor.submit(func)
         return future.result(timeout=ttl)
     except concurrent.futures.TimeoutError as e:
-        bt.logging.error(f"Failed to complete '{name}' within {ttl} seconds.")
+        logger.error(f"Failed to complete '{name}' within {ttl} seconds.")
         raise TimeoutError(f"Failed to complete '{name}' within {ttl} seconds.") from e
     finally:
-        bt.logging.trace(f"Completed {name}")
+        logger.trace(f"Completed {name}")
         executor.shutdown(wait=False)
-        bt.logging.trace(f"{name} cleaned up successfully")
+        logger.trace(f"{name} cleaned up successfully")

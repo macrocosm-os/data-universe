@@ -3,7 +3,7 @@ import random
 import traceback
 import bittensor as bt
 from typing import Any, Dict, List
-from common import constants
+from common.logger import logger
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
@@ -69,7 +69,7 @@ class RedditLiteScraper(Scraper):
             try:
                 reddit_content_to_verify = RedditContent.from_data_entity(entity)
             except Exception:
-                bt.logging.error(
+                logger.error(
                     f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}."
                 )
                 results.append(
@@ -93,7 +93,7 @@ class RedditLiteScraper(Scraper):
             try:
                 dataset: List[dict] = await self.runner.run(run_config, run_input)
             except ActorRunError as e:
-                bt.logging.error(
+                logger.error(
                     f"Failed to validate entity: {traceback.format_exc()}."
                 )
                 # This is an unfortunate situation. We have no way to distinguish a genuine failure from
@@ -166,7 +166,7 @@ class RedditLiteScraper(Scraper):
             word = random.choice(["the", "he", "she", "they", "it", "and"])
             run_input["searches"] = [word]
 
-        bt.logging.trace(
+        logger.trace(
             f"Running Reddit scraper with search: {run_input['searches']}."
         )
 
@@ -183,7 +183,7 @@ class RedditLiteScraper(Scraper):
         try:
             dataset: List[dict] = await self.runner.run(run_config, run_input)
         except ActorRunError:
-            bt.logging.error(
+            logger.error(
                 f"Failed to scrape reddit using query {run_input['searches']}: {traceback.format_exc()}."
             )
             # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
@@ -191,7 +191,7 @@ class RedditLiteScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         contents = self._best_effort_parse_dataset(dataset)
-        bt.logging.success(
+        logger.success(
             f"Completed scrape for {run_input['searches']}. Scraped {len(contents)} items."
         )
 
@@ -210,7 +210,7 @@ class RedditLiteScraper(Scraper):
             try:
                 results.append(RedditContent(**data))
             except Exception:
-                bt.logging.warning(
+                logger.warning(
                     f"Failed to decode RedditContent from Apify response: {traceback.format_exc()}."
                 )
         return results

@@ -9,7 +9,7 @@ import psutil
 import os
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
-import bittensor as bt
+from common.logger import logger
 from huggingface_utils.encoding_system import EncodingKeyManager, encode_url
 
 # Constants
@@ -124,7 +124,7 @@ def get_optimal_threads() -> int:
         return max(2, optimal_threads)
     
     except Exception as e:
-        bt.logging.warning(f"Error detecting system resources: {e}. Defaulting to 2 threads.")
+        logger.warning(f"Error detecting system resources: {e}. Defaulting to 2 threads.")
         return 2
 
 
@@ -173,7 +173,7 @@ def parallel_encode_batch(items: pd.Series, fernet) -> pd.Series:
         
     # Get optimal thread count based on system resources
     n_threads = get_optimal_threads()
-    bt.logging.info(f"Using {n_threads} threads for parallel encoding")
+    logger.info(f"Using {n_threads} threads for parallel encoding")
     
     # Calculate optimal chunk size based on data size and thread count
     total_items = len(items)
@@ -196,7 +196,7 @@ def preprocess_twitter_df(df: pd.DataFrame, encoding_key_manager: EncodingKeyMan
     try:
         # Log initial count
         initial_count = len(df)
-        bt.logging.info(f"Starting Twitter preprocessing with {initial_count} rows")
+        logger.info(f"Starting Twitter preprocessing with {initial_count} rows")
         
         # Vectorized content decoding
         df['content'] = df['content'].apply(decode_content)
@@ -214,13 +214,13 @@ def preprocess_twitter_df(df: pd.DataFrame, encoding_key_manager: EncodingKeyMan
         result_df = result_df[valid_text_mask]
         
         if len(result_df) == 0:
-            bt.logging.warning("All Twitter rows filtered out due to empty text fields")
+            logger.warning("All Twitter rows filtered out due to empty text fields")
             return pd.DataFrame(columns=TWEET_DATASET_COLUMNS)
             
         # Log filtered count
         filtered_count = len(result_df)
         removed_count = initial_count - filtered_count
-        bt.logging.info(f"Removed {removed_count} Twitter rows with empty text. Remaining rows: {filtered_count}")
+        logger.info(f"Removed {removed_count} Twitter rows with empty text. Remaining rows: {filtered_count}")
         
         # Extract username and URL series from original data
         filtered_content = df.loc[valid_text_mask, 'content']
@@ -242,7 +242,7 @@ def preprocess_twitter_df(df: pd.DataFrame, encoding_key_manager: EncodingKeyMan
         return result_df[TWEET_DATASET_COLUMNS]
         
     except Exception as e:
-        bt.logging.error(f"Error in Twitter preprocessing: {e}")
+        logger.error(f"Error in Twitter preprocessing: {e}")
         raise
 
 def preprocess_reddit_df(df: pd.DataFrame, encoding_key_manager: EncodingKeyManager, private_encoding_key_manager: EncodingKeyManager) -> pd.DataFrame:
@@ -250,7 +250,7 @@ def preprocess_reddit_df(df: pd.DataFrame, encoding_key_manager: EncodingKeyMana
     try:
         # Log initial count
         initial_count = len(df)
-        bt.logging.info(f"Starting Reddit preprocessing with {initial_count} rows")
+        logger.info(f"Starting Reddit preprocessing with {initial_count} rows")
         
         # Vectorized content decoding
         df['content'] = df['content'].apply(decode_content)
@@ -269,13 +269,13 @@ def preprocess_reddit_df(df: pd.DataFrame, encoding_key_manager: EncodingKeyMana
         result_df = result_df[valid_text_mask]
         
         if len(result_df) == 0:
-            bt.logging.warning("All Reddit rows filtered out due to empty text fields")
+            logger.warning("All Reddit rows filtered out due to empty text fields")
             return pd.DataFrame(columns=REDDIT_DATASET_COLUMNS)
             
         # Log filtered count
         filtered_count = len(result_df)
         removed_count = initial_count - filtered_count
-        bt.logging.info(f"Removed {removed_count} Reddit rows with empty text. Remaining rows: {filtered_count}")
+        logger.info(f"Removed {removed_count} Reddit rows with empty text. Remaining rows: {filtered_count}")
         
         # Extract username and URL series from original data
         filtered_content = df.loc[valid_text_mask, 'content']
@@ -297,5 +297,5 @@ def preprocess_reddit_df(df: pd.DataFrame, encoding_key_manager: EncodingKeyMana
         return result_df[REDDIT_DATASET_COLUMNS]
         
     except Exception as e:
-        bt.logging.error(f"Error in Reddit preprocessing: {e}")
+        logger.error(f"Error in Reddit preprocessing: {e}")
         raise

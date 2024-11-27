@@ -3,8 +3,7 @@ import json
 import tempfile
 import numpy as np
 import datetime as dt
-import bittensor as bt
-from datetime import datetime
+from common.logger import logger
 from typing import Dict, List, Tuple, Literal, Any, Union
 from huggingface_hub import HfApi, hf_hub_download
 
@@ -453,5 +452,5 @@ For full statistics, please refer to the `stats.json` file in the repository.
 
         os.unlink(temp_file.name)  # Remove the temporary file after uploading
 
-        bt.logging.info(f"Dataset card for {platform} updated successfully.")
+        logger.info(f"Dataset card for {platform} updated successfully.")
 
