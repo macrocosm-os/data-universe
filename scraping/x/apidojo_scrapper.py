@@ -507,7 +507,6 @@ async def test_multi_thread_validate():
 
 
 if __name__ == "__main__":
-    logger.set_trace(True)
     # asyncio.run(test_multi_thread_validate())
     # asyncio.run(test_scrape())
     asyncio.run(test_validate())
