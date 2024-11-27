@@ -471,8 +471,7 @@ def main():
 
     config = create_config(NeuronType.VALIDATOR)
 
-    logger(config=config, logging_dir=config.full_path)
-
+    logger.info(config)
     subtensor = bt.subtensor(config=config)
     metagraph = subtensor.metagraph(netuid=config.netuid)
     wallet = bt.wallet(config=config)
