@@ -43,7 +43,7 @@ async def blacklist_organic_fn(synapse: bt.Synapse) -> Tuple[bool, str]:
     return False, 'no blacklist'  # TODO what key to add ?
 
 
-async def on_organic_entry(synapse: bt.Synapse) -> bt.Synapse:
+async def on_organic_entry(synapse: OrganicProtocol):
     """Organic query handle."""
     if not isinstance(synapse, bt.Synapse):
         logger.error(f"[Organic] Received non-synapse task: {synapse.task_name}")
