@@ -25,12 +25,12 @@ class OrganicProtocol(bt.Synapse):
         with open(json_file, 'w') as f:
             json.dump(self.dict(), f, indent=4)
 
-async def priority_organic_fn(synapse: bt.Synapse) -> float:
+async def priority_organic_fn(synapse: OrganicProtocol) -> float:
     """Priority function for the axon."""
     return 10000000.0 # todo what does this number mean ?
 
 
-async def blacklist_organic_fn(synapse: bt.Synapse) -> Tuple[bool, str]:
+async def blacklist_organic_fn(synapse: OrganicProtocol) -> Tuple[bool, str]:
     """Blacklist function for the axon."""
     # ! DO NOT CHANGE `Tuple` return type to `tuple`, it will break the code (bittensor internal signature checks).
     # We expect the API to be run with one specific hotkey (e.g. OTF).
