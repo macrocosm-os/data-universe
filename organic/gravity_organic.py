@@ -1,15 +1,9 @@
-import asyncio
 import json
-import time
-from dataclasses import dataclass, field
-from functools import partial
 from typing import Dict, Tuple
-
+from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 import bittensor as bt
-from bittensor.dendrite import dendrite
-from loguru import logger
-from starlette.types import Send
 import pydantic
+from neurons.config import NeuronType, check_config, create_config
 
 
 class OrganicProtocol(bt.Synapse):
@@ -45,11 +39,11 @@ async def blacklist_organic_fn(synapse: bt.Synapse) -> Tuple[bool, str]:
 
 async def on_organic_entry(synapse: OrganicProtocol):
     """Organic query handle."""
-    if not isinstance(synapse, bt.Synapse):
-        logger.error(f"[Organic] Received non-synapse task: {synapse.task_name}")
-        return
+    # TODO desirabilty uploader
+    config = create_config(NeuronType.VALIDATOR)
 
-    bt.logging.debug('Hello from organic')
+    await run_uploader_from_gravity(config, synapse.gravity)
+
 
 
 def start_organic(axon: bt.axon):

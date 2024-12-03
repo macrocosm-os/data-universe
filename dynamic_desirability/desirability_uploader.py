@@ -5,7 +5,7 @@ import os
 import shutil
 import subprocess
 import bittensor as bt
-from typing import List, Optional
+from typing import List, Optional, Dict
 from decimal import Decimal, ROUND_HALF_UP
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
@@ -22,21 +22,27 @@ def run_command(command: List[str]) -> str:
         raise
 
 
-def normalize_preferences_json(file_path: str) -> Optional[str]:
+def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None) -> Optional[str]:
     """
     Normalize potentially invalid preferences JSONs
     """
-    try:
-        with open(file_path, 'r') as f:
-            if os.path.getsize(file_path) == 0:
-                bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
-                return {}
-            data = json.load(f)  
-    except FileNotFoundError:
-        bt.logging.error(f"File not found: {file_path}.")
-        return None
-    except Exception as e:
-        bt.logging.error(f"Unexpected error while reading file: {e}.")
+    if file_path:
+        try:
+            with open(file_path, 'r') as f:
+                if os.path.getsize(file_path) == 0:
+                    bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
+                    return {}
+                data = json.load(f)
+        except FileNotFoundError:
+            bt.logging.error(f"File not found: {file_path}.")
+            return None
+        except Exception as e:
+            bt.logging.error(f"Unexpected error while reading file: {e}.")
+            return None
+    elif desirability_dict:
+        pass
+    else:
+        bt.logging.error(f"File path and/or list of desirabilities is not provided.")
         return None
 
     all_label_weights = {}
@@ -169,7 +175,7 @@ async def run_uploader(args):
 
     try:
 
-        json_content = normalize_preferences_json(args.file_path)
+        json_content = normalize_preferences_json(file_path=args.file_path)
         if isinstance(json_content, dict):
             json_content = json.dumps(json_content, indent=4)
 
@@ -183,6 +189,30 @@ async def run_uploader(args):
         result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
         bt.logging.info(f"Stored {result} on chain commit hash.")
         return result
+    except Exception as e:
+        bt.logging.error(f"An error occurred: {str(e)}")
+        raise
+
+async def run_uploader_from_gravity(config, desirability_dict):
+    wallet = bt.wallet(config=config)
+    subtensor = bt.subtensor(config=config)
+    chain_store = ChainPreferenceStore(wallet=wallet, subtensor=subtensor, netuid=config.netuid)
+    try:
+
+        json_content = normalize_preferences_json(desirability_dict=desirability_dict)
+        if isinstance(json_content, dict):
+            json_content = json.dumps(json_content, indent=4)
+
+        if not json_content:
+            bt.logging.error("Please see docs for correct format. Not pushing to Github or chain.")
+            return
+
+        bt.logging.info(f"JSON content:\n{json_content}")
+        #github_commit = upload_to_github(json_content, wallet.hotkey_str) TODO
+        #await chain_store.store_preferences(github_commit)
+        #result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey_str)
+        #bt.logging.info(f"Stored {result} on chain commit hash.")
+        return {}
     except Exception as e:
         bt.logging.error(f"An error occurred: {str(e)}")
         raise
