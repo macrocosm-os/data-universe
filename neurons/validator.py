@@ -348,10 +348,12 @@ class Validator:
                     priority_fn=priority_organic_fn,
                 )
 
-            self.subtensor.serve_axon(
-                netuid=self.config.netuid,
-                axon=self.axon,
-            )
+            # self.subtensor.serve_axon(
+            #     netuid=self.config.netuid,
+            #     axon=self.axon,
+            # )
+
+            self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
 
             bt.logging.info(
                 f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."

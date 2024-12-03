@@ -40,7 +40,7 @@ async def blacklist_organic_fn(synapse: bt.Synapse) -> Tuple[bool, str]:
     """Blacklist function for the axon."""
     # ! DO NOT CHANGE `Tuple` return type to `tuple`, it will break the code (bittensor internal signature checks).
     # We expect the API to be run with one specific hotkey (e.g. OTF).
-    return synapse.dendrite.hotkey != 'sn13_test' # TODO what key to add ?
+    return False, 'no blacklist'  # TODO what key to add ?
 
 
 async def on_organic_entry(synapse: bt.Synapse) -> bt.Synapse:
@@ -48,7 +48,6 @@ async def on_organic_entry(synapse: bt.Synapse) -> bt.Synapse:
     if not isinstance(synapse, bt.Synapse):
         logger.error(f"[Organic] Received non-synapse task: {synapse.task_name}")
         return
-    logger.info(f"[Organic] Received from {synapse.dendrite.hotkey}, IP: {synapse.dendrite.ip}")
 
     bt.logging.debug('Hello from organic')
 
