@@ -348,11 +348,6 @@ class Validator:
                     priority_fn=priority_organic_fn,
                 )
 
-            # self.subtensor.serve_axon(
-            #     netuid=self.config.netuid,
-            #     axon=self.axon,
-            # )
-
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
 
             bt.logging.info(

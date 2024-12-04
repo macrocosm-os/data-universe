@@ -193,6 +193,7 @@ async def run_uploader(args):
         bt.logging.error(f"An error occurred: {str(e)}")
         raise
 
+
 async def run_uploader_from_gravity(config, desirability_dict):
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
@@ -207,11 +208,10 @@ async def run_uploader_from_gravity(config, desirability_dict):
             bt.logging.error("Please see docs for correct format. Not pushing to Github or chain.")
             return
 
-        bt.logging.info(f"JSON content:\n{json_content}")
-        #github_commit = upload_to_github(json_content, wallet.hotkey_str) TODO
-        #await chain_store.store_preferences(github_commit)
-        #result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey_str)
-        #bt.logging.info(f"Stored {result} on chain commit hash.")
+        github_commit = upload_to_github(json_content, wallet.hotkey_str)
+        await chain_store.store_preferences(github_commit)
+        result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey_str)
+        bt.logging.info(f"Stored {result} on chain commit hash.")
         return {}
     except Exception as e:
         bt.logging.error(f"An error occurred: {str(e)}")
