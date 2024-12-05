@@ -205,17 +205,19 @@ async def run_uploader_from_gravity(config, desirability_dict):
             json_content = json.dumps(json_content, indent=4)
 
         if not json_content:
-            bt.logging.error("Please see docs for correct format. Not pushing to Github or chain.")
-            return
+            message = "Please see docs for correct format. Not pushing to Github or chain."
+            bt.logging.error(message)
+            return False, message
 
         github_commit = upload_to_github(json_content, wallet.hotkey_str)
         await chain_store.store_preferences(github_commit)
         result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey_str)
-        bt.logging.info(f"Stored {result} on chain commit hash.")
-        return {}
+        message = f"Stored {result} on chain commit hash."
+        bt.logging.info(message)
+        return True, message
     except Exception as e:
-        bt.logging.error(f"An error occurred: {str(e)}")
-        raise
+        error_message = f"An error occured: {str(e)}"
+        return False, error_message
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Set desirabilities for Gravity.")
