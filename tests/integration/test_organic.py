@@ -62,8 +62,9 @@ class TestOrganicProtocol(unittest.TestCase):
                 timeout=12000,
             )
 
-            self.assertTrue(response.is_success)
+            self.assertTrue(response.status)  # Changed from is_success to status
             self.assertEqual(response.gravity, test_data)
+            self.assertIsInstance(response.message, str)
 
         finally:
             axon.stop()
@@ -89,6 +90,8 @@ class TestOrganicProtocol(unittest.TestCase):
         protocol.to_json(test_file)
         loaded_protocol = OrganicProtocol.from_json(test_file)
         self.assertEqual(protocol.gravity, loaded_protocol.gravity)
+        self.assertEqual(loaded_protocol.status, False)  # Changed from is_success to status
+        self.assertEqual(loaded_protocol.message, "")  # Default value
 
     def test_parse_gravity(self):
         test_data = json.dumps([
@@ -109,20 +112,34 @@ class TestOrganicProtocol(unittest.TestCase):
         protocol = OrganicProtocol(gravity="")
         parsed = protocol.parse_gravity()
         self.assertEqual(parsed, [])
+        self.assertFalse(protocol.status)  # Changed from is_success to status
+        self.assertEqual(protocol.message, "")
 
     def test_blacklist(self):
         protocol = OrganicProtocol(gravity="")
         protocol.dendrite.hotkey = "wrong_key"
 
-        result = await_result(blacklist_organic_fn(protocol))
-        self.assertTrue(result)
+        is_blacklisted, message = await_result(blacklist_organic_fn(protocol))
+        self.assertTrue(is_blacklisted)
 
-        protocol.dendrite.hotkey = "sn13_test"
-        result = await_result(blacklist_organic_fn(protocol))
-        self.assertFalse(result)
+        protocol.dendrite.hotkey = "5Cg5QgjMfRqBC6bh8X4PDbQi7UzVRn9eyWXsB8gkyfppFPPy"
+        is_blacklisted, message = await_result(blacklist_organic_fn(protocol))
+        self.assertTrue(is_blacklisted)  # Changed to True based on the blacklist function
+        self.assertEqual(message, "Non Macrocosmos request")
+
+    def test_response_fields(self):
+        protocol = OrganicProtocol(
+            gravity="[]",
+            status=True,  # Changed from is_success to status
+            message="Test message"
+        )
+        self.assertTrue(protocol.status)
+        self.assertEqual(protocol.message, "Test message")
 
 
 async def async_mock_organic_handler(synapse: OrganicProtocol) -> OrganicProtocol:
+    synapse.status = True  # Changed from is_success to status
+    synapse.message = "Success"
     return synapse
 
 

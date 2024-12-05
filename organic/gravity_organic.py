@@ -24,6 +24,18 @@ class OrganicProtocol(bt.Synapse):
         default=""
     )
 
+    status: bool = pydantic.Field(
+        title="status",
+        description="Whether the operation was successful",
+        default=False
+    )
+
+    message: str = pydantic.Field(
+        title="message",
+        description="Response message from the operation",
+        default=""
+    )
+
     @classmethod
     def from_json(cls, json_file: str):
         with open(json_file, 'r') as f:
@@ -41,16 +53,17 @@ class OrganicProtocol(bt.Synapse):
         data = json.loads(self.gravity)
         return [GravityItem(**item) for item in data]
 
+
 async def priority_organic_fn(synapse: OrganicProtocol) -> float:
     """Priority function for the axon."""
-    return 10000000.0 # todo what does this number mean ?
+    return 10000000.0
 
 
 async def blacklist_organic_fn(synapse: OrganicProtocol) -> Tuple[bool, str]:
     """Blacklist function for the axon."""
     # ! DO NOT CHANGE `Tuple` return type to `tuple`, it will break the code (bittensor internal signature checks).
     # We expect the API to be run with one specific hotkey (e.g. OTF).
-    if synapse.dendrite.hotkey == '5Cg5QgjMfRqBC6bh8X4PDbQi7UzVRn9eyWXsB8gkyfppFPPy':
+    if synapse.dendrite.hotkey != '5Cg5QgjMfRqBC6bh8X4PDbQi7UzVRn9eyWXsB8gkyfppFPPy':
         return True, 'Non Macrocosmos request'
     return False, ''
 
@@ -59,7 +72,12 @@ async def on_organic_entry(synapse: OrganicProtocol):
     """Organic query handle."""
     config = create_config(NeuronType.VALIDATOR)
 
-    await run_uploader_from_gravity(config, synapse.parse_gravity())
+    is_success, message = await run_uploader_from_gravity(config, synapse.parse_gravity())
+    # Set response properties
+    synapse.status = is_success
+    synapse.message = message
+
+    return synapse
 
 
 def start_organic(axon: bt.axon):
