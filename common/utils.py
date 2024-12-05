@@ -52,9 +52,9 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
     return not is_validator(uid, metagraph)
 
 
-def is_validator(uid: int, metagraph: bt.metagraph) -> bool:
+def is_validator(uid: int, metagraph: bt.metagraph, vpermit_tao_limit: int) -> bool:
     """Checks if a UID on the subnet is a validator."""
-    return metagraph.validator_permit[uid] and metagraph.S[uid] >= 10_000
+    return metagraph.validator_permit[uid] and metagraph.S[uid] >= vpermit_tao_limit
 
 
 def get_validator_data(metagraph: bt.metagraph) -> Dict[str, Dict[str, Any]]:
