@@ -128,6 +128,8 @@ class Miner:
         self.hugging_face_thread: threading.Thread = None
         self.lock = threading.RLock()
 
+        self.vpermit_tao_limit = self.config.vpermit_tao_limit
+
         # Instantiate encoding keys
         self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
         self.private_encoding_key_manager = EncodingKeyManager(key_path=self.config.private_encoding_key_json_file)
@@ -567,7 +569,7 @@ class Miner:
             )
 
         uid = self.metagraph.hotkeys.index(hotkey)
-        if not utils.is_validator(uid, self.metagraph):
+        if not utils.is_validator(uid, self.metagraph, self.vpermit_tao_limit):
             return (
                 True,
                 f"Hotkey {hotkey} at {ip} is not a validator",

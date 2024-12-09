@@ -38,7 +38,7 @@ def datetime_from_hours_since_epoch(hours: int) -> dt.datetime:
     return dt.datetime.fromtimestamp(hours * 3600, tz=dt.timezone.utc)
 
 
-def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
+def is_miner(uid: int, metagraph: bt.metagraph, vpermit_tao_limit: int) -> bool:
     """Checks if a UID on the subnet is a miner."""
     # Assume everyone who isn't a validator is a miner.
     # This explicilty disallows validator/miner hybrids.
@@ -49,7 +49,7 @@ def is_miner(uid: int, metagraph: bt.metagraph) -> bool:
     #     bt.logging.trace(f"Ignoring known bad coldkey {metagraph.coldkeys[uid]}.")
     #     return False
 
-    return not is_validator(uid, metagraph)
+    return not is_validator(uid, metagraph, vpermit_tao_limit)
 
 
 def is_validator(uid: int, metagraph: bt.metagraph, vpermit_tao_limit: int) -> bool:
@@ -57,12 +57,12 @@ def is_validator(uid: int, metagraph: bt.metagraph, vpermit_tao_limit: int) -> b
     return metagraph.validator_permit[uid] and metagraph.S[uid] >= vpermit_tao_limit
 
 
-def get_validator_data(metagraph: bt.metagraph) -> Dict[str, Dict[str, Any]]:
+def get_validator_data(metagraph: bt.metagraph, vpermit_tao_limit: int) -> Dict[str, Dict[str, Any]]:
     """Retrieve validator data (hotkey, percent stake) from metagraph. For use in Gravity."""
     total_stake = sum(
         stake
         for uid, stake in enumerate(metagraph.S)
-        if is_validator(uid, metagraph)
+        if is_validator(uid, metagraph, vpermit_tao_limit)
     )
 
     validator_data = {
@@ -72,19 +72,19 @@ def get_validator_data(metagraph: bt.metagraph) -> Dict[str, Dict[str, Any]]:
             'json': None
         }
         for uid, (hotkey, stake) in enumerate(zip(metagraph.hotkeys, metagraph.S))
-        if is_validator(uid, metagraph)
+        if is_validator(uid, metagraph, vpermit_tao_limit)
     }
 
     return validator_data
 
 
-def get_miner_uids(metagraph: bt.metagraph, my_uid: int) -> List[int]:
+def get_miner_uids(metagraph: bt.metagraph, my_uid: int, vpermit_tao_limit: int) -> List[int]:
     """Gets the uids of all miners in the metagraph."""
     return sorted(
         [
             uid.item()
             for uid in metagraph.uids
-            if is_miner(uid.item(), metagraph) and uid.item() != my_uid
+            if is_miner(uid.item(), metagraph, vpermit_tao_limit) and uid.item() != my_uid
         ]
     )
 
