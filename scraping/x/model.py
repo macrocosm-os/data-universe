@@ -19,7 +19,6 @@ class XContent(BaseModel):
         extra = "forbid"
 
     # model_config should NOT be set by Miners.
-    # In the near future, Validators will penalized Miners who set this field.
     model_config: Dict[str, str] = Field(default=None)
 
     username: str
@@ -59,19 +58,9 @@ class XContent(BaseModel):
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
         """Converts a DataEntity to an XContent."""
 
-
-        # TODO remove it after 30 days?
         content_str = data_entity.content.decode("utf-8")
         content_dict = json.loads(content_str)
 
-        if 'is_retweet' in content_dict:
-            if not isinstance(content_dict['is_retweet'], bool):
-                # Remove 'is_retweet' if it's not a boolean and raise a more appropriate exception
-                content_dict.pop('is_retweet', None)
-                raise ValueError("The 'is_retweet' field must be a boolean.")  # Using ValueError for clearer intent
-            else:
-                # remove 'is_retweet'
-                content_dict.pop('is_retweet', None)
 
         clean_content_str = json.dumps(content_dict)
         return XContent.parse_raw(clean_content_str)
