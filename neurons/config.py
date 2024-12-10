@@ -133,13 +133,6 @@ def add_args(neuron_type: NeuronType, parser):
             default=os.path.join(Path(os.path.dirname(__file__)).parent, "hf_validation.parquet"),
         )
 
-        parser.add_argument(
-            "--db_storage_path",
-            type=str,
-            help="Set this flag to specify the file path in which your validator db information will be saved to.",
-            default=os.path.join(Path(os.path.dirname(__file__)).parent, "SN13ValidatorDB.sqlite")
-        )
-
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(
             "--neuron.database_name",

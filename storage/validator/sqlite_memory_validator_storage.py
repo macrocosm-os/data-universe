@@ -83,6 +83,8 @@ def tz_aware_timestamp_adapter(val):
 class SqliteMemoryValidatorStorage(ValidatorStorage):
     """Sqlite in-memory backed Validator Storage"""
 
+    DB_NAME = 'SN13ValidatorDB.sqlite'
+
     # Integer Primary Key = ROWID alias which is auto-increment when assigning NULL on insert.
     MINER_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Miner (
                             minerId     INTEGER         PRIMARY KEY,
@@ -142,7 +144,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         # Create the database if it doesn't exist, defaulting to the local directory.
         # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
         connection = sqlite3.connect(
-            self.db_storage_path,  # switched to file-based db
+            self.db_storage_path,  # switched to file-based db TODO
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=120.0,
         )
