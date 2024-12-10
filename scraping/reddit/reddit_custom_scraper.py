@@ -161,12 +161,10 @@ class RedditCustomScraper(Scraper):
         validation_results = []
 
         for entity in entities:
-            # Check if the URL is a valid Reddit URL
             if not is_valid_reddit_url(entity.get('url')):
                 validation_results.append(False)
                 continue
 
-            # Retrieve the Reddit Post/Comment from PRAW
             content = None
             try:
                 async with asyncpraw.Reddit(
@@ -176,7 +174,7 @@ class RedditCustomScraper(Scraper):
                         password=os.getenv("REDDIT_PASSWORD"),
                         user_agent=RedditCustomScraper.USER_AGENT,
                 ) as reddit:
-                    if 'comments' in entity.get('url'):
+                    if entity.get('dataType') == RedditDataType.COMMENT:
                         comment = await reddit.comment(url=entity.get('url'))
                         content = self._best_effort_parse_comment(comment)
                     else:
@@ -193,17 +191,11 @@ class RedditCustomScraper(Scraper):
                 validation_results.append(False)
                 continue
 
-            # Validate the content
             validation_result = self._validate_hf_reddit_content(content, entity)
             validation_results.append(validation_result)
 
-        # Check if all validations passed
-
         valid_percentage = sum(validation_results) / len(validation_results) * 100
-
-        # Check if at least 60% of the data is valid
-        is_valid = valid_percentage >= 40
-        return is_valid
+        return valid_percentage >= 40
 
     def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
         """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""
