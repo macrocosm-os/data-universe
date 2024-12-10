@@ -5,10 +5,10 @@ import os
 import shutil
 import subprocess
 import bittensor as bt
-from typing import List, Optional
+from typing import List, Optional, Dict
 from decimal import Decimal, ROUND_HALF_UP
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
-from constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
+from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
 
 
 def run_command(command: List[str]) -> str:
@@ -22,21 +22,27 @@ def run_command(command: List[str]) -> str:
         raise
 
 
-def normalize_preferences_json(file_path: str) -> Optional[str]:
+def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None) -> Optional[str]:
     """
     Normalize potentially invalid preferences JSONs
     """
-    try:
-        with open(file_path, 'r') as f:
-            if os.path.getsize(file_path) == 0:
-                bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
-                return {}
-            data = json.load(f)  
-    except FileNotFoundError:
-        bt.logging.error(f"File not found: {file_path}.")
-        return None
-    except Exception as e:
-        bt.logging.error(f"Unexpected error while reading file: {e}.")
+    if file_path:
+        try:
+            with open(file_path, 'r') as f:
+                if os.path.getsize(file_path) == 0:
+                    bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
+                    return {}
+                data = json.load(f)
+        except FileNotFoundError:
+            bt.logging.error(f"File not found: {file_path}.")
+            return None
+        except Exception as e:
+            bt.logging.error(f"Unexpected error while reading file: {e}.")
+            return None
+    elif desirability_dict:
+        pass
+    else:
+        bt.logging.error(f"File path and/or list of desirabilities is not provided.")
         return None
 
     all_label_weights = {}
@@ -58,44 +64,22 @@ def normalize_preferences_json(file_path: str) -> Optional[str]:
         bt.logging.error(f"Error while parsing your JSON file: {e}.")
         return None
 
-    # If more than 10 label weights, only takes top 10.
-    sorted_labels = sorted(all_label_weights.items(), key=lambda x: x[1], reverse=True)[:10]
-
-    total_weight = sum(weight for _, weight in sorted_labels)
+    total_weight = sum(all_label_weights.values())
     if total_weight <= 0:
         bt.logging.error(f"Cannot normalize preferences file. Please see docs for correct preferences format.")
         return None
 
-    # Normalize weights to sum between 0.1 and 1.
-    target_sum = min(max(total_weight, Decimal('0.1')), Decimal('1'))
-    scale_factor = target_sum / total_weight
-
+    # Normalize weights to sum to 1
     normalized_weights = {
-        label: (weight * scale_factor).quantize(Decimal('0.1'), rounding=ROUND_HALF_UP)
-        for label, weight in sorted_labels
+        label: float(weight / total_weight)
+        for label, weight in all_label_weights.items()
     }
-
-    # Remove labels that round to 0.0
-    normalized_weights = {label: weight for label, weight in normalized_weights.items() if weight > Decimal('0')}
-
-    # Final adjustment to ensure sum is 1.
-    weight_sum = sum(normalized_weights.values())
-    if weight_sum < Decimal('1'):
-        deficit = Decimal('1') - weight_sum
-        while deficit > Decimal('0'):
-            for label in sorted(normalized_weights, key=normalized_weights.get):
-                if normalized_weights[label] < Decimal('1'):
-                    increase = min(deficit, Decimal('0.1'))
-                    normalized_weights[label] += increase
-                    deficit -= increase
-                    if deficit <= Decimal('0'):
-                        break
 
     # Remove sources with no label weights
     updated_data = []
     for source in data:
         updated_label_weights = {
-            label: float(normalized_weights[label])
+            label: normalized_weights[label]
             for label in source["label_weights"]
             if label in normalized_weights
         }
@@ -169,7 +153,7 @@ async def run_uploader(args):
 
     try:
 
-        json_content = normalize_preferences_json(args.file_path)
+        json_content = normalize_preferences_json(file_path=args.file_path)
         if isinstance(json_content, dict):
             json_content = json.dumps(json_content, indent=4)
 
@@ -186,6 +170,32 @@ async def run_uploader(args):
     except Exception as e:
         bt.logging.error(f"An error occurred: {str(e)}")
         raise
+
+
+async def run_uploader_from_gravity(config, desirability_dict):
+    wallet = bt.wallet(config=config)
+    subtensor = bt.subtensor(config=config)
+    chain_store = ChainPreferenceStore(wallet=wallet, subtensor=subtensor, netuid=config.netuid)
+    try:
+
+        json_content = normalize_preferences_json(desirability_dict=desirability_dict)
+        if isinstance(json_content, dict):
+            json_content = json.dumps(json_content, indent=4)
+
+        if not json_content:
+            message = "Please see docs for correct format. Not pushing to Github or chain."
+            bt.logging.error(message)
+            return False, message
+
+        github_commit = upload_to_github(json_content, wallet.hotkey_str)
+        await chain_store.store_preferences(github_commit)
+        result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey_str)
+        message = f"Stored {result} on chain commit hash."
+        bt.logging.info(message)
+        return True, message
+    except Exception as e:
+        error_message = f"An error occured: {str(e)}"
+        return False, error_message
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Set desirabilities for Gravity.")
