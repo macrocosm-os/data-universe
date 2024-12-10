@@ -248,11 +248,7 @@ def validate_tweet_content(
         # Extra check that the content size is reasonably close to what we expect.
         # Allow a 10 byte difference to account for timestamp serialization differences.
         byte_difference_allowed = 10
-        # The entity generated here will never have a model config, so add that in as buffer if included.
-        if tweet_to_verify.model_config:
-            byte_difference_allowed += len('"model_config":{"extra": "ignore"}"')
 
-        byte_difference_allowed += len("is_retweet=False")
         if (
                 entity.content_size_bytes - tweet_entity.content_size_bytes
         ) > byte_difference_allowed:
