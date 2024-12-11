@@ -73,7 +73,7 @@ class MinerEvaluator:
             utils.get_miner_uids(self.metagraph, self.uid)
         )
         self.scraper_provider = ScraperProvider()
-        db_path = os.path.join(self.config.neuron.full_path, self.DB_FILENAME)
+        db_path = os.path.join(self.config.neuron.full_path, MinerEvaluator.DB_FILENAME)
         self.storage = SqliteMemoryValidatorStorage(db_path)
         self.hf_storage = HFValidationStorage(self.config.hf_results_path)
         # Instantiate runners
