@@ -112,6 +112,7 @@ def add_args(neuron_type: NeuronType, parser):
             help="Set this flag to not attempt to serve an Axon.",
             default=False,
         )
+
         parser.add_argument(
             "--wandb.off",
             action="store_true",
@@ -124,6 +125,7 @@ def add_args(neuron_type: NeuronType, parser):
             action="store_true",
             help="Set this flag to disable setting the weights to network."
         )
+
         parser.add_argument(
             "--hf_results_path",
             action="store_true",

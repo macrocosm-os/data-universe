@@ -19,6 +19,7 @@ class XContent(BaseModel):
         extra = "forbid"
 
     # model_config should NOT be set by Miners.
+    # In the near future, Validators will penalized Miners who set this field.
     model_config: Dict[str, str] = Field(default=None)
 
     username: str

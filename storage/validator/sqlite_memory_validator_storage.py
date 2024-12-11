@@ -1,3 +1,4 @@
+import os
 import contextlib
 import datetime as dt
 import bittensor as bt
@@ -116,12 +117,24 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                         PRIMARY KEY (minerId, repo_name)
                                         )"""
 
-    def __init__(self):
+    def __init__(self, db_storage_path: str):
+        """Initialize the SqliteMemoryValidatorStorage.
+
+        Args:
+            db_storage_path (str): Path where the database file will be stored
+        """
+        self.db_storage_path = db_storage_path
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
 
-        self.continuous_connection_do_not_reuse = self._create_connection()
+        # Create persistent connection for shared memory
+        self.continuous_connection = self._create_connection()
+
+        # Load existing database if it exists
+        self._initialize_db()
+
         self.label_dict = AutoIncrementDict()
 
+        # Initialize tables
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
 
@@ -136,45 +149,66 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             )
 
             cursor.execute(SqliteMemoryValidatorStorage.HF_METADATA_TABLE_CREATE)
-            # Lock to avoid concurrency issues on interacting with the database.
-            self.lock = threading.RLock()
+
+            connection.commit()
+
+        # Lock to avoid concurrency issues on interacting with the database.
+        self.lock = threading.RLock()
+
+    def __del__(self):
+        """Cleanup and final backup on deletion"""
+        if hasattr(self, 'continuous_connection'):
+            try:
+                disk_conn = sqlite3.connect(self.db_storage_path)
+                self.continuous_connection.backup(disk_conn)
+                disk_conn.close()
+                self.continuous_connection.close()
+            except:
+                pass
+
+    def _initialize_db(self):
+        """Load from disk if exists"""
+        if os.path.exists(self.db_storage_path):
+            try:
+                disk_conn = sqlite3.connect(self.db_storage_path)
+                disk_conn.backup(self.continuous_connection)
+                disk_conn.close()
+            except Exception as e:
+                bt.logging.error(f"Failed to load database from disk: {e}")
 
     def _create_connection(self):
-        # Create the database if it doesn't exist, defaulting to the local directory.
-        # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
+        # Change the connection string to use shared memory
         connection = sqlite3.connect(
-            "file::memory:?cache=shared",
+            f"file:{self.db_storage_path}?mode=memory&cache=shared",
             uri=True,
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=120.0,
         )
-        # Avoid using a row_factory that would allow parsing results by column name for performance.
-        # connection.row_factory = sqlite3.Row
         connection.isolation_level = None
         return connection
-
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
-        miner_id = 0
+        try:
+            with self.lock:
+                with contextlib.closing(self._create_connection()) as connection:
+                    cursor = connection.cursor()
 
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
+                    cursor.execute(
+                        "UPDATE OR IGNORE Miner SET lastUpdated=?, credibility=? WHERE hotkey=?",
+                        [now_str, credibility, hotkey],
+                    )
+                    cursor.execute(
+                        """INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)""",
+                        [hotkey, now_str, credibility],
+                    )
+                    connection.commit()
 
-                cursor.execute(
-                    "UPDATE OR IGNORE Miner SET lastUpdated=?, credibility=? WHERE hotkey=?",
-                    [now_str, credibility, hotkey],
-                )
-                cursor.execute(
-                    """INSERT OR IGNORE INTO Miner (hotkey, lastUpdated, credibility) VALUES (?, ?, ?)""",
-                    [hotkey, now_str, credibility],
-                )
-                connection.commit()
-
-                # Then we get the existing or newly created minerId
-                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
-                miner_id = cursor.fetchone()[0]
-
-        return miner_id
+                    # Then we get the existing or newly created minerId
+                    cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
+                    result = cursor.fetchone()
+                    return result[0] if result else None
+        except sqlite3.Error as e:
+            bt.logging.error(f"Database error in _upsert_miner: {e}")
+            raise
 
     def _label_value_parse(self, label: Optional[DataLabel]) -> str:
         """Parses the value to store in the database out of an Optional DataLabel."""
