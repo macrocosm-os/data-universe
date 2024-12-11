@@ -47,7 +47,7 @@ class MinerEvaluator:
     """MinerEvaluator is responsible for evaluating miners and updating their scores."""
 
     SCORER_FILENAME = "scorer.pickle"
-
+    DB_FILENAME = "SN13ValidatorDB.sqlite"
     # Mapping of scrapers to use based on the data source to validate.
     PREFERRED_SCRAPERS = {
         DataSource.X: ScraperId.X_APIDOJO,
@@ -73,7 +73,8 @@ class MinerEvaluator:
             utils.get_miner_uids(self.metagraph, self.uid)
         )
         self.scraper_provider = ScraperProvider()
-        self.storage = SqliteMemoryValidatorStorage(self.config.db_storage_path)
+        db_path = os.path.join(self.config.neuron.full_path, self.DB_FILENAME)
+        self.storage = SqliteMemoryValidatorStorage(db_path)
         self.hf_storage = HFValidationStorage(self.config.hf_results_path)
         # Instantiate runners
         self.should_exit: bool = False

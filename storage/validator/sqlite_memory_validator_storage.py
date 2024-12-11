@@ -1,3 +1,4 @@
+import os
 import contextlib
 import datetime as dt
 import bittensor as bt
@@ -83,8 +84,6 @@ def tz_aware_timestamp_adapter(val):
 class SqliteMemoryValidatorStorage(ValidatorStorage):
     """Sqlite in-memory backed Validator Storage"""
 
-    DB_NAME = 'SN13ValidatorDB.sqlite'
-
     # Integer Primary Key = ROWID alias which is auto-increment when assigning NULL on insert.
     MINER_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS Miner (
                             minerId     INTEGER         PRIMARY KEY,
@@ -119,10 +118,23 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                         )"""
 
     def __init__(self, db_storage_path: str):
+        """Initialize the SqliteMemoryValidatorStorage.
+
+        Args:
+            db_storage_path (str): Path where the database file will be stored
+        """
         self.db_storage_path = db_storage_path
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
+
+        # Create persistent connection for shared memory
+        self.continuous_connection = self._create_connection()
+
+        # Load existing database if it exists
+        self._initialize_db()
+
         self.label_dict = AutoIncrementDict()
 
+        # Initialize tables
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
 
@@ -137,22 +149,43 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             )
 
             cursor.execute(SqliteMemoryValidatorStorage.HF_METADATA_TABLE_CREATE)
-            # Lock to avoid concurrency issues on interacting with the database.
-            self.lock = threading.RLock()
+
+            connection.commit()
+
+        # Lock to avoid concurrency issues on interacting with the database.
+        self.lock = threading.RLock()
+
+    def __del__(self):
+        """Cleanup and final backup on deletion"""
+        if hasattr(self, 'continuous_connection'):
+            try:
+                disk_conn = sqlite3.connect(self.db_storage_path)
+                self.continuous_connection.backup(disk_conn)
+                disk_conn.close()
+                self.continuous_connection.close()
+            except:
+                pass
+
+    def _initialize_db(self):
+        """Load from disk if exists"""
+        if os.path.exists(self.db_storage_path):
+            try:
+                disk_conn = sqlite3.connect(self.db_storage_path)
+                disk_conn.backup(self.continuous_connection)
+                disk_conn.close()
+            except Exception as e:
+                bt.logging.error(f"Failed to load database from disk: {e}")
 
     def _create_connection(self):
-        # Create the database if it doesn't exist, defaulting to the local directory.
-        # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
+        # Change the connection string to use shared memory
         connection = sqlite3.connect(
-            self.db_storage_path,  # switched to file-based db TODO
+            f"file:{self.db_storage_path}?mode=memory&cache=shared",
+            uri=True,
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=120.0,
         )
-        # Avoid using a row_factory that would allow parsing results by column name for performance.
-        # connection.row_factory = sqlite3.Row
         connection.isolation_level = None
         return connection
-
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
         try:
             with self.lock:
