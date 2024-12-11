@@ -4,6 +4,7 @@ import traceback
 from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
+from common.constants import NO_IS_RETWEET_AND_MODEL_BYTES_DATE
 import datetime as dt
 from scraping import utils
 from scraping.scraper import ValidationResult
@@ -21,9 +22,7 @@ def _validate_model_config(model_config: Dict[str, str]) -> bool:
         bool: True if the model configuration is valid.
     """
     # The model_config must either be empty, or contain only the 'extra' key with the value 'ignore'.
-    return model_config is None or (
-            len(model_config) == 1 and model_config.get("extra") == "ignore"
-    )
+    return model_config is None
 
 
 def is_valid_twitter_url(url: str) -> bool:
@@ -249,10 +248,12 @@ def validate_tweet_content(
         # Allow a 10 byte difference to account for timestamp serialization differences.
         byte_difference_allowed = 10
         # The entity generated here will never have a model config, so add that in as buffer if included.
-        if tweet_to_verify.model_config:
-            byte_difference_allowed += len('"model_config":{"extra": "ignore"}"')
+        if dt.datetime.now(dt.timezone.utc) < NO_IS_RETWEET_AND_MODEL_BYTES_DATE:
+            if tweet_to_verify.model_config:
+                byte_difference_allowed += len('"model_config":{"extra": "ignore"}"')
 
-        byte_difference_allowed += len("is_retweet=False")
+            byte_difference_allowed += len("is_retweet=False")
+
         if (
                 entity.content_size_bytes - tweet_entity.content_size_bytes
         ) > byte_difference_allowed:

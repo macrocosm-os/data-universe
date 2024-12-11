@@ -60,7 +60,6 @@ class XContent(BaseModel):
         """Converts a DataEntity to an XContent."""
 
 
-        # TODO remove it after 30 days?
         content_str = data_entity.content.decode("utf-8")
         content_dict = json.loads(content_str)
 
