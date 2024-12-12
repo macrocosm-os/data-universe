@@ -38,6 +38,9 @@ class MinerScorer:
         self.value_calculator = value_calculator
         self.cred_alpha = cred_alpha
 
+        # Keeps track of the miner's current HF boost based on the last HF evaluation.
+        self.hf_boost = 0.0
+
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
         self.lock = threading.Lock()
@@ -116,14 +119,13 @@ class MinerScorer:
                 [self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)]
             )
 
-    def apply_hf_boost(self, uid: int, hf_vali_percentage: float) -> None:
+    def update_hf_boost(self, uid: int, hf_vali_percentage: float) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
         max_boost = 3 * 10**6
-        miner_bonus = hf_vali_percentage/100 * max_boost
-        self.scores[uid] += miner_bonus
+        self.hf_boost = hf_vali_percentage/100 * max_boost
 
         bt.logging.success(
-            f"Awarded Miner {uid} a bonus of {miner_bonus} for passing HF validation. Score={self.scores[uid].item()}."
+            f"Awarded Miner {uid} a hf_boost of {self.hf_boost} for passing HF validation."
         )
 
     def on_miner_evaluated(
@@ -173,6 +175,10 @@ class MinerScorer:
 
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
+
+                # Awarding the miner their HF boost based on their last HF evaluation. 
+                score += self.hf_boost
+                bt.logging.info(f"Awarded Miner {uid} a HF boost of {self.hf_boost}, adjusting the score to {score}.")
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)
