@@ -294,7 +294,7 @@ class MinerEvaluator:
         self.scorer.on_miner_evaluated(uid, index, validation_results)
         
         if hf_validation_result and hf_validation_result.is_valid == True:
-            self.scorer.apply_hf_boost(uid, hf_validation_result.validation_percentage)
+            self.scorer.update_hf_boost(uid, hf_validation_result.validation_percentage)
         elif hf_validation_result:
             bt.logging.info(f"Miner did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
