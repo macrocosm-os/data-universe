@@ -14,6 +14,8 @@ from huggingface_hub import HfApi, hf_hub_download
 from huggingface_utils.encoding_system import SymKeyEncodingKeyManager, decode_url
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.x.apidojo_scrapper import ApiDojoTwitterScraper
+from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
+from scraping.x.quacker_url_scraper import QuackerUrlScraper
 from common.data import DataSource, HuggingFaceMetadata
 import re
 
@@ -156,7 +158,7 @@ async def validate_hf_content(df: pd.DataFrame, source: DataSource) -> bool:
         if source == DataSource.REDDIT:
             scraper = RedditCustomScraper()
         elif source == DataSource.X:
-            scraper = ApiDojoTwitterScraper()
+            scraper = ApiDojoTwitterScraper() # todo
         else:
             bt.logging.error(f"Unknown data source {source}")
             return False

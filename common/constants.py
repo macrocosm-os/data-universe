@@ -33,3 +33,5 @@ MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
 # Miner compressed index cache freshness.
 MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
 
+# Constant to remove the byte difference
+NO_IS_RETWEET_AND_MODEL_BYTES_DATE = datetime.datetime(2024, 12, 25, tzinfo=datetime.timezone.utc)  # December 25, 2024 UTC or will maybe to change
