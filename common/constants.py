@@ -35,3 +35,4 @@ MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
 
 # Constant to remove the byte difference
 NO_IS_RETWEET_DATE = datetime.datetime(2024, 12, 22, tzinfo=datetime.timezone.utc)  # December 22, 2024 UTC 
+NO_TWITTER_URL_DATE = datetime.datetime(2025, 1, 12, tzinfo=datetime.timezone.utc)  # Jan 12, 2025 UTC 

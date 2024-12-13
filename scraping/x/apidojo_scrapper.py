@@ -40,7 +40,7 @@ class ApiDojoTwitterScraper(Scraper):
             if not utils.is_valid_twitter_url(entity.uri):
                 return ValidationResult(
                     is_valid=False,
-                    reason="Invalid URI.",
+                    reason="Invalid URI. As of Jan 12 2025 twitter.com is no longer accepted.",
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
             attempt = 0
@@ -138,7 +138,7 @@ class ApiDojoTwitterScraper(Scraper):
             if not utils.is_valid_twitter_url(entity.get('url')):
                 return ValidationResult(
                     is_valid=False,
-                    reason="Invalid URI.",
+                    reason="Invalid URI. As of Jan 12 2025 twitter.com is no longer accepted.",
                     content_size_bytes_validated=0,
                 )
 

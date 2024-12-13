@@ -4,7 +4,7 @@ import traceback
 from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_IS_RETWEET_DATE
+from common.constants import NO_IS_RETWEET_DATE, NO_TWITTER_URL_DATE
 import datetime as dt
 from scraping import utils
 from scraping.scraper import ValidationResult
@@ -34,8 +34,13 @@ def is_valid_twitter_url(url: str) -> bool:
 
     try:
         result = urlparse(url)
-        return all([result.scheme, result.netloc]) and (
-                "x.com" in result.netloc                #removed twitter.com as a valid url
+        if dt.datetime.now(dt.timezone.utc) < NO_TWITTER_URL_DATE:
+            return all([result.scheme, result.netloc]) and (
+                "twitter.com" in result.netloc or "x.com" in result.netloc
+        )
+        else:
+            return all([result.scheme, result.netloc]) and (
+                "x.com" in result.netloc            # From Jan 12 2025, only x.com accepted
         )
     except ValueError:
         return False

@@ -43,7 +43,7 @@ class QuackerUrlScraper(Scraper):
             # First check the URI is a valid Twitter URL.
             if not utils.is_valid_twitter_url(entity.uri):
                 results.append(
-                    ValidationResult(is_valid=False, reason="Invalid URI."),
+                    ValidationResult(is_valid=False, reason="Invalid URI. As of Jan 12 2025 twitter.com is no longer accepted."),
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
                 continue

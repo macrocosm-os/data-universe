@@ -40,7 +40,7 @@ class MicroworldsTwitterScraper(Scraper):
             if not utils.is_valid_twitter_url(entity.uri):
                 return ValidationResult(
                     is_valid=False,
-                    reason="Invalid URI.",
+                    reason="Invalid URI. As of Jan 12 2025 twitter.com is no longer accepted.",
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
 
