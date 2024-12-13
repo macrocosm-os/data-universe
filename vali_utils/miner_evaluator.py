@@ -50,7 +50,7 @@ class MinerEvaluator:
 
     # Mapping of scrapers to use based on the data source to validate.
     PREFERRED_SCRAPERS = {
-        DataSource.X: ScraperId.X_APIDOJO,
+        DataSource.X: ScraperId.X_QUACKER,
         DataSource.REDDIT: ScraperId.REDDIT_CUSTOM
     }
 
