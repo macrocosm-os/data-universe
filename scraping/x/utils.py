@@ -35,7 +35,7 @@ def is_valid_twitter_url(url: str) -> bool:
     try:
         result = urlparse(url)
         return all([result.scheme, result.netloc]) and (
-                "twitter.com" in result.netloc or "x.com" in result.netloc
+                "x.com" in result.netloc                #removed twitter.com as a valid url
         )
     except ValueError:
         return False
@@ -48,10 +48,10 @@ def remove_at_sign_from_username(username: str) -> str:
 
 
 def normalize_url(url: str) -> str:
-    """Normalizes a twitter URL to the twitter.com domain."""
-    # We normalize to the twitter.com domain because that is what was historically used.
+    """Normalizes a twitter URL to the x.com domain."""
+    # We normalize to the x.com domain as of Dec 13 2024.
     # This will ensure the miner's DB deduplicates correctly.
-    return url.replace("x.com/", "twitter.com/")
+    return url.replace("twitter.com/", "x.com/")
 
 
 def extract_user(url: str) -> str:
