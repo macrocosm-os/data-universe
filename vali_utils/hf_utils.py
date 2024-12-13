@@ -113,7 +113,7 @@ async def validate_hf_content(df: pd.DataFrame, source: DataSource) -> bool:
         if source == DataSource.REDDIT:
             scraper = RedditCustomScraper()
         elif source == DataSource.X:
-            scraper = QuackerUrlScraper()
+            scraper = ApiDojoTwitterScraper() # todo
         else:
             bt.logging.error(f"Unknown data source {source}")
             return False
