@@ -35,6 +35,7 @@ from vali_utils.miner_evaluator import MinerEvaluator
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
+from organic.gravity_organic import on_organic_entry, blacklist_organic_fn, priority_organic_fn
 from rich.table import Table
 from rich.console import Console
 
@@ -340,11 +341,14 @@ class Validator:
         try:
             # TODO: Expose a query endpoint on this axon
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
+            if self.config.organic:
+                self.axon.attach(
+                    forward_fn=on_organic_entry,
+                    blacklist_fn=blacklist_organic_fn,
+                    priority_fn=priority_organic_fn,
+                )
 
-            self.subtensor.serve_axon(
-                netuid=self.config.netuid,
-                axon=self.axon,
-            )
+            self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
 
             bt.logging.info(
                 f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."

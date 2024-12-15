@@ -27,7 +27,7 @@ class RunConfig(StrictBaseModel):
 
     timeout_secs: PositiveInt = Field(
         description="The timeout for the actor run.",
-        default=120,
+        default=180,
     )
 
     max_data_entities: PositiveInt = Field(
