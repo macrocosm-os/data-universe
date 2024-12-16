@@ -28,7 +28,7 @@ MAX_LABEL_LENGTH = 32
 PROTOCOL_VERSION = 4
 
 # Min evaluation period that must pass before a validator re-evaluates a miner.
-MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
+MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=30) # shorter evaluation period for testnet
 
 # Miner compressed index cache freshness.
 MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
