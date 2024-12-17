@@ -40,6 +40,10 @@ from rich.table import Table
 from rich.console import Console
 
 
+bt.logging.set_trace(True) # TODO remove it in future
+
+
+
 class Validator:
     def __init__(
         self,
