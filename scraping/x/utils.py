@@ -246,7 +246,6 @@ def validate_tweet_content(
     try:
         tweet_entity = XContent.to_data_entity(content=actual_tweet)
 
-        # Extra check that the content size is reasonably close to what we expect.
         # Allow a 10 byte difference to account for timestamp serialization differences.
         byte_difference_allowed = 10
         # The entity generated here will never have a model config, so add that in as buffer if included.
@@ -265,11 +264,26 @@ def validate_tweet_content(
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
-        # Normalize the URI to allow either x.com or twitter.com URIs.
-        tweet_entity.uri = normalize_url(tweet_entity.uri)
-        entity.uri = normalize_url(entity.uri)
+        # Create new instances with normalized URIs instead of modifying frozen ones
+        normalized_tweet_entity = DataEntity(
+            uri=normalize_url(tweet_entity.uri),
+            datetime=tweet_entity.datetime,
+            source=tweet_entity.source,
+            label=tweet_entity.label,
+            content=tweet_entity.content,
+            content_size_bytes=tweet_entity.content_size_bytes
+        )
+        
+        normalized_entity = DataEntity(
+            uri=normalize_url(entity.uri),
+            datetime=entity.datetime,
+            source=entity.source,
+            label=entity.label,
+            content=entity.content,
+            content_size_bytes=entity.content_size_bytes
+        )
 
-        if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
+        if not DataEntity.are_non_content_fields_equal(normalized_tweet_entity, normalized_entity):
             return ValidationResult(
                 is_valid=False,
                 reason="The DataEntity fields are incorrect based on the tweet.",
