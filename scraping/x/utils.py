@@ -22,9 +22,7 @@ def _validate_model_config(model_config: Dict[str, str]) -> bool:
         bool: True if the model configuration is valid.
     """
     # The model_config must either be empty, or contain only the 'extra' key with the value 'ignore'.
-    return model_config is None or (
-            len(model_config) == 1 and model_config.get("extra") == "ignore"
-    )
+    return model_config is None
 
 
 def is_valid_twitter_url(url: str) -> bool:

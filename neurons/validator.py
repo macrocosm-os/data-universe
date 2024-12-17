@@ -174,7 +174,7 @@ class Validator:
         now = dt.datetime.now()
         self.wandb_run_start = now
         run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
-        name = "validator-" + str(self.uid) + "-" + run_id
+        name = "TESTING_validator-" + str(self.uid) + "-" + run_id
         version_tag = self.get_version_tag()
         scraper_providers = self.get_scraper_providers()
 
