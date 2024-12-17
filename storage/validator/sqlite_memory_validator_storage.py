@@ -177,15 +177,19 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 bt.logging.error(f"Failed to load database from disk: {e}")
 
     def _create_connection(self):
-        # Change the connection string to use shared memory
+        """Create a database connection that is both file-based AND thread-safe"""
         connection = sqlite3.connect(
-            f"file:{self.db_storage_path}?mode=memory&cache=shared",
-            uri=True,
+            self.db_storage_path,  # Just the file path, no URI shit
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=120.0,
+            check_same_thread=False  # Allow multiple threads to use same connection
         )
+        
+        # Enable WAL mode for better concurrency
+        connection.execute("PRAGMA journal_mode=WAL")
         connection.isolation_level = None
         return connection
+
     def _upsert_miner(self, hotkey: str, now_str: str, credibility: float) -> int:
         try:
             with self.lock:
