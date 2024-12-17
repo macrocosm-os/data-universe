@@ -20,6 +20,7 @@ import copy
 import datetime as dt
 import sys
 import torch
+import numpy as np
 import asyncio
 import threading
 import time
@@ -412,8 +413,8 @@ class Validator:
             processed_weight_uids,
             processed_weights,
         ) = bt.utils.weight_utils.process_weights_for_netuid(
-            uids=self.metagraph.uids.to("cpu"),
-            weights=raw_weights.to("cpu"),
+            uids=torch.tensor(self.metagraph.uids, dtype=torch.int64).to("cpu"),
+            weights=raw_weights.detach().cpu().numpy().astype(np.float32),
             netuid=self.config.netuid,
             subtensor=self.subtensor,
             metagraph=self.metagraph,
