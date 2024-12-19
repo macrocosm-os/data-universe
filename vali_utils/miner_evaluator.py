@@ -134,7 +134,8 @@ class MinerEvaluator:
         # Query HuggingFace metadata
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
-        if validation_info is None or (current_block - validation_info['block']) > 55000:
+        # On testnet, try to validate HF in a miner evaluation every 300 blocks (1 hr). On mainnet, this happens every 55,000 blocks.
+        if validation_info is None or (current_block - validation_info['block']) > 300:
             hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
             if hf_metadatas:
                 for hf_metadata in hf_metadatas:
