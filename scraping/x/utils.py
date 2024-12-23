@@ -123,6 +123,16 @@ def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> Va
     if tweet_to_verify.get('text') != actual_tweet.get('text'):
         return ValidationResult(is_valid=False, reason="Tweet texts do not match", content_size_bytes_validated=0)
 
+    # Check date (without time) TODO obfuscate and validate.
+    # try:
+    #     actual_date = dt.datetime.strptime(actual_tweet.get('datetime'), "%Y-%m-%d %H:%M:%S").date()
+    #     verify_date = dt.datetime.strptime(tweet_to_verify.get('datetime'), "%Y-%m-%d").date() # TODO
+    #
+    #     if actual_date != verify_date:
+    #         return {"is_valid": False, "reason": "Tweet dates do not match"}
+    # except ValueError:
+    #     return {"is_valid": False, "reason": "Invalid date format"}
+
     return ValidationResult(is_valid=True, reason="Tweet is valid", content_size_bytes_validated=0)
 
 
@@ -233,6 +243,13 @@ def validate_tweet_content(
             is_valid=False,
             reason="Tweet content contains an invalid model_config",
             content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    if is_retweet:
+        return ValidationResult(
+            is_valid=False,
+            reason="Retweets are no longer eligible after July 6, 2024.",
+            content_size_bytes_validated=entity.content_size_bytes
         )
 
     # Create DataEntity instances with normalization for comparison
