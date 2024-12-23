@@ -34,4 +34,4 @@ MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
 MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
 
 # Date after which only x.com URLs are accepted
-NO_TWITTER_URLS_DATE = datetime.datetime(2024, 12, 27, tzinfo=datetime.timezone.utc)  # December 27, 2024 UTC
+NO_TWITTER_URLS_DATE = datetime.datetime(2024, 12, 28, tzinfo=datetime.timezone.utc)  # December 28, 2024 UTC
