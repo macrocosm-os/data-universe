@@ -8,7 +8,6 @@ from common.data import DataEntity
 from common.constants import NO_TWITTER_URLS_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
-
 from scraping.x.model import XContent
 
 
@@ -25,6 +24,15 @@ def _validate_model_config(model_config: Dict[str, str]) -> bool:
     return model_config is None or (
             len(model_config) == 1 and model_config.get("extra") == "ignore"
     )
+
+
+def normalize_url(url: str) -> str:
+    """Normalizes URLs for comparison while maintaining original domain."""
+    # After deadline, no normalization needed since we only accept x.com
+    if dt.datetime.now(dt.timezone.utc) >= NO_TWITTER_URLS_DATE:
+        return url
+    # Before deadline, normalize twitter.com to x.com for comparison
+    return url.replace("twitter.com/", "x.com/")
 
 
 def is_valid_twitter_url(url: str) -> bool:
@@ -108,7 +116,7 @@ def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> Va
     if not is_valid_twitter_url(tweet_to_verify.get('url')):
         return ValidationResult(is_valid=False, reason="Invalid URL", content_size_bytes_validated=0)
 
-    if tweet_to_verify.get('url') != actual_tweet.get('url'):
+    if normalize_url(tweet_to_verify.get('url')) != normalize_url(actual_tweet.get('url')):
         return ValidationResult(is_valid=False, reason="Tweet URLs do not match", content_size_bytes_validated=0)
 
     # Check text
@@ -158,7 +166,7 @@ def validate_tweet_content(
         )
 
     # Check Tweet url
-    if tweet_to_verify.url != actual_tweet.url:
+    if normalize_url(tweet_to_verify.url) != normalize_url(actual_tweet.url):
         bt.logging.info(
             f"Tweet urls do not match: {tweet_to_verify} != {actual_tweet}."
         )
@@ -227,8 +235,27 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
-    # Create DataEntity instances without normalization
+    # Create DataEntity instances with normalization for comparison
     tweet_entity = XContent.to_data_entity(content=actual_tweet)
+
+    # Create normalized copies for comparison
+    normalized_tweet_entity = DataEntity(
+        uri=normalize_url(tweet_entity.uri),
+        datetime=tweet_entity.datetime,
+        source=tweet_entity.source,
+        label=tweet_entity.label,
+        content=tweet_entity.content,
+        content_size_bytes=tweet_entity.content_size_bytes
+    )
+
+    normalized_entity = DataEntity(
+        uri=normalize_url(entity.uri),
+        datetime=entity.datetime,
+        source=entity.source,
+        label=entity.label,
+        content=entity.content,
+        content_size_bytes=entity.content_size_bytes
+    )
 
     # Allow a 10 byte difference to account for timestamp serialization differences.
     byte_difference_allowed = 10
@@ -242,7 +269,7 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
-    if not DataEntity.are_non_content_fields_equal(tweet_entity, entity):
+    if not DataEntity.are_non_content_fields_equal(normalized_tweet_entity, normalized_entity):
         return ValidationResult(
             is_valid=False,
             reason="The DataEntity fields are incorrect based on the tweet.",
