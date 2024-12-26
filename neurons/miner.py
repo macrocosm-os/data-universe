@@ -46,7 +46,7 @@ from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 
 # Enable logging to the miner TODO move it to some different location
-bt.logging.set_trace(True)
+bt.logging.set_trace(False)
 
 
 class Miner:
