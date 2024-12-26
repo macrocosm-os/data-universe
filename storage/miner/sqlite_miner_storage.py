@@ -344,11 +344,8 @@ class SqliteMinerStorage(MinerStorage):
                         source=DataSource(row["source"]),
                         content=row["content"],
                         content_size_bytes=row["contentSizeBytes"],
+                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None
                     )
-
-                    # Add the optional Label field if not null.
-                    if row["label"] != "NULL":
-                        data_entity.label = DataLabel(value=row["label"])
 
                     data_entities.append(data_entity)
                     running_size += row["contentSizeBytes"]
