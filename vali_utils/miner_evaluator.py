@@ -206,7 +206,7 @@ class MinerEvaluator:
                     data_entity_bucket_id=chosen_data_entity_bucket.id,
                     version=constants.PROTOCOL_VERSION,
                 ),
-                timeout=120,
+                timeout=140,
             )
 
         data_entity_bucket = vali_utils.get_single_successful_response(

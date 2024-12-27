@@ -60,15 +60,4 @@ class XContent(BaseModel):
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
         """Converts a DataEntity to an XContent."""
         content_str = data_entity.content.decode("utf-8")
-        content_dict = json.loads(content_str)
-
-        if dt.datetime.now(dt.timezone.utc) < constants.NO_IS_RETWEET_AND_MODEL_BYTES_DATE:
-            if 'is_retweet' in content_dict:
-                if not isinstance(content_dict['is_retweet'], bool):
-                    content_dict.pop('is_retweet', None)
-                    raise ValueError("The 'is_retweet' field must be a boolean.")
-                else:
-                    content_dict.pop('is_retweet', None)
-
-        clean_content_str = json.dumps(content_dict)
-        return XContent.parse_raw(clean_content_str)
+        return XContent.parse_raw(content_str)
