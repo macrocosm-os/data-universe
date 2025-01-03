@@ -117,6 +117,9 @@ class Validator:
         # Load any state from previous runs.
         self.load_state()
 
+        # Getting latest dynamic lookup
+        self.get_updated_lookup()
+
         # TODO: Configure this to expose access to data to neurons on certain subnets.
         # Serve axon to enable external connections.
         if not self.config.neuron.axon_off:
