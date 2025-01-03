@@ -127,34 +127,17 @@ class Validator:
         self.is_setup = True
 
     def get_updated_lookup(self):
-        last_update = None
-        while not self.should_exit:
-            try:
-                current_datetime = dt.datetime.utcnow()
-                
-                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
-                
-                # Check if it's a new day and we haven't updated yet
-                if last_update is None or current_datetime.date() > last_update.date():
-                    bt.logging.info("Retrieving the latest dynamic lookup...")
-                    model = sync_run_retrieval(self.config)
-                    bt.logging.info("Model retrieved, updating value calculator...")
-                    self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
-                    bt.logging.info(f"Desirable data list: {model}")
-                    bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
-                    last_update = current_datetime
-                    bt.logging.info(f"Updated dynamic lookup at {last_update}")
-                else:
-                    bt.logging.info("No update needed at this time.")
-                
-                # Sleep for 5 minutes before checking again
-                bt.logging.info("Sleeping for 5 minutes...")
-                time.sleep(300)
-            
-            except Exception as e:
-                bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
-                bt.logging.exception("Exception details:")
-                time.sleep(300)  # Wait 5 minutes before trying again
+        try:
+            bt.logging.info("Retrieving the latest dynamic lookup...")
+            model = sync_run_retrieval(self.config)
+            bt.logging.info("Model retrieved, updating value calculator...")
+            self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
+            bt.logging.info(f"Desirable data list: {model}")
+            bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
+            bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
+        except Exception as e:
+            bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
+            bt.logging.exception("Exception details:")
 
 
     def get_version_tag(self):
@@ -248,6 +231,9 @@ class Validator:
                 # Always save state.
                 self.save_state()
 
+                # Update to the latest desirability list after each evaluation.
+                self.get_updated_lookup()
+
                 self.step += 1
 
                 # Now that we've finished a full evaluation loop, compute how long we should
@@ -297,9 +283,6 @@ class Validator:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
-            self.lookup_thread = threading.Thread(
-                target=self.get_updated_lookup, daemon=True)
-            self.lookup_thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
 
