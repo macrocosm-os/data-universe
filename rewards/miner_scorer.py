@@ -4,7 +4,7 @@ import torch
 import bittensor as bt
 import datetime as dt
 from common.data import TimeBucket
-
+from common.constants import HF_REWARD_DATE
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult, HFValidationResult
@@ -121,12 +121,13 @@ class MinerScorer:
 
     def update_hf_boost(self, uid: int, hf_vali_percentage: float) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
+        bt.logging.info(f"Miner passed HF validation with a validation percentage of {hf_vali_percentage}.")
         max_boost = 3 * 10**6
         self.hf_boost = hf_vali_percentage/100 * max_boost
-
-        bt.logging.success(
-            f"Awarded Miner {uid} a hf_boost of {self.hf_boost} for passing HF validation."
-        )
+        if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
+            bt.logging.success(
+                f"Awarded Miner {uid} a hf_boost of {self.hf_boost} for passing HF validation."
+            )
 
     def on_miner_evaluated(
         self,
@@ -176,9 +177,12 @@ class MinerScorer:
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
 
-                # Awarding the miner their HF boost based on their last HF evaluation. 
-                score += self.hf_boost
-                bt.logging.info(f"Awarded Miner {uid} a HF boost of {self.hf_boost}, adjusting the score to {score}.")
+                if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
+                    # Awarding the miner their HF boost based on their last HF evaluation. 
+                    score += self.hf_boost
+                    bt.logging.info(f"Awarded Miner {uid} a HF boost of {self.hf_boost}, adjusting the score to {score}.")
+                else:
+                    bt.logging.info("HF Rewards will be added on January 22, 2025.")
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)
