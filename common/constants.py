@@ -34,4 +34,4 @@ MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
 MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
 
 # HF reward activation date.
-HF_REWARD_DATE = datetime.datetime(2025, 1, 20, tzinfo=datetime.timezone.utc)  # January 20, 2025 UTC
+HF_REWARD_DATE = datetime.datetime(2025, 1, 27, tzinfo=datetime.timezone.utc)  # January 27, 2025 UTC

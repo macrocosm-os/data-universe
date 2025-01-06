@@ -124,10 +124,9 @@ class MinerScorer:
         bt.logging.info(f"Miner passed HF validation with a validation percentage of {hf_vali_percentage}.")
         max_boost = 3 * 10**6
         self.hf_boost = hf_vali_percentage/100 * max_boost
-        if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
-            bt.logging.success(
-                f"Awarded Miner {uid} a hf_boost of {self.hf_boost} for passing HF validation."
-            )
+        bt.logging.success(
+            f"Awarded Miner {uid} a hf_boost of {self.hf_boost} for passing HF validation."
+        )
 
     def on_miner_evaluated(
         self,
@@ -176,13 +175,12 @@ class MinerScorer:
 
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
-
+                
+                # Hugging Face rewards are active after Jan 27 2025.
                 if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
                     # Awarding the miner their HF boost based on their last HF evaluation. 
                     score += self.hf_boost
-                    bt.logging.info(f"Awarded Miner {uid} a HF boost of {self.hf_boost}, adjusting the score to {score}.")
-                else:
-                    bt.logging.info("HF Rewards will be added on January 22, 2025.")
+                    bt.logging.info(f"Awarded Miner {uid} a HF boost of {self.hf_boost} based off of the lastest HF evaluation, adjusting the score to {score}.")
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)
