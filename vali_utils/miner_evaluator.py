@@ -20,7 +20,7 @@ from common.data import (
 from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata, DecodeURLRequest
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
-from scraping.scraper import ScraperId, ValidationResult
+from scraping.scraper import ScraperId, ValidationResult, HFValidationResult
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
@@ -132,7 +132,8 @@ class MinerEvaluator:
         # Query HuggingFace metadata
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
-        if validation_info is None or (current_block - validation_info['block']) > 55000:
+        hf_validation_result = None
+        if validation_info is None or (current_block - validation_info['block']) > 1: # 5100 blocks = 17 hrs
             hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
             if hf_metadatas:
                 for hf_metadata in hf_metadatas:
@@ -296,6 +297,16 @@ class MinerEvaluator:
         )
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
+        
+        if hf_validation_result and hf_validation_result.is_valid == True:
+            bt.logging.info(f"Miner passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
+
+            # HF Rewards are active after Jan 27 2025.
+            if dt.datetime.now(dt.timezone.utc) >= constants.HF_REWARD_DATE:
+                self.scorer.update_hf_boost(uid, hf_validation_result.validation_percentage)
+                
+        elif hf_validation_result:
+            bt.logging.info(f"Miner did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
