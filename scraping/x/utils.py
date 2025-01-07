@@ -103,11 +103,12 @@ def are_hashtags_valid(tweet_to_verify_hashtags: List, actual_tweet_hashtags: Li
         len(tweet_to_verify_hashtags) <= 2.5 * len(actual_tweet_hashtags)
 
 
-def hf_tweet_validation(validation_results: List[ValidationResult]) -> bool:
+def hf_tweet_validation(validation_results: List[ValidationResult]):
     total_count = len(validation_results)
     true_count = sum(1 for item in validation_results if item.is_valid)
     true_percentage = (true_count / total_count) * 100
-    return true_percentage >= 50
+
+    return true_percentage >= 50, true_percentage
 
 
 def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> ValidationResult:
