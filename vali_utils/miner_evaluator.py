@@ -133,7 +133,7 @@ class MinerEvaluator:
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
         hf_validation_result = None
-        if validation_info is None or (current_block - validation_info['block']) > 1: # 5100 blocks = 17 hrs
+        if validation_info is None or (current_block - validation_info['block']) > 5100: # 5100 blocks = 17 hrs
             hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
             if hf_metadatas:
                 for hf_metadata in hf_metadatas:
