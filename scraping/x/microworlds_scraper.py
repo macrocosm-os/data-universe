@@ -7,7 +7,7 @@ from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.global_counter import decrement_count, get_and_increment_count
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
 from scraping.x import utils
@@ -144,6 +144,100 @@ class MicroworldsTwitterScraper(Scraper):
         statsd.increment("twitter_validate.invalid", invalid)
 
         return results
+    
+    async def validate_hf(self, entities) -> HFValidationResult:
+        """Validate the correctness of a HFEntities by URL."""
+
+        async def validate_hf_entity(entity) -> ValidationResult:
+            if not utils.is_valid_twitter_url(entity.get('url')):
+                return ValidationResult(
+                    is_valid=False,
+                    reason="Invalid URI.",
+                    content_size_bytes_validated=0,
+                )
+
+            attempt = 0
+            max_attempts = 2
+
+            while attempt < max_attempts:
+                # Increment attempt.
+                attempt += 1
+
+                # On attempt 1 we fetch the exact number of tweets. On retry we fetch more in case they are in replies.
+                tweet_count = 1 if attempt == 1 else 5
+
+                run_input = {
+                    **MicroworldsTwitterScraper.BASE_RUN_INPUT,
+                    "startUrls": [entity.get('url')],
+                    "maxItems": tweet_count,
+                }
+                run_config = RunConfig(
+                    actor_id=MicroworldsTwitterScraper.ACTOR_ID,
+                    debug_info=f"Validate {entity.get('url')}",
+                    max_data_entities=tweet_count,
+                )
+
+                # Retrieve the tweets from Apify.
+                dataset: List[dict] = None
+                try:
+                    dataset: List[dict] = await self.runner.run(run_config, run_input)
+                except (
+                        Exception
+                ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
+                    if attempt != max_attempts:
+                        # Retrying.
+                        continue
+                    else:
+                        bt.logging.error(
+                            f"Failed to run actor: {traceback.format_exc()}."
+                        )
+                        # This is an unfortunate situation. We have no way to distinguish a genuine failure from
+                        # one caused by malicious input. In my own testing I was able to make the Actor timeout by
+                        # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
+                        # pass malicious input for chunks they don't have.
+                        return ValidationResult(
+                            is_valid=False,
+                            reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
+                            content_size_bytes_validated=0,
+                        )
+
+                # Parse the response
+                tweets = self._best_effort_parse_hf_dataset(dataset)
+                actual_tweet = None
+
+                for index, tweet in enumerate(tweets):
+                    if utils.normalize_url(tweet['url']) == utils.normalize_url(entity.get('url')):
+                        actual_tweet = tweet
+                        break
+
+                bt.logging.debug(actual_tweet)
+                if actual_tweet is None:
+                    # Only append a failed result if on final attempt.
+                    if attempt == max_attempts:
+                        return ValidationResult(
+                            is_valid=False,
+                            reason="Tweet not found or is invalid.",
+                            content_size_bytes_validated=0,
+                        )
+                else:
+                    return utils.validate_hf_retrieved_tweet(
+                        actual_tweet=actual_tweet,
+                        tweet_to_verify=entity
+                    )
+
+        # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
+        bt.logging.trace("Acquiring semaphore for concurrent apidojo validations.")
+
+        with MicroworldsTwitterScraper.concurrent_validates_semaphore:
+            bt.logging.trace(
+                "Acquired semaphore for concurrent apidojo validations."
+            )
+            results = await asyncio.gather(
+                *[validate_hf_entity(entity) for entity in entities]
+            )
+
+        is_valid, valid_percent = utils.hf_tweet_validation(validation_results=results)
+        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent, reason=f"Validation Percentage = {valid_percent}")
 
     async def validate_hf(self, entities) -> bool:
         """Validate the correctness of a HFEntities by URL."""

@@ -59,9 +59,6 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
         return None
     finally:
         os.chdir(original_dir)
-        if os.path.exists(repo_path):
-            bt.logging.info(f"Deleting the cloned repository folder: {repo_name}")
-            shutil.rmtree(repo_name)
 
 
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,

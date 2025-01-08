@@ -8,6 +8,7 @@ from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.global_counter import decrement_count, get_and_increment_count
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
 from scraping.x import utils
@@ -150,7 +151,7 @@ class ApiDojoTwitterScraper(Scraper):
 
         return results
 
-    async def validate_hf(self, entities) -> bool:
+    async def validate_hf(self, entities) -> HFValidationResult:
         """Validate the correctness of a HFEntities by URL."""
 
         async def validate_hf_entity(entity) -> ValidationResult:
@@ -241,8 +242,8 @@ class ApiDojoTwitterScraper(Scraper):
                 *[validate_hf_entity(entity) for entity in entities]
             )
 
-        is_valid = utils.hf_tweet_validation(validation_results=results)
-        return is_valid
+        is_valid, valid_percent = utils.hf_tweet_validation(validation_results=results)
+        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent, reason=f"Validation Percentage = {valid_percent}" )
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""

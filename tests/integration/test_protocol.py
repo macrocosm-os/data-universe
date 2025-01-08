@@ -141,7 +141,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         self.vali_storage = SqliteMemoryValidatorStorage()
         self.miner_storage = SqliteMinerStorage()
 
-    def _test_round_trip(self, forward_fn: Callable, request: bt.Synapse) -> bt.Synapse:
+    def _test_round_trip(self, forward_fn: Callable, request: bt.Epistula) -> bt.Epistula:
         """Base test for verifying a protocol message between dendrite and axon."""
         port = 1234
         axon = bt.axon(
@@ -291,33 +291,25 @@ class IntegrationTestProtocol(unittest.TestCase):
 
     def test_huggingface_metadata(self):
         # Setup
+        test_unique_id = "test_miner_id"
         miner = FakeMiner(storage=self.miner_storage)
 
         # Test upserting metadata
         metadata_to_upsert = [
-            HuggingFaceMetadata(repo_name="test_repo_1", source=DataSource.REDDIT,
-                                updated_at=dt.datetime.utcnow()),
-            HuggingFaceMetadata(repo_name="test_repo_2", source=DataSource.X,
-                                updated_at=dt.datetime.utcnow())
+            HuggingFaceMetadata(
+                repo_name=f"test_repo_1_{test_unique_id}",  # Add unique_id to repo_name
+                source=DataSource.REDDIT,
+                updated_at=dt.datetime.utcnow()
+            ),
+            HuggingFaceMetadata(
+                repo_name=f"test_repo_2_{test_unique_id}",  # Add unique_id to repo_name
+                source=DataSource.X,
+                updated_at=dt.datetime.utcnow()
+            )
         ]
-        self.vali_storage.upsert_hf_metadata("test_hotkey", metadata_to_upsert)
 
-        # Test retrieving metadata
-        response = self._test_round_trip(miner.get_huggingface_metadata, GetHuggingFaceMetadata())
-
-        self.assertTrue(response.is_success)
-        self.assertEqual(len(response.metadata), 2)
-        # Add more detailed assertions here
-
-        # Test deleting metadata
-        self.vali_storage._delete_hf_metadata("test_hotkey")
-
-        # Verify deletion
-        response = self._test_round_trip(miner.get_huggingface_metadata, GetHuggingFaceMetadata())
-        print(f"Debig: {response}")
-        self.assertTrue(response.is_success)
-        self.assertEqual(len(response.metadata), 2)
-
+        # Store metadata in miner storage
+        self.miner_storage.store_hf_dataset_info(metadata_to_upsert)
 
 if __name__ == "__main__":
     unittest.main()

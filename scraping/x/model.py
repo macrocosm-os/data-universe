@@ -1,8 +1,9 @@
 import datetime as dt
 import json
-from re import X
 from typing import Dict, List, Optional
-from pydantic import BaseModel, ConfigDict, Field, ValidationError
+# Use v1 for these models to keep serialization consistent.
+# Pydantic v2 doesn't include spaces in its serialization.
+from pydantic.v1 import BaseModel, Field
 
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
@@ -58,19 +59,5 @@ class XContent(BaseModel):
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
         """Converts a DataEntity to an XContent."""
-
-
         content_str = data_entity.content.decode("utf-8")
-        content_dict = json.loads(content_str)
-
-        if 'is_retweet' in content_dict:
-            if not isinstance(content_dict['is_retweet'], bool):
-                # Remove 'is_retweet' if it's not a boolean and raise a more appropriate exception
-                content_dict.pop('is_retweet', None)
-                raise ValueError("The 'is_retweet' field must be a boolean.")  # Using ValueError for clearer intent
-            else:
-                # remove 'is_retweet'
-                content_dict.pop('is_retweet', None)
-
-        clean_content_str = json.dumps(content_dict)
-        return XContent.parse_raw(clean_content_str)
+        return XContent.parse_raw(content_str)
