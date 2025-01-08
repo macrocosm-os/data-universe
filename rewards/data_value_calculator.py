@@ -3,6 +3,7 @@ from typing import Optional
 from common.data import DataSource, TimeBucket
 from common.data_v2 import ScorableDataEntityBucket
 from rewards.data import DataDesirabilityLookup
+from scraping.scraper import HFValidationResult
 
 from rewards import data_desirability_lookup
 
@@ -16,7 +17,7 @@ class DataValueCalculator:
     def get_score_for_data_entity_bucket(
         self,
         scorable_data_entity_bucket: ScorableDataEntityBucket,
-        current_time_bucket: TimeBucket,
+        current_time_bucket: TimeBucket
     ) -> float:
         """Returns the score for the given data entity bucket.
 
@@ -32,6 +33,7 @@ class DataValueCalculator:
         time_scalar = self._scale_factor_for_age(
             scorable_data_entity_bucket.time_bucket_id, current_time_bucket.id
         )
+
         return (
             data_type_scale_factor
             * time_scalar
