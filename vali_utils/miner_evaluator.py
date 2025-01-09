@@ -156,22 +156,34 @@ class MinerEvaluator:
                                 # Add length check before DataFrame operation
                                 if len(decoded_urls) == 0:
                                     bt.logging.error(f"{hotkey}: Got empty decoded_urls list")
-                                    validation_result = False
+                                    hf_validation_result = HFValidationResult(
+                                        is_valid=False,
+                                        reason=f"{hotkey}: Got empty decoded_urls list",
+                                        validation_percentage=0.0
+                                    )
                                 else:
                                     decoded_df = encoded_df.copy()
                                     del encoded_df
                                     decoded_df = decoded_df.head(
                                         len(decoded_urls))  # Ensure DataFrame matches decoded_urls length
                                     decoded_df['url'] = decoded_urls
-                                    validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
+                                    hf_validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
                                     bt.logging.info(
-                                        f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
+                                        f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {hf_validation_result}')
                             except ValueError as e:
                                 bt.logging.error(f"{hotkey}: ValueError in URL decoding: {str(e)}")
-                                validation_result = False
+                                hf_validation_result = HFValidationResult(
+                                        is_valid=False,
+                                        reason=f"{hotkey}: ValueError in URL decoding: {str(e)}",
+                                        validation_percentage=0.0
+                                    )
                             except Exception as e:
                                 bt.logging.error(f"{hotkey}: Unexpected error in URL decoding: {str(e)}")
-                                validation_result = False
+                                hf_validation_result = HFValidationResult(
+                                        is_valid=False,
+                                        reason=f"{hotkey}: Unexpected error in URL decoding: {str(e)}",
+                                        validation_percentage=0.0
+                                    )
 
                     # Store validation result
                     self.hf_storage.update_validation_info(
