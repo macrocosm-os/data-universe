@@ -89,6 +89,7 @@ class Validator:
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
         self.axon = None
+        self.api = None
         self.step = 0
         self.wandb_run_start = None
         self.wandb_run = None
@@ -329,9 +330,12 @@ class Validator:
         """Serve axon to enable external connections."""
 
         try:
-            # TODO: Expose a query endpoint on this axon
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
+            if self.config.neuron.api_on:
+                from vali_utils.api.server import ValidatorAPI
+                self.api = ValidatorAPI(self, port=self.config.neuron.api_port)
+                self.api.start()
 
             bt.logging.info(
                 f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."

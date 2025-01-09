@@ -1,6 +1,7 @@
 import bittensor as bt
 from pydantic import Field, ConfigDict, field_validator
 from common.data import (
+    DataSource,
     DataEntityBucket,
     DataEntity,
     DataEntityBucketId,
@@ -16,7 +17,7 @@ class BaseProtocol(bt.Synapse):
     )
 
     version: Optional[int] = Field(
-        description="Protocol version", 
+        description="Protocol version",
         default=None
     )
 
@@ -132,11 +133,66 @@ class DecodeURLRequest(BaseProtocol):
     )
 
 
+class OnDemandRequest(BaseProtocol):
+    """Protocol for on-demand data retrieval requests"""
+
+    # Request parameters
+    source: Optional[DataSource] = Field(
+        default=None,
+        description="Source to query (X or Reddit)"
+    )
+
+    usernames: List[str] = Field(
+        default_factory=list,
+        description="Usernames to fetch data from",
+        max_length=10
+    )
+
+    keywords: List[str] = Field(
+        default_factory=list,
+        description="Keywords/hashtags to search for",
+        max_length=5
+    )
+
+    start_date: Optional[str] = Field(
+        default=None,
+        description="Start date (ISO format)"
+    )
+
+    end_date: Optional[str] = Field(
+        default=None,
+        description="End date (ISO format)"
+    )
+
+    limit: int = Field(
+        default=100,
+        ge=1,
+        le=1000,
+        description="Maximum items to return"
+    )
+
+    # Response fields
+    data: List[Dict] = Field(
+        default_factory=list,
+        description="Retrieved data"
+    )
+
+    validation_sample: Optional[Dict] = Field(
+        default=None,
+        description="Random sample for validation"
+    )
+
+    version: Optional[int] = Field(
+        default=None,
+        description="Protocol version"
+    )
+
 # How many times validators can send requests per validation period.
 REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
     GetMinerIndex: 1,
     GetDataEntityBucket: 1,
     GetContentsByBuckets: 5,
     DecodeURLRequest: 2,
-    GetHuggingFaceMetadata: 1,  # New entry for HuggingFace metadata requests
+    GetHuggingFaceMetadata: 1,
+    OnDemandRequest: 5,
 }

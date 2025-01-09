@@ -131,6 +131,20 @@ def add_args(neuron_type: NeuronType, parser):
             default=os.path.join(Path(os.path.dirname(__file__)).parent, "hf_validation.parquet"),
         )
 
+        parser.add_argument(
+            "--neuron.api_on",
+            action="store_true",
+            help="Enable the validator API server",
+            default=False,
+        )
+
+        parser.add_argument(
+            "--neuron.api_port",
+            type=int,
+            help="Port for the validator API server",
+            default=8000,
+        )
+
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(
             "--neuron.database_name",
