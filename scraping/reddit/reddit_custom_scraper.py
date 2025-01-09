@@ -173,7 +173,7 @@ class RedditCustomScraper(Scraper):
         valid_percentage = sum(validation_results) / len(validation_results) * 100
 
         # Check if at least 60% of the data is valid
-        is_valid = valid_percentage >= 40
+        is_valid = valid_percentage >= 60
         return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percentage, reason=f"Validation Percentage = {valid_percentage}")
 
     def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
