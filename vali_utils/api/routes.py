@@ -66,7 +66,10 @@ async def query_data(request: QueryRequest, validator=Depends(get_validator)):
                 except Exception as e:
                     bt.logging.error(f"Error querying miner {uid}: {str(e)}")
 
-        # Process and deduplicate data
+
+        # TODO ADD VALIDATION
+
+        # Process data
         all_data = []
         seen = set()
         for response in responses:
