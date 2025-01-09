@@ -8,6 +8,7 @@ from common.data import DataSource
 from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
 from .models import QueryRequest, QueryResponse, HealthResponse
+import random
 
 router = APIRouter()
 
@@ -30,7 +31,7 @@ async def query_data(request: QueryRequest, validator=Depends(get_validator)):
         # Sort by stake and get top 50%
         miners = sorted(
             miner_uids,
-            key=lambda uid: validator.metagraph.S[uid],
+            key=lambda uid: validator.metagraph.I[uid],
             reverse=True
         )[:len(miner_uids) // 2]
 
@@ -50,20 +51,20 @@ async def query_data(request: QueryRequest, validator=Depends(get_validator)):
         # Query miners in parallel
         responses = []
         async with bt.dendrite(wallet=validator.wallet) as dendrite:
-            for uid in miners:
-                # Check if miner is qualified using your utility
-                if utils.is_miner(uid, validator.metagraph):
-                    axon = validator.metagraph.axons[uid]
-                    try:
-                        response = await dendrite.forward(
-                            axons=[axon],
-                            synapse=synapse,
-                            timeout=30
-                        )
-                        if response and response.data:
-                            responses.append(response.data)
-                    except Exception as e:
-                        bt.logging.error(f"Error querying miner {uid}: {str(e)}")
+            uid = random.choice(miner_uids)
+            # Check if miner is qualified using your utility
+            if utils.is_miner(uid, validator.metagraph):
+                axon = validator.metagraph.axons[uid]
+                try:
+                    response = await dendrite.forward(
+                        axons=[axon],
+                        synapse=synapse,
+                        timeout=30
+                    )
+                    if response and response.data:
+                        responses.append(response.data)
+                except Exception as e:
+                    bt.logging.error(f"Error querying miner {uid}: {str(e)}")
 
         # Process and deduplicate data
         all_data = []
