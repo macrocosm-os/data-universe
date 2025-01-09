@@ -152,26 +152,21 @@ class MinerEvaluator:
                         # Get decoded URLs from miner
                         success, decoded_urls = await self._get_decoded_urls(hotkey, uid, axon_info, encoded_urls)
                         if success:
-                            try:
-                                # Add length check before DataFrame operation
-                                if len(decoded_urls) == 0:
-                                    bt.logging.error(f"{hotkey}: Got empty decoded_urls list")
-                                    validation_result = False
-                                else:
-                                    decoded_df = encoded_df.copy()
-                                    del encoded_df
-                                    decoded_df = decoded_df.head(
-                                        len(decoded_urls))  # Ensure DataFrame matches decoded_urls length
-                                    decoded_df['url'] = decoded_urls
-                                    validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
-                                    bt.logging.info(
-                                        f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {validation_result}')
-                            except ValueError as e:
-                                bt.logging.error(f"{hotkey}: ValueError in URL decoding: {str(e)}")
-                                validation_result = False
-                            except Exception as e:
-                                bt.logging.error(f"{hotkey}: Unexpected error in URL decoding: {str(e)}")
-                                validation_result = False
+                            # Replace encoded URLs with decoded ones for validation
+                            decoded_df = encoded_df.copy()
+                            del encoded_df  # clean up memory
+                            decoded_df['url'] = decoded_urls
+                            # Now do content validation with decoded URLs
+                            hf_validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
+                            bt.logging.info(
+                                f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {hf_validation_result}')
+                        else:
+                            bt.logging.error(f"{hotkey}: Failed to get decoded URLs")
+                            hf_validation_result = HFValidationResult(
+                                is_valid=False,
+                                reason=f"{hotkey}: Failed to get decoded URLs",
+                                validation_percentage=0.0
+                            )
 
                     # Store validation result
                     self.hf_storage.update_validation_info(
