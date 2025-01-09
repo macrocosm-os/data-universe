@@ -33,8 +33,9 @@ from common.protocol import (
     GetHuggingFaceMetadata,
     DecodeURLRequest,
     REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
+    OnDemandRequest
 )
-from neurons.config import NeuronType
+
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
@@ -515,6 +516,46 @@ class Miner:
     async def get_data_entity_bucket_priority(
         self, synapse: GetDataEntityBucket
     ) -> float:
+        return self.default_priority(synapse)
+
+    async def handle_on_demand(self, synapse: OnDemandRequest) -> OnDemandRequest:
+        """
+        Handle on-demand data requests from validators.
+        TODO: Implement full data retrieval logic
+
+        Flow:
+        1. Check storage for cached data matching request
+        2. If not enough data in storage, scrape new data:
+           - For usernames: Use apidojo/custom scraper to get user tweets/posts
+           - For keywords: Use search functionality
+        3. Return data + random validation sample
+
+        Current implementation: Returns empty response for API structure testing
+        """
+        bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
+
+        try:
+            # Mock empty response
+            synapse.data = []
+            synapse.validation_sample = None
+            synapse.version = constants.PROTOCOL_VERSION
+
+        except Exception as e:
+            bt.logging.error(f"Error in on-demand request: {str(e)}")
+            bt.logging.debug(traceback.format_exc())
+
+        return synapse
+
+    async def handle_on_demand_blacklist(
+            self, synapse: OnDemandRequest
+    ) -> typing.Tuple[bool, str]:
+        """Blacklist function for on-demand requests"""
+        return self.default_blacklist(synapse)
+
+    async def handle_on_demand_priority(
+            self, synapse: OnDemandRequest
+    ) -> float:
+        """Priority function for on-demand requests"""
         return self.default_priority(synapse)
 
     async def get_contents_by_buckets(
