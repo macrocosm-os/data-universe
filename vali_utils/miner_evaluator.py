@@ -4,6 +4,8 @@ import traceback
 import asyncio
 import threading
 import os
+import sys
+import time
 from common import constants
 from common.data_v2 import ScorableMinerIndex
 from common.metagraph_syncer import MetagraphSyncer
@@ -565,3 +567,60 @@ class MinerEvaluator:
                 self.scorer.resize(len(metagraph.hotkeys))
 
             self.metagraph = copy.deepcopy(metagraph)
+
+
+    def exit(self):
+        self.should_exit = True
+
+    def run_api_data_loop(self):
+        """
+        Initiates and manages the api data loop for the validator, which
+        periodically updates the sqlite api data tables with current information.
+        """
+
+        # Sleep on startup to avoid wiping the tables on restart.
+        time.sleep(datetime.timedelta(minutes=90).total_seconds())
+
+        # This loop maintains the validator's databox table updates until intentionally stopped.
+        while not self.should_exit:
+            try:
+                bt.logging.trace("Updating tables for validator API.")
+
+                next_api_update = datetime.datetime.utcnow() + datetime.timedelta(
+                    minutes=45
+                )
+
+                # Get Miners from SqliteMemory and write to api miner table.
+                self.storage.upsert_api_miners()
+
+                # Get Age Sizes from SqliteMemory and write to api label size table.
+                self.storage.upsert_age_sizes()
+
+                # Get Label Sizes from SqliteMemory and write to api age size table.
+                self.storage.upsert_label_sizes()
+
+                wait_time = max(
+                    0,
+                    (next_api_update - datetime.datetime.utcnow()).total_seconds(),
+                )
+
+                bt.logging.trace(
+                    f"Finished updating api tables. Waiting {wait_time} seconds until next update."
+                )
+
+                if wait_time > 0:
+                    time.sleep(wait_time)
+
+            # If someone intentionally stops the validator, it'll safely terminate operations.
+            except KeyboardInterrupt:
+                bt.logging.success(
+                    "Validator killed by keyboard interrupt while in api data loop run."
+                )
+                sys.exit()
+
+            # In case of unforeseen errors, the validator will log the error and continue operations.
+            except Exception as err:
+                bt.logging.error("Error during api data loop run", str(err))
+                bt.logging.debug(
+                    traceback.print_exception(type(err), err, err.__traceback__)
+                )

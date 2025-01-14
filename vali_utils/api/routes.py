@@ -7,7 +7,8 @@ from typing import Optional
 from common.data import DataSource
 from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
-from .models import QueryRequest, QueryResponse, HealthResponse
+from .models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize
+from typing import List
 import random
 
 router = APIRouter()
@@ -104,3 +105,131 @@ async def health_check(validator=Depends(get_validator)):
         "timestamp": dt.datetime.utcnow(),
         "miners_available": len(miner_uids)
     }
+
+
+@router.get("/miners", response_model=List[MinerInfo])
+async def get_miner_indices(validator=Depends(get_validator)):
+    """Get information about all miners and their data holdings"""
+    try:
+        with validator.evaluator.storage.lock:
+            connection = validator.evaluator.storage._create_connection()
+            cursor = connection.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    hotkey,
+                    credibility,
+                    bucketCount,
+                    contentSizeBytesReddit,
+                    contentSizeBytesTwitter,
+                    lastUpdated
+                FROM APIMiner
+                ORDER BY credibility DESC
+            """)
+            
+            miners = [
+                MinerInfo(
+                    hotkey=row[0],
+                    credibility=row[1],
+                    bucket_count=row[2],
+                    content_size_bytes_reddit=row[3],
+                    content_size_bytes_twitter=row[4],
+                    last_updated=row[5]
+                )
+                for row in cursor.fetchall()
+            ]
+            
+            connection.close()
+            return miners
+            
+    except Exception as e:
+        bt.logging.error(f"Error getting miner indices: {str(e)}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/labels/{source}", response_model=List[LabelSize])
+async def get_label_sizes(
+    source: str,
+    validator=Depends(get_validator)
+):
+    """Get content size information by label for a specific source"""
+    try:
+        # Validate source
+        try:
+            source_id = DataSource[source.upper()].value
+        except KeyError:
+            raise HTTPException(400, f"Invalid source: {source}")
+            
+        with validator.evaluator.storage.lock:
+            connection = validator.evaluator.storage._create_connection()
+            cursor = connection.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    labelValue,
+                    contentSizeBytes,
+                    adjContentSizeBytes
+                FROM APILabelSize
+                WHERE source = ?
+                ORDER BY adjContentSizeBytes DESC
+            """, [source_id])
+            
+            labels = [
+                LabelSize(
+                    label_value=row[0],
+                    content_size_bytes=row[1],
+                    adj_content_size_bytes=row[2]
+                )
+                for row in cursor.fetchall()
+            ]
+            
+            connection.close()
+            return labels
+            
+    except Exception as e:
+        bt.logging.error(f"Error getting label sizes: {str(e)}")
+        raise HTTPException(500, str(e))
+
+
+@router.get("/ages/{source}", response_model=List[AgeSize])
+async def get_age_sizes(
+    source: str,
+    validator=Depends(get_validator)
+):
+    """Get content size information by age bucket for a specific source"""
+    try:
+        # Validate source
+        try:
+            source_id = DataSource[source.upper()].value
+        except KeyError:
+            raise HTTPException(400, f"Invalid source: {source}")
+            
+        with validator.evaluator.storage.lock:
+            connection = validator.evaluator.storage._create_connection()
+            cursor = connection.cursor()
+            
+            cursor.execute("""
+                SELECT 
+                    timeBucketId,
+                    contentSizeBytes,
+                    adjContentSizeBytes
+                FROM APIAgeSize
+                WHERE source = ?
+                ORDER BY timeBucketId DESC
+            """, [source_id])
+            
+            ages = [
+                AgeSize(
+                    time_bucket_id=row[0],
+                    content_size_bytes=row[1],
+                    adj_content_size_bytes=row[2]
+                )
+                for row in cursor.fetchall()
+            ]
+            
+            connection.close()
+            return ages
+            
+    except Exception as e:
+        bt.logging.error(f"Error getting age sizes: {str(e)}")
+        raise HTTPException(500, str(e))

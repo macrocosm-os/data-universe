@@ -88,3 +88,27 @@ class HealthResponse(StrictBaseModel):
     timestamp: dt.datetime = Field(description="Current UTC timestamp")
     miners_available: int = Field(description="Number of available miners")
     version: str = Field(default="1.0.0", description="API version")
+
+
+class MinerInfo(BaseModel):
+    """Information about a miner's current data"""
+    hotkey: str
+    credibility: float
+    bucket_count: int 
+    content_size_bytes_reddit: int
+    content_size_bytes_twitter: int
+    last_updated: dt.datetime
+
+
+class LabelSize(BaseModel):
+    """Content size information for a specific label"""
+    label_value: str
+    content_size_bytes: int
+    adj_content_size_bytes: int
+
+
+class AgeSize(BaseModel):
+    """Content size information for a specific time bucket"""
+    time_bucket_id: int
+    content_size_bytes: int
+    adj_content_size_bytes: int
