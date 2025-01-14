@@ -173,6 +173,12 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             )
 
             cursor.execute(SqliteMemoryValidatorStorage.HF_METADATA_TABLE_CREATE)
+
+            # Creating the tables for the API
+            cursor.execute(SqliteMemoryValidatorStorage.API_MINER_TABLE_CREATE)
+            cursor.execute(SqliteMemoryValidatorStorage.API_LABEL_SIZE_TABLE_CREATE)
+            cursor.execute(SqliteMemoryValidatorStorage.API_AGE_SIZE_TABLE_CREATE)
+
             # Lock to avoid concurrency issues on interacting with the database.
             self.lock = threading.RLock()
 
