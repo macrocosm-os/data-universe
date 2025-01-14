@@ -537,8 +537,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         LEFT JOIN MinerIndex USING (minerId)
                         WHERE source = 1
                         GROUP BY timeBucketId
-                        ORDER BY adjContentSizeBytes DESC
-                        LIMIT 1000
                         
                         UNION ALL
                         
@@ -551,13 +549,12 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         LEFT JOIN MinerIndex USING (minerId)
                         WHERE source = 2
                         GROUP BY timeBucketId
-                        ORDER BY adjContentSizeBytes DESC
-                        LIMIT 1000
                     )
+                    ORDER BY adjContentSizeBytes DESC
+                    LIMIT 1000
                 """)
                 
                 connection.commit()
-
 
     def upsert_label_sizes(self):
         """Updates APILabelSize table with label-based content metrics for use in API."""
