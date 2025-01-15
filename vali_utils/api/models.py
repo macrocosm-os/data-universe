@@ -4,6 +4,37 @@ import datetime as dt
 from common.data import DataSource, StrictBaseModel
 
 
+class DesirabilityItem(StrictBaseModel):
+    source: str = Field(description="Data source identifier")
+    label: str = Field(description="Label for content")
+    weight: float = Field(ge=0.0, le=1.0, description="Weight value")
+
+    @field_validator('source')
+    @classmethod
+    def validate_source(cls, v: str) -> str:
+        try:
+            source = DataSource[v.upper()]
+            return v.lower()
+        except KeyError:
+            valid_sources = [s.name.lower() for s in DataSource]
+            raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
+
+
+class DesirabilityRequest(StrictBaseModel):
+    desirabilities: List[DesirabilityItem] = Field(
+        description="List of source items with label weights",
+        min_length=1
+    )
+
+    @field_validator('desirabilities')
+    @classmethod
+    def validate_weights(cls, v: List[DesirabilityItem]) -> List[DesirabilityItem]:
+        for item in v:
+            if item.weight > 1.0:
+                raise ValueError(f"Weight must be between 0 and 1")
+        return v
+
+
 class QueryRequest(StrictBaseModel):
     """Request model for data queries"""
     source: str = Field(
@@ -88,7 +119,8 @@ class HealthResponse(StrictBaseModel):
     timestamp: dt.datetime = Field(description="Current UTC timestamp")
     miners_available: int = Field(description="Number of available miners")
     version: str = Field(default="1.0.0", description="API version")
-
+    netuid: int = Field(description="Network UID")
+    hotkey: str = Field(description="Validator hotkey address")
 
 class MinerInfo(BaseModel):
     """Information about a miner's current data"""
