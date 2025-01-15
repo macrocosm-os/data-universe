@@ -117,20 +117,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                         )"""
 
     #############
-    # Information for miners, labels, and ages for API
-
-    # Table for information by miner hotkey
-    # We store all hotkeys. ~250 max.
-    # Table for information by miner hotkey
-    # We store all hotkeys. ~250 max.
-    API_MINER_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS APIMiner (
-                                hotkey                  VARCHAR(64)     NOT NULL    PRIMARY KEY,
-                                credibility             FLOAT           NOT NULL,
-                                bucketCount             INTEGER         NOT NULL,
-                                contentSizeBytesReddit  INTEGER         NOT NULL,
-                                contentSizeBytesTwitter INTEGER         NOT NULL,
-                                lastUpdated             TIMESTAMP(6)    NOT NULL
-                            )"""
 
     # Table for content size by label (labelValue 'NULL' is OK.)
     # We only store top 1k per source for databox limits
@@ -141,16 +127,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                     adjContentSizeBytes INTEGER         NOT NULL,
                                     PRIMARY KEY(source, labelValue)
                                 )"""
-
-    # Table for content size by age
-    # We only store top 1k per source for databox limits
-    API_AGE_SIZE_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS APIAgeSize (
-                                source              INTEGER     NOT NULL,
-                                timeBucketId        INTEGER     NOT NULL,
-                                contentSizeBytes    INTEGER     NOT NULL,
-                                adjContentSizeBytes INTEGER     NOT NULL,
-                                PRIMARY KEY(source, timeBucketId)
-                            )"""
     #############
 
     def __init__(self):
@@ -176,7 +152,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
             # Creating the tables for the API
             cursor.execute(SqliteMemoryValidatorStorage.API_LABEL_SIZE_TABLE_CREATE)
-            cursor.execute(SqliteMemoryValidatorStorage.API_AGE_SIZE_TABLE_CREATE)
 
             # Lock to avoid concurrency issues on interacting with the database.
             self.lock = threading.RLock()
@@ -477,52 +452,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 )
                 result = cursor.fetchone()
                 return result[0] if result and result[0] is not None else None    
-
-    def upsert_age_sizes(self):
-        """Updates APIAgeSize table with age-based content metrics for use in API."""
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                
-                # Truncate the table
-                cursor.execute("DELETE FROM APIAgeSize")
-                
-                # Insert data for both sources in a single query
-                cursor.execute("""
-                    INSERT INTO APIAgeSize (
-                        source,
-                        timeBucketId,
-                        contentSizeBytes,
-                        adjContentSizeBytes
-                    )
-                    SELECT * FROM (
-                        SELECT 
-                            1 as source,
-                            timeBucketId,
-                            SUM(contentSizeBytes) as contentSizeBytes,
-                            SUM(contentSizeBytes * credibility) as adjContentSizeBytes
-                        FROM Miner
-                        LEFT JOIN MinerIndex USING (minerId)
-                        WHERE source = 1
-                        GROUP BY timeBucketId
-                        
-                        UNION ALL
-                        
-                        SELECT 
-                            2 as source,
-                            timeBucketId,
-                            SUM(contentSizeBytes) as contentSizeBytes,
-                            SUM(contentSizeBytes * credibility) as adjContentSizeBytes
-                        FROM Miner
-                        LEFT JOIN MinerIndex USING (minerId)
-                        WHERE source = 2
-                        GROUP BY timeBucketId
-                    )
-                    ORDER BY adjContentSizeBytes DESC
-                    LIMIT 1000
-                """)
-                
-                connection.commit()
 
     def upsert_label_sizes(self):
         """Updates APILabelSize table with label-based content metrics for use in API."""

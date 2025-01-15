@@ -590,9 +590,6 @@ class MinerEvaluator:
                     minutes=45
                 )
 
-                # Get Age Sizes from SqliteMemory and write to api label size table.
-                self.storage.upsert_age_sizes()
-
                 # Get Label Sizes from SqliteMemory and write to api age size table.
                 self.storage.upsert_label_sizes()
 

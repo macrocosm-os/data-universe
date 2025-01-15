@@ -107,46 +107,6 @@ async def health_check(validator=Depends(get_validator)):
     }
 
 
-@router.get("/miners", response_model=List[MinerInfo])
-async def get_miner_indices(validator=Depends(get_validator)):
-    """Get information about all miners and their data holdings"""
-    try:
-        with validator.evaluator.storage.lock:
-            connection = validator.evaluator.storage._create_connection()
-            cursor = connection.cursor()
-            
-            cursor.execute("""
-                SELECT 
-                    hotkey,
-                    credibility,
-                    bucketCount,
-                    contentSizeBytesReddit,
-                    contentSizeBytesTwitter,
-                    lastUpdated
-                FROM APIMiner
-                ORDER BY credibility DESC
-            """)
-            
-            miners = [
-                MinerInfo(
-                    hotkey=row[0],
-                    credibility=row[1],
-                    bucket_count=row[2],
-                    content_size_bytes_reddit=row[3],
-                    content_size_bytes_twitter=row[4],
-                    last_updated=row[5]
-                )
-                for row in cursor.fetchall()
-            ]
-            
-            connection.close()
-            return miners
-            
-    except Exception as e:
-        bt.logging.error(f"Error getting miner indices: {str(e)}")
-        raise HTTPException(500, str(e))
-
-
 @router.get("/labels/{source}", response_model=List[LabelSize])
 async def get_label_sizes(
     source: str,
@@ -196,14 +156,14 @@ async def get_age_sizes(
     source: str,
     validator=Depends(get_validator)
 ):
-    """Get content size information by age bucket for a specific source"""
+    """Get content size information by age bucket for a specific source from Miner and MinerIndex validator tables"""
     try:
         # Validate source
         try:
             source_id = DataSource[source.upper()].value
         except KeyError:
             raise HTTPException(400, f"Invalid source: {source}")
-            
+
         with validator.evaluator.storage.lock:
             connection = validator.evaluator.storage._create_connection()
             cursor = connection.cursor()
@@ -211,13 +171,15 @@ async def get_age_sizes(
             cursor.execute("""
                 SELECT 
                     timeBucketId,
-                    contentSizeBytes,
-                    adjContentSizeBytes
-                FROM APIAgeSize
+                    SUM(contentSizeBytes) as contentSizeBytes,
+                    SUM(contentSizeBytes * credibility) as adjContentSizeBytes
+                FROM Miner
+                JOIN MinerIndex USING (minerId)
                 WHERE source = ?
+                GROUP BY timeBucketId
                 ORDER BY timeBucketId DESC
             """, [source_id])
-            
+
             ages = [
                 AgeSize(
                     time_bucket_id=row[0],
@@ -226,10 +188,7 @@ async def get_age_sizes(
                 )
                 for row in cursor.fetchall()
             ]
-            
             connection.close()
             return ages
-            
     except Exception as e:
-        bt.logging.error(f"Error getting age sizes: {str(e)}")
-        raise HTTPException(500, str(e))
+        raise HTTPException(500, f"Error retrieving age sizes: {str(e)}")
