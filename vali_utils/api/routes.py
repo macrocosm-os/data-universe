@@ -212,7 +212,8 @@ async def set_desirabilities(
 ):
     """Set desirabilities endpoint"""
     try:
-        success, message = await run_uploader_from_gravity(validator.config, request)
+        request_data = [item.model_dump() for item in request]
+        success, message = await run_uploader_from_gravity(validator.config, request_data)
         if not success:
             bt.logging.error(f"Could not set desirabilities error message\n: {message}")
             raise HTTPException(status_code=400, detail=message)
