@@ -286,10 +286,6 @@ class Validator:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
-            self.api_thread = threading.Thread(
-                target=self.evaluator.run_api_data_loop, daemon=True
-            )
-            self.api_thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
 
