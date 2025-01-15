@@ -39,8 +39,10 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
         except Exception as e:
             bt.logging.error(f"Unexpected error while reading file: {e}.")
             return None
+
     elif desirability_dict:
-        pass
+        data = desirability_dict
+
     else:
         bt.logging.error(f"File path and/or list of desirabilities is not provided.")
         return None
