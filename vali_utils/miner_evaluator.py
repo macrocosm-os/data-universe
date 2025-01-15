@@ -590,9 +590,6 @@ class MinerEvaluator:
                     minutes=45
                 )
 
-                # Get Miners from SqliteMemory and write to api miner table.
-                self.storage.upsert_api_miners()
-
                 # Get Age Sizes from SqliteMemory and write to api label size table.
                 self.storage.upsert_age_sizes()
 

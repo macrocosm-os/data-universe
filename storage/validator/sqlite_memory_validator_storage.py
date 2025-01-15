@@ -175,7 +175,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor.execute(SqliteMemoryValidatorStorage.HF_METADATA_TABLE_CREATE)
 
             # Creating the tables for the API
-            cursor.execute(SqliteMemoryValidatorStorage.API_MINER_TABLE_CREATE)
             cursor.execute(SqliteMemoryValidatorStorage.API_LABEL_SIZE_TABLE_CREATE)
             cursor.execute(SqliteMemoryValidatorStorage.API_AGE_SIZE_TABLE_CREATE)
 
@@ -477,38 +476,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     "SELECT MAX(updated_at) FROM HFMetadata WHERE minerId = ?", (miner_id,)
                 )
                 result = cursor.fetchone()
-                return result[0] if result and result[0] is not None else None
-            
-    def upsert_api_miners(self):
-        """Updates APIMiner table with latest miner metrics for use in API."""
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                
-                cursor.execute("DELETE FROM APIMiner")  # SQLite doesn't have TRUNCATE, uses DELETE
-                
-                cursor.execute("""
-                    INSERT INTO APIMiner (
-                        hotkey,
-                        credibility,
-                        bucketCount,
-                        contentSizeBytesReddit,
-                        contentSizeBytesTwitter,
-                        lastUpdated
-                    )
-                    SELECT 
-                        m.hotkey,
-                        m.credibility,
-                        COUNT(mi.minerId),
-                        SUM(CASE WHEN source = 1 THEN contentSizeBytes ELSE 0 END),
-                        SUM(CASE WHEN source = 2 THEN contentSizeBytes ELSE 0 END),
-                        m.lastUpdated
-                    FROM Miner m
-                    LEFT JOIN MinerIndex mi USING (minerId)
-                    GROUP BY m.minerId, m.hotkey, m.credibility, m.lastUpdated
-                """)
-                
-                connection.commit()
+                return result[0] if result and result[0] is not None else None    
 
     def upsert_age_sizes(self):
         """Updates APIAgeSize table with age-based content metrics for use in API."""
