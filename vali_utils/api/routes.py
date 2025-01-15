@@ -202,15 +202,13 @@ async def get_age_sizes(
             return ages
     except Exception as e:
         raise HTTPException(500, f"Error retrieving age sizes: {str(e)}")
-    
 
 
 @router.post("/set_desirabilities")
 async def set_desirabilities(
-    request: List[DesirabilityItem],  # Note: directly accepting a list
-    validator=Depends(get_validator)
+        request: List[DesirabilityItem],
+        validator=Depends(get_validator)
 ):
-    """Set desirabilities endpoint"""
     try:
         request_data = [item.model_dump() for item in request]
         success, message = await run_uploader_from_gravity(validator.config, request_data)
