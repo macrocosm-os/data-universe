@@ -7,7 +7,8 @@ from typing import Optional
 from common.data import DataSource
 from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
-from .models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize, LabelBytes
+from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize, LabelBytes, DesirabilityRequest
+from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from typing import List
 import random
 
@@ -199,6 +200,26 @@ async def get_age_sizes(
     except Exception as e:
         raise HTTPException(500, f"Error retrieving age sizes: {str(e)}")
     
+
+
+@router.post("/set_desirabilities")
+async def set_desirabilities(
+    request: DesirabilityRequest,
+    validator=Depends(get_validator)
+):
+    """Set desirabilities endpoint"""
+    try:
+        success, message = await run_uploader_from_gravity(validator.config, request.desirabilities)
+        if not success:
+            bt.logging.error(f"Could not set desirabilities error message\n: {message}")
+            raise HTTPException(status_code=400, detail=message)
+        return {"status": "success", "message": message}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        bt.logging.error(f"Error setting desirabilities: {str(e)}")
+        raise HTTPException(status_code=500, detail=str(e))
+
 
 @router.get("/bytes_by_label/{label}", response_model=LabelBytes)
 async def get_bytes_by_label(
