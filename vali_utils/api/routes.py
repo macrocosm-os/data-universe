@@ -142,8 +142,8 @@ async def get_label_sizes(
             labels = [
                 LabelSize(
                     label_value=validator.evaluator.storage.label_dict.get_by_id(row[0]),
-                    content_size_bytes=row[1],
-                    adj_content_size_bytes=row[2] 
+                    content_size_bytes=int(row[1]),
+                    adj_content_size_bytes=int(row[2]) 
                 )
                 for row in cursor.fetchall()
             ]
@@ -189,8 +189,8 @@ async def get_age_sizes(
             ages = [
                 AgeSize(
                     time_bucket_id=row[0],
-                    content_size_bytes=row[1],
-                    adj_content_size_bytes=row[2]
+                    content_size_bytes=int(row[1]),
+                    adj_content_size_bytes=int(row[2])
                 )
                 for row in cursor.fetchall()
             ]
@@ -239,8 +239,8 @@ async def get_bytes_by_label(
 
             return LabelBytes(
                 label=label,
-                total_bytes=total_bytes,
-                adj_total_bytes=adj_total_bytes
+                total_bytes=int(total_bytes),
+                adj_total_bytes=int(adj_total_bytes)
             )
 
     except Exception as e:
