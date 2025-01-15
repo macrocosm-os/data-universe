@@ -112,3 +112,10 @@ class AgeSize(BaseModel):
     time_bucket_id: int
     content_size_bytes: int
     adj_content_size_bytes: int
+
+
+class LabelBytes(BaseModel):
+    """Byte size information for a particular label"""
+    label: str
+    total_bytes: int
+    adj_total_bytes: float  

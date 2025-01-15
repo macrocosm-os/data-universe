@@ -7,7 +7,7 @@ from typing import Optional
 from common.data import DataSource
 from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
-from .models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize
+from .models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize, LabelBytes
 from typing import List
 import random
 
@@ -114,6 +114,7 @@ async def get_label_sizes(
 ):
     """Get content size information by label for a specific source"""
     try:
+        # Validate source
         try:
             source_id = DataSource[source.upper()].value
         except KeyError:
@@ -197,3 +198,51 @@ async def get_age_sizes(
             return ages
     except Exception as e:
         raise HTTPException(500, f"Error retrieving age sizes: {str(e)}")
+    
+
+@router.get("/bytes_by_label/{label}", response_model=LabelBytes)
+async def get_bytes_by_label(
+    label: str,
+    validator=Depends(get_validator)
+):
+    """
+    Returns the total sum of contentSizeBytes and adjusted bytes for the given label.
+    """
+    try:
+        # Normalize label as done in the storage system
+        normalized_label = label.strip().casefold()
+        if not normalized_label:
+            return LabelBytes(label=label, total_bytes=0, adj_total_bytes=0.0)
+
+        with validator.evaluator.storage.lock:
+            connection = validator.evaluator.storage._create_connection()
+            cursor = connection.cursor()
+
+            # Get label ID from label dictionary
+            label_id = validator.evaluator.storage.label_dict.get_or_insert(normalized_label)
+
+            # Query both raw bytes and adjusted bytes (weighted by credibility)
+            cursor.execute("""
+                SELECT 
+                    SUM(contentSizeBytes) as total_bytes,
+                    SUM(contentSizeBytes * credibility) as adj_total_bytes
+                FROM MinerIndex
+                JOIN Miner USING (minerId)
+                WHERE labelId = ?
+            """, [label_id])
+
+            row = cursor.fetchone()
+            total_bytes = row[0] if row and row[0] is not None else 0
+            adj_total_bytes = row[1] if row and row[1] is not None else 0.0
+
+            connection.close()
+
+            return LabelBytes(
+                label=label,
+                total_bytes=total_bytes,
+                adj_total_bytes=adj_total_bytes
+            )
+
+    except Exception as e:
+        bt.logging.error(f"Error getting bytes for label {label}: {str(e)}")
+        raise HTTPException(500, f"Error retrieving bytes for label: {str(e)}")
