@@ -1,38 +1,13 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import datetime as dt
 from common.data import DataSource, StrictBaseModel
 
 
-class DesirabilityItem(StrictBaseModel):
-    source: str = Field(description="Data source identifier")
-    label: str = Field(description="Label for content")
-    weight: float = Field(ge=0.0, le=1.0, description="Weight value")
-
-    @field_validator('source')
-    @classmethod
-    def validate_source(cls, v: str) -> str:
-        try:
-            source = DataSource[v.upper()]
-            return v.lower()
-        except KeyError:
-            valid_sources = [s.name.lower() for s in DataSource]
-            raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
-
-
 class DesirabilityRequest(StrictBaseModel):
-    desirabilities: List[DesirabilityItem] = Field(
-        description="List of source items with label weights",
-        min_length=1
+    desirabilities: List[Dict[str, Any]] = Field(
+        description="List of source items with label weights"
     )
-
-    @field_validator('desirabilities')
-    @classmethod
-    def validate_weights(cls, v: List[DesirabilityItem]) -> List[DesirabilityItem]:
-        for item in v:
-            if item.weight > 1.0:
-                raise ValueError(f"Weight must be between 0 and 1")
-        return v
 
 
 class QueryRequest(StrictBaseModel):
