@@ -114,31 +114,35 @@ async def get_label_sizes(
 ):
     """Get content size information by label for a specific source"""
     try:
-        # Validate source
         try:
             source_id = DataSource[source.upper()].value
         except KeyError:
             raise HTTPException(400, f"Invalid source: {source}")
-            
+
         with validator.evaluator.storage.lock:
             connection = validator.evaluator.storage._create_connection()
             cursor = connection.cursor()
             
+            # Direct query from MinerIndex and Miner tables
             cursor.execute("""
                 SELECT 
-                    labelValue,
-                    contentSizeBytes,
-                    adjContentSizeBytes
-                FROM APILabelSize
+                    labelId,
+                    SUM(contentSizeBytes) as contentSizeBytes,
+                    SUM(contentSizeBytes * credibility) as adjContentSizeBytes
+                FROM MinerIndex
+                JOIN Miner USING (minerId)
                 WHERE source = ?
+                GROUP BY labelId
                 ORDER BY adjContentSizeBytes DESC
+                LIMIT 1000
             """, [source_id])
             
+            # Translate labelIds to label values using label_dict
             labels = [
                 LabelSize(
-                    label_value=row[0],
+                    label_value=validator.evaluator.storage.label_dict.get_by_id(row[0]),
                     content_size_bytes=row[1],
-                    adj_content_size_bytes=row[2]
+                    adj_content_size_bytes=row[2] 
                 )
                 for row in cursor.fetchall()
             ]
@@ -178,6 +182,7 @@ async def get_age_sizes(
                 WHERE source = ?
                 GROUP BY timeBucketId
                 ORDER BY timeBucketId DESC
+                LIMIT 1000
             """, [source_id])
 
             ages = [

@@ -116,18 +116,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                         PRIMARY KEY (minerId, repo_name)
                                         )"""
 
-    #############
-
-    # Table for content size by label (labelValue 'NULL' is OK.)
-    # We only store top 1k per source for databox limits
-    API_LABEL_SIZE_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS APILabelSize (
-                                    source              INTEGER         NOT NULL,
-                                    labelValue          VARCHAR(32)     NOT NULL,
-                                    contentSizeBytes    INTEGER         NOT NULL,
-                                    adjContentSizeBytes INTEGER         NOT NULL,
-                                    PRIMARY KEY(source, labelValue)
-                                )"""
-    #############
 
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
@@ -149,9 +137,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             )
 
             cursor.execute(SqliteMemoryValidatorStorage.HF_METADATA_TABLE_CREATE)
-
-            # Creating the tables for the API
-            cursor.execute(SqliteMemoryValidatorStorage.API_LABEL_SIZE_TABLE_CREATE)
 
             # Lock to avoid concurrency issues on interacting with the database.
             self.lock = threading.RLock()
@@ -452,54 +437,3 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 )
                 result = cursor.fetchone()
                 return result[0] if result and result[0] is not None else None    
-
-    def upsert_label_sizes(self):
-        """Updates APILabelSize table with label-based content metrics for use in API."""
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                
-                # Truncate the table
-                cursor.execute("DELETE FROM APILabelSize")
-                
-                for source in [1, 2]:  # 1 for Reddit, 2 for Twitter/X
-                    cursor.execute(
-                        """
-                        SELECT 
-                            labelId,
-                            SUM(contentSizeBytes) as contentSizeBytes,
-                            SUM(contentSizeBytes * credibility) as adjContentSizeBytes
-                        FROM Miner
-                        LEFT JOIN MinerIndex USING (minerId)
-                        WHERE source = ?
-                        GROUP BY labelId
-                        ORDER BY adjContentSizeBytes DESC
-                        LIMIT 1000
-                        """,
-                        [source]
-                    )
-                    
-                    # Prepare the values with translated labels before inserting
-                    vals = [
-                        (
-                            source,
-                            self.label_dict.get_by_id(row[0]),  # Translate labelId to value
-                            row[1],  # contentSizeBytes
-                            int(row[2])  # adjContentSizeBytes
-                        )
-                        for row in cursor.fetchall()
-                    ]
-                    
-                    cursor.executemany(
-                        """
-                        INSERT INTO APILabelSize (
-                            source,
-                            labelValue,
-                            contentSizeBytes,
-                            adjContentSizeBytes
-                        ) VALUES (?, ?, ?, ?)
-                        """,
-                        vals
-                    )
-                
-                connection.commit()
