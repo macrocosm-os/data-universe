@@ -7,7 +7,7 @@ from typing import Optional
 from common.data import DataSource
 from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
-from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize, LabelBytes, DesirabilityRequest
+from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize, LabelBytes, DesirabilityItem
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from typing import List
 import random
@@ -207,12 +207,12 @@ async def get_age_sizes(
 
 @router.post("/set_desirabilities")
 async def set_desirabilities(
-    request: DesirabilityRequest,
+    request: List[DesirabilityItem],  # Note: directly accepting a list
     validator=Depends(get_validator)
 ):
     """Set desirabilities endpoint"""
     try:
-        success, message = await run_uploader_from_gravity(validator.config, request.desirabilities)
+        success, message = await run_uploader_from_gravity(validator.config, request)
         if not success:
             bt.logging.error(f"Could not set desirabilities error message\n: {message}")
             raise HTTPException(status_code=400, detail=message)

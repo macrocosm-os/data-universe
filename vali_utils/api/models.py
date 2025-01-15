@@ -4,10 +4,9 @@ import datetime as dt
 from common.data import DataSource, StrictBaseModel
 
 
-class DesirabilityRequest(StrictBaseModel):
-    desirabilities: List[Dict[str, Any]] = Field(
-        description="List of source items with label weights"
-    )
+class DesirabilityItem(BaseModel):
+    source_name: str
+    label_weights: Dict[str, float]
 
 
 class QueryRequest(StrictBaseModel):
