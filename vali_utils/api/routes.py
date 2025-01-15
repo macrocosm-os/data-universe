@@ -104,7 +104,10 @@ async def health_check(validator=Depends(get_validator)):
     return {
         "status": "healthy" if validator.is_healthy() else "unhealthy",
         "timestamp": dt.datetime.utcnow(),
-        "miners_available": len(miner_uids)
+        "miners_available": len(miner_uids),
+        "netuid": validator.config.netuid,
+        "hotkey": validator.wallet.hotkey.ss58_address,
+        "version": "1.0.0"
     }
 
 
