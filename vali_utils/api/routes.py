@@ -8,6 +8,7 @@ from common.data import DataSource
 from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize, LabelBytes, DesirabilityItem
+from vali_utils.api.auth import verify_api_key
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from typing import List
 import random
@@ -23,7 +24,9 @@ def get_validator():
 
 
 @router.post("/query", response_model=QueryResponse)
-async def query_data(request: QueryRequest, validator=Depends(get_validator)):
+async def query_data(request: QueryRequest,
+                     validator=Depends(get_validator),
+                     api_key: str = Depends(verify_api_key)):
     """Handle data queries"""
     try:
         # Get miner UIDs using your utility function
@@ -113,9 +116,9 @@ async def health_check(validator=Depends(get_validator)):
 
 @router.get("/labels/{source}", response_model=List[LabelSize])
 async def get_label_sizes(
-    source: str,
-    validator=Depends(get_validator)
-):
+        source: str,
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)):
     """Get content size information by label for a specific source"""
     try:
         # Validate source
@@ -162,8 +165,10 @@ async def get_label_sizes(
 
 @router.get("/ages/{source}", response_model=List[AgeSize])
 async def get_age_sizes(
-    source: str,
-    validator=Depends(get_validator)
+        source: str,
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)
+
 ):
     """Get content size information by age bucket for a specific source from Miner and MinerIndex validator tables"""
     try:
@@ -207,8 +212,9 @@ async def get_age_sizes(
 @router.post("/set_desirabilities")
 async def set_desirabilities(
         request: List[DesirabilityItem],
-        validator=Depends(get_validator)
-):
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)):
+
     try:
         request_data = [item.model_dump() for item in request]
         success, message = await run_uploader_from_gravity(validator.config, request_data)
@@ -225,9 +231,9 @@ async def set_desirabilities(
 
 @router.get("/bytes_by_label/{label}", response_model=LabelBytes)
 async def get_bytes_by_label(
-    label: str,
-    validator=Depends(get_validator)
-):
+        label: str,
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)):
     """
     Returns the total sum of contentSizeBytes and adjusted bytes for the given label.
     """

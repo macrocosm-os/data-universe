@@ -114,6 +114,7 @@ class HealthResponse(StrictBaseModel):
     netuid: int = Field(description="Network UID")
     hotkey: str = Field(description="Validator hotkey address")
 
+
 class MinerInfo(BaseModel):
     """Information about a miner's current data"""
     hotkey: str
