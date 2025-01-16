@@ -101,7 +101,8 @@ async def query_data(request: QueryRequest,
 
 
 @router.get("/health", response_model=HealthResponse)
-async def health_check(validator=Depends(get_validator)):
+async def health_check(validator=Depends(get_validator),
+                       api_key: str = Depends(verify_api_key)):
     """Health check endpoint"""
     miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid)
     return {
