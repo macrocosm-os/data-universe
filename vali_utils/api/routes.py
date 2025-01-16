@@ -114,7 +114,7 @@ async def health_check(validator=Depends(get_validator)):
     }
 
 
-@router.get("/labels/{source}", response_model=List[LabelSize])
+@router.get("/get_top_labels_by_source/{source}", response_model=List[LabelSize])
 async def get_label_sizes(
         source: str,
         validator=Depends(get_validator),
@@ -229,7 +229,7 @@ async def set_desirabilities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/bytes_by_label/{label}", response_model=LabelBytes)
+@router.get("/get_bytes_by_label/{label}", response_model=LabelBytes)
 async def get_bytes_by_label(
         label: str,
         validator=Depends(get_validator),
