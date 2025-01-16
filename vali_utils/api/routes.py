@@ -164,7 +164,7 @@ async def get_label_sizes(
         raise HTTPException(500, str(e))
 
 
-@router.get("/ages/{source}", response_model=List[AgeSize])
+@router.get("/ages", response_model=List[AgeSize])
 async def get_age_sizes(
         source: str,
         validator=Depends(get_validator),
@@ -230,7 +230,7 @@ async def set_desirabilities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/get_bytes_by_label/{label}", response_model=LabelBytes)
+@router.get("/get_bytes_by_label", response_model=LabelBytes)
 async def get_bytes_by_label(
         label: str,
         validator=Depends(get_validator),
