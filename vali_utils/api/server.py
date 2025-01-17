@@ -43,7 +43,7 @@ class ValidatorAPI:
         get_validator.api = self
 
         # Include API routes
-        app.include_router(router, prefix="/api")
+        app.include_router(router, prefix="/api/v1")
 
         return app
 

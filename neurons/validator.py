@@ -333,6 +333,7 @@ class Validator:
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
             if self.config.neuron.api_on:
+                bt.logging.info("Starting Validator API...")
                 from vali_utils.api.server import ValidatorAPI
                 self.api = ValidatorAPI(self, port=self.config.neuron.api_port)
                 self.api.start()
