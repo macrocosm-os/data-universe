@@ -116,6 +116,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                                         PRIMARY KEY (minerId, repo_name)
                                         )"""
 
+
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
 
@@ -136,6 +137,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             )
 
             cursor.execute(SqliteMemoryValidatorStorage.HF_METADATA_TABLE_CREATE)
+
             # Lock to avoid concurrency issues on interacting with the database.
             self.lock = threading.RLock()
 
@@ -434,4 +436,4 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     "SELECT MAX(updated_at) FROM HFMetadata WHERE minerId = ?", (miner_id,)
                 )
                 result = cursor.fetchone()
-                return result[0] if result and result[0] is not None else None
+                return result[0] if result and result[0] is not None else None    

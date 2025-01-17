@@ -1,7 +1,30 @@
 from pydantic import BaseModel, Field, field_validator
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any
 import datetime as dt
 from common.data import DataSource, StrictBaseModel
+
+
+class DesirabilityItem(StrictBaseModel):
+    source_name: str = Field(description="Source name (x or reddit)")
+    label_weights: Dict[str, float] = Field(description="Dictionary of labels and their weights")
+
+    @field_validator('source_name')
+    @classmethod
+    def validate_source(cls, v: str) -> str:
+        try:
+            source = DataSource[v.upper()]
+            return v.lower()
+        except KeyError:
+            valid_sources = [s.name.lower() for s in DataSource]
+            raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
+
+    @field_validator('label_weights')
+    @classmethod
+    def validate_weights(cls, v: Dict[str, float]) -> Dict[str, float]:
+        for weight in v.values():
+            if not 0 <= weight <= 1:
+                raise ValueError("Weights must be between 0 and 1")
+        return v
 
 
 class QueryRequest(StrictBaseModel):
@@ -88,3 +111,36 @@ class HealthResponse(StrictBaseModel):
     timestamp: dt.datetime = Field(description="Current UTC timestamp")
     miners_available: int = Field(description="Number of available miners")
     version: str = Field(default="1.0.0", description="API version")
+    netuid: int = Field(description="Network UID")
+    hotkey: str = Field(description="Validator hotkey address")
+
+
+class MinerInfo(BaseModel):
+    """Information about a miner's current data"""
+    hotkey: str
+    credibility: float
+    bucket_count: int 
+    content_size_bytes_reddit: int
+    content_size_bytes_twitter: int
+    last_updated: dt.datetime
+
+
+class LabelSize(BaseModel):
+    """Content size information for a specific label"""
+    label_value: str
+    content_size_bytes: int
+    adj_content_size_bytes: int
+
+
+class AgeSize(BaseModel):
+    """Content size information for a specific time bucket"""
+    time_bucket_id: int
+    content_size_bytes: int
+    adj_content_size_bytes: int
+
+
+class LabelBytes(BaseModel):
+    """Byte size information for a particular label"""
+    label: str
+    total_bytes: int
+    adj_total_bytes: float  
