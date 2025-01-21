@@ -21,9 +21,11 @@ class APIKeyManager:
         # Master key from environment
         self.master_key = os.getenv('MASTER_KEY')
         if not self.master_key:
-            self.master_key = f"sk_master_{secrets.token_urlsafe(32)}"
-            bt.logging.info(f"\n[IMPORTANT] Master API Key: {self.master_key}\nStore this safely!\n")
-
+            bt.logging.error("MASTER_KEY not found in environment. API will be disabled.")
+            raise ValueError(
+                "MASTER_KEY environment variable is required to enable API. "
+                "Please set MASTER_KEY in your .env file."
+            )
         self.db_path = db_path
         self.lock = threading.Lock()
         self._init_db()
