@@ -3,12 +3,13 @@
 from fastapi import APIRouter, HTTPException, Depends
 import bittensor as bt
 import datetime as dt
-from typing import Optional
 from common.data import DataSource
 from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
-from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, MinerInfo, LabelSize, AgeSize, LabelBytes, DesirabilityItem
-from vali_utils.api.auth import verify_api_key
+from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, DesirabilityItem
+from vali_utils.api.auth.auth import require_master_key, verify_api_key
+
+
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from typing import List
 import random
@@ -53,7 +54,7 @@ async def query_data(request: QueryRequest,
             limit=request.limit
         )
 
-        # Query miners in parallel
+        # Query random miner
         responses = []
         async with bt.dendrite(wallet=validator.wallet) as dendrite:
             uid = random.choice(miner_uids)
@@ -214,7 +215,7 @@ async def get_age_sizes(
 async def set_desirabilities(
         request: List[DesirabilityItem],
         validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)):
+        api_key: str = Depends(require_master_key)):
 
     try:
         request_data = [item.model_dump() for item in request]

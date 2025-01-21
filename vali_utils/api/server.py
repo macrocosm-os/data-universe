@@ -5,6 +5,8 @@ from threading import Thread
 import bittensor as bt
 from typing import Optional
 from .routes import router, get_validator
+from vali_utils.api.auth.key_routes import router as key_router
+from vali_utils.api.auth.auth import APIKeyManager, key_manager
 
 
 class ValidatorAPI:
@@ -19,6 +21,8 @@ class ValidatorAPI:
         """
         self.validator = validator
         self.port = port
+        # Initialize API key manager
+        self.key_manager = key_manager
         self.app = self._create_app()
         self.server_thread: Optional[Thread] = None
 
@@ -39,11 +43,27 @@ class ValidatorAPI:
             allow_headers=["*"],
         )
 
+        # Add rate limit headers middleware
+        @app.middleware("http")
+        async def add_rate_limit_headers(request, call_next):
+            response = await call_next(request)
+
+            # Add rate limit headers if API key is present
+            api_key = request.headers.get("X-API-Key")
+            if api_key and self.key_manager.is_valid_key(api_key):
+                _, headers = self.key_manager.check_rate_limit(api_key)
+                for header_name, header_value in headers.items():
+                    response.headers[header_name] = header_value
+
+            return response
+
         # Set validator instance for dependency injection
         get_validator.api = self
 
         # Include API routes
         app.include_router(router, prefix="/api/v1")
+        # Include API key management routes
+        app.include_router(key_router, prefix="/api/v1/keys")
 
         return app
 
