@@ -19,8 +19,8 @@ class MinerScorer:
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
 
-    # Start new miners' HF credibility at 0.5
-    STARTING_HF_CREDIBILITY = 0.5
+    # Start new miners' HF credibility at 0.375
+    STARTING_HF_CREDIBILITY = 0.375
 
     # The exponent used to scale the miner's score by its credibility.
     _CREDIBILITY_EXP = 2.5
@@ -30,7 +30,7 @@ class MinerScorer:
         num_neurons: int,
         value_calculator: DataValueCalculator,
         cred_alpha: float = 0.15,
-        hf_cred_alpha: float = 0.3
+        hf_cred_alpha: float = 0.20
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
@@ -131,7 +131,7 @@ class MinerScorer:
 
     def update_hf_boost_and_cred(self, uid: int, hf_vali_percentage: float) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
-        max_boost = 3 * 10**6
+        max_boost = 10 * 10**6
         self.hf_boosts[uid] = hf_vali_percentage/100 * max_boost
         self.hf_credibility[uid] = hf_vali_percentage * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid]
         bt.logging.info(
