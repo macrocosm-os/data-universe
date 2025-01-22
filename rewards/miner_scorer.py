@@ -60,6 +60,8 @@ class MinerScorer:
                 {
                     "scores": self.scores,
                     "credibility": self.miner_credibility,
+                    "hf_boosts": self.hf_boosts,
+                    "hf_credibility": self.hf_credibility,
                     "scorable_bytes": self.scorable_bytes,
                 },
                 filepath,
