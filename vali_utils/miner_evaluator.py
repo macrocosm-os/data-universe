@@ -70,11 +70,11 @@ class MinerEvaluator:
         # Set up initial scoring weights for validation
         self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
 
-        self.vpermit_tao_limit = self.config.vpermit_tao_limit
+        self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
         # Setup dependencies.
         self.miner_iterator = MinerIterator(
-            utils.get_miner_uids(self.metagraph, self.uid, self.vpermit_tao_limit)
+            utils.get_miner_uids(self.metagraph, self.uid, self.vpermit_rao_limit)
         )
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
@@ -545,8 +545,8 @@ class MinerEvaluator:
             old_hotkeys = self.metagraph.hotkeys
             for uid, hotkey in enumerate(old_hotkeys):
                 if hotkey != metagraph.hotkeys[uid] or (
-                    not utils.is_miner(uid, metagraph, self.vpermit_tao_limit)
-                    and not utils.is_validator(uid, metagraph, self.vpermit_tao_limit)
+                    not utils.is_miner(uid, metagraph, self.vpermit_rao_limit)
+                    and not utils.is_validator(uid, metagraph, self.vpermit_rao_limit)
                 ):
                     bt.logging.info(
                         f"Hotkey {hotkey} w/ UID {uid} has been unregistered or does not qualify to mine/validate."
@@ -561,7 +561,7 @@ class MinerEvaluator:
                         )
             # Update the iterator. It will keep its current position if possible.
             self.miner_iterator.set_miner_uids(
-                utils.get_miner_uids(self.metagraph, self.uid, self.vpermit_tao_limit)
+                utils.get_miner_uids(self.metagraph, self.uid, self.vpermit_rao_limit)
             )
 
             # Check to see if the metagraph has changed size.
