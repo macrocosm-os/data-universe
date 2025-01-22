@@ -13,7 +13,7 @@ class APIKeyResponse(BaseModel):
     name: str
 
 
-router = APIRouter(prefix="/keys", tags=["key management"])
+router = APIRouter(tags=["key management"])
 
 
 @router.post("", response_model=APIKeyResponse)
