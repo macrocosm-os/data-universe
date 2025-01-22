@@ -39,8 +39,10 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
         except Exception as e:
             bt.logging.error(f"Unexpected error while reading file: {e}.")
             return None
+
     elif desirability_dict:
-        pass
+        data = desirability_dict
+
     else:
         bt.logging.error(f"File path and/or list of desirabilities is not provided.")
         return None
@@ -187,9 +189,9 @@ async def run_uploader_from_gravity(config, desirability_dict):
             bt.logging.error(message)
             return False, message
 
-        github_commit = upload_to_github(json_content, wallet.hotkey_str)
+        github_commit = upload_to_github(json_content, wallet.hotkey.ss58_address)
         await chain_store.store_preferences(github_commit)
-        result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey_str)
+        result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey.ss58_address)
         message = f"Stored {result} on chain commit hash."
         bt.logging.info(message)
         return True, message

@@ -4,6 +4,8 @@ import traceback
 import asyncio
 import threading
 import os
+import sys
+import time
 from common import constants
 from common.data_v2 import ScorableMinerIndex
 from common.metagraph_syncer import MetagraphSyncer
@@ -568,3 +570,8 @@ class MinerEvaluator:
                 self.scorer.resize(len(metagraph.hotkeys))
 
             self.metagraph = copy.deepcopy(metagraph)
+
+
+    def exit(self):
+        self.should_exit = True
+
