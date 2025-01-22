@@ -8,7 +8,7 @@ from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, DesirabilityItem
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
-
+from vali_utils.api.utils import endpoint_error_handler
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from typing import List
@@ -24,7 +24,8 @@ def get_validator():
     return get_validator.api.validator
 
 
-@router.post("/query", response_model=QueryResponse)
+@router.post("/on_demand_data_request", response_model=QueryResponse)
+@endpoint_error_handler
 async def query_data(request: QueryRequest,
                      validator=Depends(get_validator),
                      api_key: str = Depends(verify_api_key)):
@@ -102,6 +103,7 @@ async def query_data(request: QueryRequest,
 
 
 @router.get("/health", response_model=HealthResponse)
+@endpoint_error_handler
 async def health_check(validator=Depends(get_validator),
                        api_key: str = Depends(verify_api_key)):
     """Health check endpoint"""
@@ -117,6 +119,7 @@ async def health_check(validator=Depends(get_validator),
 
 
 @router.get("/get_top_labels_by_source/{source}", response_model=List[LabelSize])
+@endpoint_error_handler
 async def get_label_sizes(
         source: str,
         validator=Depends(get_validator),
@@ -166,6 +169,7 @@ async def get_label_sizes(
 
 
 @router.get("/ages", response_model=List[AgeSize])
+@endpoint_error_handler
 async def get_age_sizes(
         source: str,
         validator=Depends(get_validator),
@@ -212,6 +216,7 @@ async def get_age_sizes(
 
 
 @router.post("/set_desirabilities")
+@endpoint_error_handler
 async def set_desirabilities(
         request: List[DesirabilityItem],
         validator=Depends(get_validator),
@@ -232,6 +237,7 @@ async def set_desirabilities(
 
 
 @router.get("/get_bytes_by_label", response_model=LabelBytes)
+@endpoint_error_handler
 async def get_bytes_by_label(
         label: str,
         validator=Depends(get_validator),
