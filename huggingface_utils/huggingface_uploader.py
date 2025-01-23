@@ -143,7 +143,7 @@ class HuggingFaceUploader:
                 FROM DataEntity
                 WHERE source = ?
                 ORDER BY datetime ASC
-                LIMIT 400000000
+                LIMIT 200000000
             """
             params = [source]
         else:
@@ -252,8 +252,8 @@ class HuggingFaceUploader:
                         continue
 
                     bt.logging.info(f"Current total rows: {total_rows}")
-                    if total_rows >= 400_000_000:
-                        bt.logging.info(f"Reached 400 million rows limit for source {source}. Stopping upload.")
+                    if total_rows >= 200_000_000: # TODO
+                        bt.logging.info(f"Reached 200 million rows limit for source {source}. Stopping upload.")
                         break
 
                     last_upload = df['datetime'].max()
