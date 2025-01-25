@@ -170,6 +170,7 @@ class RedditCustomScraper(Scraper):
             validation_result = self._validate_hf_reddit_content(content, entity)
             validation_results.append(validation_result)
 
+        bt.logging.info(f"HuggingFace Validation Results: {validation_results}")  # todo
         valid_percentage = sum(validation_results) / len(validation_results) * 100
 
         # Check if at least 60% of the data is valid
