@@ -133,7 +133,7 @@ class MinerScorer:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
         max_boost = 10 * 10**6
         self.hf_boosts[uid] = hf_vali_percentage/100 * max_boost
-        self.hf_credibility[uid] = hf_vali_percentage * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid]
+        self.hf_credibility[uid] = min(1, hf_vali_percentage * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
         bt.logging.info(
             f"After HF evaluation for miner {uid}: Raw HF Boost = {self.hf_boosts[uid]}. HF Credibility = {self.hf_credibility[uid]}."
         )
