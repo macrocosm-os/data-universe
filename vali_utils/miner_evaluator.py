@@ -318,7 +318,7 @@ class MinerEvaluator:
             else:
                 bt.logging.info(f"Miner did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
-            self.scorer.update_hf_boost(uid, hf_validation_result.validation_percentage)
+            self.scorer.update_hf_boost_and_cred(uid, hf_validation_result.validation_percentage)
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
