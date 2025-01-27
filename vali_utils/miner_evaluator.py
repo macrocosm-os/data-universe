@@ -312,17 +312,13 @@ class MinerEvaluator:
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
-        if hf_validation_result:
-            if hf_validation_result.is_valid:
-                bt.logging.info(
-                    f"Miner passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
+        if hf_validation_result and dt.datetime.now(dt.timezone.utc) >= constants.HF_REWARD_DATE:
+            if hf_validation_result.is_valid == True:
+                bt.logging.info(f"Miner passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
             else:
-                bt.logging.info(
-                    f"Miner did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
+                bt.logging.info(f"Miner did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
-            # Update scorer regardless of validation status
             self.scorer.update_hf_boost_and_cred(uid, hf_validation_result.validation_percentage)
-
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
