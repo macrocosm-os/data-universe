@@ -4,19 +4,10 @@ import datetime as dt
 from common.data import DataSource, StrictBaseModel
 
 
-class DesirabilityItem(StrictBaseModel):
-    source_name: str = Field(description="Source name (x or reddit)")
-    label_weights: Dict[str, float] = Field(description="Dictionary of labels and their weights")
-
-    @field_validator('source_name')
-    @classmethod
-    def validate_source(cls, v: str) -> str:
-        try:
-            source = DataSource[v.upper()]
-            return v.lower()
-        except KeyError:
-            valid_sources = [s.name.lower() for s in DataSource]
-            raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
+class DesirabilityRequest(BaseModel):
+    desirabilities: List[Dict[str, Any]] = Field(
+        description="List of source items with label weights"
+    )
 
 
 class QueryRequest(StrictBaseModel):
