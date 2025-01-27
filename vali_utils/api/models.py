@@ -18,14 +18,6 @@ class DesirabilityItem(StrictBaseModel):
             valid_sources = [s.name.lower() for s in DataSource]
             raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
 
-    @field_validator('label_weights')
-    @classmethod
-    def validate_weights(cls, v: Dict[str, float]) -> Dict[str, float]:
-        for weight in v.values():
-            if not 0 <= weight <= 1:
-                raise ValueError("Weights must be between 0 and 1")
-        return v
-
 
 class QueryRequest(StrictBaseModel):
     """Request model for data queries"""

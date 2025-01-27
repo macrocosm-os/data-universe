@@ -74,6 +74,10 @@ class MinerScorer:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
 
+            # Resetting HF scores and credibility
+            # self.hf_boosts = state["hf_boosts"]
+            # self.hf_credibility = state["hf_credibility"]
+
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
         # Return a copy to ensure outside code can't modify the scores.
@@ -133,7 +137,7 @@ class MinerScorer:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
         max_boost = 10 * 10**6
         self.hf_boosts[uid] = hf_vali_percentage/100 * max_boost
-        self.hf_credibility[uid] = hf_vali_percentage * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid]
+        self.hf_credibility[uid] = min(1, hf_vali_percentage * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
         bt.logging.info(
             f"After HF evaluation for miner {uid}: Raw HF Boost = {self.hf_boosts[uid]}. HF Credibility = {self.hf_credibility[uid]}."
         )
@@ -186,7 +190,7 @@ class MinerScorer:
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
                 
-                # Hugging Face rewards are active after Jan 27 2025.
+                # Hugging Face rewards are active after Feb 1 2025.
                 if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
                     # Awarding the miner their HF boost based on their last HF evaluation. 
                     score += self.hf_boosts[uid] * self.hf_credibility[uid]
