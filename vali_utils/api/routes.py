@@ -223,7 +223,6 @@ async def set_desirabilities(
         api_key: str = Depends(require_master_key)):
 
     try:
-        # request_data = [item.model_dump() for item in request] todo
         success, message = await run_uploader_from_gravity(validator.config, request.desirabilities)
         if not success:
             bt.logging.error(f"Could not set desirabilities error message\n: {message}")
