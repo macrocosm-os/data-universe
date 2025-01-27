@@ -37,4 +37,4 @@ MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
 NO_TWITTER_URLS_DATE = datetime.datetime(2024, 12, 28, tzinfo=datetime.timezone.utc)  # December 28, 2024 UTC
 
 # HF reward activation date.
-HF_REWARD_DATE = datetime.datetime(2025, 1, 27, tzinfo=datetime.timezone.utc)  # January 27, 2025 UTC
+HF_REWARD_DATE = datetime.datetime(2025, 2, 1, hour=16, tzinfo=datetime.timezone.utc)  # February 1, 16:00 2025 UTC

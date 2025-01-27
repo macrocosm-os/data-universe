@@ -333,10 +333,15 @@ class Validator:
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
             if self.config.neuron.api_on:
-                bt.logging.info("Starting Validator API...")
-                from vali_utils.api.server import ValidatorAPI
-                self.api = ValidatorAPI(self, port=self.config.neuron.api_port)
-                self.api.start()
+                try:
+                    bt.logging.info("Starting Validator API...")
+                    from vali_utils.api.server import ValidatorAPI
+                    self.api = ValidatorAPI(self, port=self.config.neuron.api_port)
+                    self.api.start()
+                except ValueError as e:
+                    bt.logging.error(f"Failed to start API: {str(e)}")
+                    bt.logging.info("Validator will continue running without API.")
+                    self.config.neuron.api_on = False
 
             bt.logging.info(
                 f"Serving validator axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
