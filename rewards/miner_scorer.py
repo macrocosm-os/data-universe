@@ -137,7 +137,7 @@ class MinerScorer:
         self.hf_boosts[uid] = hf_vali_percentage/100 * max_boost
         self.hf_credibility[uid] = min(1, hf_vali_percentage/100 * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
         bt.logging.info(
-            f"After HF evaluation for miner {uid}: Raw HF Boost = {self.hf_boosts[uid]}. HF Credibility = {self.hf_credibility[uid]}."
+            f"After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
         )
 
     def on_miner_evaluated(
@@ -192,7 +192,7 @@ class MinerScorer:
                 if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
                     # Awarding the miner their HF boost based on their last HF evaluation. 
                     score += self.hf_boosts[uid] * self.hf_credibility[uid]
-                    bt.logging.info(f"Awarded Miner {uid} a HF boost of {self.hf_boosts[uid] * self.hf_credibility[uid]} based off of the lastest HF evaluation, adjusting the score to {score}.")
+                    bt.logging.info(f"Awarded Miner {uid} a HF boost of {float(self.hf_boosts[uid] * self.hf_credibility[uid])} based off of the last performed HF evaluation, adjusting the score to {score}.")
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)
