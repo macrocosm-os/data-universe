@@ -60,14 +60,14 @@ def is_validator(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int) -> b
 def get_validator_data(metagraph: bt.metagraph, vpermit_rao_limit: int) -> Dict[str, Dict[str, Any]]:
     """Retrieve validator data (hotkey, percent stake) from metagraph. For use in Gravity."""
     total_stake = sum(
-        stake
+        float(stake)
         for uid, stake in enumerate(metagraph.S)
         if is_validator(uid, metagraph, vpermit_rao_limit)
     )
 
     validator_data = {
         hotkey: {
-            'percent_stake': float(stake / total_stake),
+            'percent_stake': float(stake) / total_stake,
             'github_hash': None,
             'json': None
         }
