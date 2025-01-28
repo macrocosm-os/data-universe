@@ -191,7 +191,7 @@ class MinerScorer:
                 # Hugging Face rewards are active after Jan 29 2025.
                 if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
                     # Awarding the miner their HF boost based on their last HF evaluation. 
-                    score += self.hf_boosts[uid] * self.hf_credibility[uid]
+                    score += (self.hf_boosts[uid] * self.hf_credibility[uid])
                     bt.logging.info(f"Awarded Miner {uid} a HF boost of {float(self.hf_boosts[uid] * self.hf_credibility[uid])} based off of the last performed HF evaluation, adjusting the score to {float(score)}.")
 
                 # Now update the credibility again based on the current validation results.
