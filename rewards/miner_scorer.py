@@ -73,10 +73,8 @@ class MinerScorer:
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
-
-            # Resetting HF scores and credibility
-            # self.hf_boosts = state["hf_boosts"]
-            # self.hf_credibility = state["hf_credibility"]
+            self.hf_boosts = state["hf_boosts"]
+            self.hf_credibility = state["hf_credibility"]
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
