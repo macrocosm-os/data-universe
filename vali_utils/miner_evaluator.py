@@ -312,7 +312,7 @@ class MinerEvaluator:
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
-        if hf_validation_result and dt.datetime.now(dt.timezone.utc) >= constants.HF_REWARD_DATE:
+        if hf_validation_result:
             if hf_validation_result.is_valid == True:
                 bt.logging.info(f"Miner passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
             else:

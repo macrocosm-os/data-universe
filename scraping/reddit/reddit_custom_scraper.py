@@ -179,10 +179,6 @@ class RedditCustomScraper(Scraper):
     def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
         """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""
 
-        # Compare username
-        if actual_content.username != entity_to_validate.get('username'):
-            return False
-
         # Compare date (year, month, day)
         entity_datetime = dt.datetime.fromisoformat(entity_to_validate.get('datetime'))
         actual_datetime = actual_content.created_at

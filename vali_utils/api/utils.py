@@ -1,3 +1,4 @@
+import bittensor as bt
 from fastapi import HTTPException
 from functools import wraps
 
