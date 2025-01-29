@@ -526,7 +526,6 @@ class Miner:
     async def handle_on_demand(self, synapse: OnDemandRequest) -> OnDemandRequest:
         """
         Handle on-demand data requests from validators.
-        TODO: Implement full data retrieval logic
 
         Flow:
         1. Check storage for cached data matching request
