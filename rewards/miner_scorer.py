@@ -4,7 +4,6 @@ import torch
 import bittensor as bt
 import datetime as dt
 from common.data import TimeBucket
-from common.constants import HF_REWARD_DATE
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult, HFValidationResult
@@ -73,10 +72,8 @@ class MinerScorer:
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
-
-            # Resetting HF scores and credibility
-            # self.hf_boosts = state["hf_boosts"]
-            # self.hf_credibility = state["hf_credibility"]
+            self.hf_boosts = state["hf_boosts"]
+            self.hf_credibility = state["hf_credibility"]
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -137,9 +134,9 @@ class MinerScorer:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
         max_boost = 10 * 10**6
         self.hf_boosts[uid] = hf_vali_percentage/100 * max_boost
-        self.hf_credibility[uid] = min(1, hf_vali_percentage * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
+        self.hf_credibility[uid] = min(1, hf_vali_percentage/100 * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
         bt.logging.info(
-            f"After HF evaluation for miner {uid}: Raw HF Boost = {self.hf_boosts[uid]}. HF Credibility = {self.hf_credibility[uid]}."
+            f"After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
         )
 
     def on_miner_evaluated(
@@ -190,11 +187,9 @@ class MinerScorer:
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
                 
-                # Hugging Face rewards are active after Feb 1 2025.
-                if dt.datetime.now(dt.timezone.utc) >= HF_REWARD_DATE:
-                    # Awarding the miner their HF boost based on their last HF evaluation. 
-                    score += self.hf_boosts[uid] * self.hf_credibility[uid]
-                    bt.logging.info(f"Awarded Miner {uid} a HF boost of {self.hf_boosts[uid] * self.hf_credibility[uid]} based off of the lastest HF evaluation, adjusting the score to {score}.")
+                # Awarding the miner their HF boost based on their last HF evaluation. 
+                score += (self.hf_boosts[uid] * self.hf_credibility[uid])
+                bt.logging.info(f"Awarded Miner {uid} a HF boost of {float(self.hf_boosts[uid] * self.hf_credibility[uid])} based off of the last performed HF evaluation, adjusting the score to {float(score)}.")
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)
