@@ -95,7 +95,7 @@ def select_random_rows_from_parquet(repo_id: str, num_rows: int = 10, buffer_siz
 async def main():
     """Main function to demonstrate the usage of the script."""
     repo_id = "arrmlet/reddit_dataset_123456"
-
+    bt.logging.set_trace(True)
     try:
         selected_rows = select_random_rows_from_parquet(repo_id)
         print(selected_rows)
