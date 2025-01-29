@@ -45,6 +45,11 @@ from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
+from common.data import DataLabel, DataSource, DataEntity
+from common.protocol import OnDemandRequest
+from common.date_range import DateRange
+from scraping.scraper import ScrapeConfig, ScraperId
+
 
 # Enable logging to the miner TODO move it to some different location
 bt.logging.set_info(True)
@@ -528,28 +533,60 @@ class Miner:
         Handle on-demand data requests from validators.
 
         Flow:
-        1. Check storage for cached data matching request
-        2. If not enough data in storage, scrape new data:
-           - For usernames: Use apidojo/custom scraper to get user tweets/posts
-           - For keywords: Use search functionality
-        3. Return data + random validation sample
-
-        Current implementation: Returns empty response for API structure testing
+        1. Parse request parameters
+        2. Create scrape config
+        3. Use appropriate scraper to get data
+        4. Return results
         """
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
-            # Mock empty response
-            synapse.data = []
-            synapse.validation_sample = None
+            # Create scrape config from request
+            labels = []
+            if synapse.usernames:
+                labels.extend([DataLabel(value=f"@{u}") for u in synapse.usernames])
+            if synapse.keywords:
+                labels.extend([DataLabel(value=k) for k in synapse.keywords])
+
+            # Create config with date range
+            config = ScrapeConfig(
+                entity_limit=synapse.limit,
+                date_range=DateRange(
+                    start=dt.datetime.fromisoformat(synapse.start_date),
+                    end=dt.datetime.fromisoformat(synapse.end_date)
+                ),
+                labels=labels
+            )
+
+            # Get appropriate scraper from provider
+            scraper = None
+            if synapse.source == DataSource.X:
+                scraper = self.scraping_coordinator.scraper_provider.get(ScraperId.X_APIDOJO)
+            elif synapse.source == DataSource.REDDIT:
+                scraper = self.scraping_coordinator.scraper_provider.get(ScraperId.REDDIT_CUSTOM)
+
+            if not scraper:
+                bt.logging.error(f"No scraper available for source {synapse.source}")
+                synapse.data = []
+                return synapse
+
+            # Get data using scraper
+            data = await scraper.scrape(config)
+
+            # Update response with data and version
+            synapse.data = data[:synapse.limit]
             synapse.version = constants.PROTOCOL_VERSION
+
+            bt.logging.success(
+                f"Returning {len(synapse.data)} items to {synapse.dendrite.hotkey}"
+            )
 
         except Exception as e:
             bt.logging.error(f"Error in on-demand request: {str(e)}")
             bt.logging.debug(traceback.format_exc())
+            synapse.data = []
 
         return synapse
-
     async def handle_on_demand_blacklist(
             self, synapse: OnDemandRequest
     ) -> typing.Tuple[bool, str]:

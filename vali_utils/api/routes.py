@@ -8,7 +8,7 @@ from common.protocol import OnDemandRequest
 from common import utils  # Import your utils
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, DesirabilityRequest
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
-from vali_utils.api.utils import endpoint_error_handler
+from vali_utils.api.utils import endpoint_error_handler, select_validation_samples
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from typing import List
@@ -29,10 +29,9 @@ def get_validator():
 async def query_data(request: QueryRequest,
                      validator=Depends(get_validator),
                      api_key: str = Depends(verify_api_key)):
-    """Handle data queries"""
+    """Handle data queries with simple validation"""
     try:
-        # Get miner UIDs using your utility function
-        # This excludes validators and the current validator's UID
+        # Get miner UIDs
         miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid)
 
         # Sort by stake and get top 50%
@@ -56,51 +55,52 @@ async def query_data(request: QueryRequest,
         )
 
         # Query random miner
-        responses = []
+        uid = random.choice(miners)
+
+        if not utils.is_miner(uid, validator.metagraph):
+            raise HTTPException(503, "Selected miner is not valid")
+
+        # Get data from miner
         async with bt.dendrite(wallet=validator.wallet) as dendrite:
-            uid = random.choice(miner_uids)
-            # Check if miner is qualified using your utility
-            if utils.is_miner(uid, validator.metagraph):
-                axon = validator.metagraph.axons[uid]
-                try:
-                    response = await dendrite.forward(
-                        axons=[axon],
-                        synapse=synapse,
-                        timeout=30
-                    )
-                    if response and response.data:
-                        responses.append(response.data)
-                except Exception as e:
-                    bt.logging.error(f"Error querying miner {uid}: {str(e)}")
+            axon = validator.metagraph.axons[uid]
+            response = await dendrite.forward(
+                axons=[axon],
+                synapse=synapse,
+                timeout=30
+            )
 
+            if not response or not response.data:
+                raise HTTPException(500, "No data returned from miner")
 
-        # TODO ADD VALIDATION
+            # Validate one random sample
+            if response.data:
+                sample = random.choice(response.data)
+                scraper = validator.evaluator.scraper_provider.get(
+                    validator.evaluator.PREFERRED_SCRAPERS[synapse.source]
+                )
 
-        # Process data
-        all_data = []
-        seen = set()
-        for response in responses:
-            for item in response:
+                if scraper:
+                    validation_result = await scraper.validate([sample])
+                    is_valid = any(result.is_valid for result in validation_result)
+                    bt.logging.info(f"Miner {uid} validation {'passed' if is_valid else 'failed'}")
+
+            # Process data (remove duplicates)
+            seen = set()
+            all_data = []
+            for item in response.data:
                 item_hash = hash(str(item))
                 if item_hash not in seen:
                     seen.add(item_hash)
                     all_data.append(item)
 
-        return {
-            "status": "success",
-            "data": all_data[:request.limit],
-            "meta": {
-                "total_responses": len(responses),
-                "unique_items": len(all_data),
-                "miners_queried": len(miners),
-                "total_miners": len(miner_uids)
+            return {
+                "status": "success",
+                "data": all_data[:request.limit]
             }
-        }
 
     except Exception as e:
         bt.logging.error(f"Error processing request: {str(e)}")
         raise HTTPException(500, str(e))
-
 
 @router.get("/health", response_model=HealthResponse)
 @endpoint_error_handler

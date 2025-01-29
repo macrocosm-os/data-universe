@@ -177,11 +177,6 @@ class OnDemandRequest(BaseProtocol):
         description="Retrieved data"
     )
 
-    validation_sample: Optional[Dict] = Field(
-        default=None,
-        description="Random sample for validation"
-    )
-
     version: Optional[int] = Field(
         default=None,
         description="Protocol version"

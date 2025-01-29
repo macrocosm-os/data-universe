@@ -13,6 +13,7 @@ from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 class TestOnDemandProtocol(unittest.TestCase):
     def test_on_demand_flow(self):
         """Test the complete on-demand data flow"""
+
         async def run_test():
             # Create OnDemand request
             test_request = OnDemandRequest(
@@ -38,22 +39,24 @@ class TestOnDemandProtocol(unittest.TestCase):
 
             # Get data using scraper
             data = await scraper.scrape(scrape_config)
-            from pprint import pprint
-            pprint(data)
+
             # Verify data was retrieved
             self.assertTrue(len(data) > 0, "No data returned from scraper")
 
-            # Validate random sample
+            # Select 1 random samples for validation
             if data:
-                sample = random.choice(data)
-                validation_results = await scraper.validate([sample])
+                samples = random.sample(data, min(1, len(data)))
+                validation_results = await scraper.validate(samples)
+                print(data)
+                # Check if any validation passed
                 self.assertTrue(
                     any(result.is_valid for result in validation_results),
-                    "Validation failed for sample data"
+                    "All validation failed for sample data"
                 )
 
         # Run the async test
         asyncio.run(run_test())
+
 
 if __name__ == "__main__":
     unittest.main()
