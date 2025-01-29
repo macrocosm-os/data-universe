@@ -122,7 +122,12 @@ class Miner:
                 forward_fn=self.decode_urls,
                 blacklist_fn=self.decode_urls_blacklist,
                 priority_fn=self.decode_urls_priority
+            ).attach(
+                forward_fn=self.handle_on_demand,
+                blacklist_fn=self.handle_on_demand_blacklist,
+                priority_fn=self.handle_on_demand_priority
             )
+
             bt.logging.success(f"Axon created: {self.axon}.")
 
         # Instantiate runners.
