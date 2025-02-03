@@ -240,7 +240,7 @@ async def set_desirabilities(
 @router.get("/get_validator_json_submission")
 @endpoint_error_handler
 async def get_validator_json_submission(
-    hotkey: str,
+    hotkey: str = None,
     validator=Depends(get_validator),
     api_key: str = Depends(verify_api_key)
 ):

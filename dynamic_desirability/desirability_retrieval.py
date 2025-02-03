@@ -152,6 +152,7 @@ def get_hotkey_json_submission(config: bt.config, metagraph: bt.metagraph, hotke
        If no hotkey is specified, returns the current aggregate desirability list. """
     try:
         if not hotkey:
+            bt.logging.info(f"No hotkey specified. Returning aggeregate dynamic desirability list.")
             with open(AGGREGATE_JSON_PATH, "r") as file:
                 agg_list = json.load(file)
             return agg_list
