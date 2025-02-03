@@ -153,7 +153,9 @@ def get_hotkey_json_submission(config: bt.config, metagraph: bt.metagraph, hotke
     try:
         if not hotkey:
             bt.logging.info(f"No hotkey specified. Returning aggeregate dynamic desirability list.")
-            with open(AGGREGATE_JSON_PATH, "r") as file:
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            agg_path = os.path.join(script_dir, AGGREGATE_JSON_PATH)
+            with open(agg_path, "r") as file:
                 agg_list = json.load(file)
             return agg_list
         
