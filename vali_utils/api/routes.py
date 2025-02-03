@@ -11,10 +11,9 @@ from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
-from dynamic_desirability.desirability_retrieval import get_hotkey_scaled_preferences, get_hotkey_json_submission
+from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
 from typing import List
 import random
-import json
 
 router = APIRouter()
 
