@@ -148,8 +148,14 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
 
 
 def get_hotkey_json_submission(config: bt.config, metagraph: bt.metagraph, hotkey: str):
-    """Gets the unscaled JSON submisson for a specified validator hotkey. """
+    """Gets the unscaled JSON submisson for a specified validator hotkey. 
+       If no hotkey is specified, returns the current aggregate desirability list. """
     try:
+        if not hotkey:
+            with open(AGGREGATE_JSON_PATH, "r") as file:
+                agg_list = json.load(file)
+            return agg_list
+        
         subtensor = bt.subtensor(config=config)
         uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
 
