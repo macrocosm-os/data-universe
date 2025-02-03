@@ -236,7 +236,7 @@ async def set_desirabilities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.post("/get_desirabilities")
+@router.get("/get_desirabilities")
 @endpoint_error_handler
 async def get_desirability_list(
         validator=Depends(get_validator),
