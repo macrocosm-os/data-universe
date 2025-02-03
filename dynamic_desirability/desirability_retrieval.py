@@ -147,15 +147,15 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
 
-def get_hotkey_json_submission(hotkey: str):
+def get_hotkey_json_submission(config: bt.config, metagraph: bt.metagraph, hotkey: str):
+    """Gets the unscaled JSON submisson for a specified validator hotkey. """
     try:
-        subtensor = bt.subtensor(network="finney")
-        metagraph = subtensor.metagraph(netuid=13)
-        uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=13)
+        subtensor = bt.subtensor(config=config)
+        uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
 
         if is_validator(uid=uid, metagraph=metagraph):
             bt.logging.info(f"Hotkey {hotkey} is a validator. Checking for JSON submission to return...")
-            commit_sha = subtensor.get_commitment(netuid=13, uid=uid)
+            commit_sha = subtensor.get_commitment(netuid=config.netuid, uid=uid)
             return get_json(commit_sha=commit_sha, filename=f"{hotkey}.json")
         else:
             bt.logging.error(f"Hotkey {hotkey} is not a validator. Only validators have JSON submissions. ")
@@ -163,38 +163,6 @@ def get_hotkey_json_submission(hotkey: str):
 
     except Exception as e:
         bt.logging.error(f"Could not retrieve JSON submission for hotkey {hotkey}. Error: {e}")
-        return None
-
-
-def get_hotkey_scaled_preferences(hotkey: str):
-    try:
-        json_content = get_hotkey_json_submission(hotkey=hotkey)
-        subtensor = bt.subtensor(network="finney")
-        validator_data = get_validator_data(bt.metagraph(netuid=13, network="finney"))
-        for hotkey in validator_data.keys():
-            uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=13)
-            validator_data[hotkey]['github_hash'] =  subtensor.get_commitment(netuid=13, uid=uid)
-
-        total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('github_hash'))
-        #hotkey specific stake percentage
-        stake_percentage = validator_data.get(hotkey, {}).get('percent_stake', 1) / total_stake
-
-        total_vali_weight = TOTAL_VALI_WEIGHT
-        normalizer = (1 - total_vali_weight) / AMPLICATION_FACTOR
-        
-        scaled_preferences = {}
-        for source in json_content:
-            source_name = source['source_name']
-            scaled_preferences[source_name] = {}
-            
-            for label, weight in source['label_weights'].items():
-                scaled_weight = (total_vali_weight * stake_percentage * weight) / normalizer
-                scaled_preferences[source_name][label] = scaled_weight
-
-        return scaled_preferences
-
-    except Exception as e:
-        bt.logging.error(f"Error while retrieving preferences for hotkey {hotkey}. Error: {e}")
         return None
 
 

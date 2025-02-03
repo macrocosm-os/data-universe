@@ -247,24 +247,11 @@ async def get_validator_json_submission(
 ):
     """Return the current unscaled json submission for a specific validator hotkey."""
     try:
-        return get_hotkey_json_submission(hotkey)
+        config = validator.evaluator.config
+        metagraph = validator.evaluator.metagraph
+        return get_hotkey_json_submission(config=config, metagraph=metagraph, hotkey=hotkey)
     except Exception as e:
         bt.logging.error(f"Error while getting unscaled json submission for {hotkey}. Error: {e}")
-
-
-@router.get("/get_validator_desirabilities")
-@endpoint_error_handler
-async def get_validator_desirabilities(
-    hotkey: str,
-    validator=Depends(get_validator),
-    api_key: str = Depends(verify_api_key)
-):
-    """Return the current scaled desirabilities submitted by a specific validator hotkey."""
-    try:
-        scaled_prefs = get_hotkey_scaled_preferences(hotkey)
-        return json.dumps(scaled_prefs, indent=4)
-    except Exception as e:
-        bt.logging.error(f"Error while getting scaled desirabilities submitted by {hotkey}. Error: {e}")
 
 
 @router.get("/get_desirabilities")
