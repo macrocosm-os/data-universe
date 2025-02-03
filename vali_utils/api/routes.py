@@ -237,44 +237,19 @@ async def set_desirabilities(
         raise HTTPException(status_code=500, detail=str(e))
 
 
-@router.get("/get_validator_json_submission")
+@router.get("/get_desirabilities")
 @endpoint_error_handler
-async def get_validator_json_submission(
-    hotkey: str = None,
-    validator=Depends(get_validator),
-    api_key: str = Depends(verify_api_key)
+async def get_desirability_list(
+        hotkey: str = None,
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)
 ):
-    """Return the current unscaled json submission for a specific validator hotkey."""
+    """If hotkey specified, return the current unscaled json submission for a specific validator hotkey. 
+       Otherwise, return the current aggregate desirability list."""
     try:
         config = validator.evaluator.config
         metagraph = validator.evaluator.metagraph
         return get_hotkey_json_submission(config=config, metagraph=metagraph, hotkey=hotkey)
-    except Exception as e:
-        bt.logging.error(f"Error while getting unscaled json submission for {hotkey}. Error: {e}")
-
-
-@router.get("/get_desirabilities")
-@endpoint_error_handler
-async def get_desirability_list(
-        validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)
-):
-    """Return the current desirability configuration including weights and scale factors for all data sources"""
-    try:
-        data_value_calculator = validator.evaluator.scorer.value_calculator
-        model = data_value_calculator.model
-
-        return {
-            "distribution": {
-                DataSource(data_source).name: {
-                    "weight": desirability.weight,
-                    "default_scale_factor": desirability.default_scale_factor,
-                    "label_scale_factors": desirability.label_scale_factors
-                }
-                for data_source, desirability in model.distribution.items()
-            },
-            "max_age_in_hours": model.max_age_in_hours
-        }
     except Exception as e:
         bt.logging.error(f"Error getting desirabilities: {str(e)}")
         raise HTTPException(500, f"Error retrieving desirabilities: {str(e)}")
