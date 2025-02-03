@@ -11,8 +11,10 @@ from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
+from dynamic_desirability.desirability_retrieval import get_hotkey_scaled_preferences, get_hotkey_json_submission
 from typing import List
 import random
+import json
 
 router = APIRouter()
 
@@ -234,6 +236,35 @@ async def set_desirabilities(
     except Exception as e:
         bt.logging.error(f"Error setting desirabilities: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/get_validator_json_submission")
+@endpoint_error_handler
+async def get_validator_json_submission(
+    hotkey: str,
+    validator=Depends(get_validator),
+    api_key: str = Depends(verify_api_key)
+):
+    """Return the current unscaled json submission for a specific validator hotkey."""
+    try:
+        return get_hotkey_json_submission(hotkey)
+    except Exception as e:
+        bt.logging.error(f"Error while getting unscaled json submission for {hotkey}. Error: {e}")
+
+
+@router.get("/get_validator_desirabilities")
+@endpoint_error_handler
+async def get_validator_desirabilities(
+    hotkey: str,
+    validator=Depends(get_validator),
+    api_key: str = Depends(verify_api_key)
+):
+    """Return the current scaled desirabilities submitted by a specific validator hotkey."""
+    try:
+        scaled_prefs = get_hotkey_scaled_preferences(hotkey)
+        return json.dumps(scaled_prefs, indent=4)
+    except Exception as e:
+        bt.logging.error(f"Error while getting scaled desirabilities submitted by {hotkey}. Error: {e}")
 
 
 @router.get("/get_desirabilities")
