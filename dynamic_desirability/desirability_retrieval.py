@@ -147,7 +147,7 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
 
-def get_hotkey_json_submission(config: bt.config, metagraph: bt.metagraph, hotkey: str):
+def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
     """Gets the unscaled JSON submisson for a specified validator hotkey. 
        If no hotkey is specified, returns the current aggregate desirability list. """
     try:
@@ -159,12 +159,11 @@ def get_hotkey_json_submission(config: bt.config, metagraph: bt.metagraph, hotke
                 agg_list = json.load(file)
             return agg_list
         
-        subtensor = bt.subtensor(config=config)
-        uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
+        uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=netuid)
 
         if is_validator(uid=uid, metagraph=metagraph):
             bt.logging.info(f"Hotkey {hotkey} is a validator. Checking for JSON submission to return...")
-            commit_sha = subtensor.get_commitment(netuid=config.netuid, uid=uid)
+            commit_sha = subtensor.get_commitment(netuid=netuid, uid=uid)
             return get_json(commit_sha=commit_sha, filename=f"{hotkey}.json")
         else:
             bt.logging.error(f"Hotkey {hotkey} is not a validator. Only validators have JSON submissions. ")

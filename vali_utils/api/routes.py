@@ -247,9 +247,10 @@ async def get_desirability_list(
     """If hotkey specified, return the current unscaled json submission for a specific validator hotkey. 
        Otherwise, return the current aggregate desirability list."""
     try:
-        config = validator.evaluator.config
+        subtensor = validator.subtensor
+        netuid = validator.evaluator.config.netuid
         metagraph = validator.evaluator.metagraph
-        return get_hotkey_json_submission(config=config, metagraph=metagraph, hotkey=hotkey)
+        return get_hotkey_json_submission(subtensor=subtensor, netuid=netuid, metagraph=metagraph, hotkey=hotkey)
     except Exception as e:
         bt.logging.error(f"Error getting desirabilities: {str(e)}")
         raise HTTPException(500, f"Error retrieving desirabilities: {str(e)}")
