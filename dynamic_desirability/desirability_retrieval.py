@@ -160,7 +160,7 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
 
         for hotkey in validator_data.keys():
             uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
-            validator_data[hotkey]['github_hash'] =  subtensor.get_commitment(netuid=13, uid=uid)
+            validator_data[hotkey]['github_hash'] =  subtensor.get_commitment(netuid=config.netuid, uid=uid)
             if validator_data[hotkey]['github_hash']:
                 validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'],
                                                           filename=f"{hotkey}.json")

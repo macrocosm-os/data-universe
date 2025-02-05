@@ -174,7 +174,7 @@ async def run_uploader(args):
         raise
 
 
-async def run_uploader_from_gravity(config, desirability_dict):
+def run_uploader_from_gravity(config, desirability_dict):
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
