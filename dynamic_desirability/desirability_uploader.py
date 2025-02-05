@@ -151,7 +151,7 @@ async def run_uploader(args):
     my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
     my_hotkey = my_wallet.hotkey.ss58_address
     subtensor = bt.subtensor(network=args.network)
-    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=args.netuid)
+    uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=my_hotkey, netuid=args.netuid)
 
     try:
 
@@ -165,8 +165,8 @@ async def run_uploader(args):
 
         bt.logging.info(f"JSON content:\n{json_content}")
         github_commit = upload_to_github(json_content, my_hotkey)
-        await chain_store.store_preferences(github_commit)
-        result = await chain_store.retrieve_preferences(hotkey=my_hotkey)
+        subtensor.commit(wallet=my_wallet, netuid=args.netuid, data=github_commit)
+        result = subtensor.get_commitment(netuid=args.netuid, uid=uid)
         bt.logging.info(f"Stored {result} on chain commit hash.")
         return result
     except Exception as e:
@@ -177,7 +177,7 @@ async def run_uploader(args):
 async def run_uploader_from_gravity(config, desirability_dict):
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
-    chain_store = ChainPreferenceStore(wallet=wallet, subtensor=subtensor, netuid=config.netuid)
+    uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
     try:
 
         json_content = normalize_preferences_json(desirability_dict=desirability_dict)
@@ -190,8 +190,8 @@ async def run_uploader_from_gravity(config, desirability_dict):
             return False, message
 
         github_commit = upload_to_github(json_content, wallet.hotkey.ss58_address)
-        await chain_store.store_preferences(github_commit)
-        result = await chain_store.retrieve_preferences(hotkey=wallet.hotkey.ss58_address)
+        subtensor.commit(wallet=wallet, netuid=config.netuid, data=github_commit)
+        result = subtensor.get_commitment(netuid=config.netuid, uid=uid)
         message = f"Stored {result} on chain commit hash."
         bt.logging.info(message)
         return True, message
