@@ -11,6 +11,7 @@ from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
+from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
 from typing import List
 import random
 
@@ -238,25 +239,17 @@ async def set_desirabilities(
 @router.get("/get_desirabilities")
 @endpoint_error_handler
 async def get_desirability_list(
+        hotkey: str = None,
         validator=Depends(get_validator),
         api_key: str = Depends(verify_api_key)
 ):
-    """Return the current desirability configuration including weights and scale factors for all data sources"""
+    """If hotkey specified, return the current unscaled json submission for a specific validator hotkey. 
+       Otherwise, return the current aggregate desirability list."""
     try:
-        data_value_calculator = validator.evaluator.scorer.value_calculator
-        model = data_value_calculator.model
-
-        return {
-            "distribution": {
-                DataSource(data_source).name: {
-                    "weight": desirability.weight,
-                    "default_scale_factor": desirability.default_scale_factor,
-                    "label_scale_factors": desirability.label_scale_factors
-                }
-                for data_source, desirability in model.distribution.items()
-            },
-            "max_age_in_hours": model.max_age_in_hours
-        }
+        subtensor = validator.subtensor
+        netuid = validator.evaluator.config.netuid
+        metagraph = validator.evaluator.metagraph
+        return get_hotkey_json_submission(subtensor=subtensor, netuid=netuid, metagraph=metagraph, hotkey=hotkey)
     except Exception as e:
         bt.logging.error(f"Error getting desirabilities: {str(e)}")
         raise HTTPException(500, f"Error retrieving desirabilities: {str(e)}")
