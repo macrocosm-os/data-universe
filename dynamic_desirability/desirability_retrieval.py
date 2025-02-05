@@ -178,7 +178,6 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
     try:
         my_wallet = bt.wallet(config=config)
         subtensor = bt.subtensor(config=config)
-        chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=config.netuid)
         metagraph = subtensor.metagraph(netuid=config.netuid)
 
         bt.logging.info("\nGetting validator weights from the metagraph...\n")
@@ -187,7 +186,8 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
         for hotkey in validator_data.keys():
-            validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
+            uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
+            validator_data[hotkey]['github_hash'] =  subtensor.get_commitment(netuid=config.netuid, uid=uid)
             if validator_data[hotkey]['github_hash']:
                 validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'],
                                                           filename=f"{hotkey}.json")
