@@ -172,7 +172,7 @@ class OnDemandRequest(BaseProtocol):
     )
 
     # Response fields
-    data: List[Dict] = Field(
+    data: List[DataEntity] = Field(
         default_factory=list,
         description="Retrieved data"
     )

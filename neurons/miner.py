@@ -531,50 +531,45 @@ class Miner:
     async def handle_on_demand(self, synapse: OnDemandRequest) -> OnDemandRequest:
         """
         Handle on-demand data requests from validators.
-
-        Flow:
-        1. Parse request parameters
-        2. Create scrape config
-        3. Use appropriate scraper to get data
-        4. Return results
+        Uses scraper_provider to get appropriate scraper.
         """
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
-            # Create scrape config from request
-            labels = []
-            if synapse.usernames:
-                labels.extend([DataLabel(value=f"@{u}") for u in synapse.usernames])
-            if synapse.keywords:
-                labels.extend([DataLabel(value=k) for k in synapse.keywords])
-
-            # Create config with date range
-            config = ScrapeConfig(
-                entity_limit=synapse.limit,
-                date_range=DateRange(
-                    start=dt.datetime.fromisoformat(synapse.start_date),
-                    end=dt.datetime.fromisoformat(synapse.end_date)
-                ),
-                labels=labels
-            )
-
             # Get appropriate scraper from provider
-            scraper = None
+            scraper_id = None
             if synapse.source == DataSource.X:
-                scraper = self.scraping_coordinator.scraper_provider.get(ScraperId.X_APIDOJO)
+                scraper_id = ScraperId.X_APIDOJO
             elif synapse.source == DataSource.REDDIT:
-                scraper = self.scraping_coordinator.scraper_provider.get(ScraperId.REDDIT_CUSTOM)
+                scraper_id = ScraperId.REDDIT_CUSTOM
+            # elif synapse.source == ScraperId.FINANCE:
+            #     pass
+            # elif synapse.source == ScraperId.SPEECH:
+            #     pass
 
-            if not scraper:
-                bt.logging.error(f"No scraper available for source {synapse.source}")
+            if not scraper_id:
+                bt.logging.error(f"No scraper ID for source {synapse.source}")
                 synapse.data = []
                 return synapse
 
-            # Get data using scraper
-            data = await scraper.scrape(config)
+            # Get scraper from provider
+            scraper = self.scraping_coordinator.scraper_provider.get(scraper_id)
+            if not scraper:
+                bt.logging.error(f"No scraper available for ID {scraper_id}")
+                synapse.data = []
+                return synapse
 
-            # Update response with data and version
-            synapse.data = data[:synapse.limit]
+            # Use scraper's on-demand handler
+            data = await scraper.handle_request(
+                keywords=synapse.keywords,
+                usernames=synapse.usernames,
+                start_date=synapse.start_date,
+                end_date=synapse.end_date,
+                limit=synapse.limit
+            )
+
+            # Update response
+            synapse.data = data
             synapse.version = constants.PROTOCOL_VERSION
 
             bt.logging.success(
@@ -587,6 +582,7 @@ class Miner:
             synapse.data = []
 
         return synapse
+
     async def handle_on_demand_blacklist(
             self, synapse: OnDemandRequest
     ) -> typing.Tuple[bool, str]:
@@ -653,7 +649,7 @@ class Miner:
             )
 
         uid = self.metagraph.hotkeys.index(hotkey)
-        if not utils.is_validator(uid, self.metagraph):
+        if not utils.is_validator(uid, self.metagraph, self.vpermit_rao_limit):
             return (
                 True,
                 f"Hotkey {hotkey} at {ip} is not a validator",
