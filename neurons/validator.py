@@ -466,6 +466,7 @@ def main():
     """Main constructs the validator with its dependencies."""
 
     config = create_config(NeuronType.VALIDATOR)
+    check_config(config=config)
 
     bt.logging(config=config, logging_dir=config.full_path)
 
