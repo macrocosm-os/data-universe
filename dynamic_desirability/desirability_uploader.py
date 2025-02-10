@@ -44,8 +44,8 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
         data = desirability_dict
 
     else:
-        bt.logging.error(f"File path and/or list of desirabilities is not provided.")
-        return None
+        bt.logging.info(f"Empty desirabilities submitted. Submitting empty vote.")
+        return {}
 
     all_label_weights = {}
     valid_keys = {"source_name", "label_weights"}
