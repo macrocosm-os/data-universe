@@ -1,6 +1,6 @@
 apify-client==1.6.1
 asyncpraw==7.8.0
-bittensor==8.5.1
+bittensor==9.0.0rc5
 jupyter==1.0.0
 numpy==2.0.1
 pydantic==2.10.1
