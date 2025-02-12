@@ -32,8 +32,7 @@ from common.protocol import (
     GetContentsByBuckets,
     GetHuggingFaceMetadata,
     DecodeURLRequest,
-    REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
-    OnDemandRequest
+    REQUEST_LIMIT_BY_TYPE_PER_PERIOD
 )
 
 from scraping.config.config_reader import ConfigReader
@@ -45,7 +44,7 @@ from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
-from common.data import DataLabel, DataSource, DataEntity
+from common.data import DataLabel, DataSource
 from common.protocol import OnDemandRequest
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, ScraperId
@@ -536,16 +535,31 @@ class Miner:
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
+            # Create a new scraper provider instance
+            scraper_provider = ScraperProvider()
+
             # Get appropriate scraper from provider
             scraper_id = None
             if synapse.source == DataSource.X:
                 scraper_id = ScraperId.X_APIDOJO
+                # For X, combine keywords and usernames with appropriate label formatting
+                labels = []
+                if synapse.keywords:
+                    labels.extend([DataLabel(value=k) for k in synapse.keywords])
+                if synapse.usernames:
+                    # Ensure usernames have @ prefix
+                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in synapse.usernames])
+
             elif synapse.source == DataSource.REDDIT:
                 scraper_id = ScraperId.REDDIT_CUSTOM
-            # elif synapse.source == ScraperId.FINANCE:
-            #     pass
-            # elif synapse.source == ScraperId.SPEECH:
-            #     pass
+                # For Reddit, ensure subreddit has r/ prefix
+                if synapse.keywords and len(synapse.keywords) > 0:
+                    subreddit = synapse.keywords[0]
+                    if not subreddit.startswith('r/'):
+                        subreddit = f"r/{subreddit}"
+                    labels = [DataLabel(value=subreddit)]
+                else:
+                    labels = []
 
             if not scraper_id:
                 bt.logging.error(f"No scraper ID for source {synapse.source}")
@@ -553,23 +567,35 @@ class Miner:
                 return synapse
 
             # Get scraper from provider
-            scraper = self.scraping_coordinator.scraper_provider.get(scraper_id)
+            scraper = scraper_provider.get(scraper_id)
             if not scraper:
                 bt.logging.error(f"No scraper available for ID {scraper_id}")
                 synapse.data = []
                 return synapse
 
-            # Use scraper's on-demand handler
-            data = await scraper.handle_request(
-                keywords=synapse.keywords,
-                usernames=synapse.usernames,
-                start_date=synapse.start_date,
-                end_date=synapse.end_date,
-                limit=synapse.limit
+            # Create date range
+            start_dt = (dt.datetime.fromisoformat(synapse.start_date)
+                    if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
+            end_dt = (dt.datetime.fromisoformat(synapse.end_date)
+                    if synapse.end_date else dt.datetime.now(dt.timezone.utc))
+
+            # Log the labels being used
+            bt.logging.info(f"Searching with labels: {[l.value for l in labels]}")
+
+            config = ScrapeConfig(
+                entity_limit=synapse.limit,
+                date_range=DateRange(
+                    start=start_dt,
+                    end=end_dt
+                ),
+                labels=labels,
             )
 
+            # Use scraper's scrape method
+            data = await scraper.scrape(config)
+
             # Update response
-            synapse.data = data
+            synapse.data = data[:synapse.limit] if synapse.limit else data
             synapse.version = constants.PROTOCOL_VERSION
 
             bt.logging.success(
