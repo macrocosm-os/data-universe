@@ -1,3 +1,4 @@
+import json
 from typing import Dict
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
 
@@ -27,16 +28,30 @@ class DataSourceDesirability(StrictBaseModel):
         default_factory=lambda: {},
     )
 
+    def model_dump_json(self, **kwargs):
+        """Custom JSON serialization"""
+        return {
+            "weight": self.weight,
+            "default_scale_factor": self.default_scale_factor,
+            "label_scale_factors": {
+                label.value.replace('"', ''): scale_factor
+                for label, scale_factor in self.label_scale_factors.items()
+            }
+        }
+
+    def __str__(self) -> str:
+        return json.dumps(self.model_dump_json(), indent=4)
+
     @field_validator("label_scale_factors")
     def validate_label_scale_factors(
         cls, value: Dict[DataLabel, float]
     ) -> Dict[str, float]:
         """Validates the label_scale_factors field."""
         for label, scale_factor in value.items():
-            # Max label weight for one active validator putting 100% on one label = 23.333
-            if scale_factor < -1.0 or scale_factor > 23.34:
+            # Max label weight for one active validator putting 100% on one label = 100 + 1 from default.json if applicable
+            if scale_factor < -1.0 or scale_factor > 101:
                 raise ValueError(
-                    f"Label {label} scale factors must be between -1 and 1, inclusive."
+                    f"Label {label} scale factors must be between -1 and 101, inclusive."
                 )
         return value
 
@@ -67,6 +82,18 @@ class DataDesirabilityLookup(StrictBaseModel):
         description="The maximum age of data that will receive rewards. Data older than this will score 0",
     )
 
+    def __str__(self) -> str:
+        return json.dumps({
+            "distribution": {
+                DataSource(data_source).name: desirability.model_dump_json()  # Use .name instead of str()
+                for data_source, desirability in self.distribution.items()
+            },
+            "max_age_in_hours": self.max_age_in_hours
+        }, indent=4)
+
+    def __repr__(self) -> str:
+        return self.__str__()
+    
     @field_validator("distribution")
     def validate_distribution(
         cls, distribution: Dict[DataSource, DataSourceDesirability]

@@ -11,6 +11,8 @@ from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler, select_validation_samples
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
+
+from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
 from typing import List, Optional
 import random
 
@@ -369,7 +371,7 @@ async def set_desirabilities(
         validator=Depends(get_validator),
         api_key: str = Depends(require_master_key)):
     try:
-        success, message = await run_uploader_from_gravity(validator.config, request.desirabilities)
+        success, message = run_uploader_from_gravity(validator.config, request.desirabilities)
         if not success:
             bt.logging.error(f"Could not set desirabilities error message\n: {message}")
             raise HTTPException(status_code=400, detail=message)
@@ -379,6 +381,25 @@ async def set_desirabilities(
     except Exception as e:
         bt.logging.error(f"Error setting desirabilities: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
+
+
+@router.get("/get_desirabilities")
+@endpoint_error_handler
+async def get_desirability_list(
+        hotkey: str = None,
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)
+):
+    """If hotkey specified, return the current unscaled json submission for a specific validator hotkey. 
+       Otherwise, return the current aggregate desirability list."""
+    try:
+        subtensor = validator.subtensor
+        netuid = validator.evaluator.config.netuid
+        metagraph = validator.evaluator.metagraph
+        return get_hotkey_json_submission(subtensor=subtensor, netuid=netuid, metagraph=metagraph, hotkey=hotkey)
+    except Exception as e:
+        bt.logging.error(f"Error getting desirabilities: {str(e)}")
+        raise HTTPException(500, f"Error retrieving desirabilities: {str(e)}")
 
 
 @router.get("/get_bytes_by_label", response_model=LabelBytes)

@@ -4,8 +4,9 @@ from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 
 #################################################################
 
-# We welcome feedback on this list.
-# Please file an Issue on the github with your suggestions.
+# This list is outdated and is only used as a backup to Dynamic Desirability. 
+# Please see the folder dynamic_desirability for more information on how reward 
+# scale factors are constructed. 
 
 #################################################################
 
