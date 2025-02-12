@@ -314,9 +314,9 @@ class MinerEvaluator:
 
         if hf_validation_result:
             if hf_validation_result.is_valid == True:
-                bt.logging.info(f"Miner passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
+                bt.logging.info(f"{hotkey}: Miner {uid} passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
             else:
-                bt.logging.info(f"Miner did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
+                bt.logging.info(f"{hotkey}: Miner {uid} did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
             self.scorer.update_hf_boost_and_cred(uid, hf_validation_result.validation_percentage)
 
