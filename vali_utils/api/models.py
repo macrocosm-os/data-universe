@@ -13,32 +13,28 @@ class DesirabilityRequest(BaseModel):
 class QueryRequest(StrictBaseModel):
     """Request model for data queries"""
     source: str = Field(
-        ...,
+        ...,  # Required field
         description="Data source (x or reddit)"
     )
-
     usernames: List[str] = Field(
         default_factory=list,
         description="List of usernames to fetch data from",
         max_length=10
     )
-
     keywords: List[str] = Field(
         default_factory=list,
         description="List of keywords to search for",
         max_length=5
     )
-
-    start_date: Optional[dt.datetime] = Field(
+    # Change to optional strings for ISO format
+    start_date: Optional[str] = Field(
         default=None,
-        description="Start date for data collection (UTC)"
+        description="Start date (ISO format)"
     )
-
-    end_date: Optional[dt.datetime] = Field(
+    end_date: Optional[str] = Field(
         default=None,
-        description="End date for data collection (UTC)"
+        description="End date (ISO format)"
     )
-
     limit: int = Field(
         default=100,
         ge=1,
@@ -53,20 +49,20 @@ class QueryRequest(StrictBaseModel):
             source = DataSource[v.upper()]
             if source.weight == 0:  # Check if it's an active source
                 raise ValueError(f"Source {v} is not currently active")
-
-            return v.lower()
+            return v.upper()  # Return uppercase to match enum
         except KeyError:
             valid_sources = [s.name.lower() for s in DataSource if s.weight > 0]
             raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
 
-    @field_validator('end_date')
-    @classmethod
-    def validate_dates(cls, v: Optional[dt.datetime], values: Dict) -> Optional[dt.datetime]:
-        if v and values.get('start_date'):
-            if v < values['start_date']:
-                raise ValueError("end_date must be after start_date")
 
-        return v
+class QueryResponse(StrictBaseModel):
+    """Response model for data queries"""
+    status: str = Field(description="Request status (success/error)")
+    data: List[Dict[str, Any]] = Field(default_factory=list)
+    meta: Dict[str, Any] = Field(
+        default_factory=dict,
+        description="Additional metadata about the request"
+    )
 
 
 class DataItem(StrictBaseModel):
@@ -76,16 +72,6 @@ class DataItem(StrictBaseModel):
     uri: str
     source: DataSource
     label: Optional[str] = None
-
-
-class QueryResponse(StrictBaseModel):
-    """Response model for data queries"""
-    status: str = Field(description="Request status (success/error)")
-    data: List[DataItem] = Field(default_factory=list)
-    meta: Dict = Field(
-        default_factory=dict,
-        description="Additional metadata about the request"
-    )
 
 
 class HealthResponse(StrictBaseModel):
@@ -102,7 +88,7 @@ class MinerInfo(BaseModel):
     """Information about a miner's current data"""
     hotkey: str
     credibility: float
-    bucket_count: int 
+    bucket_count: int
     content_size_bytes_reddit: int
     content_size_bytes_twitter: int
     last_updated: dt.datetime
@@ -126,4 +112,4 @@ class LabelBytes(BaseModel):
     """Byte size information for a particular label"""
     label: str
     total_bytes: int
-    adj_total_bytes: float  
+    adj_total_bytes: float
