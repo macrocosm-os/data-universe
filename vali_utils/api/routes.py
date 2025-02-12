@@ -31,14 +31,20 @@ async def query_data(request: QueryRequest,
                      api_key: str = Depends(verify_api_key)):
     """Handle data queries targeting test miner"""
     try:
-        # Target test miner
-        TEST_MINER_HOTKEY = "5HSmU8zVqHRhVskecoyh2JWPD5erGuDRT6B6TBNtUwqJyopG" # todo remove it.
 
-        # Find miner's UID from hotkey
-        if TEST_MINER_HOTKEY not in validator.metagraph.hotkeys:
-            raise HTTPException(503, "Test miner not found in metagraph")
+        # Get all miner UIDs and sort by stake
+        miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid)
+        miner_scores = [(uid, float(validator.metagraph.I[uid])) for uid in miner_uids]
+        miner_scores.sort(key=lambda x: x[1], reverse=True)
 
-        uid = validator.metagraph.hotkeys.index(TEST_MINER_HOTKEY)
+        # Take top 50%
+        top_miners = miner_scores[:len(miner_scores) // 2]
+
+        # Select random miner from top 50%
+        uid, _ = random.choice(top_miners)
+        hotkey = validator.metagraph.hotkeys[uid]
+
+        bt.logging.info(f"Selected miner {uid} from top {len(top_miners)} miners")
 
         # Create request synapse
         synapse = OnDemandRequest(
