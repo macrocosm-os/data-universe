@@ -71,20 +71,27 @@ async def query_data(request: QueryRequest,
             # Access the data directly from the synapse data field
             all_data = response.data if response.data else []
 
-            # Process data (remove duplicates) and convert DataLabel objects to strings
+            # Convert DataEntity objects to dictionaries
+            processed_data = []
+            for item in all_data:
+                # Convert DataEntity to dict
+                item_dict = {
+                    'uri': item.uri,
+                    'datetime': item.datetime.isoformat(),
+                    'source': DataSource(item.source).name,
+                    'label': item.label.value if item.label else None,
+                    'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
+                }
+                processed_data.append(item_dict)
+
+            # Remove duplicates by converting to string representation
             seen = set()
             unique_data = []
-            for item in all_data:
-                item_hash = hash(str(item))
-                if item_hash not in seen:
-                    seen.add(item_hash)
-                    # Convert DataLabel to string if necessary
-                    if hasattr(item, 'label') and hasattr(item.label, 'value'):
-                        item_dict = item.dict()
-                        item_dict['label'] = item.label.value  # Extract the string value from DataLabel
-                        unique_data.append(item_dict)
-                    else:
-                        unique_data.append(item)
+            for item in processed_data:
+                item_str = str(sorted(item.items()))
+                if item_str not in seen:
+                    seen.add(item_str)
+                    unique_data.append(item)
 
             return {
                 "status": "success",
@@ -99,7 +106,6 @@ async def query_data(request: QueryRequest,
     except Exception as e:
         bt.logging.error(f"Error processing request: {str(e)}")
         raise HTTPException(500, str(e))
-
 
 @router.get("/query_bucket/{source}")
 @endpoint_error_handler
