@@ -26,7 +26,6 @@ class ApiDojoTwitterScraper(Scraper):
         "maxRequestRetries": 5
     }
 
-
     # As of 2/5/24 this actor only takes 256 MB in the default config so we can run a full batch without hitting shared actor memory limits.
     concurrent_validates_semaphore = threading.BoundedSemaphore(20)
 
@@ -69,7 +68,7 @@ class ApiDojoTwitterScraper(Scraper):
                 try:
                     dataset: List[dict] = await self.runner.run(run_config, run_input)
                 except (
-                    Exception
+                        Exception
                 ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
                     if attempt != max_attempts:
                         # Retrying.
@@ -223,22 +222,48 @@ class ApiDojoTwitterScraper(Scraper):
             )
 
         is_valid, valid_percent = utils.hf_tweet_validation(validation_results=results)
-        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent, reason=f"Validation Percentage = {valid_percent}" )
+        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent,
+                                  reason=f"Validation Percentage = {valid_percent}")
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
 
-        query = f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)} until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
+        query_parts = []
+
+        # Add date range
+        query_parts.append(
+            f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
+        query_parts.append(f"until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
+
+        # Handle labels - separate usernames and keywords
         if scrape_config.labels:
-            label_query = " OR ".join([label.value for label in scrape_config.labels])
-            query += f" ({label_query})"
+            username_labels = []
+            keyword_labels = []
+
+            for label in scrape_config.labels:
+                if label.value.startswith('@'):
+                    # Remove @ for the API query
+                    username = label.value[1:]
+                    username_labels.append(f"from:{username}")
+                else:
+                    keyword_labels.append(label.value)
+
+            # Add usernames with OR between them
+            if username_labels:
+                query_parts.append(f"({' OR '.join(username_labels)})")
+
+            # Add keywords with OR between them if there are any
+            if keyword_labels:
+                query_parts.append(f"({' OR '.join(keyword_labels)})")
         else:
             # HACK: The search query doesn't work if only a time range is provided.
             # If no label is specified, just search for "e", the most common letter in the English alphabet.
-            # I attempted using "#" instead, but that still returned empty results ¯\_(ツ)_/¯
-            query += " e"
+            query_parts.append("e")
+
+        # Join all parts with spaces
+        query = " ".join(query_parts)
 
         # Construct the input to the runner.
         max_items = scrape_config.entity_limit or 150
@@ -265,7 +290,6 @@ class ApiDojoTwitterScraper(Scraper):
             bt.logging.error(
                 f"Failed to scrape tweets using search terms {query}: {traceback.format_exc()}."
             )
-            # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
@@ -276,7 +300,6 @@ class ApiDojoTwitterScraper(Scraper):
         )
 
         data_entities = []
-
         for x_content in x_contents:
             data_entities.append(XContent.to_data_entity(content=x_content))
 
@@ -286,7 +309,7 @@ class ApiDojoTwitterScraper(Scraper):
         """Performs a best effort parsing of Apify dataset into List[XContent]
 
         Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}] or not dataset: # Todo remove first statement if it's not necessary
+        if dataset == [{"zero_result": True}] or not dataset:  # Todo remove first statement if it's not necessary
             return [], []
 
         results: List[XContent] = []
@@ -295,9 +318,9 @@ class ApiDojoTwitterScraper(Scraper):
             try:
                 # Check that we have the required fields.
                 if (
-                    ("text" not in data)
-                    or "url" not in data
-                    or "createdAt" not in data
+                        ("text" not in data)
+                        or "url" not in data
+                        or "createdAt" not in data
                 ):
                     continue
 
@@ -321,7 +344,7 @@ class ApiDojoTwitterScraper(Scraper):
                 is_retweets.append(is_retweet)
                 results.append(
                     XContent(
-                        username= data['author']['userName'],# utils.extract_user(data["url"]),
+                        username=data['author']['userName'],  # utils.extract_user(data["url"]),
                         text=utils.sanitize_scraped_tweet(text),
                         url=data["url"],
                         timestamp=dt.datetime.strptime(
@@ -344,7 +367,7 @@ class ApiDojoTwitterScraper(Scraper):
         results: List[dict] = []
         i = 0
         for data in dataset:
-            i = i+1
+            i = i + 1
             if (
                     ("text" not in data)
                     or "url" not in data
@@ -357,8 +380,8 @@ class ApiDojoTwitterScraper(Scraper):
             results.append({"text": utils.sanitize_scraped_tweet(text),
                             "url": url,
                             "datetime": dt.datetime.strptime(
-                            data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
-                        ),})
+                                data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
+                            ), })
 
         return results
 
