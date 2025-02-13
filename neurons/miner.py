@@ -141,6 +141,7 @@ class Miner:
         self.compressed_index_refresh_thread: threading.Thread = None
         self.hugging_face_thread: threading.Thread = None
         self.lock = threading.RLock()
+        self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
         # Instantiate encoding keys
         self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
@@ -675,6 +676,7 @@ class Miner:
             )
 
         uid = self.metagraph.hotkeys.index(hotkey)
+        
         if not utils.is_validator(uid, self.metagraph, self.vpermit_rao_limit):
             return (
                 True,
