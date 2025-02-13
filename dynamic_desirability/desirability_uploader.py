@@ -151,7 +151,7 @@ async def run_uploader(args):
     my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
     my_hotkey = my_wallet.hotkey.ss58_address
     subtensor = bt.subtensor(network=args.network)
-    chain_store = ChainPreferenceStore(wallet=my_wallet, subtensor=subtensor, netuid=args.netuid)
+    uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=my_hotkey, netuid=args.netuid)
 
     try:
 
@@ -176,10 +176,10 @@ async def run_uploader(args):
         raise
 
 
-async def run_uploader_from_gravity(config, desirability_dict):
+def run_uploader_from_gravity(config, desirability_dict):
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
-    chain_store = ChainPreferenceStore(wallet=wallet, subtensor=subtensor, netuid=config.netuid)
+    uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
     try:
 
         json_content = normalize_preferences_json(desirability_dict=desirability_dict)

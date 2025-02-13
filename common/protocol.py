@@ -172,14 +172,9 @@ class OnDemandRequest(BaseProtocol):
     )
 
     # Response fields
-    data: List[Dict] = Field(
+    data: List[DataEntity] = Field(
         default_factory=list,
         description="Retrieved data"
-    )
-
-    validation_sample: Optional[Dict] = Field(
-        default=None,
-        description="Random sample for validation"
     )
 
     version: Optional[int] = Field(

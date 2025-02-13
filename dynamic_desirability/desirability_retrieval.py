@@ -10,7 +10,7 @@ import bittensor as bt
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
-from common.utils import get_validator_data
+from common.utils import get_validator_data, is_validator
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
@@ -147,6 +147,33 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
 
+def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
+    """Gets the unscaled JSON submisson for a specified validator hotkey. 
+       If no hotkey is specified, returns the current aggregate desirability list. """
+    try:
+        if not hotkey:
+            bt.logging.info(f"No hotkey specified. Returning aggeregate dynamic desirability list.")
+            script_dir = os.path.dirname(os.path.abspath(__file__))
+            agg_path = os.path.join(script_dir, AGGREGATE_JSON_PATH)
+            with open(agg_path, "r") as file:
+                agg_list = json.load(file)
+            return agg_list
+        
+        uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=netuid)
+
+        if is_validator(uid=uid, metagraph=metagraph):
+            bt.logging.info(f"Hotkey {hotkey} is a validator. Checking for JSON submission to return...")
+            commit_sha = subtensor.get_commitment(netuid=netuid, uid=uid)
+            return get_json(commit_sha=commit_sha, filename=f"{hotkey}.json")
+        else:
+            bt.logging.error(f"Hotkey {hotkey} is not a validator. Only validators have JSON submissions. ")
+            return None
+
+    except Exception as e:
+        bt.logging.error(f"Could not retrieve JSON submission for hotkey {hotkey}. Error: {e}")
+        return None
+
+
 async def run_retrieval(config) -> DataDesirabilityLookup:
     try:
         # my_wallet = bt.wallet(config=config)
@@ -160,9 +187,8 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
         for hotkey in validator_data.keys():
-            vali_uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
-            validator_data[hotkey]['github_hash'] = subtensor.get_commitment(netuid=config.netuid, uid=vali_uid)
-            # validator_data[hotkey]['github_hash'] = await chain_store.retrieve_preferences(hotkey=hotkey)
+            uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
+            validator_data[hotkey]['github_hash'] =  subtensor.get_commitment(netuid=config.netuid, uid=uid)
             if validator_data[hotkey]['github_hash']:
                 validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'],
                                                           filename=f"{hotkey}.json")

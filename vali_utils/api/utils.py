@@ -1,6 +1,17 @@
 import bittensor as bt
+import random
 from fastapi import HTTPException
 from functools import wraps
+
+
+def select_validation_samples(data, sample_size: int = 1):
+    """Select random samples from the data for validation"""
+    if not data:
+        return []
+
+    # Select up to sample_size random items, or all items if less than sample_size
+    sample_count = min(sample_size, len(data))
+    return random.sample(data, sample_count)
 
 
 def endpoint_error_handler(func):
