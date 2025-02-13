@@ -181,7 +181,7 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         metagraph = subtensor.metagraph(netuid=config.netuid)
 
         bt.logging.info("\nGetting validator weights from the metagraph...\n")
-        validator_data = get_validator_data(metagraph=metagraph, vpermit_tao_limit=config.vpermit_tao_limit)
+        validator_data = get_validator_data(metagraph=metagraph, vpermit_rao_limit=config.vpermit_rao_limit)
 
         bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
