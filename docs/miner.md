@@ -116,6 +116,9 @@ In this example, we configure the Miner to scrape using a single scraper, the "X
 
 You can start your Miner with a different scraping config by passing the filepath to `--neuron.scraping_config_file`
 
+# On Demand request handle
+As described in [on demand request handle](../docs/on_demand.md)
+
 # Choosing which data to scrape
 
 As described in the [incentive mechanism](../README.md#incentive-mechanism), Miners are, in part, scored based on their data's desirability and uniqueness. We encourage Miners to tune their Miners to maximize their scores by scraping unique, desirable data.

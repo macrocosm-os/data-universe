@@ -1,3 +1,4 @@
+import json
 from typing import Dict
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
 
@@ -26,6 +27,20 @@ class DataSourceDesirability(StrictBaseModel):
         description="The scaling factor used for each Label. If a Label is not present, the default_scale_factor is used. The values must be between -1 and 23.33, inclusive.",
         default_factory=lambda: {},
     )
+
+    def model_dump_json(self, **kwargs):
+        """Custom JSON serialization"""
+        return {
+            "weight": self.weight,
+            "default_scale_factor": self.default_scale_factor,
+            "label_scale_factors": {
+                label.value.replace('"', ''): scale_factor
+                for label, scale_factor in self.label_scale_factors.items()
+            }
+        }
+
+    def __str__(self) -> str:
+        return json.dumps(self.model_dump_json(), indent=4)
 
     @field_validator("label_scale_factors")
     def validate_label_scale_factors(
@@ -67,6 +82,18 @@ class DataDesirabilityLookup(StrictBaseModel):
         description="The maximum age of data that will receive rewards. Data older than this will score 0",
     )
 
+    def __str__(self) -> str:
+        return json.dumps({
+            "distribution": {
+                DataSource(data_source).name: desirability.model_dump_json()  # Use .name instead of str()
+                for data_source, desirability in self.distribution.items()
+            },
+            "max_age_in_hours": self.max_age_in_hours
+        }, indent=4)
+
+    def __repr__(self) -> str:
+        return self.__str__()
+    
     @field_validator("distribution")
     def validate_distribution(
         cls, distribution: Dict[DataSource, DataSourceDesirability]

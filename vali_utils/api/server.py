@@ -1,6 +1,6 @@
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.docs import get_swagger_ui_html
+from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
 import uvicorn
 from threading import Thread
 import bittensor as bt
@@ -10,12 +10,12 @@ from vali_utils.api.auth.key_routes import router as key_router
 from vali_utils.api.auth.auth import APIKeyManager, key_manager, require_master_key
 from vali_utils.api.utils import endpoint_error_handler
 
-
 class ValidatorAPI:
     """API server for validator on-demand queries"""
 
     def __init__(self, validator, port: int = 8000):
-        """Initialize API server
+        """
+        Initialize API server
 
         Args:
             validator: Validator instance
@@ -33,8 +33,7 @@ class ValidatorAPI:
             title="Data Universe Validator API",
             description="API for on-demand data queries from the Data Universe network",
             version="1.0.0",
-            docs_url=None,    # Disable default docs
-            redoc_url=None    # Disable default redoc
+            docs_url=None,    # Disable default docs routes
         )
 
         # Add CORS middleware
@@ -46,34 +45,37 @@ class ValidatorAPI:
             allow_headers=["*"],
         )
 
-        # Protected documentation routes
+        # Protected Swagger UI docs endpoint
         @app.get("/docs", include_in_schema=False)
         async def get_docs(_: bool = Depends(require_master_key)):
             return get_swagger_ui_html(
                 openapi_url="/openapi.json",
-                title="API Documentation",
-                swagger_js_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui-bundle.js",
-                swagger_css_url="https://cdn.jsdelivr.net/npm/swagger-ui-dist@5.9.0/swagger-ui.css",
+                title="API Documentation"
             )
 
+        # Protected ReDoc docs endpoint using default styling
+        @app.get("/redoc", include_in_schema=False)
+        async def get_redoc(_: bool = Depends(require_master_key)):
+            return get_redoc_html(
+                openapi_url="/openapi.json",
+                title="API Documentation"
+            )
+
+        # Protected OpenAPI JSON schema endpoint
         @app.get("/openapi.json", include_in_schema=False)
         @endpoint_error_handler
-        async def get_openapi(_: bool = Depends(require_master_key)):
+        async def openapi_schema(_: bool = Depends(require_master_key)):
             try:
                 if not app.openapi_schema:
+                    from fastapi.openapi.utils import get_openapi
                     app.openapi_schema = get_openapi(
                         title=app.title,
                         version=app.version,
                         description=app.description,
                         routes=app.routes,
-                        tags=app.openapi_tags,
-                        servers=app.servers,
-                        terms_of_service=app.terms_of_service,
-                        contact=app.contact,
-                        license_info=app.license_info
                     )
-                    # Strip any sensitive information
-                    for path in app.openapi_schema["paths"].values():
+                    # Remove sensitive security information if needed
+                    for path in app.openapi_schema.get("paths", {}).values():
                         for operation in path.values():
                             if "security" in operation:
                                 del operation["security"]
@@ -82,9 +84,9 @@ class ValidatorAPI:
                 bt.logging.error(f"Failed to generate OpenAPI schema: {str(e)}")
                 raise HTTPException(status_code=500, detail="Could not generate API documentation")
 
-        # Add rate limit headers middleware
+        # Rate limit headers middleware
         @app.middleware("http")
-        async def add_rate_limit_headers(request, call_next):
+        async def add_rate_limit_headers(request: Request, call_next):
             response = await call_next(request)
             api_key = request.headers.get("X-API-Key")
             if api_key and self.key_manager.is_valid_key(api_key):

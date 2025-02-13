@@ -32,8 +32,7 @@ from common.protocol import (
     GetContentsByBuckets,
     GetHuggingFaceMetadata,
     DecodeURLRequest,
-    REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
-    OnDemandRequest
+    REQUEST_LIMIT_BY_TYPE_PER_PERIOD
 )
 
 from scraping.config.config_reader import ConfigReader
@@ -44,6 +43,11 @@ from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
+
+from common.data import DataLabel, DataSource
+from common.protocol import OnDemandRequest
+from common.date_range import DateRange
+from scraping.scraper import ScrapeConfig, ScraperId
 
 
 # Enable logging to the miner TODO move it to some different location
@@ -122,7 +126,12 @@ class Miner:
                 forward_fn=self.decode_urls,
                 blacklist_fn=self.decode_urls_blacklist,
                 priority_fn=self.decode_urls_priority
+            ).attach(
+                forward_fn=self.handle_on_demand,
+                blacklist_fn=self.handle_on_demand_blacklist,
+                priority_fn=self.handle_on_demand_priority
             )
+
             bt.logging.success(f"Axon created: {self.axon}.")
 
         # Instantiate runners.
@@ -522,28 +531,82 @@ class Miner:
     async def handle_on_demand(self, synapse: OnDemandRequest) -> OnDemandRequest:
         """
         Handle on-demand data requests from validators.
-        TODO: Implement full data retrieval logic
-
-        Flow:
-        1. Check storage for cached data matching request
-        2. If not enough data in storage, scrape new data:
-           - For usernames: Use apidojo/custom scraper to get user tweets/posts
-           - For keywords: Use search functionality
-        3. Return data + random validation sample
-
-        Current implementation: Returns empty response for API structure testing
+        Uses scraper_provider to get appropriate scraper.
         """
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
-            # Mock empty response
-            synapse.data = []
-            synapse.validation_sample = None
+            # Create a new scraper provider instance
+            scraper_provider = ScraperProvider()
+
+            # Get appropriate scraper from provider
+            scraper_id = None
+            if synapse.source == DataSource.X:
+                scraper_id = ScraperId.X_APIDOJO
+                # For X, combine keywords and usernames with appropriate label formatting
+                labels = []
+                if synapse.keywords:
+                    labels.extend([DataLabel(value=k) for k in synapse.keywords])
+                if synapse.usernames:
+                    # Ensure usernames have @ prefix
+                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in synapse.usernames])
+
+            elif synapse.source == DataSource.REDDIT:
+                scraper_id = ScraperId.REDDIT_CUSTOM
+                # For Reddit, ensure subreddit has r/ prefix
+                if synapse.keywords and len(synapse.keywords) > 0:
+                    subreddit = synapse.keywords[0]
+                    if not subreddit.startswith('r/'):
+                        subreddit = f"r/{subreddit}"
+                    labels = [DataLabel(value=subreddit)]
+                else:
+                    labels = []
+
+            if not scraper_id:
+                bt.logging.error(f"No scraper ID for source {synapse.source}")
+                synapse.data = []
+                return synapse
+
+            # Get scraper from provider
+            scraper = scraper_provider.get(scraper_id)
+            if not scraper:
+                bt.logging.error(f"No scraper available for ID {scraper_id}")
+                synapse.data = []
+                return synapse
+
+            # Create date range
+            start_dt = (dt.datetime.fromisoformat(synapse.start_date)
+                    if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
+            end_dt = (dt.datetime.fromisoformat(synapse.end_date)
+                    if synapse.end_date else dt.datetime.now(dt.timezone.utc))
+
+            # Log the labels being used
+            bt.logging.info(f"Searching with labels: {[l.value for l in labels]}")
+
+            config = ScrapeConfig(
+                entity_limit=synapse.limit,
+                date_range=DateRange(
+                    start=start_dt,
+                    end=end_dt
+                ),
+                labels=labels,
+            )
+
+            # Use scraper's scrape method
+            data = await scraper.scrape(config)
+
+            # Update response
+            synapse.data = data[:synapse.limit] if synapse.limit else data
             synapse.version = constants.PROTOCOL_VERSION
+
+            bt.logging.success(
+                f"Returning {len(synapse.data)} items to {synapse.dendrite.hotkey}"
+            )
 
         except Exception as e:
             bt.logging.error(f"Error in on-demand request: {str(e)}")
             bt.logging.debug(traceback.format_exc())
+            synapse.data = []
 
         return synapse
 
@@ -613,6 +676,7 @@ class Miner:
             )
 
         uid = self.metagraph.hotkeys.index(hotkey)
+        
         if not utils.is_validator(uid, self.metagraph, self.vpermit_tao_limit):
             return (
                 True,
