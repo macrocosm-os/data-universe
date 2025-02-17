@@ -38,7 +38,14 @@ from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
+import warnings
 
+# Filter out the specific deprecation warning from datetime.utcnow()
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message="datetime.datetime.utcnow() is deprecated"
+)
 
 bt.logging.set_trace(True) # TODO remove it in future
 
