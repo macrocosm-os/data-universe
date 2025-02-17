@@ -105,7 +105,7 @@ async def query_data(request: QueryRequest,
                 "status": "success",
                 "data": unique_data[:request.limit],
                 "meta": {
-                    "miner_hotkey": TEST_MINER_HOTKEY,
+                    "miner_hotkey": hotkey,
                     "miner_uid": uid,
                     "items_returned": len(unique_data)
                 }
