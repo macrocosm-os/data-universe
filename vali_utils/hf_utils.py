@@ -7,9 +7,8 @@ from datasets import load_dataset
 import itertools
 import asyncio
 import datetime as dt
-import pyarrow.parquet as pq
+import pyarrow as pa
 import fsspec
-
 from typing import List, Dict, Any, Tuple, Optional
 from huggingface_hub import HfApi, hf_hub_url
 from huggingface_utils.encoding_system import SymKeyEncodingKeyManager, decode_url
@@ -84,7 +83,7 @@ def compare_latest_commits_parquet_files(repo_id: str) -> Tuple[bool, List[str],
                 commit_date = getattr(commits[0], "commit_date", None)
             if commit_date is None and hasattr(commits[0], "commit"):
                 commit_date = commits[0].commit.get("author", {}).get("date", None)
-            return True, parquet_files, commit_date
+            return False, parquet_files, commit_date
 
         latest_commit = commits[0]
         second_commit = commits[1]
@@ -104,25 +103,45 @@ def compare_latest_commits_parquet_files(repo_id: str) -> Tuple[bool, List[str],
         return False, [], None
 
 
+def schema_to_dict(schema: pa.Schema) -> dict:
+    """ Manually convert a pyarrow Schema to a Python dict. """
+    fields = []
+    for field in schema:
+        fields.append({
+            "name": field.name,
+            "type": str(field.type),
+            "nullable": field.nullable
+            # we can add more fields
+        })
+
+    # Convert metadata (if present) to a dict of decoded strings.
+    metadata = {}
+    if schema.metadata is not None:
+        for k, v in schema.metadata.items():
+            metadata[k.decode("utf-8")] = v.decode("utf-8")
+
+    return {
+        "fields": fields,
+        "metadata": metadata
+    }
+
+
 def get_parquet_file_structure(repo_id: str, file: str) -> dict:
     """
     Retrieve the schema (structure) of a parquet file from a HuggingFace dataset repository
-    without downloading the entire file.
-
-    Args:
-        repo_id (str): The repository ID.
-        file (str): The parquet file path in the repo.
-
-    Returns:
-        dict: The schema of the parquet file.
+    without downloading the entire file, returning a dictionary representation.
     """
     try:
         file_url = hf_hub_url(repo_id=repo_id, filename=file, repo_type="dataset")
         with fsspec.open(file_url, "rb") as f:
-            parquet_file = pq.ParquetFile(f)
+            parquet_file = pa.parquet.ParquetFile(f)
             schema = parquet_file.schema_arrow
-            return schema.to_dict()
+
+            # Convert the pyarrow Schema to a dict manually:
+            return schema_to_dict(schema)
+
     except Exception as e:
+        import bittensor as bt
         bt.logging.error(f"Error retrieving parquet structure: {str(e)}")
         return {}
 
@@ -201,6 +220,9 @@ async def test_hf(repo_id: str):
 
     # Compare the two latest commits for parquet files.
     same_commits, latest_parquet_files, latest_commit_date = compare_latest_commits_parquet_files(repo_id)
+
+    a = (dt.datetime.now(dt.timezone.utc) - latest_commit_date) < dt.timedelta(hours=17)
+    print(f'========\n {a} \n==========')
     if same_commits:
         print("The latest two commits have the same parquet files.")
     else:
@@ -256,5 +278,5 @@ async def test_hf(repo_id: str):
 
 
 if __name__ == "__main__":
-    test_repo_id = "arrmlet/x_dataset_123456"  # Change to your repository ID as needed
+    test_repo_id = "icedwind/x_dataset_4561"  # Change to your repository ID as needed
     asyncio.run(test_hf(test_repo_id))

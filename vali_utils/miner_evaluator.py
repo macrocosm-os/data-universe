@@ -304,7 +304,7 @@ class MinerEvaluator:
                     except Exception as e:
                         bt.logging.error(f"{hotkey}: Failed to parse commit date: {commit_date}. Error: {str(e)}")
                         commit_datetime = None
-                    if commit_datetime and (dt.datetime.utcnow() - commit_datetime) < dt.timedelta(hours=17):
+                    if commit_datetime and (dt.datetime.now(dt.timezone.utc) - commit_datetime) < dt.timedelta(hours=19):
                         bt.logging.info(
                             f"{hotkey}: Latest commit for {hf_metadata.repo_name} is less than 17 hours old. Marking HF validation as False."
                         )
