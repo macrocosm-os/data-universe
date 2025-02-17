@@ -34,8 +34,8 @@ async def query_data(request: QueryRequest,
     """Handle data queries targeting test miner"""
     try:
 
-        # Get all miner UIDs and sort by stake
-        miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid)
+        # Get all miner UIDs and sort by incentive
+        miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid, 10_000)
         miner_scores = [(uid, float(validator.metagraph.I[uid])) for uid in miner_uids]
         miner_scores.sort(key=lambda x: x[1], reverse=True)
 
@@ -105,7 +105,7 @@ async def query_data(request: QueryRequest,
                 "status": "success",
                 "data": unique_data[:request.limit],
                 "meta": {
-                    "miner_hotkey": TEST_MINER_HOTKEY,
+                    "miner_hotkey": hotkey,
                     "miner_uid": uid,
                     "items_returned": len(unique_data)
                 }
@@ -256,7 +256,7 @@ async def query_bucket(
 async def health_check(validator=Depends(get_validator),
                        api_key: str = Depends(verify_api_key)):
     """Health check endpoint"""
-    miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid)
+    miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid, 10_000)
     return {
         "status": "healthy" if validator.is_healthy() else "unhealthy",
         "timestamp": dt.datetime.utcnow(),
