@@ -23,7 +23,6 @@ import numpy as np
 import asyncio
 import threading
 import time
-import datetime as dt
 import os
 import wandb
 import subprocess
@@ -45,6 +44,9 @@ warnings.filterwarnings(
     category=DeprecationWarning,
     message="datetime.datetime.utcnow() is deprecated"
 )
+# import datetime after the warning filter
+import datetime as dt
+
 
 bt.logging.set_trace(True) # TODO remove it in future
 
