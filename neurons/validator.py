@@ -17,7 +17,6 @@
 
 
 import copy
-import datetime as dt
 import sys
 import torch
 import numpy as np
@@ -48,7 +47,6 @@ warnings.filterwarnings(
 )
 
 bt.logging.set_trace(True) # TODO remove it in future
-
 
 
 class Validator:
