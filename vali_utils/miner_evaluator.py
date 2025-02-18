@@ -256,7 +256,7 @@ class MinerEvaluator:
             else:
                 bt.logging.info(f"{hotkey}: Miner {uid} did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
-            self.scorer.update_hf_boost_and_cred(uid, hf_validation_result.validation_percentage)
+            self.scorer.update_hf_boost_and_cred(uid, hf_validation_result)
 
     async def _perform_hf_validation(
             self, hotkey: str, uid: int, axon_info: bt.AxonInfo, current_block: int
