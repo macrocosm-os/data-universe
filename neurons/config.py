@@ -82,13 +82,6 @@ def add_args(neuron_type: NeuronType, parser):
     parser.add_argument("--netuid", type=int, help="Subnet netuid", default=13)
 
     parser.add_argument(
-        "--vpermit_rao_limit",
-        type=int,
-        help="Set this flag to specify the minimum stake a validator needs to be recognized by a miner.",
-        default=19390, #rao stake of vali on testnet
-    )
-
-    parser.add_argument(
         "--neuron.epoch_length",
         type=int,
         help="The default epoch length (how often we sync the metagraph, measured in 12 second blocks).",
