@@ -62,16 +62,16 @@ class DataValueCalculator:
         # but we make the trade-off because it has a notable impact on perf vs. constructing TimeBuckets
         # to compute the age in hours.
 
+        data_age_in_hours = current_time_bucket_id - time_bucket_id
+        dd_threshold = 0.6
+        # Safe guard against future data.
+        data_age_in_hours = max(0, data_age_in_hours)
+
         # If the label is in the Dynamic Desirability list, all post ages are granted an age_scale_factor of 1 (maximum).
         if label is not None:
             for data_source_desirability in self.model.distribution.values():
                 if label in data_source_desirability.label_scale_factors:
-                    return 1.0
-
-        data_age_in_hours = current_time_bucket_id - time_bucket_id
-
-        # Safe guard against future data.
-        data_age_in_hours = max(0, data_age_in_hours)
+                    return max(dd_threshold, 1.0 - (data_age_in_hours / (2 * self.model.max_age_in_hours)))
 
         if data_age_in_hours > self.model.max_age_in_hours:
             return 0.0

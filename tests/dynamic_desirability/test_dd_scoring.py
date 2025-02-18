@@ -83,7 +83,7 @@ class TestDDScoring(unittest.TestCase):
         self.get_score_for_label(label="r/testlabel", score=0)
 
     def test_dd_label_score(self):
-        self.get_score_for_label(label="r/bittensor_", score=60)
+        self.get_score_for_label(label="r/bittensor_", score=0.6 * 0.6 * 100)
 
 if __name__ == "__main__":
     unittest.main()
