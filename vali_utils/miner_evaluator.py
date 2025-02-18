@@ -265,7 +265,7 @@ class MinerEvaluator:
         Performs HuggingFace validation for a miner using metadata from the miner.
         Enhanced logic:
           - If the two latest commits for the repo are identical, return an invalid result.
-          - If the latest commit is less than 17 hours old, return an invalid result.
+          - If the latest commit is greater than 19 (17 hrs + 2 hr allowance) hours old, return an invalid result.
           - Otherwise, proceed with URL decoding and content validation.
 
         Returns:
@@ -297,7 +297,7 @@ class MinerEvaluator:
                     self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
                     continue
 
-                # Check if the latest commit is less than 17 hours old.
+                # Check if the latest commit is greater than 19 hours old (17 hrs + 2 hr allowance).
                 if commit_date:
                     try:
                         commit_datetime = dt.datetime.fromisoformat(commit_date)
@@ -306,11 +306,11 @@ class MinerEvaluator:
                         commit_datetime = None
                     if commit_datetime and (dt.datetime.now(dt.timezone.utc) - commit_datetime) > dt.timedelta(hours=19):
                         bt.logging.info(
-                            f"{hotkey}: Latest commit for {hf_metadata.repo_name} is less than 17 hours old. Marking HF validation as False."
+                            f"{hotkey}: Latest commit for {hf_metadata.repo_name} is greater than 19 hours old. Marking HF validation as False."
                         )
                         hf_validation_result = HFValidationResult(
                             is_valid=False,
-                            reason="Latest commit is too recent (<17 hours)",
+                            reason="Latest commit is too old (>19 hours)",
                             validation_percentage=0.0,
                         )
                         self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
