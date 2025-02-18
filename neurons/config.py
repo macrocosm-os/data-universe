@@ -109,6 +109,13 @@ def add_args(neuron_type: NeuronType, parser):
         default=False,
     )
 
+    parser.add_argument(
+        "--vpermit_rao_limit",
+        type=int,
+        help="Set this flag to specify the minimum stake a validator needs to be recognized by a miner.",
+        default=10_000, #TODO: change based on feedback
+    )
+
     if neuron_type == NeuronType.VALIDATOR:
         parser.add_argument(
             "--neuron.axon_off",

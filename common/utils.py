@@ -10,7 +10,6 @@ from math import floor
 from typing import Any, Callable, List, Optional, Dict
 import bittensor as bt
 from functools import lru_cache, update_wrapper
-
 from common.date_range import DateRange
 
 _KB = 1024
@@ -52,7 +51,7 @@ def is_miner(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int) -> bool:
     return not is_validator(uid, metagraph, vpermit_rao_limit)
 
 
-def is_validator(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int) -> bool:
+def is_validator(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int = 10_000) -> bool:
     """Checks if a UID on the subnet is a validator."""
     return metagraph.validator_permit[uid] and float(metagraph.S[uid]) >= vpermit_rao_limit
 

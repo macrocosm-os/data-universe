@@ -17,14 +17,12 @@
 
 
 import copy
-import datetime as dt
 import sys
 import torch
 import numpy as np
 import asyncio
 import threading
 import time
-import datetime as dt
 import os
 import wandb
 import subprocess
@@ -38,10 +36,19 @@ from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
+import warnings
+
+# Filter out the specific deprecation warning from datetime.utcnow()
+warnings.filterwarnings(
+    "ignore",
+    category=DeprecationWarning,
+    message="datetime.datetime.utcnow() is deprecated"
+)
+# import datetime after the warning filter
+import datetime as dt
 
 
 bt.logging.set_trace(True) # TODO remove it in future
-
 
 
 class Validator:

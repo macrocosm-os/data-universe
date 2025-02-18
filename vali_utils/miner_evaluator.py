@@ -38,7 +38,8 @@ from vali_utils.hf_utils import (
     get_latest_commit_files,
     get_validation_data,
     decode_dataframe,
-    validate_hf_content
+    validate_hf_content,
+    compare_latest_commits_parquet_files
 )
 
 
@@ -64,7 +65,7 @@ class MinerEvaluator:
         self.metagraph_syncer.register_listener(
             self._on_metagraph_updated, netuids=[config.netuid]
         )
-
+        self.vpermit_rao_limit = self.config.vpermit_rao_limit
         self.wallet = bt.wallet(config=self.config)
 
         # Set up initial scoring weights for validation
@@ -133,78 +134,14 @@ class MinerEvaluator:
             return
 
         ##########
-        # Query HuggingFace metadata
+        # Query HuggingFace metadata and perform enhanced HF validation.
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
         hf_validation_result = None
-        # On testnet, try to validate HF in a miner evaluation every 300 blocks (1 hr). On mainnet, this happens every 5100 blocks.
-        if validation_info is None or (current_block - validation_info['block']) > 300:
-            hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
-            if hf_metadatas:
-                for hf_metadata in hf_metadatas:
-                    bt.logging.info(f'{hotkey}: Trying to validate {hf_metadata.repo_name}')
-
-                    # Get parquet files
-                    new_parquet_files = get_latest_commit_files(hf_metadata.repo_name)
-                    if not new_parquet_files:
-                        bt.logging.warning(f"No new parquet files found for {hf_metadata.repo_name}")
-                        continue
-
-                    # Get encoded URLs and DataFrame
-                    encoded_urls, encoded_df = get_validation_data(hf_metadata.repo_name, new_parquet_files)
-
-                    if encoded_urls:
-                        # Get decoded URLs from miner
-                        success, decoded_urls = await self._get_decoded_urls(hotkey, uid, axon_info, encoded_urls)
-                        if success:
-                            try:
-                                # Add length check before DataFrame operation
-                                if len(decoded_urls) == 0:
-                                    bt.logging.error(f"{hotkey}: Got empty decoded_urls list")
-                                    hf_validation_result = HFValidationResult(
-                                        is_valid=False,
-                                        reason=f"{hotkey}: Got empty decoded_urls list",
-                                        validation_percentage=0.0
-                                    )
-                                else:
-                                    decoded_df = encoded_df.copy()
-                                    del encoded_df
-                                    decoded_df = decoded_df.head(
-                                        len(decoded_urls))  # Ensure DataFrame matches decoded_urls length
-                                    decoded_df['url'] = decoded_urls
-                                    hf_validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
-                                    bt.logging.info(
-                                        f'{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {hf_validation_result}')
-                            except ValueError as e:
-                                bt.logging.error(f"{hotkey}: ValueError in URL decoding: {str(e)}")
-                                hf_validation_result = HFValidationResult(
-                                        is_valid=False,
-                                        reason=f"{hotkey}: ValueError in URL decoding: {str(e)}",
-                                        validation_percentage=0.0
-                                    )
-                            except Exception as e:
-                                bt.logging.error(f"{hotkey}: Unexpected error in URL decoding: {str(e)}")
-                                hf_validation_result = HFValidationResult(
-                                        is_valid=False,
-                                        reason=f"{hotkey}: Unexpected error in URL decoding: {str(e)}",
-                                        validation_percentage=0.0
-                                    )
-
-                    # Store validation result
-                    self.hf_storage.update_validation_info(
-                        hotkey,
-                        str(hf_metadata.repo_name),
-                        current_block,
-                    )
-            else:
-                self.hf_storage.update_validation_info(
-                    hotkey,
-                    'no_dataset_provided',
-                    current_block,
-                )
+        if validation_info is None or (current_block - validation_info['block']) > 5100:  # ~17 hrs
+            hf_validation_result = await self._perform_hf_validation(hotkey, uid, axon_info, current_block)
         ##########
 
-        ##########
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
             vali_utils.choose_data_entity_bucket_to_query(index)
@@ -322,6 +259,108 @@ class MinerEvaluator:
                 bt.logging.info(f"{hotkey}: Miner {uid} did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
             self.scorer.update_hf_boost_and_cred(uid, hf_validation_result.validation_percentage)
+
+    async def _perform_hf_validation(
+            self, hotkey: str, uid: int, axon_info: bt.AxonInfo, current_block: int
+    ) -> Optional[HFValidationResult]:
+        """
+        Performs HuggingFace validation for a miner using metadata from the miner.
+        Enhanced logic:
+          - If the two latest commits for the repo are identical, return an invalid result.
+          - If the latest commit is less than 17 hours old, return an invalid result.
+          - Otherwise, proceed with URL decoding and content validation.
+
+        Returns:
+            An HFValidationResult with validation details or None if no metadata is provided.
+        """
+        hf_validation_result = None
+        hf_metadatas = await self._query_huggingface_metadata(hotkey, uid, axon_info)
+        if hf_metadatas:
+            for hf_metadata in hf_metadatas:
+                bt.logging.info(f"{hotkey}: Trying to validate {hf_metadata.repo_name}")
+
+                # Get parquet files and commit date from the latest commit.
+                new_parquet_files, commit_date = get_latest_commit_files(hf_metadata.repo_name)
+                if not new_parquet_files:
+                    bt.logging.warning(f"No new parquet files found for {hf_metadata.repo_name}")
+                    continue
+
+                # Check if the two latest commits are identical.
+                same_commits, _, _ = compare_latest_commits_parquet_files(hf_metadata.repo_name)
+                if same_commits:
+                    bt.logging.info(
+                        f"{hotkey}: Latest commits for {hf_metadata.repo_name} are identical. Marking HF validation as False."
+                    )
+                    hf_validation_result = HFValidationResult(
+                        is_valid=False,
+                        reason="Latest two commits are identical",
+                        validation_percentage=0.0,
+                    )
+                    self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
+                    continue
+
+                # Check if the latest commit is less than 17 hours old.
+                if commit_date:
+                    try:
+                        commit_datetime = dt.datetime.fromisoformat(commit_date)
+                    except Exception as e:
+                        bt.logging.error(f"{hotkey}: Failed to parse commit date: {commit_date}. Error: {str(e)}")
+                        commit_datetime = None
+                    if commit_datetime and (dt.datetime.now(dt.timezone.utc) - commit_datetime) > dt.timedelta(hours=19):
+                        bt.logging.info(
+                            f"{hotkey}: Latest commit for {hf_metadata.repo_name} is less than 17 hours old. Marking HF validation as False."
+                        )
+                        hf_validation_result = HFValidationResult(
+                            is_valid=False,
+                            reason="Latest commit is too recent (<17 hours)",
+                            validation_percentage=0.0,
+                        )
+                        self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
+                        continue
+
+                # Get encoded URLs and a DataFrame from the parquet files.
+                encoded_urls, encoded_df = get_validation_data(hf_metadata.repo_name, new_parquet_files)
+                if encoded_urls:
+                    # Retrieve decoded URLs from the miner.
+                    success, decoded_urls = await self._get_decoded_urls(hotkey, uid, axon_info, encoded_urls)
+                    if success:
+                        try:
+                            if len(decoded_urls) == 0:
+                                bt.logging.error(f"{hotkey}: Got empty decoded_urls list")
+                                hf_validation_result = HFValidationResult(
+                                    is_valid=False,
+                                    reason=f"{hotkey}: Got empty decoded_urls list",
+                                    validation_percentage=0.0,
+                                )
+                            else:
+                                decoded_df = encoded_df.copy()
+                                del encoded_df  # free up memory
+                                # Ensure the DataFrame row count matches the decoded URLs count.
+                                decoded_df = decoded_df.head(len(decoded_urls))
+                                decoded_df['url'] = decoded_urls
+                                hf_validation_result = await validate_hf_content(decoded_df, hf_metadata.source)
+                                bt.logging.info(
+                                    f"{hotkey}: HuggingFace validation result for {hf_metadata.repo_name}: {hf_validation_result}"
+                                )
+                        except ValueError as e:
+                            bt.logging.error(f"{hotkey}: ValueError in URL decoding: {str(e)}")
+                            hf_validation_result = HFValidationResult(
+                                is_valid=False,
+                                reason=f"{hotkey}: ValueError in URL decoding: {str(e)}",
+                                validation_percentage=0.0,
+                            )
+                        except Exception as e:
+                            bt.logging.error(f"{hotkey}: Unexpected error in URL decoding: {str(e)}")
+                            hf_validation_result = HFValidationResult(
+                                is_valid=False,
+                                reason=f"{hotkey}: Unexpected error in URL decoding: {str(e)}",
+                                validation_percentage=0.0,
+                            )
+                # Update the HF validation storage with the current block for this repo.
+                self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
+        else:
+            self.hf_storage.update_validation_info(hotkey, "no_dataset_provided", current_block)
+        return hf_validation_result
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
@@ -568,6 +607,7 @@ class MinerEvaluator:
                 self.scorer.resize(len(metagraph.hotkeys))
 
             self.metagraph = copy.deepcopy(metagraph)
+
 
 
     def exit(self):
