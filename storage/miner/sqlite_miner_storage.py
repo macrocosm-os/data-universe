@@ -269,8 +269,8 @@ class SqliteMinerStorage(MinerStorage):
 
                 current_datetime = dt.datetime.now(dt.timezone.utc)
 
-                # Calculate time difference for 25000 blocks (300,000 seconds (~4 days))
-                time_difference = dt.timedelta(seconds=300000)
+                # Calculate time difference for 5100 blocks (61 200 seconds (~17 hours))
+                time_difference = dt.timedelta(seconds=61200)
                 threshold_datetime = current_datetime - time_difference
 
                 return threshold_datetime > average_datetime
