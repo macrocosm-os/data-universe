@@ -189,7 +189,7 @@ class RedditCustomScraper(Scraper):
         if (entity_datetime.year != actual_datetime.year or
                 entity_datetime.month != actual_datetime.month or
                 entity_datetime.day != actual_datetime.day):
-            bt.logging.info(f'HF validation failed for {entity_to_validate} due to date mismatch')
+            bt.logging.warning(f'HF validation failed for {entity_to_validate} due to date mismatch')
             return False
 
         # Compare text content
@@ -200,7 +200,7 @@ class RedditCustomScraper(Scraper):
             actual_text = actual_content.body.strip()
 
         if actual_text != entity_to_validate.get('text', '').strip():
-            bt.logging.info(f'HF validation failed for {entity_to_validate} due to text mismatch')
+            bt.logging.warning(f'HF validation failed for {entity_to_validate} due to text mismatch')
             return False
 
         return True

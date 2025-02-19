@@ -130,11 +130,18 @@ class MinerScorer:
                 [self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)]
             )
 
-    def update_hf_boost_and_cred(self, uid: int, hf_vali_percentage: float) -> None:
+    def update_hf_boost_and_cred(self, uid: int, hf_result: HFValidationResult) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
         max_boost = 10 * 10**6
-        self.hf_boosts[uid] = hf_vali_percentage/100 * max_boost
-        self.hf_credibility[uid] = min(1, hf_vali_percentage/100 * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
+
+        if not hf_result.is_valid and "is greater than 19 hours old" in hf_result.reason:
+            # Punish miners who don't upload consistently to HF harshly
+            bt.logging.info(f"Miner {uid} has not updated their HF repo in the last 19 hrs. Setting HF credibility to 0.")
+            self.hf_credibility[uid] = 0.0
+        else:
+            self.hf_credibility[uid] = min(1, hf_result.validation_percentage/100 * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
+
+        self.hf_boosts[uid] = hf_result.validation_percentage/100 * max_boost
         bt.logging.info(
             f"After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
         )

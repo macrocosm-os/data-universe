@@ -43,7 +43,7 @@ class HFValidationResult(StrictBaseModel):
     is_valid: bool
 
     validation_percentage: float = Field(
-        description="The percentage of successfully validated HF rows. "
+        description="The percentage of successfully validated HF rows. (0-100) "
     )
 
     reason: str = Field(
