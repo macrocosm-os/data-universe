@@ -283,19 +283,21 @@ class MinerEvaluator:
                     bt.logging.warning(f"No new parquet files found for {hf_metadata.repo_name}")
                     continue
 
+                # Temporarily remove parquet check until SN stabilizes
+
                 # Check if the two latest commits are identical.
-                same_commits, _, _ = compare_latest_commits_parquet_files(hf_metadata.repo_name)
-                if same_commits:
-                    bt.logging.info(
-                        f"{hotkey}: Latest commits for {hf_metadata.repo_name} are identical. Marking HF validation as False."
-                    )
-                    hf_validation_result = HFValidationResult(
-                        is_valid=False,
-                        reason="Latest two commits are identical",
-                        validation_percentage=0.0,
-                    )
-                    self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
-                    continue
+                #same_commits, _, _ = compare_latest_commits_parquet_files(hf_metadata.repo_name)
+                # if same_commits:
+                #     bt.logging.info(
+                #         f"{hotkey}: Latest commits for {hf_metadata.repo_name} are identical. Marking HF validation as False."
+                #     )
+                #     hf_validation_result = HFValidationResult(
+                #         is_valid=False,
+                #         reason="Latest two commits are identical",
+                #         validation_percentage=0.0,
+                #     )
+                #     self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
+                #     continue
 
                 # Check if the latest commit is less than 17 hours old.
                 if commit_date:
@@ -306,7 +308,7 @@ class MinerEvaluator:
                         commit_datetime = None
                     if commit_datetime and (dt.datetime.now(dt.timezone.utc) - commit_datetime) > dt.timedelta(hours=19):
                         bt.logging.info(
-                            f"{hotkey}: Latest commit for {hf_metadata.repo_name} is less than 17 hours old. Marking HF validation as False."
+                            f"{hotkey}: Latest commit for {hf_metadata.repo_name} is less than 19 hours old. Marking HF validation as False."
                         )
                         hf_validation_result = HFValidationResult(
                             is_valid=False,
