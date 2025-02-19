@@ -299,7 +299,7 @@ class MinerEvaluator:
                 #     self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
                 #     continue
 
-                # Check if the latest commit is less than 17 hours old.
+                # Check if the latest commit is greater than 19 hours old.
                 if commit_date:
                     try:
                         commit_datetime = dt.datetime.fromisoformat(commit_date)
