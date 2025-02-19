@@ -48,10 +48,10 @@ class DataSourceDesirability(StrictBaseModel):
     ) -> Dict[str, float]:
         """Validates the label_scale_factors field."""
         for label, scale_factor in value.items():
-            # Max label weight for one active validator putting 100% on one label = 100 + 1 from default.json if applicable
-            if scale_factor < -1.0 or scale_factor > 101:
+            # Max label weight for one active validator putting 100% on one label = 250 + 1 from default.json if applicable
+            if scale_factor < -1.0 or scale_factor > 251:
                 raise ValueError(
-                    f"Label {label} scale factors must be between -1 and 101, inclusive."
+                    f"Label {label} scale factors must be between -1 and 251, inclusive."
                 )
         return value
 
