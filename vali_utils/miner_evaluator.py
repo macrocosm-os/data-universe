@@ -300,7 +300,7 @@ class MinerEvaluator:
                 # Check if the latest commit is greater than 19 hours old (17 hrs + 2 hr allowance).
                 if commit_date:
                     try:
-                        commit_datetime = dt.datetime.fromisoformat(commit_date)
+                        commit_datetime = dt.datetime.fromisoformat(str(commit_date))
                     except Exception as e:
                         bt.logging.error(f"{hotkey}: Failed to parse commit date: {commit_date}. Error: {str(e)}")
                         commit_datetime = None
