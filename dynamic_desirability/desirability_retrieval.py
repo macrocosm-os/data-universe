@@ -96,6 +96,9 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                         total_weights[source_name][label] += vali_weight * weight / normalizer
                     else:
                         total_weights[source_name][label] = vali_weight * weight / normalizer
+                        
+                    if total_weights[source_name][label] > 5.0:
+                        total_weights[source_name][label] = 5.0
 
     # At the end of aggregation, if some label weights are < default weight value, increase them to match. 
     for source_name, label_weights in total_weights.items():
