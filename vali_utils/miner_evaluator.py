@@ -265,7 +265,7 @@ class MinerEvaluator:
         Performs HuggingFace validation for a miner using metadata from the miner.
         Enhanced logic:
           - If the two latest commits for the repo are identical, return an invalid result.
-          - If the latest commit is greater than 17 hours old, return an invalid result.
+          - If the latest commit is greater than 19 hours old, return an invalid result.
           - Otherwise, proceed with URL decoding and content validation.
 
         Returns:
