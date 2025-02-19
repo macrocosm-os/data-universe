@@ -38,6 +38,13 @@ from rich.table import Table
 from rich.console import Console
 import warnings
 
+# Temporary solution to getting rid of annoying bittensor trace logs
+original_trace = bt.logging.trace 
+def filtered_trace(message, *args, **kwargs):
+    if "Unexpected header key encountered" not in message:
+        original_trace(message, *args, **kwargs)
+bt.logging.trace = filtered_trace 
+
 # Filter out the specific deprecation warning from datetime.utcnow()
 warnings.filterwarnings(
     "ignore",
