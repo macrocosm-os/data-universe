@@ -92,6 +92,9 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 if source_name not in total_weights:
                     total_weights[source_name] = {}
                 for label, weight in source['label_weights'].items():
+                    # Skip labels that are longer than 140 characters
+                    if len(label) > 140:
+                        continue
                     if label in total_weights[source_name]:
                         total_weights[source_name][label] += vali_weight * weight / normalizer
                     else:
