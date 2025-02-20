@@ -7,6 +7,7 @@ import subprocess
 import bittensor as bt
 from typing import List, Optional, Dict
 from decimal import Decimal, ROUND_HALF_UP
+from common.constants import MAX_LABEL_LENGTH
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
 
@@ -24,7 +25,7 @@ def run_command(command: List[str]) -> str:
 
 def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None) -> Optional[str]:
     """
-    Normalize potentially invalid preferences JSONs
+    Normalize potentially invalid preferences JSONs and filter out labels longer than 140 characters
     """
     if file_path:
         try:
@@ -59,6 +60,11 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
 
             if source_dict.keys() == valid_keys and source_name in VALID_SOURCES.keys(): 
                 for label, weight in source_dict["label_weights"].items():
+                    # Skip labels that are longer than 140 characters.
+                    if len(label) > MAX_LABEL_LENGTH:
+                        bt.logging.warning(f"Skipping label {label}: exceeds 140 character limit")
+                        continue
+                        
                     weight_decimal = Decimal(str(weight))
                     if weight_decimal > Decimal('0') and label.startswith(source_prefix):
                         all_label_weights[label] = all_label_weights.get(label, Decimal('0')) + weight_decimal
@@ -83,14 +89,13 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
         updated_label_weights = {
             label: normalized_weights[label]
             for label in source["label_weights"]
-            if label in normalized_weights
+            if label in normalized_weights and len(label) <= MAX_LABEL_LENGTH
         }
         if updated_label_weights:
             source["label_weights"] = updated_label_weights
             updated_data.append(source)
 
     return json.dumps(updated_data, indent=4)
-
 
 def upload_to_github(json_content: str, hotkey: str) -> str:
     """Uploads the preferences json to Github."""
