@@ -300,23 +300,24 @@ class MinerEvaluator:
                 #     continue
 
                 # Check if the latest commit is greater than 19 hours old.
-                if commit_date:
+                if isinstance(commit_date, str):
                     try:
-                        commit_datetime = dt.datetime.fromisoformat(commit_date)
+                        bt.logging.info(f"{hotkey}: Commit date is in string format, converting to datetime.datetime.")
+                        commit_date = dt.datetime.fromisoformat(commit_date)
                     except Exception as e:
-                        bt.logging.error(f"{hotkey}: Failed to parse commit date: {commit_date}. Error: {str(e)}")
-                        commit_datetime = None
-                    if commit_datetime and (dt.datetime.now(dt.timezone.utc) - commit_datetime) > dt.timedelta(hours=19):
-                        bt.logging.info(
-                            f"{hotkey}: Latest commit for {hf_metadata.repo_name} is greater than 19 hours old. Marking HF validation as False."
-                        )
-                        hf_validation_result = HFValidationResult(
-                            is_valid=False,
-                            reason="Latest commit is too recent (<17 hours)",
-                            validation_percentage=0.0,
-                        )
-                        self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
-                        continue
+                        bt.logging.error(f"{hotkey}: Failed to parse commit date: {commit_date}. Error: {str(e)}") 
+                     
+                if commit_date and (dt.datetime.now(dt.timezone.utc) - commit_date) > dt.timedelta(hours=19):
+                    bt.logging.info(
+                        f"{hotkey}: Latest commit for {hf_metadata.repo_name} is greater than 19 hours old. Marking HF validation as False."
+                    )
+                    hf_validation_result = HFValidationResult(
+                        is_valid=False,
+                        reason="Latest commit is too old (>19 hours)",
+                        validation_percentage=0.0,
+                    )
+                    self.hf_storage.update_validation_info(hotkey, str(hf_metadata.repo_name), current_block)
+                    continue
 
                 # Get encoded URLs and a DataFrame from the parquet files.
                 encoded_urls, encoded_df = get_validation_data(hf_metadata.repo_name, new_parquet_files)
