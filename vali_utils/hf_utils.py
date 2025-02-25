@@ -21,7 +21,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def get_latest_commit_files(repo_id: str) -> Tuple[List[str], Optional[str]]:
+def get_latest_commit_files(repo_id: str) -> Tuple[List[str], Optional[dt.datetime]]:
     """
     Retrieve new or modified parquet files from the latest commit along with its commit date.
 
