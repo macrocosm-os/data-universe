@@ -53,7 +53,7 @@ class ScorableDataEntityBucket:
         scorable_bytes: int,
     ):
         if label and len(label) > constants.MAX_LABEL_LENGTH:
-            raise ValueError("Label value cannot be longer than 32 characters.")
+            raise ValueError("Label value cannot be longer than 140 characters.")
         if not 0 <= size_bytes <= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
             raise ValueError(
                 f"Size must be between 0 and {constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES}."

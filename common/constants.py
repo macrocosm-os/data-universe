@@ -22,7 +22,7 @@ BULK_BUCKETS_COUNT_LIMIT = 100
 DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS = 30
 
 # The maximum number of characters a label can have.
-MAX_LABEL_LENGTH = 32
+MAX_LABEL_LENGTH = 140
 
 # The current protocol version (int)
 PROTOCOL_VERSION = 4
