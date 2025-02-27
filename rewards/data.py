@@ -147,9 +147,9 @@ class DynamicDesirabilityLookup(StrictBaseModel):
 
     @classmethod
     def to_primitive_data_desirability_lookup(
-        cls, obj: "DataDesirabilityLookup"
-    ) -> "PrimitiveDataDesirabilityLookup":
-        return PrimitiveDataDesirabilityLookup(
+        cls, obj: "DynamicDesirabilityLookup"
+    ) -> "PrimitiveDynamicDesirabilityLookup":
+        return PrimitiveDynamicDesirabilityLookup(
             distribution={
                 data_source: DynamicSourceDesirability.to_primitive_data_source_desirability(
                     data_source_reward
