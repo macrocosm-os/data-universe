@@ -68,7 +68,7 @@ async def query_data(request: QueryRequest,
         selected_miners = []
         selected_coldkeys = set()
 
-        # First, try to get a diverse set from top 30%
+        # First, try to get a diverse set from top miners
         while len(selected_miners) < NUM_MINERS_TO_QUERY and top_miners:
             idx = random.randint(0, len(top_miners) - 1)
             uid, _ = top_miners.pop(idx)
@@ -80,15 +80,14 @@ async def query_data(request: QueryRequest,
                 selected_coldkeys.add(coldkey)
 
         # If we couldn't get enough diverse miners, just take what we have
-        if len(selected_miners) < 2:
+        if len(selected_miners) < 1:
             bt.logging.warning(f"Could only select {len(selected_miners)} diverse miners")
             # Get any miners to make up the numbers
-            while len(selected_miners) < min(NUM_MINERS_TO_QUERY, len(miner_uids)):
-                for uid in miner_uids:
-                    if uid not in selected_miners:
-                        selected_miners.append(uid)
-                        if len(selected_miners) >= NUM_MINERS_TO_QUERY:
-                            break
+            for uid in miner_uids:
+                if uid not in selected_miners:
+                    selected_miners.append(uid)
+                    if len(selected_miners) >= NUM_MINERS_TO_QUERY:
+                        break
 
         bt.logging.info(f"Selected {len(selected_miners)} miners for on-demand query")
 
@@ -334,7 +333,6 @@ async def query_data(request: QueryRequest,
     except Exception as e:
         bt.logging.error(f"Error processing request: {str(e)}")
         raise HTTPException(500, str(e))
-
 
 @router.get("/query_bucket/{source}")
 @endpoint_error_handler
