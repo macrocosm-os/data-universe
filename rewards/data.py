@@ -20,50 +20,50 @@ class DynamicSourceDesirability(StrictBaseModel):
         ge=-1,
         le=1,
         default=1.0,
-        description="The scaling factor used for all Labels that aren't explicitly set in label_scale_factors.",
+        description="The scaling factor used for all Labels that aren't explicitly set in label_config.",
     )
 
-    label_scale_factors: Dict[DataLabel, Dict[str, List[DateRange]]] = Field(
-        description="The scaling factor used for each Label with time ranges. Contains 'weight' (float) and 'date_ranges' (list of DateRange objects).",
+    label_config: Dict[DataLabel, Dict[str, List[DateRange]]] = Field(
+        description="The scaling factor used for each Label with time ranges. Contains 'label_weight' (float) and 'date_ranges' (list of DateRange objects).",
         default_factory=lambda: {},
     )
 
     def model_dump_json(self, **kwargs):
         """Custom JSON serialization"""
         label_factors = {}
-        for label, config in self.label_scale_factors.items():
+        for label, config in self.label_config.items():
             date_ranges_json = [
                 {"start": dr.start.isoformat(), "end": dr.end.isoformat()} 
                 for dr in config.get("date_ranges", [])
             ]
             label_factors[label.value.replace('"', '')] = {
-                "weight": config.get("weight", 0.0),
+                "label_weight": config.get("label_weight", 0.0),
                 "date_ranges": date_ranges_json
             }
             
         return {
             "weight": self.weight,
             "default_scale_factor": self.default_scale_factor,
-            "label_scale_factors": label_factors
+            "label_config": label_factors
         }
 
     def __str__(self) -> str:
         return json.dumps(self.model_dump_json(), indent=4)
 
-    @field_validator("label_scale_factors")
-    def validate_label_scale_factors(
+    @field_validator("label_config")
+    def validate_label_config(
         cls, value: Dict[DataLabel, Dict[str, Any]]
     ) -> Dict[DataLabel, Dict[str, Any]]:
-        """Validates the label_scale_factors field."""
+        """Validates the label_config field."""
         for label, config in value.items():
             # Validate weight
-            weight = config.get("weight")
-            if weight is None:
-                raise ValueError(f"Label {label} must have a weight defined")
+            label_weight = config.get("label_weight")
+            if label_weight is None:
+                raise ValueError(f"Label {label} must have a label_weight defined")
                 
-            if weight < -1.0 or weight > 251:
+            if label_weight < -1.0 or label_weight > 251:
                 raise ValueError(
-                    f"Label {label} weight must be between -1 and 251, inclusive."
+                    f"Label {label} label_weight must be between -1 and 251, inclusive."
                 )
                 
             # Validate date_ranges
@@ -83,15 +83,31 @@ class DynamicSourceDesirability(StrictBaseModel):
                     
         return value
 
+    def get_label_weight(self, label: DataLabel) -> float:
+        """
+        Gets the weight for a specific label, or returns the default_scale_factor if 
+        the label is not explicitly set in label_config.
+        
+        Args:
+            label: The DataLabel to get the weight for
+            
+        Returns:
+            The label_weight if the label is in label_config, otherwise the default_scale_factor
+        """
+        label_config = self.label_config.get(label)
+        if label_config is not None:
+            return label_config.get("label_weight", self.default_scale_factor)
+        return self.default_scale_factor
+
     @classmethod
     def to_primitive_dynamic_source_desirability(
         cls, obj: "DynamicSourceDesirability"
     ) -> "PrimitiveDynamicSourceDesirability":
         primitive_label_factors = {}
         
-        for label, config in obj.label_scale_factors.items():
+        for label, config in obj.label_config.items():
             primitive_label_factors[label.value if label else None] = {
-                "weight": config.get("weight", 0.0),
+                "label_weight": config.get("label_weight", 0.0),
                 "date_ranges": [
                     {"start": dr.start.isoformat(), "end": dr.end.isoformat()}
                     for dr in config.get("date_ranges", [])
@@ -101,7 +117,7 @@ class DynamicSourceDesirability(StrictBaseModel):
         return PrimitiveDynamicSourceDesirability(
             weight=obj.weight,
             default_scale_factor=obj.default_scale_factor,
-            label_scale_factors=primitive_label_factors,
+            label_config=primitive_label_factors,
         )
 
 
@@ -175,11 +191,11 @@ class PrimitiveDynamicSourceDesirability(StrictBaseModel):
         ge=-1,
         le=1,
         default=1.0,
-        description="The scaling factor used for all Labels that aren't explicitly set in label_scale_factors.",
+        description="The scaling factor used for all Labels that aren't explicitly set in label_config.",
     )
 
-    label_scale_factors: Dict[str, Dict[str, Any]] = Field(
-        description="The scaling factor used for each Label with time ranges. Contains 'weight' (float) and 'date_ranges' (list of dictionaries with 'start' and 'end' as ISO datetime strings).",
+    label_config: Dict[str, Dict[str, Any]] = Field(
+        description="The scaling factor used for each Label with time ranges. Contains 'label_weight' (float) and 'date_ranges' (list of dictionaries with 'start' and 'end' as ISO datetime strings).",
         default_factory=lambda: {},
     )
 

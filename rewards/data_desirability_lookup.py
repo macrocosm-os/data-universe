@@ -10,6 +10,9 @@ from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 
 #################################################################
 
+# TODO: the miner_evaluator takes this as the initial LOOKUP. Without DataSourceDesirability, 
+# need to have MinerEvaluator START with dynamic lookup instead of legacy lookup. 
+
 LOOKUP = DataDesirabilityLookup(
     distribution={
         DataSource.REDDIT: DataSourceDesirability(

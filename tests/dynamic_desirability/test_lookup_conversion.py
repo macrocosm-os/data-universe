@@ -11,6 +11,8 @@ from common import constants
 
 """Testing to_lookup that converts a json desirability index to a DataDesirabilityLookup object."""
 
+# TODO: switch test case to DynamicDesirabilityLookup instead of DataDesirabilityLookup
+
 def formatted_print(distribution):
     """Converts a DataDesirabilityLookup distribution to JSON-like format."""
     json_data = []
