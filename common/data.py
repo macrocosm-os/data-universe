@@ -23,6 +23,48 @@ class StrictBaseModel(BaseModel):
     )
 
 
+class DateRange(BaseModel):
+    """
+    Represents a specific date range specified by a user for a Dynamic Desirability.
+    If a label does not have a specified date range, it defaults to regular scoring (30 days).
+    """
+    start: dt.datetime
+    end: dt.datetime
+    
+    @field_validator('end')
+    def end_after_start(cls, v, values):
+        if 'start' in values and v < values['start']:
+            raise ValueError('end datetime must be after start datetime')
+        return v
+
+    def contains(self, dt: dt.datetime):
+        return self.start <= dt < self.end
+    
+    def compare_with(self, other):
+        """
+        Compares with another DateRange to find overlap.
+        Returns (False, []) if there is no overlap,
+        Returns (True, [non-overlapping DateRanges]) if there is an overlap.
+        """
+        if self.end <= other.start or other.end <= self.start:
+            return False, []  # No overlap
+        
+        non_overlapping = []
+        
+        # Checking left side
+        if self.start < other.start:
+            non_overlapping.append(DateRange(self.start, other.start))
+        elif other.start < self.start:
+            non_overlapping.append(DateRange(other.start, self.start))
+        
+        # Checking right side
+        if self.end > other.end:
+            non_overlapping.append(DateRange(other.end, self.end))
+        elif other.end > self.end:
+            non_overlapping.append(DateRange(self.end, other.end))
+        
+        return True, non_overlapping
+
 class TimeBucket(StrictBaseModel):
     """Represents a specific time bucket in the linear flow of time."""
 
