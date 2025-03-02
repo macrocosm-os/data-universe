@@ -7,6 +7,7 @@ from typing import Dict, Optional, Any
 import logging
 import shutil
 import bittensor as bt
+import datetime as dt
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
@@ -63,52 +64,99 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
 
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
                             total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
-    """Calculate total weights and write to total.json."""
-    total_weights: Dict[str, Dict[str, float]] = {}
+    """
+    Calculate total weights and write to total.json.
+    Handles both old format (direct weight values) and new format ([weight, datetime] tuples).
+    For duplicate labels, adds their weights and takes the earliest viable date.
+    """
+    
+    total_weights: Dict[str, Dict[str, Any]] = {}
     subnet_weight = 1 - total_vali_weight
     normalizer = subnet_weight / AMPLICATION_FACTOR
-
+    
     # Adding default weights to total.
     try:
         with open(default_json_path, 'r') as f:
             default_preferences = json.load(f)
-        for source in default_preferences:
-            source_name = source['source_name']
-            if source_name not in total_weights:
-                total_weights[source_name] = {}
-            for label, weight in source['label_weights'].items():
-                total_weights[source_name][label] = weight
+            for source in default_preferences:
+                source_name = source['source_name']
+                if source_name not in total_weights:
+                    total_weights[source_name] = {}
+                
+                for label, weight_info in source['label_weights'].items():
+                    # Handle both formats for default preferences
+                    if isinstance(weight_info, list) and len(weight_info) == 2:
+                        weight, earliest_date = weight_info
+                    else:
+                        weight = weight_info
+                        earliest_date = None
+                    
+                    total_weights[source_name][label] = [weight, earliest_date]
     except FileNotFoundError:
         bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default weights.")
-
+    
     # Calculating the sum of percent_stake for validators that have voted. Non-voting validators are excluded.
     total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('json'))
+    
     for hotkey, data in validator_data.items():
         if data['json']:
             stake_percentage = data.get('percent_stake', 1) / total_stake
             vali_weight = total_vali_weight * stake_percentage
+            
             for source in data['json']:
                 source_name = source['source_name']
                 if source_name not in total_weights:
                     total_weights[source_name] = {}
-                for label, weight in source['label_weights'].items():
+                
+                for label, weight_info in source['label_weights'].items():
                     # Skip labels that are longer than 140 characters
                     if len(label) > 140:
                         continue
-                    if label in total_weights[source_name]:
-                        total_weights[source_name][label] += vali_weight * weight / normalizer
+                    
+                    # backwards compatibility for old JSON format without dates
+                    if isinstance(weight_info, list) and len(weight_info) == 2:
+                        weight, earliest_date = weight_info
                     else:
-                        total_weights[source_name][label] = vali_weight * weight / normalizer
+                        weight = weight_info
+                        earliest_date = None
+                    
+                    adjusted_weight = vali_weight * weight / normalizer
+                    
+                    if label in total_weights[source_name]:
+                        current_weight, current_date = total_weights[source_name][label]
                         
-                    if total_weights[source_name][label] > 5.0:
-                        total_weights[source_name][label] = 5.0
-
-    # At the end of aggregation, if some label weights are < default weight value, increase them to match. 
+                        # Add weights
+                        new_weight = current_weight + adjusted_weight
+                        
+                        # Determine the earliest date
+                        new_date = current_date
+                        if earliest_date is not None and current_date is not None:
+                            # Parse dates and compare
+                            try:
+                                date1 = dt.fromisoformat(earliest_date.replace('Z', '+00:00'))
+                                date2 = dt.fromisoformat(current_date.replace('Z', '+00:00'))
+                                new_date = earliest_date if date1 < date2 else current_date
+                            except ValueError:
+                                # If date parsing fails, keep the current one
+                                bt.logging.warning(f"Invalid date format found for label {label}. Using existing date.")
+                        elif earliest_date is not None:
+                            new_date = earliest_date
+                        # If earliest_date is None, keep current_date
+                        
+                        total_weights[source_name][label] = [new_weight, new_date]
+                    else:
+                        total_weights[source_name][label] = [adjusted_weight, earliest_date]
+                    
+                    # Cap the weight at 5.0
+                    if total_weights[source_name][label][0] > 5.0:
+                        total_weights[source_name][label][0] = 5.0
+    
+    # At the end of aggregation, if some label weights are < default weight value, increase them to match.
     for source_name, label_weights in total_weights.items():
-        for label, weight in label_weights.items():
-            if weight < DEFAULT_SCALE_FACTOR:
-                label_weights[label] = DEFAULT_SCALE_FACTOR + 0.01
-
+        for label, weight_info in label_weights.items():
+            if weight_info[0] < DEFAULT_SCALE_FACTOR:
+                label_weights[label][0] = DEFAULT_SCALE_FACTOR + 0.01
+    
     total_json = [
         {
             "source_name": source_name,
@@ -116,17 +164,17 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
         }
         for source_name, label_weights in total_weights.items()
     ]
-
+    
     script_dir = os.path.dirname(os.path.abspath(__file__))
     total_path = os.path.join(script_dir, AGGREGATE_JSON_PATH)
     with open(total_path, 'w') as f:
         json.dump(total_json, f, indent=4)
-
+    
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
 
 def to_lookup(json_file: str) -> DynamicDesirabilityLookup:
-    """Converts a json format to a LOOKUP format."""
+    """Converts a json format to a LOOKUP format, handling the new (weight, date) tuple format."""
     with open(json_file, 'r') as file:
         data = json.load(file)
 
@@ -138,15 +186,29 @@ def to_lookup(json_file: str) -> DynamicDesirabilityLookup:
 
         source_weight = DataSource.REDDIT.weight if source_name.lower() == "reddit" else DataSource.X.weight
 
-        label_scale_factors = {
-            DataLabel(value=label): weight
-            for label, weight in label_weights.items()
-        }
+        label_config = {}
+        for label, weight_info in label_weights.items():
+            # Handle the new tuple format [weight, date]
+            if isinstance(weight_info, list) and len(weight_info) == 2:
+                scale_factor, date_str = weight_info
+                
+                # Convert date string to datetime object if applicable
+                earliest_datetime = None
+                if date_str:
+                    try:
+                        earliest_datetime = dt.fromisoformat(date_str.replace('Z', '+00:00'))
+                    except ValueError:
+                        bt.logging.warning(f"Invalid date format for label {label}: {date_str}. Using None instead.")
+                
+                label_config[DataLabel(value=label)] = (scale_factor, earliest_datetime)
+            else:
+                # Backwards compatibility for old format (single float)
+                label_config[DataLabel(value=label)] = (weight_info, None)
 
         distribution[getattr(DataSource, source_name.upper())] = DynamicSourceDesirability(
             weight=source_weight,
-            default_scale_factor=DEFAULT_SCALE_FACTOR,  # number is subject to change
-            label_scale_factors=label_scale_factors
+            default_scale_factor=DEFAULT_SCALE_FACTOR,
+            label_config=label_config
         )
 
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24

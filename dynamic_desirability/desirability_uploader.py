@@ -5,6 +5,7 @@ import os
 import shutil
 import subprocess
 import bittensor as bt
+import datetime as dt
 from typing import List, Optional, Dict
 from decimal import Decimal, ROUND_HALF_UP
 from common.constants import MAX_LABEL_LENGTH
@@ -25,8 +26,12 @@ def run_command(command: List[str]) -> str:
 
 def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None) -> Optional[str]:
     """
-    Normalize potentially invalid preferences JSONs and filter out labels longer than 140 characters
+    Normalize potentially invalid preferences JSONs and filter out labels longer than 140 characters.
+    Handles both old format (direct weight values) and new format ([weight, datetime] tuples).
+    Converts old format to new format with null datetime values during normalization.
     """
+    from datetime import datetime, timezone
+
     if file_path:
         try:
             with open(file_path, 'r') as f:
@@ -50,6 +55,7 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
 
     all_label_weights = {}
     valid_keys = {"source_name", "label_weights"}
+    current_time = datetime.now(timezone.utc)
     
     # Taking all positive label weights across all sources that are valid.
     try:
@@ -59,11 +65,28 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
             source_prefix = VALID_SOURCES[source_name]
 
             if source_dict.keys() == valid_keys and source_name in VALID_SOURCES.keys(): 
-                for label, weight in source_dict["label_weights"].items():
+                for label, weight_info in source_dict["label_weights"].items():
                     # Skip labels that are longer than 140 characters.
                     if len(label) > MAX_LABEL_LENGTH:
                         bt.logging.warning(f"Skipping label {label}: exceeds 140 character limit")
                         continue
+                    
+                    if isinstance(weight_info, list) and len(weight_info) == 2:
+                        weight, earliest_datetime = weight_info
+                        
+                        # Skip if datetime is provided and is in the future
+                        if earliest_datetime is not None:
+                            try:
+                                earliest_time = datetime.fromisoformat(earliest_datetime.replace('Z', '+00:00'))
+                                if earliest_time > current_time:
+                                    bt.logging.warning(f"Skipping label {label}: earliest viable datetime {earliest_datetime} is in the future")
+                                    continue
+                            except ValueError:
+                                bt.logging.warning(f"Skipping label {label}: invalid datetime format {earliest_datetime}")
+                                continue
+                    else:
+                        # Backwards compatibility for the old format without dates
+                        weight = weight_info
                         
                     weight_decimal = Decimal(str(weight))
                     if weight_decimal > Decimal('0') and label.startswith(source_prefix):
@@ -83,17 +106,23 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
         for label, weight in all_label_weights.items()
     }
 
-    # Remove sources with no label weights
+    # Update to use the new [weight, datetime] format for all entries
     updated_data = []
     for source in data:
-        updated_label_weights = {
-            label: normalized_weights[label]
-            for label in source["label_weights"]
-            if label in normalized_weights and len(label) <= MAX_LABEL_LENGTH
-        }
-        if updated_label_weights:
-            source["label_weights"] = updated_label_weights
-            updated_data.append(source)
+        updated_label_weights = {}
+        if source["source_name"] in VALID_SOURCES.keys():
+            for label, weight_info in source["label_weights"].items():
+                if label in normalized_weights and len(label) <= MAX_LABEL_LENGTH:
+                    if isinstance(weight_info, list) and len(weight_info) == 2:
+                        # Normalized weight with preserved datetime
+                        updated_label_weights[label] = [normalized_weights[label], weight_info[1]]
+                    else:
+                        # Convert old format to new format with null datetime
+                        updated_label_weights[label] = [normalized_weights[label], None]
+            
+            if updated_label_weights:
+                source["label_weights"] = updated_label_weights
+                updated_data.append(source)
 
     return json.dumps(updated_data, indent=4)
 
