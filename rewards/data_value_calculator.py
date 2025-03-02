@@ -2,7 +2,7 @@ import datetime as dt
 from typing import Optional
 from common.data import DataSource, TimeBucket
 from common.data_v2 import ScorableDataEntityBucket
-from rewards.data import DataDesirabilityLookup
+from rewards.data import DynamicDesirabilityLookup
 from scraping.scraper import HFValidationResult
 
 from rewards import data_desirability_lookup
@@ -11,8 +11,8 @@ from rewards import data_desirability_lookup
 class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""
 
-    def __init__(self, model: DataDesirabilityLookup = data_desirability_lookup.LOOKUP):
-        self.model = DataDesirabilityLookup.to_primitive_data_desirability_lookup(model)
+    def __init__(self, model: DynamicDesirabilityLookup = data_desirability_lookup.LOOKUP):
+        self.model = DynamicDesirabilityLookup.to_primitive_dynamic_desirability_lookup(model)
 
     def get_score_for_data_entity_bucket(
         self,

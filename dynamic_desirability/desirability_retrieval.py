@@ -11,7 +11,7 @@ from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data, is_validator
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data import DynamicSourceDesirability, DynamicDesirabilityLookup
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
                                             DEFAULT_JSON_PATH,
@@ -125,7 +125,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
 
-def to_lookup(json_file: str) -> DataDesirabilityLookup:
+def to_lookup(json_file: str) -> DynamicDesirabilityLookup:
     """Converts a json format to a LOOKUP format."""
     with open(json_file, 'r') as file:
         data = json.load(file)
@@ -143,14 +143,14 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
             for label, weight in label_weights.items()
         }
 
-        distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
+        distribution[getattr(DataSource, source_name.upper())] = DynamicSourceDesirability(
             weight=source_weight,
             default_scale_factor=DEFAULT_SCALE_FACTOR,  # number is subject to change
             label_scale_factors=label_scale_factors
         )
 
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
-    return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
+    return DynamicDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
 
 def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
@@ -180,7 +180,7 @@ def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: 
         return None
 
 
-async def run_retrieval(config) -> DataDesirabilityLookup:
+async def run_retrieval(config) -> DynamicDesirabilityLookup:
     try:
         my_wallet = bt.wallet(config=config)
         subtensor = bt.subtensor(config=config)

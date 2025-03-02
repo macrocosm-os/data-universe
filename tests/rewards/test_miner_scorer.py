@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, Mock, patch
 from typing import List
 import torch
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data import DynamicSourceDesirability, DynamicDesirabilityLookup
 from scraping.scraper import ValidationResult
 from common import constants
 from common.data import (
@@ -27,13 +27,13 @@ class TestMinerScorer(unittest.TestCase):
     def setUp(self):
         self.num_neurons = 10
         self.value_calculator = rewards.data_value_calculator.DataValueCalculator(
-            DataDesirabilityLookup(
+            DynamicDesirabilityLookup(
                 distribution={
-                    DataSource.REDDIT: DataSourceDesirability(
+                    DataSource.REDDIT: DynamicSourceDesirability(
                         weight=0.4,
                         default_scale_factor=0.5,
                     ),
-                    DataSource.X: DataSourceDesirability(
+                    DataSource.X: DynamicSourceDesirability(
                         weight=0.6,
                         default_scale_factor=0.5,
                     ),

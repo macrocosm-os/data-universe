@@ -1,6 +1,6 @@
 from common import constants
 from common.data import DataLabel, DataSource
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data import DynamicSourceDesirability, DynamicDesirabilityLookup
 
 #################################################################
 
@@ -10,9 +10,9 @@ from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 
 #################################################################
 
-LOOKUP = DataDesirabilityLookup(
+LOOKUP = DynamicDesirabilityLookup(
     distribution={
-        DataSource.REDDIT: DataSourceDesirability(
+        DataSource.REDDIT: DynamicSourceDesirability(
             weight=0.6,
             default_scale_factor=0.5,
             label_scale_factors={
@@ -31,7 +31,7 @@ LOOKUP = DataDesirabilityLookup(
                 DataLabel(value="r/WallstreetBets"): 1.0,
             },
         ),
-        DataSource.X: DataSourceDesirability(
+        DataSource.X: DynamicSourceDesirability(
             weight=0.4,
             default_scale_factor=0.5,
             label_scale_factors={

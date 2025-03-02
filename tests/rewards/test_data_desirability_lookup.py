@@ -3,11 +3,11 @@ import unittest
 from attr import dataclass
 from common import constants, utils
 from common.data import DataLabel, DataSource
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data import DynamicSourceDesirability, DynamicDesirabilityLookup
 from rewards import data_desirability_lookup
 
 
-class TestDataDesirabilityLookup(unittest.TestCase):
+class TestDynamicDesirabilityLookup(unittest.TestCase):
     def setUp(self):
         self.lookup = data_desirability_lookup.LOOKUP
 
