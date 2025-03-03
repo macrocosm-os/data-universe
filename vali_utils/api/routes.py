@@ -194,14 +194,16 @@ async def query_data(request: QueryRequest,
 
                     # Apply penalty to all miners for this request
                     for uid in selected_miners:
-                        current_cred = validator.evaluator.scorer.get_miner_credibility(uid)
-                        safe_penalty = min(current_cred * 0.1, MAX_PENALTY)  # 10% penalty, but max of MAX_PENALTY
+                        validation_result = ValidationResult(
+                            is_valid=False,
+                            reason="Failed to return existing data",
+                            content_size_bytes_validated=1000  # Nominal value
+                        )
 
-                        bt.logging.info(
-                            f"Applying penalty of {safe_penalty:.4f} to miner {uid} for not returning data that exists")
+                        bt.logging.info(f"Applying penalty to miner {uid} for not returning data that exists")
 
-                        # Apply penalty directly
-                        validator.evaluator.scorer.update_credibility(uid, -safe_penalty)
+                        # Update the miner's score directly
+                        validator.evaluator.scorer._update_credibility(uid, [validation_result])
 
                     # Return the verification data to the user
                     processed_data = []
