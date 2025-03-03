@@ -9,7 +9,9 @@ from common import utils  # Import your utils
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, \
     DesirabilityRequest
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
-from vali_utils.api.utils import endpoint_error_handler, select_validation_samples
+from vali_utils.api.utils import endpoint_error_handler
+from scraping.scraper import ScrapeConfig
+from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
 from vali_utils.miner_evaluator import MinerEvaluator
@@ -139,7 +141,97 @@ async def query_data(request: QueryRequest,
         # Step 1: Check if we have a consensus on "no data"
         no_data_consensus = all(count == 0 for count in miner_data_counts.values())
         if no_data_consensus:
-            bt.logging.info("All miners returned no data - likely a valid empty result")
+            bt.logging.info("All miners returned no data - performing verification check")
+
+            # Perform a quick check to verify if data should exist
+            try:
+                # Determine which scraper to use based on the source
+                scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
+                if not scraper_id:
+                    bt.logging.warning(f"No preferred scraper for source {synapse.source}")
+                    # Return empty result with consensus
+                    return {
+                        "status": "success",
+                        "data": [],
+                        "meta": {
+                            "miners_queried": len(selected_miners),
+                            "consensus": "no_data"
+                        }
+                    }
+
+                # Initialize the appropriate scraper
+                scraper = ScraperProvider().get(scraper_id)
+                if not scraper:
+                    bt.logging.warning(f"Could not initialize scraper {scraper_id}")
+                    return {
+                        "status": "success",
+                        "data": [],
+                        "meta": {
+                            "miners_queried": len(selected_miners),
+                            "consensus": "no_data"
+                        }
+                    }
+
+                # Create scrape config with limited scope (only check for a few items)
+                verify_config = ScrapeConfig(
+                    entity_limit=5,  # Just get a few items to verify data exists
+                    date_range=DateRange(
+                        start=dt.datetime.fromisoformat(synapse.start_date) if synapse.start_date else dt.datetime.now(
+                            dt.timezone.utc) - dt.timedelta(days=1),
+                        end=dt.datetime.fromisoformat(synapse.end_date) if synapse.end_date else dt.datetime.now(
+                            dt.timezone.utc)
+                    ),
+                    labels=[DataLabel(value=k) for k in synapse.keywords] if synapse.keywords else
+                    [DataLabel(value=f"@{u.strip('@')}") for u in synapse.usernames] if synapse.usernames else []
+                )
+
+                # Directly fetch some data
+                verification_data = await scraper.scrape(verify_config)
+
+                # If we found data but miners returned none, they should be penalized
+                if verification_data:
+                    bt.logging.warning(f"Miners returned no data, but validator found {len(verification_data)} items")
+
+                    # Apply penalty to all miners for this request
+                    for uid in selected_miners:
+                        validation_results = [
+                            ValidationResult(is_valid=True, reason="", content_size_bytes_validated=95),
+                            ValidationResult(is_valid=False, reason="Failed to return existing data",
+                                             content_size_bytes_validated=5)
+                        ]
+
+                        bt.logging.info(f"Applying 5% penalty to miner {uid} for not returning data that exists")
+
+                        # Update the miner's score with the mixed results
+                        validator.evaluator.scorer._update_credibility(uid, validation_results)
+
+                    # Return the verification data to the user
+                    processed_data = []
+                    for item in verification_data:
+                        # Convert DataEntity to dict
+                        item_dict = {
+                            'uri': item.uri,
+                            'datetime': item.datetime.isoformat(),
+                            'source': DataSource(item.source).name,
+                            'label': item.label.value if item.label else None,
+                            'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
+                        }
+                        processed_data.append(item_dict)
+
+                    return {
+                        "status": "warning",
+                        "data": processed_data[:request.limit],
+                        "meta": {
+                            "miners_queried": len(selected_miners),
+                            "miners_responded": len(miner_responses),
+                            "verification_message": "Miners returned no data, but data was found. Results are from validator's direct check.",
+                            "items_returned": len(processed_data)
+                        }
+                    }
+            except Exception as e:
+                bt.logging.error(f"Error during verification check: {str(e)}")
+
+            # If verification failed or no data was found, return original empty result
             return {
                 "status": "success",
                 "data": [],
@@ -333,7 +425,6 @@ async def query_data(request: QueryRequest,
     except Exception as e:
         bt.logging.error(f"Error processing request: {str(e)}")
         raise HTTPException(500, str(e))
-
 @router.get("/query_bucket/{source}")
 @endpoint_error_handler
 async def query_bucket(
