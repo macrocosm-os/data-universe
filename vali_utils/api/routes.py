@@ -200,16 +200,8 @@ async def query_data(request: QueryRequest,
                         bt.logging.info(
                             f"Applying penalty of {safe_penalty:.4f} to miner {uid} for not returning data that exists")
 
-                        # Create a validation result for the scorer
-                        validation_result = ValidationResult(
-                            is_valid=False,
-                            reason="Failed to return existing data",
-                            content_size_bytes_validated=100  # Nominal value
-                        )
-
-                        # Update the miner's score with this result
-                        index = validator.storage.read_miner_index(validator.metagraph.hotkeys[uid])
-                        validator.evaluator.scorer.on_miner_evaluated(uid, index, [validation_result])
+                        # Apply penalty directly
+                        validator.evaluator.scorer.update_credibility(uid, -safe_penalty)
 
                     # Return the verification data to the user
                     processed_data = []
