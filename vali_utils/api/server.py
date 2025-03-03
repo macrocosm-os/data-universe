@@ -1,3 +1,4 @@
+import os
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -9,6 +10,7 @@ from .routes import router, get_validator
 from vali_utils.api.auth.key_routes import router as key_router
 from vali_utils.api.auth.auth import APIKeyManager, key_manager, require_master_key
 from vali_utils.api.utils import endpoint_error_handler
+
 
 class ValidatorAPI:
     """API server for validator on-demand queries"""
