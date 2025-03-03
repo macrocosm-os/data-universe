@@ -17,7 +17,7 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME)
 
 
 class APIKeyManager:
-    def __init__(self, db_path: str = "api_keys.db"):
+    def __init__(self, db_path: str = None):
         # Master key from environment
         self.master_key = os.getenv('MASTER_KEY')
         if not self.master_key:
@@ -26,8 +26,13 @@ class APIKeyManager:
                 "MASTER_KEY environment variable is required to enable API. "
                 "Please set MASTER_KEY in your .env file."
             )
+
+        # Use provided path or default to current directory
+        if db_path is None:
+            db_path = "api_keys.db"
+
         self.db_path = db_path
-        self.lock = threading.Lock()
+        self.lock = threading.RLock()
         self._init_db()
 
     def _init_db(self):
