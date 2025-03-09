@@ -1,5 +1,5 @@
 import json
-from typing import Dict, Tuple
+from typing import Dict, Tuple, Optional
 from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
 import datetime as dt
 from common.data import DataLabel, DataSource, StrictBaseModel
@@ -21,7 +21,7 @@ class DynamicSourceDesirability(StrictBaseModel):
         description="The scaling factor used for all Labels that aren't explicitly set in label_config.",
     )
     
-    label_config: Dict[DataLabel, Tuple[float, dt.datetime]] = Field(
+    label_config: Dict[DataLabel, Tuple[float, Optional[dt.datetime]]] = Field(
         description=(
             "The scaling factor and earliest viable datetime used for each DataLabel. "
             "If a Label is not present, the default_scale_factor is used. "
@@ -62,7 +62,7 @@ class DynamicSourceDesirability(StrictBaseModel):
                 )
             
             # Check that the timestamp is not in the future
-            if timestamp > current_time:
+            if timestamp and timestamp > current_time:
                 raise ValueError(
                     f"Label {label} has a timestamp in the future ({timestamp}), which is not allowed."
                 )
@@ -97,7 +97,7 @@ class PrimitiveDynamicSourceDesirability(StrictBaseModel):
         ge=-1,
         le=1,
         default=1.0,
-        description="The scaling factor used for all Labels that aren't explicitly set in label_scale_factors.",
+        description="The scaling factor used for all Labels that aren't explicitly set in label_config.",
     )
 
     label_config: Dict[str, Tuple[float, str]] = Field(
