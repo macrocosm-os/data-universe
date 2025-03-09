@@ -77,7 +77,7 @@ class DynamicSourceDesirability(StrictBaseModel):
             weight=obj.weight,
             default_scale_factor=obj.default_scale_factor,
             label_config={
-                label.value.replace('"', ''): (scale_factor, earliest_dt.isoformat() if earliest_dt else None)
+                label.value.replace('"', '').lower(): (scale_factor, earliest_dt.isoformat() if earliest_dt else "")
                 for label, (scale_factor, earliest_dt) in obj.label_config.items()
             },
         )

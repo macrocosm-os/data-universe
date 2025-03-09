@@ -4,13 +4,12 @@ from common.data import DataSource, TimeBucket
 from common.data_v2 import ScorableDataEntityBucket
 from rewards.data import DynamicDesirabilityLookup
 from scraping.scraper import HFValidationResult
-from rewards import data_desirability_lookup
 
 
 class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""
 
-    def __init__(self, model: DynamicDesirabilityLookup = data_desirability_lookup.LOOKUP):
+    def __init__(self, model: DynamicDesirabilityLookup):
         self.model = DynamicDesirabilityLookup.to_primitive_dynamic_desirability_lookup(model)
 
     def get_score_for_data_entity_bucket(
@@ -76,7 +75,7 @@ class DataValueCalculator:
                 
                 # If the data time bucket is from after or equal to the earliest viable time bucket
                 if time_bucket_id >= earliest_viable_bucket_id:
-                    return 0.3
+                    return 0.3 # some constant 
                 else:
                     return 0.0  # data is from before earliest viable datetime
         
