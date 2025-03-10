@@ -52,7 +52,7 @@ class DynamicSourceDesirability(StrictBaseModel):
         cls, value: Dict[DataLabel, Tuple[float, dt.datetime]]
     ) -> Dict[DataLabel, Tuple[float, dt.datetime]]:
         """Validates the label_config field."""
-        current_time = dt.datetime.now()
+        current_time = dt.datetime.now(dt.timezone.utc) 
         
         for label, (scale_factor, timestamp) in value.items():
             # Max label weight for one active validator putting 100% on one label = 250 + 1 from default.json if applicable
@@ -62,10 +62,13 @@ class DynamicSourceDesirability(StrictBaseModel):
                 )
             
             # Check that the timestamp is not in the future
-            if timestamp and timestamp > current_time:
-                raise ValueError(
-                    f"Label {label} has a timestamp in the future ({timestamp}), which is not allowed."
-                )
+            if timestamp:
+                # Converts timestamp to UTC if it has timezone info, or add UTC if it doesn't
+                ts_utc = timestamp if timestamp.tzinfo else timestamp.replace(tzinfo=dt.timezone.utc)
+                if ts_utc > current_time:
+                    raise ValueError(
+                        f"Label {label} has a timestamp in the future ({timestamp}), which is not allowed."
+                    )
                 
         return value
     
