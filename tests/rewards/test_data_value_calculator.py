@@ -31,9 +31,9 @@ class TestDataValueCalculator(unittest.TestCase):
                     weight=0.25,
                     default_scale_factor=0.8,
                     label_config={
-                        DataLabel(value="TestLABEL"): (1.0, None),
-                        DataLabel(value="unscoredLabel"): (0, None),
-                        DataLabel(value="penalizedLABEL"): (-1.0, None),
+                        DataLabel(value="#TestLABEL"): (1.0, None),
+                        DataLabel(value="#unscoredLabel"): (0, None),
+                        DataLabel(value="#penalizedLABEL"): (-1.0, None),
                     },
                 ),
             },
