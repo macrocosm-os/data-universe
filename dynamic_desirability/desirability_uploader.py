@@ -30,7 +30,6 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
     Handles both old format (direct weight values) and new format ([weight, datetime] tuples).
     Converts old format to new format with null datetime values during normalization.
     """
-    from datetime import datetime, timezone
 
     if file_path:
         try:
@@ -55,7 +54,7 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
 
     all_label_weights = {}
     valid_keys = {"source_name", "label_weights"}
-    current_time = datetime.now(timezone.utc)
+    current_time = dt.datetime.now(dt.timezone.utc)
     
     # Taking all positive label weights across all sources that are valid.
     try:
@@ -77,7 +76,7 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
                         # Skip if datetime is provided and is in the future
                         if earliest_datetime is not None:
                             try:
-                                earliest_time = datetime.fromisoformat(earliest_datetime.replace('Z', '+00:00'))
+                                earliest_time = dt.datetime.fromisoformat(earliest_datetime.replace('Z', '+00:00'))
                                 if earliest_time > current_time:
                                     bt.logging.warning(f"Skipping label {label}: earliest viable datetime {earliest_datetime} is in the future")
                                     continue

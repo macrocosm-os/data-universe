@@ -133,8 +133,8 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                         if earliest_date is not None and current_date is not None:
                             # Parse dates and compare
                             try:
-                                date1 = dt.fromisoformat(earliest_date.replace('Z', '+00:00'))
-                                date2 = dt.fromisoformat(current_date.replace('Z', '+00:00'))
+                                date1 = dt.datetime.fromisoformat(earliest_date.replace('Z', '+00:00'))
+                                date2 = dt.datetime.fromisoformat(current_date.replace('Z', '+00:00'))
                                 new_date = earliest_date if date1 < date2 else current_date
                             except ValueError:
                                 # If date parsing fails, keep the current one
@@ -196,7 +196,7 @@ def to_lookup(json_file: str) -> DynamicDesirabilityLookup:
                 earliest_datetime = None
                 if date_str:
                     try:
-                        earliest_datetime = dt.fromisoformat(date_str.replace('Z', '+00:00'))
+                        earliest_datetime = dt.datetime.fromisoformat(date_str.replace('Z', '+00:00'))
                     except ValueError:
                         bt.logging.warning(f"Invalid date format for label {label}: {date_str}. Using None instead.")
                 
