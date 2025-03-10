@@ -9,7 +9,7 @@ from dynamic_desirability.desirability_retrieval import to_lookup
 class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""
 
-    def __init__(self, model: Optional[DynamicDesirabilityLookup]):
+    def __init__(self, model: DynamicDesirabilityLookup = None):
         self.model = DynamicDesirabilityLookup.to_primitive_dynamic_desirability_lookup(model) if model else None
 
     def get_score_for_data_entity_bucket(
