@@ -19,7 +19,7 @@
 
 # MUST READ: Miner Data Compliance Policy
 
-By participating as a miner on Subnet 13, you are agreeing to adhere to our Miner Policy below. 
+By participating as a miner on Subnet 13, you are agreeing to adhere to our [Miner Policy](docs/miner_policy.md) below. 
 <details>
   <summary>
     Macrocosmos Miner Data Compliance Policy
