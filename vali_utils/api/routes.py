@@ -761,9 +761,10 @@ async def get_bytes_by_label(
         raise HTTPException(500, f"Error retrieving bytes for label: {str(e)}")
 
 
-@router.get("internal/health")
-async def health_check(
-        api_key: str = Depends(require_master_key)
+@router.get("/monitoring/system-status")
+@endpoint_error_handler
+async def system_health_check(
+    _: bool = Depends(require_master_key)
 ):
-    """Simple health check endpoint"""
+    """Internal health check endpoint for monitoring"""
     return {"status": "healthy", "timestamp": dt.datetime.utcnow().isoformat()}

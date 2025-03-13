@@ -413,7 +413,7 @@ class Validator:
                 try:
                     # Try a simple local request to check if API is responding
                     response = requests.get(
-                        f"http://localhost:{self.config.neuron.api_port}/api/v1/internal/health",
+                        f"http://localhost:{self.config.neuron.api_port}/api/v1/monitoring/system-status",
                         headers={"X-API-Key": master_key},
                         timeout=10
                     )
@@ -451,8 +451,8 @@ class Validator:
                     except Exception as e:
                         bt.logging.error(f"Error restarting API server: {str(e)}")
 
-                # Check every 30 seconds
-                time.sleep(30)
+                # Check every 30 minutes
+                time.sleep(30 * 60)
 
         # Start monitoring in background thread
         thread = threading.Thread(target=monitor_api, daemon=True)
