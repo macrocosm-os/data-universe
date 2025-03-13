@@ -574,7 +574,7 @@ async def list_hf_repo_names(
     """
     try:
         # Get the root directory of the project
-        root_dir = Path(__file__).resolve().parents[1]  # Two levels up from current file
+        root_dir = Path(__file__).resolve().parents[2]  # Three levels up from current file
         parquet_path = root_dir / "hf_validation.parquet"
         
         df = pd.read_parquet(parquet_path)
