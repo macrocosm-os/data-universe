@@ -1,4 +1,4 @@
-import os
+import time
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
@@ -107,14 +107,14 @@ class ValidatorAPI:
         return app
 
     def start(self):
-        """Start API server in background thread"""
+        """Start API server with better error handling"""
         if self.server_thread and self.server_thread.is_alive():
             bt.logging.warning("API server already running")
             return
 
         def run_server():
-            """Run uvicorn server"""
             try:
+                bt.logging.info(f"Starting API server on port {self.port}")
                 uvicorn.run(
                     self.app,
                     host="0.0.0.0",
@@ -128,6 +128,18 @@ class ValidatorAPI:
         self.server_thread.start()
         bt.logging.success(f"API server started on port {self.port}")
 
+    def stop(self):
+        """Stop API server"""
+        bt.logging.info("Stopping API server")
+        # The uvicorn server will stop when the thread is terminated
+        self.server_thread = None  # Allow for garbage collection
+
+    def restart(self):
+        """Restart API server"""
+        bt.logging.info("Restarting API server")
+        self.stop()
+        time.sleep(2)  # Give it a moment to fully stop
+        self.start()
     def stop(self):
         """Stop API server"""
         if self.server_thread and self.server_thread.is_alive():
