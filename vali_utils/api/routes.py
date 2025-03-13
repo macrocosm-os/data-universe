@@ -1,13 +1,15 @@
 from fastapi import APIRouter, HTTPException, Depends
 import bittensor as bt
 import datetime as dt
+from pathlib import Path
+import pandas as pd
 import random
 from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel
 from common import constants
 from common.protocol import OnDemandRequest, GetDataEntityBucket
 from common import utils  # Import your utils
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, \
-    DesirabilityRequest
+    DesirabilityRequest, HfReposResponse
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler
 from scraping.scraper import ScrapeConfig
@@ -425,6 +427,8 @@ async def query_data(request: QueryRequest,
     except Exception as e:
         bt.logging.error(f"Error processing request: {str(e)}")
         raise HTTPException(500, str(e))
+
+
 @router.get("/query_bucket/{source}")
 @endpoint_error_handler
 async def query_bucket(
@@ -559,6 +563,36 @@ async def query_bucket(
         raise HTTPException(500, str(e))
 
 
+@router.get("/list_repo_names", response_model=HfReposResponse)
+@endpoint_error_handler
+async def list_hf_repo_names(
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)):
+    """
+    Returns a list of repository names from the hf_validation.parquet file,
+    excluding "no_dataset_provided".
+    """
+    try:
+        # Get the root directory of the project
+        root_dir = Path(__file__).resolve().parents[1]  # Two levels up from current file
+        parquet_path = root_dir / "hf_validation.parquet"
+        
+        df = pd.read_parquet(parquet_path)
+        
+        # Extract unique repo names, excluding "no_dataset_provided"
+        repo_names = [name for name in df['repo_name'].unique() if name != "no_dataset_provided"]
+        repo_names.sort()
+        
+        return {
+            "count": len(repo_names),
+            "repo_names": repo_names
+        }
+    except FileNotFoundError:
+        bt.logging.error("hf_validation.parquet file not found")
+        raise HTTPException(404, "Dataset file not found")
+    except Exception as e:
+        bt.logging.error(f"Error retrieving repository names: {str(e)}")
+        raise HTTPException(500, f"Error retrieving repository names: {str(e)}")
 
 
 @router.get("/health", response_model=HealthResponse)
