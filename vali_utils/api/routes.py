@@ -573,9 +573,7 @@ async def list_hf_repo_names(
     excluding "no_dataset_provided".
     """
     try:
-        # Get the root directory of the project
-        root_dir = Path(__file__).resolve().parents[2]  # Three levels up from current file
-        parquet_path = root_dir / "hf_validation.parquet"
+        parquet_path = validator.config.hf_results_path
         
         df = pd.read_parquet(parquet_path)
         
