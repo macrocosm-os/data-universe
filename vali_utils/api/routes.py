@@ -36,19 +36,14 @@ async def query_data(request: QueryRequest,
                      api_key: str = Depends(verify_api_key)):
     """
     Handle data queries targeting multiple miners with validation and incentives.
-
-    1. Selects multiple miners from top performers
-    2. Queries them with the same request
-    3. Validates data with a small probability
-    4. Rewards/penalizes miners based on data quality
-    5. Returns the best data to the user
+    Now supports enhanced X content with rich metadata.
     """
     try:
         # Constants for miner selection and validation
-        NUM_MINERS_TO_QUERY = 5  # Number of miners to query
-        VALIDATION_PROBABILITY = 0.05  # 5% chance to validate (to minimize API usage)
-        MIN_PENALTY = 0.01  # Minimum credibility penalty for bad data
-        MAX_PENALTY = 0.05  # Maximum credibility penalty for bad data
+        NUM_MINERS_TO_QUERY = 5
+        VALIDATION_PROBABILITY = 0.05
+        MIN_PENALTY = 0.01
+        MAX_PENALTY = 0.05
 
         # Get all miner UIDs and sort by incentive
         miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid, 10_000)
@@ -66,7 +61,7 @@ async def query_data(request: QueryRequest,
                 "data": []
             }
 
-        # Select a diverse set of miners (don't pick all from the same hotkey owner if possible)
+        # Select a diverse set of miners
         selected_miners = []
         selected_coldkeys = set()
 
@@ -174,7 +169,7 @@ async def query_data(request: QueryRequest,
 
                 # Create scrape config with limited scope (only check for a few items)
                 verify_config = ScrapeConfig(
-                    entity_limit=5,  # Just get a few items to verify data exists
+                    entity_limit=10,  # Just get a few items to verify data exists
                     date_range=DateRange(
                         start=dt.datetime.fromisoformat(synapse.start_date) if synapse.start_date else dt.datetime.now(
                             dt.timezone.utc) - dt.timedelta(days=1),
@@ -387,15 +382,23 @@ async def query_data(request: QueryRequest,
         # Process the data for return
         processed_data = []
         for item in best_data:
-            # Convert DataEntity to dict
-            item_dict = {
-                'uri': item.uri,
-                'datetime': item.datetime.isoformat(),
-                'source': DataSource(item.source).name,
-                'label': item.label.value if item.label else None,
-                'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
-            }
-            processed_data.append(item_dict)
+            # Check if this is an EnhancedXContent object (for X data)
+            if hasattr(item, 'to_api_response') and callable(getattr(item, 'to_api_response')):
+                # This is an EnhancedXContent object, use its to_api_response method
+                item_dict = item.to_api_response()
+                processed_data.append(item_dict)
+            else:
+                # This is a standard DataEntity or other object
+                item_dict = {
+                    'uri': item.uri if hasattr(item, 'uri') else None,
+                    'datetime': item.datetime.isoformat() if hasattr(item, 'datetime') else None,
+                    'source': DataSource(item.source).name if hasattr(item, 'source') else None,
+                    'label': item.label.value if hasattr(item, 'label') and item.label else None,
+                    'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content,
+                                                                                                       bytes) else
+                    item.content if hasattr(item, 'content') else None
+                }
+                processed_data.append(item_dict)
 
         # Remove duplicates by converting to string representation
         seen = set()
