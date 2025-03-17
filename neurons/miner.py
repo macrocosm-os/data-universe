@@ -530,15 +530,12 @@ class Miner:
 
     async def handle_on_demand(self, synapse: OnDemandRequest) -> OnDemandRequest:
         """
-        Handle on-demand data requests from validators.
-        Uses scraper_provider to get appropriate scraper.
+        Enhanced handle_on_demand method that uses EnhancedApiDojoTwitterScraper for X requests
+        to provide richer data.
         """
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
-            # Create a new scraper provider instance
-            scraper_provider = ScraperProvider()
-
             # Get appropriate scraper from provider
             scraper_id = None
             if synapse.source == DataSource.X:
@@ -549,7 +546,8 @@ class Miner:
                     labels.extend([DataLabel(value=k) for k in synapse.keywords])
                 if synapse.usernames:
                     # Ensure usernames have @ prefix
-                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in synapse.usernames])
+                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
+                                   synapse.usernames])
 
             elif synapse.source == DataSource.REDDIT:
                 scraper_id = ScraperId.REDDIT_CUSTOM
@@ -567,18 +565,11 @@ class Miner:
                 synapse.data = []
                 return synapse
 
-            # Get scraper from provider
-            scraper = scraper_provider.get(scraper_id)
-            if not scraper:
-                bt.logging.error(f"No scraper available for ID {scraper_id}")
-                synapse.data = []
-                return synapse
-
             # Create date range
             start_dt = (dt.datetime.fromisoformat(synapse.start_date)
-                    if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
+                        if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
             end_dt = (dt.datetime.fromisoformat(synapse.end_date)
-                    if synapse.end_date else dt.datetime.now(dt.timezone.utc))
+                      if synapse.end_date else dt.datetime.now(dt.timezone.utc))
 
             # Log the labels being used
             bt.logging.info(f"Searching with labels: {[l.value for l in labels]}")
@@ -592,11 +583,31 @@ class Miner:
                 labels=labels,
             )
 
-            # Use scraper's scrape method
-            data = await scraper.scrape(config)
+            # For X source, use the enhanced scraper directly
+            if synapse.source == DataSource.X:
+                # Initialize the enhanced scraper directly instead of using the provider
+                from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper # TODO move it
+                from scraping.x.on_demand_model import EnhancedXContent
 
-            # Update response
-            synapse.data = data[:synapse.limit] if synapse.limit else data
+                enhanced_scraper = EnhancedApiDojoTwitterScraper()
+                await enhanced_scraper.scrape(config)
+
+                # Get enhanced content
+                enhanced_content = enhanced_scraper.get_enhanced_content()
+
+                # Use the enhanced objects directly instead of converting to DataEntity
+                synapse.data = enhanced_content[:synapse.limit] if synapse.limit else enhanced_content
+            else:
+                # Use regular scraper's scrape method for other sources
+                scraper = self.scraper_provider.get(scraper_id)
+                if not scraper:
+                    bt.logging.error(f"No scraper available for ID {scraper_id}")
+                    synapse.data = []
+                    return synapse
+
+                data = await scraper.scrape(config)
+                synapse.data = data[:synapse.limit] if synapse.limit else data
+
             synapse.version = constants.PROTOCOL_VERSION
 
             bt.logging.success(
