@@ -37,7 +37,10 @@ from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
 import warnings
+import requests
+from dotenv import load_dotenv
 
+load_dotenv()
 # Temporary solution to getting rid of annoying bittensor trace logs
 original_trace = bt.logging.trace 
 def filtered_trace(message, *args, **kwargs):
@@ -352,6 +355,9 @@ class Validator:
                     from vali_utils.api.server import ValidatorAPI
                     self.api = ValidatorAPI(self, port=self.config.neuron.api_port)
                     self.api.start()
+                    # Start monitoring to auto-restart if it fails
+                    self._start_api_monitoring()
+
                 except ValueError as e:
                     bt.logging.error(f"Failed to start API: {str(e)}")
                     bt.logging.info("Validator will continue running without API.")
@@ -389,6 +395,69 @@ class Validator:
             return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(
                 minutes=20
             )
+
+    def _start_api_monitoring(self):
+        """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
+
+        master_key = os.getenv('MASTER_KEY')
+
+        def monitor_api():
+            consecutive_failures = 0
+            max_failures = 3  # Restart after 3 consecutive failures
+
+            while not self.should_exit:
+                if not hasattr(self, 'api') or not self.api:
+                    time.sleep(60 * 20)
+                    continue
+
+                try:
+                    # Try a simple local request to check if API is responding
+                    response = requests.get(
+                        f"http://localhost:{self.config.neuron.api_port}/api/v1/monitoring/system-status",
+                        headers={"X-API-Key": master_key},
+                        timeout=10
+                    )
+
+                    if response.status_code == 200:
+                        # API is working, reset failure counter
+                        consecutive_failures = 0
+                    else:
+                        # HTTP error
+                        consecutive_failures += 1
+                        bt.logging.warning(f"API health check returned status {response.status_code}")
+                except requests.RequestException:
+                    # Connection error (most likely API is down)
+                    consecutive_failures += 1
+                    bt.logging.warning(f"API server not responding ({consecutive_failures}/{max_failures})")
+
+                # If too many consecutive failures, restart API
+                if consecutive_failures >= max_failures:
+                    bt.logging.warning(f"API server unresponsive for {consecutive_failures} checks, restarting...")
+
+                    try:
+                        # Stop API if it's running
+                        if hasattr(self.api, 'stop'):
+                            self.api.stop()
+
+                        # Wait a moment
+                        time.sleep(2)
+
+                        # Start API again
+                        if hasattr(self.api, 'start'):
+                            self.api.start()
+
+                        bt.logging.info("API server restarted")
+                        consecutive_failures = 0
+                    except Exception as e:
+                        bt.logging.error(f"Error restarting API server: {str(e)}")
+
+                # Check every 30 minutes
+                time.sleep(30 * 60)
+
+        # Start monitoring in background thread
+        thread = threading.Thread(target=monitor_api, daemon=True)
+        thread.start()
+        bt.logging.info("API monitoring started")
 
     def set_weights(self):
         """
