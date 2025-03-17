@@ -50,7 +50,6 @@ class EnhancedXContent(BaseModel):
     media_types: List[str] = Field(default_factory=list)
 
     # Additional metadata
-    language: Optional[str] = None
     conversation_id: Optional[str] = None
     in_reply_to_user_id: Optional[str] = None
     in_reply_to_username: Optional[str] = None
@@ -122,7 +121,6 @@ class EnhancedXContent(BaseModel):
         is_retweet = data.get('isRetweet', False)
         is_reply = data.get('isReply', False)
         is_quote = data.get('isQuote', False)
-        language = data.get('lang', None)
         conversation_id = data.get('conversationId', None)
 
         # Reply info
@@ -176,7 +174,6 @@ class EnhancedXContent(BaseModel):
             is_quote=is_quote,
             media_urls=media_urls,
             media_types=media_types,
-            language=language,
             conversation_id=conversation_id,
             in_reply_to_user_id=in_reply_to_user_id,
             in_reply_to_username=in_reply_to_username
@@ -208,7 +205,6 @@ class EnhancedXContent(BaseModel):
                 'is_retweet': self.is_retweet,
                 'is_reply': self.is_reply,
                 'is_quote': self.is_quote,
-                'language': self.language,
                 'conversation_id': self.conversation_id
             }
         }
