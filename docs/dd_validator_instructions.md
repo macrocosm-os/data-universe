@@ -99,9 +99,11 @@ More information on JSON restrictions can be found in the [Dynamic Desirability 
 
 As a validator, you can submit preferences through the SN13 Validator API using the `set_desirabilities` endpoint. To delete current preferences, simply submit an empty list `[]`.
 
+---
+
 <details>
   <summary>
-    Legacy Preference Submission Instructions
+    Non-API Preference Submission Instructions
   </summary>
 
   
