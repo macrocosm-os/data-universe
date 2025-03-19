@@ -280,6 +280,10 @@ class RedditCustomScraper(Scraper):
         bt.logging.success(
             f"Completed scrape for subreddit {subreddit_name}. Scraped {len(parsed_contents)} items."
         )
+        print("@@Scrape subreddit@@")
+        stack = traceback.extract_stack(limit=5)
+        for filename, lineno, function, text in stack:
+            print(f"{filename}:{lineno} in {function} -> {text}")
 
         data_entities = []
         for content in parsed_contents:
