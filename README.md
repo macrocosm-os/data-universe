@@ -153,7 +153,7 @@ As of Dec 11th, 2023 data older than 30 days is not scored. This may increase in
 
 ### 2) Data Desirability
 
-Data Universe defines a [DataDesirabilityLookup](https://github.com/RusticLuftig/data-universe/blob/main/rewards/data_desirability_lookup.py) that defines which types of data are desirable. Data deemed desirable is scored more highly. Unspecified labels get the default_scale_factor of 0.5 meaning they score half value in comparison.
+Data Universe maintains a [Dynamic Desirability List](docs/dynamic_desirability.md) that defines which types of data are desirable according to user requests from [Gravity](https://app.macrocosmos.ai/), the Data Universe product. Data deemed desirable is scored more highly. Unspecified labels get the default_scale_factor of 0.3, meaning they score less than half value in comparison.
 
 The DataDesirabilityLookup will evolve over time, but each change will be announced ahead of time to give Miners adequate time to prepare for the update.
 
@@ -179,7 +179,7 @@ See [Validator Setup](docs/validator.md#validator_setup) to learn how to setup a
 
 # Upcoming Features
 
-1. A Validator API to allow other Subnets to query the data.
+1. Post/Comment metadata
 2. More data sources
 
 # Terminology
