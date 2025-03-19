@@ -14,6 +14,7 @@ from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
+from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
@@ -140,11 +141,26 @@ async def query_data(request: QueryRequest,
 
             # Perform a quick check to verify if data should exist
             try:
-                # Determine which scraper to use based on the source
-                scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
-                if not scraper_id:
+                if synapse.source == DataSource.X:
+                    # Use EnhancedApiDojoTwitterScraper for X content
+                    scraper = EnhancedApiDojoTwitterScraper()
+                elif synapse.source == DataSource.REDDIT:
+                    # Use the standard scraper for Reddit
+                    scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
+                    if not scraper_id:
+                        bt.logging.warning(f"No preferred scraper for source {synapse.source}")
+                        # Return empty result with consensus
+                        return {
+                            "status": "success",
+                            "data": [],
+                            "meta": {
+                                "miners_queried": len(selected_miners),
+                                "consensus": "no_data"
+                            }
+                        }
+                    scraper = ScraperProvider().get(scraper_id)
+                else:
                     bt.logging.warning(f"No preferred scraper for source {synapse.source}")
-                    # Return empty result with consensus
                     return {
                         "status": "success",
                         "data": [],
@@ -154,10 +170,8 @@ async def query_data(request: QueryRequest,
                         }
                     }
 
-                # Initialize the appropriate scraper
-                scraper = ScraperProvider().get(scraper_id)
                 if not scraper:
-                    bt.logging.warning(f"Could not initialize scraper {scraper_id}")
+                    bt.logging.warning(f"Could not initialize scraper for {synapse.source}")
                     return {
                         "status": "success",
                         "data": [],
@@ -169,7 +183,7 @@ async def query_data(request: QueryRequest,
 
                 # Create scrape config with limited scope (only check for a few items)
                 verify_config = ScrapeConfig(
-                    entity_limit=10,  # Just get a few items to verify data exists
+                    entity_limit=synapse.limit,  # Just get a few items to verify data exists
                     date_range=DateRange(
                         start=dt.datetime.fromisoformat(synapse.start_date) if synapse.start_date else dt.datetime.now(
                             dt.timezone.utc) - dt.timedelta(days=1),
@@ -180,8 +194,13 @@ async def query_data(request: QueryRequest,
                     [DataLabel(value=f"@{u.strip('@')}") for u in synapse.usernames] if synapse.usernames else []
                 )
 
-                # Directly fetch some data
-                verification_data = await scraper.scrape(verify_config)
+                # Directly fetch some data - use enhanced scraping for X
+                if synapse.source == DataSource.X:
+                    # For X content, use the enhanced scraper's special method to get rich content
+                    verification_data = await scraper.get_enhanced_data_entities(verify_config)
+                else:
+                    # For other sources, use standard scraping
+                    verification_data = await scraper.scrape(verify_config)
 
                 # If we found data but miners returned none, they should be penalized
                 if verification_data:
@@ -204,14 +223,21 @@ async def query_data(request: QueryRequest,
                     processed_data = []
                     for item in verification_data:
                         # Convert DataEntity to dict
-                        item_dict = {
-                            'uri': item.uri,
-                            'datetime': item.datetime.isoformat(),
-                            'source': DataSource(item.source).name,
-                            'label': item.label.value if item.label else None,
-                            'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
-                        }
-                        processed_data.append(item_dict)
+                        if synapse.source == DataSource.X and hasattr(item, 'to_api_response') and callable(
+                                getattr(item, 'to_api_response')):
+                            # For EnhancedXContent, use its to_api_response method
+                            processed_data.append(item.to_api_response())
+                        else:
+                            # Convert DataEntity to dict (for non-enhanced content)
+                            item_dict = {
+                                'uri': item.uri,
+                                'datetime': item.datetime.isoformat(),
+                                'source': DataSource(item.source).name,
+                                'label': item.label.value if item.label else None,
+                                'content': item.content.decode('utf-8') if isinstance(item.content,
+                                                                                      bytes) else item.content
+                            }
+                            processed_data.append(item_dict)
 
                     return {
                         "status": "warning",
