@@ -281,7 +281,7 @@ class RedditCustomScraper(Scraper):
             f"Completed scrape for subreddit {subreddit_name}. Scraped {len(parsed_contents)} items."
         )
         print("@@Scrape subreddit@@")
-        stack = traceback.extract_stack(limit=5)
+        stack = traceback.extract_stack(limit=15)
         for filename, lineno, function, text in stack:
             print(f"{filename}:{lineno} in {function} -> {text}")
 
