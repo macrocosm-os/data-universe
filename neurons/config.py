@@ -157,7 +157,7 @@ def add_args(neuron_type: NeuronType, parser):
             "--neuron.database_name",
             type=str,
             help="The name of the database.",
-            default="SqliteMinerStorage.sqlite",
+            default="PostgresMinerStorage",
         )
 
         parser.add_argument(

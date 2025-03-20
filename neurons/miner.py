@@ -38,7 +38,7 @@ from common.protocol import (
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
-from storage.miner.sqlite_miner_storage import SqliteMinerStorage
+from storage.miner.postgresql_miner_storage import PostgresMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
@@ -161,7 +161,7 @@ class Miner:
             )
 
         # Instantiate storage.
-        self.storage = SqliteMinerStorage(
+        self.storage = PostgresMinerStorage(
             self.config.neuron.database_name,
             self.config.neuron.max_database_size_gb_hint,
         )
