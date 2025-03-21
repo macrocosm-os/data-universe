@@ -50,9 +50,9 @@ class PostgresMinerStorage(MinerStorage):
 
     def __init__(
         self,
-        dbname="mydb",
-        user="myuser",
-        password="mypassword",
+        dbname="subnet13",
+        user="subnet13",
+        password="subnet13",
         host="localhost",
         max_database_size_gb_hint=250,
     ):

@@ -162,8 +162,8 @@ class Miner:
 
         # Instantiate storage.
         self.storage = PostgresMinerStorage(
-            self.config.neuron.database_name,
-            self.config.neuron.max_database_size_gb_hint,
+            # self.config.neuron.database_name,
+            # self.config.neuron.max_database_size_gb_hint,
         )
 
         bt.logging.success(
