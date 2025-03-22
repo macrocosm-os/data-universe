@@ -114,14 +114,36 @@ class PostgresMinerStorage(MinerStorage):
 
     def store_data_entities(self, data_entities: List[DataEntity]):
         added_content_size = 0
+        current_utc_time = dt.datetime.now(dt.timezone.utc)  # Thời điểm hiện tại theo UTC
+        thirty_days_ago = current_utc_time - dt.timedelta(days=30)  # Giới hạn 30 ngày trư
+        
+        # Lọc các data_entities hợp lệ (không cũ hơn 30 ngày)
+        valid_data_entities = []
+
         for data_entity in data_entities:
+            # Đảm bảo datetime là UTC (nếu chưa có tzinfo, gán UTC)
+            entity_datetime = data_entity.datetime
+            if entity_datetime.tzinfo is None:
+                entity_datetime = entity_datetime.replace(tzinfo=dt.timezone.utc)
+        
+            # Kiểm tra nếu datetime cũ hơn 30 ngày
+            if entity_datetime < thirty_days_ago:
+                bt.logging.debug(f"Skipping entity {data_entity.uri}: datetime {entity_datetime} is older than 30 days")
+                continue
+            #add valid content
+            valid_data_entities.append(data_entity)
+
             added_content_size += data_entity.content_size_bytes
 
         if added_content_size > self.database_max_content_size_bytes:
             raise ValueError(
                 f"Content size to store: {added_content_size} exceeds configured max: {self.database_max_content_size_bytes}"
             )
-
+        # Nếu không có entity nào hợp lệ, thoát sớm
+        if not valid_data_entities:
+            bt.logging.info("No valid data entities to store (all older than 30 days)")
+            return
+    
         with contextlib.closing(self._create_connection()) as connection:
             with self.clearing_space_lock:
                 cursor = connection.cursor()
@@ -138,8 +160,9 @@ class PostgresMinerStorage(MinerStorage):
                     self.clear_content_from_oldest(content_bytes_to_clear)
 
             values = []
-            for data_entity in data_entities:
+            for data_entity in valid_data_entities:
                 label = None if data_entity.label is None else data_entity.label.value
+                data_entity.datetime.astimezone(dt.timezone.utc)
                 time_bucket_id = TimeBucket.from_datetime(data_entity.datetime).id
                 values.append(
                     (
