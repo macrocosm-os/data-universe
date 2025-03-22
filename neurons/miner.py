@@ -153,7 +153,10 @@ class Miner:
 
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
-                db_path=self.config.neuron.database_name,
+                dbname="subnet13",
+                user="subnet13",
+                password="subnet13",
+                host="localhost",
                 miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
                 encoding_key_manager=self.encoding_key_manager,
                 private_encoding_key_manager=self.private_encoding_key_manager,
