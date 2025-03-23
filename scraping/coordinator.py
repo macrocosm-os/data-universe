@@ -199,6 +199,9 @@ class ScraperCoordinator:
                 scraper = self.provider.get(scraper_id)
 
                 print("@@Putting scrape tasks in queue")
+                print("@@Scraper: ", scraper)
+                print("@@Scraper ID: ", scraper_id)
+                print("@@Config: ", self.config)
                 scrape_configs = _choose_scrape_configs(scraper_id, self.config, now)
 
                 print("@@Scrape configs: ", scrape_configs)
