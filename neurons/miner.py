@@ -442,6 +442,9 @@ class Miner:
             bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
         )
         synapse.compressed_index_serialized = compressed_index.model_dump_json()
+
+        print("@@synapse.compressed_index_serialized", synapse.compressed_index_serialized)
+
         bt.logging.success(
             f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
             + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
@@ -473,6 +476,8 @@ class Miner:
         )
         synapse.version = constants.PROTOCOL_VERSION
 
+        print("@@get_data_entity_bucket_##_synapse.data_entities", synapse.data_entities)
+
         bt.logging.success(
             f"Returning Bucket ID: {str(synapse.data_entity_bucket_id)} with {len(synapse.data_entities)} entities to {synapse.dendrite.hotkey}."
         )
@@ -484,6 +489,8 @@ class Miner:
 
         # Query the HuggingFace metadata from the database
         synapse.metadata = self.storage.get_hf_metadata(unique_id=self.hf_uploader.unique_id)
+
+        print("@@get_huggingface_metadata_##_synapse.metadata", synapse.metadata)
 
         if not synapse.metadata:
             bt.logging.info(f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
@@ -507,6 +514,8 @@ class Miner:
             decoded_urls.append(result if result else "")
 
         synapse.decoded_urls = decoded_urls
+
+        print("@@decode_urls_##_synapse.decoded_urls", synapse.decoded_urls)
         return synapse
 
     async def decode_urls_blacklist(self, synapse: DecodeURLRequest) -> typing.Tuple[bool, str]:
@@ -539,6 +548,8 @@ class Miner:
         Uses enhanced scraper for X data while maintaining protocol compatibility.
         """
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
+        
+        print("@@Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
             # Get appropriate scraper from provider
@@ -680,6 +691,9 @@ class Miner:
         synapse.bucket_ids_to_contents = [
             (k, v) for k, v in buckets_to_contents.items()
         ]
+
+        print("@@get_contents_by_buckets_##_synapse.bucket_ids_to_contents", synapse.bucket_ids_to_contents)
+
         synapse.version = constants.PROTOCOL_VERSION
 
         bt.logging.success(
