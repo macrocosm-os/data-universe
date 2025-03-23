@@ -144,7 +144,7 @@ class HuggingFaceUploader:
     def get_data_for_huggingface_upload(self, source, last_upload):
         if last_upload is None:
             query = """
-                SELECT datetime, label, content
+                SELECT datetime, label, convert_from(content, 'UTF8') AS content
                 FROM DataEntity
                 WHERE source = %s
                 ORDER BY datetime ASC
@@ -153,7 +153,7 @@ class HuggingFaceUploader:
             params = (source,)
         else:
             query = """
-                SELECT datetime, label, content
+                SELECT datetime, label, convert_from(content, 'UTF8') AS content
                 FROM DataEntity
                 WHERE source = %s
                 AND datetime > %s
