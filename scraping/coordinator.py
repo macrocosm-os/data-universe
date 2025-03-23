@@ -219,7 +219,9 @@ class ScraperCoordinator:
             try:
                 # Wait for a scraping task to be added to the queue.
                 scrape_fn = await self.queue.get()
-
+                print("@@==@@")
+                print("@@self.queue: ", self.queue)
+                print("@@Scrape fn: ", scrape_fn)
                 # Perform the scrape
                 data_entities = await scrape_fn()
                 self.storage.store_data_entities(data_entities)
