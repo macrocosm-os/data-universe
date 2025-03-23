@@ -282,7 +282,8 @@ class ApiDojoTwitterScraper(Scraper):
 
         bt.logging.success(f"Performing Twitter scrape for search terms: {query}.")
 
-        print("@@Scrape@@")
+        print("@@Scrape Twitter@@")
+        print("@@scrape_config: ", scrape_config)
         print("@@query: ", query)
         print("@@run_input: ", run_input)
         print("@@run_config: ", run_config)
