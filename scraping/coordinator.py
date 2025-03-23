@@ -198,7 +198,11 @@ class ScraperCoordinator:
             for scraper_id in scraper_ids_to_scrape_now:
                 scraper = self.provider.get(scraper_id)
 
+                print("@@Putting scrape tasks in queue")
                 scrape_configs = _choose_scrape_configs(scraper_id, self.config, now)
+
+                print("@@Scrape configs: ", scrape_configs)
+
 
                 for config in scrape_configs:
                     # Use .partial here to make sure the functions arguments are copied/stored
