@@ -442,6 +442,9 @@ class Miner:
             bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
         )
         synapse.compressed_index_serialized = compressed_index.model_dump_json()
+
+        print("@@synapse.compressed_index_serialized", synapse.compressed_index_serialized)
+        
         bt.logging.success(
             f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
             + f"across {CompressedMinerIndex.bucket_count(compressed_index)} buckets to {synapse.dendrite.hotkey}."
@@ -539,6 +542,8 @@ class Miner:
         Uses enhanced scraper for X data while maintaining protocol compatibility.
         """
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
+        
+        print("@@Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
             # Get appropriate scraper from provider
