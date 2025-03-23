@@ -205,6 +205,11 @@ class ScraperCoordinator:
                     # now rather than being lazily evaluated (if a lambda was used).
                     # https://pylint.readthedocs.io/en/latest/user_guide/messages/warning/cell-var-from-loop.html#cell-var-from-loop-w0640
                     bt.logging.trace(f"Adding scrape task for {scraper_id}: {config}.")
+
+                    
+                    print("@@##==##", scraper.scrape)
+                    print("@@##==##", config)
+
                     self.queue.put_nowait(functools.partial(scraper.scrape, config))
 
                 self.tracker.on_scrape_scheduled(scraper_id, now)
