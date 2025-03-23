@@ -283,6 +283,9 @@ class ApiDojoTwitterScraper(Scraper):
         bt.logging.success(f"Performing Twitter scrape for search terms: {query}.")
 
         print("@@Scrape@@")
+        print("@@query: ", query)
+        print("@@run_input: ", run_input)
+        print("@@run_config: ", run_config)
         stack = traceback.extract_stack(limit=25)
         for filename, lineno, function, text in stack:
             print(f"{filename}:{lineno} in {function} -> {text}")
