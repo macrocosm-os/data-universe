@@ -284,7 +284,7 @@ class PostgresMinerStorage(MinerStorage):
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
             cursor.execute(
-                """SELECT uri, datetime, source, label, content, contentSizeBytes 
+                """SELECT uri, datetime, source, label, convert_from(content, 'UTF8') AS content, contentSizeBytes 
                    FROM DataEntity 
                    WHERE timeBucketId = %s AND source = %s AND (label = %s OR (label IS NULL AND %s IS NULL))""",
                 (
@@ -398,7 +398,7 @@ class PostgresMinerStorage(MinerStorage):
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
             query = (
-                """SELECT timeBucketId, source, label, content, contentSizeBytes 
+                """SELECT timeBucketId, source, label, convert_from(content, 'UTF8') AS content, contentSizeBytes 
                    FROM DataEntity
                    WHERE """
                 + " OR ".join(
