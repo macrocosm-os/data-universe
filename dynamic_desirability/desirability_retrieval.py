@@ -192,6 +192,7 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
         for hotkey in validator_data.keys():
+            hotkey = '5Cg5QgjMfRqBC6bh8X4PDbQi7UzVRn9eyWXsB8gkyfppFPPy' #hardcoded for testing
             uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
             validator_data[hotkey]['github_hash'] =  subtensor.get_commitment(netuid=config.netuid, uid=uid)
             if validator_data[hotkey]['github_hash']:

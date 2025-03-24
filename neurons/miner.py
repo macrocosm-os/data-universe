@@ -342,20 +342,25 @@ class Miner:
         if not self.is_running:
             bt.logging.debug("Starting miner in background thread.")
             self.should_exit = False
+            
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+
             self.compressed_index_refresh_thread = threading.Thread(
                 target=self.refresh_index, daemon=True
             )
             self.compressed_index_refresh_thread.start()
+
             self.hugging_face_thread = threading.Thread(
                 target=self.upload_hugging_face, daemon=True
             )
             self.hugging_face_thread.start()
+
             self.lookup_thread = threading.Thread(
                 target=self.get_updated_lookup, daemon=True
             )
             self.lookup_thread.start()
+            
             self.is_running = True
             bt.logging.debug("Started")
 
