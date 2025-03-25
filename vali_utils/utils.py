@@ -44,14 +44,11 @@ def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     # In future, consider sampling every N bytes.
     chosen_entities = []
     total_size = sum(entity.content_size_bytes for entity in entities)
-    print(f"@@ Total size of all entities: {total_size}")
 
     # Ensure we don't try to choose more entities than exist to choose from.
     num_entities_to_choose = min(2, len(entities))
-    print(f"@@ Number of entities to choose: {num_entities_to_choose}")
     for _ in range(num_entities_to_choose):
         chosen_byte = random.uniform(0, total_size)
-        print(f"@@ Chosen byte: {chosen_byte}")
         iterated_bytes = 0
         for entity in entities:
             if entity in chosen_entities:
@@ -60,13 +57,11 @@ def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
 
             if iterated_bytes + entity.content_size_bytes >= chosen_byte:
                 chosen_entities.append(entity)
-                print(f"@@ Chosen entity: {entity}")
                 # Adjust total_size to account for the entity we already selected.
                 total_size -= entity.content_size_bytes
                 break
 
             iterated_bytes += entity.content_size_bytes
-            print(f"@@ Iterated bytes: {iterated_bytes}")
 
     return chosen_entities
 
