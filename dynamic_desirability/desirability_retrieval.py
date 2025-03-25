@@ -199,6 +199,9 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
                 validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'],
                                                           filename=f"{hotkey}.json")
 
+        print("@@validator_data", validator_data)
+        print("@@validator_data", validator_data.keys())
+
         bt.logging.info("\nCalculating total weights...\n")
 
         script_dir = os.path.dirname(os.path.abspath(__file__))
