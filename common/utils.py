@@ -74,13 +74,6 @@ def get_validator_data(metagraph: bt.metagraph, vpermit_rao_limit: int) -> Dict[
         if is_validator(uid, metagraph, vpermit_rao_limit)
     }
     
-    validator_data = {
-        '5Cg5QgjMfRqBC6bh8X4PDbQi7UzVRn9eyWXsB8gkyfppFPPy': {
-            'percent_stake': 0.583382450712095,
-            'github_hash': None,
-            'json': None
-        }
-    }
 
     return validator_data
 
