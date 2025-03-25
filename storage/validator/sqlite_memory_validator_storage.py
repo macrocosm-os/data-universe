@@ -144,9 +144,15 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def _create_connection(self):
         # Create the database if it doesn't exist, defaulting to the local directory.
         # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
+        # connection = sqlite3.connect(
+        #     "file::memory:?cache=shared",
+        #     uri=True,
+        #     detect_types=sqlite3.PARSE_DECLTYPES,
+        #     timeout=120.0,
+        # )
+
         connection = sqlite3.connect(
-            "file::memory:?cache=shared",
-            uri=True,
+            "./validator_test.sqlite",
             detect_types=sqlite3.PARSE_DECLTYPES,
             timeout=120.0,
         )
