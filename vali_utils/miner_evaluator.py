@@ -228,10 +228,14 @@ class MinerEvaluator:
             )
             return
 
+        print("@@data_entities: ", data_entities)
+
         # Basic validation and uniqueness passed. Now sample some entities for data correctness.
         entities_to_validate: List[DataEntity] = vali_utils.choose_entities_to_verify(
             data_entities
         )
+        
+        print("@@Entities to validate: ", entities_to_validate)
 
         entity_uris = [entity.uri for entity in entities_to_validate]
 
