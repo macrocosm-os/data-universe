@@ -39,6 +39,8 @@ from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
+from storage.s3.factory import create_storage_from_config
+from storage.s3.dual_storage import DualStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
@@ -67,6 +69,11 @@ class Miner:
         bt.logging.info(self.config)
         self.use_hf_uploader = self.config.huggingface
         self.use_gravity_retrieval = self.config.gravity
+        
+        # Check if S3 upload is enabled in config
+        self.use_s3 = False
+        if hasattr(self.config, 's3'):
+            self.use_s3 = getattr(self.config.s3, 'enabled', False)
 
         if self.config.offline:
             bt.logging.success(
@@ -246,8 +253,8 @@ class Miner:
                 time.sleep(300)  # Wait 5 minutes before trying again
 
     def upload_hugging_face(self):
-        if not self.use_hf_uploader:
-            bt.logging.info("HuggingFace Uploader is not enabled.")
+        if not self.use_hf_uploader and not self.use_s3:
+            bt.logging.info("Neither HuggingFace nor S3 Uploader is enabled.")
             return
 
         time_sleep_val = dt.timedelta(minutes=30).total_seconds()
@@ -255,13 +262,70 @@ class Miner:
 
         while not self.should_exit:
             try:
-                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the HuggingFaceUploader
+                # Use unique ID from HF uploader if available, otherwise generate one
+                if hasattr(self, 'hf_uploader'):
+                    unique_id = self.hf_uploader.unique_id
+                else:
+                    # Generate deterministic ID based on hotkey if no HF uploader
+                    from huggingface_utils.utils import generate_static_integer
+                    miner_hotkey = self.wallet.hotkey.ss58_address if hasattr(self, 'wallet') and self.wallet else str(self.uid)
+                    unique_id = generate_static_integer(miner_hotkey)
+                
+                # Check if we should upload data
                 if self.storage.should_upload_hf_data(unique_id):
-                    bt.logging.info("Trying to upload the data into HuggingFace.")
-                    hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
-                    if hf_metadata_list:
-                        self.storage.store_hf_dataset_info(hf_metadata_list)
-            except Exception:
+                    metadata_list = []
+                    
+                    # Upload to HuggingFace if enabled
+                    if self.use_hf_uploader:
+                        bt.logging.info("Uploading data to HuggingFace...")
+                        try:
+                            hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
+                            if hf_metadata_list:
+                                metadata_list.extend(hf_metadata_list)
+                                bt.logging.success(f"Successfully uploaded data to HuggingFace: {len(hf_metadata_list)} datasets")
+                        except Exception as e:
+                            bt.logging.error(f"HuggingFace upload failed: {str(e)}")
+                            bt.logging.error(traceback.format_exc())
+                    
+                    # Upload to S3 if enabled
+                    if self.use_s3:
+                        bt.logging.info("Uploading data to S3...")
+                        try:
+                            from storage.s3.s3_miner_storage import S3MinerStorage
+                            
+                            # Create S3 storage for this upload session
+                            s3_config = {
+                                'bucket_name': self.config.s3.bucket_name,
+                                'region': getattr(self.config.s3, 'region', 'us-east-1'),
+                                'auth_endpoint': self.config.s3.auth_endpoint
+                            }
+                            
+                            s3_storage = S3MinerStorage(
+                                db_path=self.config.neuron.database_name,
+                                miner_hotkey=self.wallet.hotkey.ss58_address if hasattr(self, 'wallet') and self.wallet else str(self.uid),
+                                wallet=self.wallet,
+                                encoding_key_manager=self.encoding_key_manager,
+                                private_encoding_key_manager=self.private_encoding_key_manager,
+                                state_file=f"{self.config.miner_upload_state_file}_s3",
+                                s3_config=s3_config,
+                                output_dir=self.config.neuron.storage_dir or 'temp_s3_storage'
+                            )
+                            
+                            # Upload data to S3
+                            s3_metadata_list = s3_storage.upload_data_to_s3()
+                            if s3_metadata_list:
+                                metadata_list.extend(s3_metadata_list)
+                                bt.logging.success(f"Successfully uploaded data to S3: {len(s3_metadata_list)} datasets")
+                        except Exception as e:
+                            bt.logging.error(f"S3 upload failed: {str(e)}")
+                            bt.logging.error(traceback.format_exc())
+                    
+                    # Store metadata for successful uploads
+                    if metadata_list:
+                        self.storage.store_hf_dataset_info(metadata_list)
+                
+            except Exception as e:
+                bt.logging.error(f"Error in upload process: {str(e)}")
                 bt.logging.error(traceback.format_exc())
 
             time_sleep_val = dt.timedelta(minutes=90).total_seconds()
