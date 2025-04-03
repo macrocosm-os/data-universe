@@ -120,6 +120,13 @@ class DataEntity(StrictBaseModel):
     def are_non_content_fields_equal(
             cls, this: "DataEntity", other: "DataEntity"
     ) -> bool:
+        
+        print("@@compare data entities")
+        print("uri this: ", this.uri, " uri other: ", other.uri)
+        print("datetime this: ", this.datetime, " datetime other: ", other.datetime)
+        print("source this: ", this.source, " source other: ", other.source)
+        print("label this: ", this.label, " label other: ", other.label)
+        
         return (
                 this.uri == other.uri
                 and this.datetime == other.datetime

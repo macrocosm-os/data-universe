@@ -191,12 +191,19 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
 
         bt.logging.info("\nRetrieving latest validator commit hashes from the chain (This takes ~90 secs)...\n")
 
+        print("@@validator_data", validator_data)
+        print("@@validator_data", validator_data.keys())    
+        
         for hotkey in validator_data.keys():
+            # hotkey = '5Cg5QgjMfRqBC6bh8X4PDbQi7UzVRn9eyWXsB8gkyfppFPPy' #hardcoded for testing
             uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=hotkey, netuid=config.netuid)
             validator_data[hotkey]['github_hash'] =  subtensor.get_commitment(netuid=config.netuid, uid=uid)
             if validator_data[hotkey]['github_hash']:
                 validator_data[hotkey]['json'] = get_json(commit_sha=validator_data[hotkey]['github_hash'],
                                                           filename=f"{hotkey}.json")
+
+        print("@@validator_data22", validator_data)
+        print("@@validator_data22", validator_data.keys())
 
         bt.logging.info("\nCalculating total weights...\n")
 

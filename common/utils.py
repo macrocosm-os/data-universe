@@ -73,6 +73,7 @@ def get_validator_data(metagraph: bt.metagraph, vpermit_rao_limit: int) -> Dict[
         for uid, (hotkey, stake) in enumerate(zip(metagraph.hotkeys, metagraph.S))
         if is_validator(uid, metagraph, vpermit_rao_limit)
     }
+    
 
     return validator_data
 
