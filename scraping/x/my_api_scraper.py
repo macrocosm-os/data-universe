@@ -103,9 +103,11 @@ class MyApiTwitterScraper(Scraper):
                             data = json.loads(response_text)
                             if not data or "data" not in data or data.get("data") is None:
                                 bt.logging.warning("API returned empty or invalid data.")
+                                print("@@API returned empty or invalid data.")
                                 continue
                         except json.JSONDecodeError as e:
                             bt.logging.error(f"Failed to parse JSON response: {e}")
+                            print("@@Failed to parse JSON response: ", e)
                             continue
 
                         # Parse the dataset
@@ -118,6 +120,9 @@ class MyApiTwitterScraper(Scraper):
                                     
                                 if "Hashtags" not in data["Tweet"] or data["Tweet"]["Hashtags"] is None:
                                     data["Tweet"]["Hashtags"] = []
+
+                                tweets.append(data["Tweet"])
+                                
                         return self._best_effort_parse_dataset(tweets)
             except Exception as e:
                 bt.logging.error(f"Attempt {attempt + 1} failed: {traceback.format_exc()}")

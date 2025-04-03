@@ -79,16 +79,3 @@ try:
 except json.JSONDecodeError as e:
     print(f"JSON is invalid: {e}")
 
-
-
-
-                        # Parse the dataset
-                        tweets = []
-                        for data in (data.get("data") or []):
-                            if "Tweet" in data and data["Tweet"] is not None:
-                                # Replace "twitter.com" with "x.com" in PermanentURL
-                                if "PermanentURL" in data["Tweet"]:
-                                    data["Tweet"]["PermanentURL"] = data["Tweet"]["PermanentURL"].replace("twitter.com", "x.com")
-                                
-                                if "Hashtags" not in data["Tweet"]:
-                                    data["Tweet"]["Hashtags"] = []
