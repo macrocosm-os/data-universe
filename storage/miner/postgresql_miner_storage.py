@@ -30,7 +30,7 @@ class PostgresMinerStorage(MinerStorage):
                                 datetime            TIMESTAMPTZ NOT NULL,
                                 timeBucketId        INTEGER     NOT NULL,
                                 source              INTEGER     NOT NULL,
-                                label               CHAR(32),
+                                label               CHAR(140),
                                 content             BYTEA       NOT NULL,
                                 contentSizeBytes    INTEGER     NOT NULL,
                                 PRIMARY KEY (uri, datetime)
