@@ -113,10 +113,10 @@ class MyApiTwitterScraper(Scraper):
                         for data in (data.get("data") or []):
                             if "Tweet" in data and data["Tweet"] is not None:
                                 # Replace "twitter.com" with "x.com" in PermanentURL
-                                if "PermanentURL" in data["Tweet"]:
+                                if "PermanentURL" in data["Tweet"] and data["Tweet"]["PermanentURL"] is not None:
                                     data["Tweet"]["PermanentURL"] = data["Tweet"]["PermanentURL"].replace("twitter.com", "x.com")
-                                
-                                if "Hashtags" not in data["Tweet"]:
+                                    
+                                if "Hashtags" not in data["Tweet"] or data["Tweet"]["Hashtags"] is None:
                                     data["Tweet"]["Hashtags"] = []
                         return self._best_effort_parse_dataset(tweets)
             except Exception as e:
