@@ -7,6 +7,7 @@ from scraping.scraper import Scraper, ScraperId
 from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.x.quacker_url_scraper import QuackerUrlScraper
+from scraping.x.my_api_scraper import MyApiTwitterScraper
 
 DEFAULT_FACTORIES = {
     ScraperId.REDDIT_LITE: RedditLiteScraper,
@@ -15,7 +16,8 @@ DEFAULT_FACTORIES = {
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
     ScraperId.X_MICROWORLDS: MicroworldsTwitterScraper,
     ScraperId.X_APIDOJO: ApiDojoTwitterScraper,
-    ScraperId.X_QUACKER: QuackerUrlScraper
+    ScraperId.X_QUACKER: QuackerUrlScraper,
+    ScraperId.MY_API: MyApiTwitterScraper,  # Thêm scraper mới
 }
 
 
