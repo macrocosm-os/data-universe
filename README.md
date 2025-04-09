@@ -31,7 +31,16 @@ In the Data Universe, Miners scrape data from a defined set of sources, called D
 
 Validators periodically query each Miner to fetch their latest MinerIndexes and store them in a local database. This gives the Validator a complete understanding of all data that's stored on the network, as well as which Miners to query for specific types of data. Validators also periodically verify the correctness of the data stored on Miners and reward Miners based on the amount of [valuable data](#data-value) the Miner has. Validators log to [wandb](https://wandb.ai/macrocosmos/data-universe-validators) anonymously by default.
 
-Optionally, Miners upload their local stores to HuggingFace for public dataset access. This data is anonymized for privacy purposes to comply with the Terms of Service per each data source. See the [HuggingFace](docs/huggingface_setup.md) docs for more information on HuggingFace uploads. In the future, publicly uploading data to HuggingFace will be required.
+
+
+  Miners upload their local stores to either HuggingFace or S3-compatible storage for public dataset access. This data is anonymized for privacy purposes to comply with the Terms of
+  Service per each data source.
+
+  - For HuggingFace setup, see the [HuggingFace documentation](docs/huggingface_setup.md).
+  - For S3 storage setup, see the [S3 Storage documentation](https://github.com/macrocosm-os/data-universe-api).
+
+  The S3 storage option provides improved scalability, security, and performance, especially for large datasets. It uses a folder-based structure with blockchain authentication to
+  ensure miners can only access their own data while validators can efficiently access all miners' data.
 
 See the [Miner](docs/miner.md) and [Validator](docs/validator.md) docs for more information about how they work, as well as setup instructions.
 
@@ -69,7 +78,7 @@ Validators remain suspicious of Miners and so they periodically check a sample o
 
 As you can see from the above, Data Universe rewards diversity of data (storing 200 copies of the same data isn't exactly beneficial!) 
 
-To help understand the current data on the Subnet, the Data Universe team hosts a dashboard (https://shorturl.at/Ca5uu), showing the amount of each type of data (by DataEntityBucketId) on the Subnet. Miners are strongly encouraged to use this dashboard to customize their [Miner Configuration](./docs/miner.md#configuring-the-miner), to maximize their rewards.
+To help understand the current data on the Subnet, the Data Universe team hosts a dashboard (https://sn13-dashboard.api.macrocosmos.ai/), showing the amount of each type of data (by DataEntityBucketId) on the Subnet. Miners are strongly encouraged to use this dashboard to customize their [Miner Configuration](./docs/miner.md#configuring-the-miner), to maximize their rewards.
 
 # Getting Started
 
@@ -80,7 +89,8 @@ See [Validator Setup](docs/validator.md#validator_setup) to learn how to setup a
 # Upcoming Features
 
 1. A Validator API to allow other Subnets to query the data.
-2. More data sources
+2. Private storage
+2. More datasources feel free to add by yourself in [this repo](https://github.com/macrocosm-os/scrapers)! 
 
 # Terminology
 
