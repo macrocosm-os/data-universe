@@ -184,6 +184,16 @@ async def query_data(request: QueryRequest,
                     }
 
                 # Create scrape config with limited scope (only check for a few items)
+                # For X data, combine keywords and usernames with appropriate label formatting
+                labels = []
+                if synapse.keywords:
+                    labels.extend([DataLabel(value=k) for k in synapse.keywords])
+                if synapse.usernames:
+                    # Ensure usernames have @ prefix
+                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
+                                   synapse.usernames])
+
+                # Create scrape config matching the miner's configuration
                 verify_config = ScrapeConfig(
                     entity_limit=request.limit,  # Use requested limit
                     date_range=DateRange(
@@ -192,8 +202,7 @@ async def query_data(request: QueryRequest,
                         end=dt.datetime.fromisoformat(synapse.end_date) if synapse.end_date else dt.datetime.now(
                             dt.timezone.utc)
                     ),
-                    labels=[DataLabel(value=k) for k in synapse.keywords] if synapse.keywords else
-                    [DataLabel(value=f"@{u.strip('@')}") for u in synapse.usernames] if synapse.usernames else []
+                    labels=labels,
                 )
 
                 # For X source, replicate exactly what miners do in handle_on_demand
