@@ -95,6 +95,18 @@ Weights that are not increments of 0.1 will be rounded accordingly.
 
 More information on JSON restrictions can be found in the [Dynamic Desirability Doc](https://github.com/macrocosm-os/data-universe/blob/gravity/docs/dynamic_desirability.md).
 
+## Submitting and Deleting Preferences with the API
+
+As a validator, you can submit preferences through the SN13 Validator API using the `set_desirabilities` endpoint. To delete current preferences, simply submit an empty list `[]`.
+
+---
+
+<details>
+  <summary>
+    Non-API Preference Submission Instructions
+  </summary>
+
+  
 ### Creating a `my_preferences.json`
 
 An alternative to manually creating a JSON preferences file is using the [`json_maker.ipynb`](https://colab.research.google.com/drive/1bc6OWAZ8EbKEGtc1Bnt5D_kJVKmcDo1K?usp=sharing) provided in Google Colab.
@@ -179,3 +191,4 @@ No Update:
 
 Miners can also choose to retrieve the updated desirability lookup every day. This is done by setting the `--gravity` flag. See [`neurons/config.py`](../neurons/config.py) and [`neurons/miner.py`](../neurons/miner.py) for code references. 
 
+</details>

@@ -2,7 +2,7 @@
 
 ## Foreword 
 
-Dynamic Desirability (Gravity) is an in-progress feature and will be fully added to the subnet soon! We welcome questions, comments and feedback on Discord - message @arrmlet or @ewekazoo, or file a GitHub issue. 
+We welcome questions, comments and feedback on Discord - message @arrmlet or @ewekazoo, or file a GitHub issue. 
 
 The following is a conceptual overview of Dynamic Desirability (Gravity). We recommend you read this first, then the [Validator Instructions](dd_validator_instructions.md) for technical instructions. 
 
@@ -15,7 +15,7 @@ The following is a conceptual overview of Dynamic Desirability (Gravity). We rec
 
 Dynamic Desirability uses the Gravity repo as a part of the validator preference submission pipeline. Read-access is public and encouraged! 
 
-If you are a validator and would like to have your subreddit/hashtag preferences incentivized on SN13, please check out the [**Gravity repo**](https://github.com/macrocosm-os/gravity/tree/main) and fill out a [**request form**](https://forms.gle/BzLg4SwWgmi9xVC18) for write-access. 
+If you are a validator and would like to have your subreddit/hashtag preferences incentivized on SN13, please check out the [**Gravity repo**](https://github.com/macrocosm-os/gravity/tree/main) and fill out a [**request form**](https://forms.gle/BzLg4SwWgmi9xVC18) for write-access. Then, contact any Macrocosmos member on Discord notifying us of your request.
 
 
 ## Overall Process
@@ -105,4 +105,4 @@ Miners are encouraged to:
 
 ---
 
-Note: This feature is subject to community review and approval processes. Details may change based on further research and development.
+Note: This feature is subject to community feedback. Details may change based on further research and development.
