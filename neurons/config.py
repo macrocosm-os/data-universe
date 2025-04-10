@@ -205,6 +205,41 @@ def add_args(neuron_type: NeuronType, parser):
             help="Set this flag to true to retrieve updated desirabilities, stored in total.json",
             default=False
         )
+        
+        parser.add_argument(
+            "--s3.enabled", 
+            action="store_true",
+            help="Enable uploading data to S3 storage",
+            default=False
+        )
+        
+        parser.add_argument(
+            "--s3.bucket_name",
+            type=str,
+            help="S3 bucket name for data storage",
+            default=""
+        )
+        
+        parser.add_argument(
+            "--s3.auth_endpoint",
+            type=str,
+            help="Authentication endpoint URL for S3 access",
+            default=""
+        )
+        
+        parser.add_argument(
+            "--s3.region",
+            type=str,
+            help="AWS region for S3 bucket",
+            default="us-east-1"
+        )
+        
+        parser.add_argument(
+            "--neuron.storage_dir",
+            type=str,
+            help="Directory for temporary storage files",
+            default="storage_data"
+        )
 
         parser.add_argument(
             "--encoding_key_json_file",
