@@ -3,7 +3,7 @@ import unittest
 from attr import dataclass
 from common import constants, utils
 from common.data_v2 import ScorableDataEntityBucket
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data import DynamicSourceDesirability, DynamicDesirabilityLookup
 from rewards.data_value_calculator import DataValueCalculator
 from common.data import (
     DataLabel,
@@ -15,25 +15,25 @@ import datetime as dt
 
 class TestDataValueCalculator(unittest.TestCase):
     def setUp(self):
-        model = DataDesirabilityLookup(
+        model = DynamicDesirabilityLookup(
             distribution={
-                DataSource.REDDIT: DataSourceDesirability(
+                DataSource.REDDIT: DynamicSourceDesirability(
                     weight=0.75,
                     default_scale_factor=0.5,
-                    label_scale_factors={
+                    label_config={
                         # Labels include upper and lower case to ensure matching is case insensitive.
-                        DataLabel(value="TestLABEL"): 1.0,
-                        DataLabel(value="unscoredLabel"): 0,
-                        DataLabel(value="penalizedLABEL"): -1.0,
+                        DataLabel(value="TestLABEL"): (1.0, None),
+                        DataLabel(value="unscoredLabel"): (0, None),
+                        DataLabel(value="penalizedLABEL"): (-1.0, None),
                     },
                 ),
-                DataSource.X: DataSourceDesirability(
+                DataSource.X: DynamicSourceDesirability(
                     weight=0.25,
                     default_scale_factor=0.8,
-                    label_scale_factors={
-                        DataLabel(value="#TestLABEL"): 1.0,
-                        DataLabel(value="#unscoredLabel"): 0,
-                        DataLabel(value="#penalizedLABEL"): -1.0,
+                    label_config={
+                        DataLabel(value="#TestLABEL"): (1.0, None),
+                        DataLabel(value="#unscoredLabel"): (0, None),
+                        DataLabel(value="#penalizedLABEL"): (-1.0, None),
                     },
                 ),
             },
