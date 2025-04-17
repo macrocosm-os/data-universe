@@ -116,7 +116,6 @@ def add_args(neuron_type: NeuronType, parser):
         default="https://sn13-data.api.macrocosmos.ai"
     )
 
-
     if neuron_type == NeuronType.VALIDATOR:
         parser.add_argument(
             "--neuron.axon_off",
