@@ -24,9 +24,9 @@ class S3Auth:
             commitment = f"s3:access:{coldkey}:{source_name}:{timestamp}"
 
             bt.logging.info(f"Committing to blockchain: {commitment}")
-            #success = subtensor.commit(wallet=wallet, netuid=netuid, data=commitment) #TODO
+            success = subtensor.commit(wallet=wallet, netuid=netuid, data=commitment)
 
-            if not True:
+            if not success:
                 bt.logging.error("Failed to commit to blockchain")
                 return None
 
@@ -36,7 +36,6 @@ class S3Auth:
                 "hotkey": hotkey,
                 "source": source_name,
                 "netuid": netuid,
-                "network": 'finney',  # '#subtensor.network, todo
                 "timestamp": timestamp
             }
 
