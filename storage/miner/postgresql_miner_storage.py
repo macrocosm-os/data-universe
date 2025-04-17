@@ -19,7 +19,10 @@ import psycopg2
 import contextlib
 import bittensor as bt
 import pandas as pd
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # Use a timezone aware adapter for timestamp columns (not needed for psycopg2, handled natively).
 class PostgresMinerStorage(MinerStorage):
@@ -50,11 +53,11 @@ class PostgresMinerStorage(MinerStorage):
 
     def __init__(
         self,
-        dbname="subnet13",
-        user="subnet13",
-        password="subnet13",
-        host="localhost",
-        max_database_size_gb_hint=250,
+        dbname=os.getenv("PG_DB"),
+        user=os.getenv("PG_USERNAME"),
+        password=os.getenv("PG_PASSWORD"),
+        host=os.getenv("PG_HOST"),
+        max_database_size_gb_hint=int(os.getenv("PG_MAX_DB_SIZE_GB", "250")),
     ):
         self.dbname = dbname
         self.user = user

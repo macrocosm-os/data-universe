@@ -22,7 +22,9 @@ from typing import List, Dict, Union, Any
 from huggingface_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
 from requests.exceptions import RequestException
 from functools import wraps
+from dotenv import load_dotenv
 
+load_dotenv()
 
 def retry_upload(max_retries: int = 3, delay: int = 5):
     """Decorator to retry uploads on failure."""
@@ -44,20 +46,16 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
 
 class HuggingFaceUploader:
     def __init__(self, 
-                 dbname: str,
-                 user: str,
-                 password: str,
-                 host: str,
                  miner_hotkey: str,
                  encoding_key_manager: EncodingKeyManager,  # USED FOR ENCODING USERNAMES
                  private_encoding_key_manager: EncodingKeyManager,   # USED FOR ENCODING URLS
                  state_file: str,
                  output_dir: str = 'hf_storage',
                  chunk_size: int = 1_000_000):
-        self.dbname = dbname
-        self.user = user
-        self.password = password
-        self.host = host
+        self.dbname = os.getenv("PG_DB")
+        self.user = os.getenv("PG_USERNAME")
+        self.password = os.getenv("PG_PASSWORD")
+        self.host = os.getenv("PG_HOST")
         self.miner_hotkey = miner_hotkey
         self.output_dir = os.path.join(output_dir, self.miner_hotkey)
         self.unique_id = generate_static_integer(self.miner_hotkey)
