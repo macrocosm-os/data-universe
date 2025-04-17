@@ -286,7 +286,7 @@ class Miner:
             self.last_sync_timestamp = dt.datetime.now()
             bt.logging.success(f"Miner starting at {self.last_sync_timestamp}.")
 
-        self.scraping_coordinator.run_in_background_thread()
+        # self.scraping_coordinator.run_in_background_thread()
 
         while not self.should_exit:
             # This loop maintains the miner's operations until intentionally stopped.
