@@ -157,7 +157,7 @@ class Miner:
                 miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
                 encoding_key_manager=self.encoding_key_manager,
                 private_encoding_key_manager=self.private_encoding_key_manager,
-                miner_coldkey=self.wallet.coldkey.ss58_address,
+                miner_coldkey=self.wallet.get_coldkeypub().ss58_address,
                 wallet=self.wallet,
                 subtensor=self.subtensor,
                 state_file=self.config.miner_upload_state_file,
