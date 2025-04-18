@@ -25,6 +25,8 @@ from dotenv import load_dotenv
 load_dotenv()
 
 # Use a timezone aware adapter for timestamp columns (not needed for psycopg2, handled natively).
+
+
 class PostgresMinerStorage(MinerStorage):
     """PostgreSQL backed MinerStorage"""
 
@@ -33,7 +35,7 @@ class PostgresMinerStorage(MinerStorage):
                                 datetime            TIMESTAMPTZ NOT NULL,
                                 timeBucketId        INTEGER     NOT NULL,
                                 source              INTEGER     NOT NULL,
-                                label               CHAR(140),
+                                label               VARCHAR(140),
                                 content             BYTEA       NOT NULL,
                                 contentSizeBytes    INTEGER     NOT NULL,
                                 PRIMARY KEY (uri, datetime)
@@ -353,6 +355,8 @@ class PostgresMinerStorage(MinerStorage):
                 oldest_time_bucket_id = TimeBucket.from_datetime(
                     dt.datetime.now() - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
                 ).id
+
+                print("@@vmintam oldest_time_bucket_id", oldest_time_bucket_id)
 
                 cursor.execute(
                     """SELECT SUM(contentSizeBytes) AS bucketSize, timeBucketId, source, label 
