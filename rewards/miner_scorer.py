@@ -73,6 +73,13 @@ class MinerScorer:
 
             bt.logging.info("@@@ save state miner scorer:", filepath)
 
+            bt.logging.info("@@@ lưu giá trị của toàn bộ miner:", self.scores)
+            bt.logging.info("@@@ lưu độ tin cậy của miner:", self.miner_credibility)
+            bt.logging.info("@@@ lưu giá trị của hf_boosts:", self.hf_boosts)
+            bt.logging.info("@@@ lưu độ tin cậy của hf:", self.hf_credibility)
+            bt.logging.info("@@@ lưu giá trị của scorable bytes:", self.scorable_bytes)
+
+
 
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
@@ -81,10 +88,14 @@ class MinerScorer:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
 
-            bt.logging.info("@@@ Lấy độ tin cậy của miner từ file state:", self.miner_credibility)
-
             self.hf_boosts = state["hf_boosts"]
             self.hf_credibility = state["hf_credibility"]
+
+            bt.logging.info("@@@ Lấy độ tin cậy của miner từ file state:", self.miner_credibility)
+            bt.logging.info("@@@ Lấy giá trị của hf_boosts từ file state:", self.hf_boosts)
+            bt.logging.info("@@@ Lấy giá trị của hf_credibility từ file state:", self.hf_credibility)
+            bt.logging.info("@@@ Lấy giá trị của scores từ file state:", self.scores)
+
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
