@@ -37,9 +37,9 @@ class MinerScorer:
             (num_neurons, 1), MinerScorer.STARTING_CREDIBILITY, dtype=torch.float32
         )
 
-        bt.logging.debug(f"Initialized tensors with size {num_neurons}:")
-        bt.logging.debug(f"- hf_boosts shape: {self.hf_boosts.shape}")
-        bt.logging.debug(f"- hf_credibility shape: {self.hf_credibility.shape}")
+        # bt.logging.debug(f"Initialized tensors with size {num_neurons}:")
+        # bt.logging.debug(f"- hf_boosts shape: {self.hf_boosts.shape}")
+        # bt.logging.debug(f"- hf_credibility shape: {self.hf_credibility.shape}")
 
         # Keeps track of the amount of scorable bytes the miner had last time it was evaluated.
         self.scorable_bytes = torch.zeros(num_neurons, dtype=torch.float32)
