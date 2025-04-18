@@ -206,6 +206,14 @@ class MinerScorer:
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
                 
+                # Debug logging for HF-related variables
+                bt.logging.info(f"@@@ Debug HF variables for miner {uid}:")
+                bt.logging.info(f"@@@ hf_boosts tensor shape: {self.hf_boosts.shape}")
+                bt.logging.info(f"@@@ hf_credibility tensor shape: {self.hf_credibility.shape}")
+                bt.logging.info(f"@@@ Current uid: {uid}")
+                bt.logging.info(f"@@@ hf_boosts[uid]: {self.hf_boosts[uid]}")
+                bt.logging.info(f"@@@ hf_credibility[uid]: {self.hf_credibility[uid]}")
+                
                 # Awarding the miner their HF boost based on their last HF evaluation. 
                 score += (self.hf_boosts[uid] * self.hf_credibility[uid])
                 bt.logging.info(f"Awarded Miner {uid} a HF boost of {float(self.hf_boosts[uid] * self.hf_credibility[uid])} based off of the last performed HF evaluation, adjusting the score to {float(score)}.")
