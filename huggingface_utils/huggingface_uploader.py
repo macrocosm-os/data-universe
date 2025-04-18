@@ -181,7 +181,7 @@ class HuggingFaceUploader:
             return preprocess_twitter_df(df, self.encoding_key_manager, self.private_encoding_key_manager)
 
     @retry_upload(max_retries=5)
-    def upload_parquet_to_hf(self, repo_id, s3_policy):
+    def upload_parquet_to_hf(self, repo_id, s3_policy=None):
         """Upload parquet files to HuggingFace and S3 if configured"""
         success = False
 
@@ -276,15 +276,16 @@ class HuggingFaceUploader:
             all_stats = {}
             new_rows = 0
 
-            s3_creds = self.s3_auth.get_credentials(
-                coldkey=self.miner_coldkey,
-                hotkey=self.miner_hotkey,
-                source_name=platform,
-                subtensor=self.subtensor,
-                wallet=self.wallet,
-                netuid=13
-            )
+            # s3_creds = self.s3_auth.get_credentials(
+            #     coldkey=self.miner_coldkey,
+            #     hotkey=self.miner_hotkey,
+            #     source_name=platform,
+            #     subtensor=self.subtensor,
+            #     wallet=self.wallet,
+            #     netuid=13
+            # )
 
+            s3_creds = None # Todo update it after the Easter
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
                     bt.logging.info(f"Processing new DataFrame for source {source}")
