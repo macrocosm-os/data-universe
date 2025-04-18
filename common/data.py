@@ -121,11 +121,12 @@ class DataEntity(StrictBaseModel):
             cls, this: "DataEntity", other: "DataEntity"
     ) -> bool:
         
-        print("@@compare data entities")
-        print("uri this: ", this.uri, " uri other: ", other.uri)
-        print("datetime this: ", this.datetime, " datetime other: ", other.datetime)
-        print("source this: ", this.source, " source other: ", other.source)
-        print("label this: ", this.label, " label other: ", other.label)
+        print("\n=== @@@ Comparing DataEntities ===")
+        print(f"URI:\n  this:  {repr(this.uri)}\n  other: {repr(other.uri)}\n  equal: {this.uri == other.uri}")
+        print(f"DateTime:\n  this:  {this.datetime}\n  other: {other.datetime}\n  equal: {this.datetime == other.datetime}")
+        print(f"Source:\n  this:  {this.source}\n  other: {other.source}\n  equal: {this.source == other.source}")
+        print(f"Label:\n  this:  {repr(this.label)}\n  other: {repr(other.label)}\n  equal: {this.label == other.label}")
+        print("============================\n")
         
         return (
                 this.uri == other.uri
