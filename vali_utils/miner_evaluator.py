@@ -494,8 +494,13 @@ class MinerEvaluator:
                     timeout=120,
                 )
 
-            # if uid == 11:
-            #     print("@@responses: ", responses)
+            bt.logging.info(f"\n=== GetMinerIndex Response Details ===")
+            bt.logging.info(f"Hotkey: {hotkey}")
+            bt.logging.info(f"Response type: {type(responses[0])}")
+            bt.logging.info(f"Response version: {responses[0].version}")
+            bt.logging.info(f"Response compressed_miner_index: {responses[0].compressed_miner_index}")
+            bt.logging.info(f"Response sources: {responses[0].compressed_miner_index.sources if responses[0].compressed_miner_index else 'None'}")
+            bt.logging.info(f"=====================================\n")
 
             response = vali_utils.get_single_successful_response(
                 responses, GetMinerIndex
