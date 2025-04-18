@@ -137,7 +137,7 @@ class MinerEvaluator:
             return
         else:
             bt.logging.info(
-                f"@@@ uid: {uid} |  {hotkey}: Got new miner index of {CompressedMinerIndex.size_bytes(index)} bytes across {CompressedMinerIndex.bucket_count(index)} buckets."
+                f"@@@ uid: {uid} |  {hotkey}: Got new miner index"
             )
 
         ##########

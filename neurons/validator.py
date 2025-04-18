@@ -264,7 +264,7 @@ class Validator:
                 )
                 if wait_time > 0:
                     bt.logging.info(
-                        f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
+                        f"Finished full evaluation loop early. Waiting {wait_time} seconds ( {wait_time/60} minutes ) until running next evaluation loop."
                     )
                     time.sleep(wait_time)
 
