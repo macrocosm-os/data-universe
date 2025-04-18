@@ -90,7 +90,7 @@ class MinerEvaluator:
 
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous version of eval_miner."""
-        if uid != 8:
+        if uid != 11:
             bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
             return
         else:
