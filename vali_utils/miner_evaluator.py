@@ -496,10 +496,21 @@ class MinerEvaluator:
 
             bt.logging.info(f"\n=== GetMinerIndex Response Details ===")
             bt.logging.info(f"Hotkey: {hotkey}")
-            bt.logging.info(f"Response type: {type(responses[0])}")
-            bt.logging.info(f"Response version: {responses[0].version}")
-            bt.logging.info(f"Response compressed_miner_index: {responses[0].compressed_miner_index}")
-            bt.logging.info(f"Response sources: {responses[0].compressed_miner_index.sources if responses[0].compressed_miner_index else 'None'}")
+            try:
+                if responses and len(responses) > 0:
+                    bt.logging.info(f"Response type: {type(responses[0])}")
+                    bt.logging.info(f"Response version: {getattr(responses[0], 'version', 'N/A')}")
+                    # Use dir() to inspect available attributes
+                    bt.logging.info(f"Response attributes: {dir(responses[0])}")
+                    # Safely get compressed index if exists
+                    index = getattr(responses[0], 'compressed_index', None)
+                    sources = getattr(index, 'sources', 'None') if index else 'None'
+                    bt.logging.info(f"Response compressed_index: {index}")
+                    bt.logging.info(f"Response sources: {sources}")
+                else:
+                    bt.logging.warning(f"Empty or invalid response received")
+            except Exception as e:
+                bt.logging.error(f"Error inspecting response: {str(e)}")
             bt.logging.info(f"=====================================\n")
 
             response = vali_utils.get_single_successful_response(
