@@ -90,11 +90,11 @@ class MinerEvaluator:
 
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous version of eval_miner."""
-        if uid != 11:
-            bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
-            return
-        else:
-            bt.logging.info(f"@@@ uid: {uid} ++++++++ RUNNING EVAL MINER")
+        # if uid != 11:
+        #     bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
+        #     return
+        # else:
+        #     bt.logging.info(f"@@@ uid: {uid} ++++++++ RUNNING EVAL MINER")
         asyncio.run(self.eval_miner(uid))
 
     async def eval_miner(self, uid: int) -> None:
@@ -494,8 +494,8 @@ class MinerEvaluator:
                     timeout=120,
                 )
 
-            if uid == 11:
-                print("@@responses: ", responses)
+            # if uid == 11:
+            #     print("@@responses: ", responses)
 
             response = vali_utils.get_single_successful_response(
                 responses, GetMinerIndex
