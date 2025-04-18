@@ -491,7 +491,7 @@ class MinerEvaluator:
                 responses = await dendrite.forward(
                     axons=[miner_axon],
                     synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
-                    timeout=10,
+                    timeout=120,
                 )
 
             if uid == 11:
