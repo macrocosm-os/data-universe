@@ -216,7 +216,7 @@ class MinerScorer:
                 bt.logging.info(f"@@@ hf_boosts tensor shape: {self.hf_boosts.shape}")
                 bt.logging.info(f"@@@ hf_credibility tensor shape: {self.hf_credibility.shape}")
                 bt.logging.info(f"@@@ Current uid: {uid}")
-                bt.logging.info(f"@@@ hf_boosts[uid]: {self.hf_boosts[uid]}")
+                bt.logging.info(f"@@@ hf_boosts: {self.hf_boosts}")
                 bt.logging.info(f"@@@ hf_credibility[uid]: {self.hf_credibility[uid]}")
                 
                 # Awarding the miner their HF boost based on their last HF evaluation. 
