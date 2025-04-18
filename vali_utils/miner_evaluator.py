@@ -116,7 +116,7 @@ class MinerEvaluator:
         if not index:
             # The miner hasn't provided an index yet, so we can't validate them. Count as a failed validation.
             bt.logging.info(
-                f"{hotkey}: Failed to get an index for miner. Counting as a failed validation."
+                f"@@@ uid: {uid} | {hotkey}: Failed to get an index for miner. Counting as a failed validation."
             )
             self.scorer.on_miner_evaluated(
                 uid,
@@ -130,6 +130,10 @@ class MinerEvaluator:
                 ],
             )
             return
+        else:
+            bt.logging.info(
+                f"@@@ uid: {uid} |  {hotkey}: Got new miner index of {CompressedMinerIndex.size_bytes(index)} bytes across {CompressedMinerIndex.bucket_count(index)} buckets."
+            )
 
         ##########
         # Query HuggingFace metadata and perform enhanced HF validation.
@@ -166,7 +170,7 @@ class MinerEvaluator:
         # If we didn't, the miner could just not respond to queries for data entity buckets it doesn't have.
         if data_entity_bucket is None:
             bt.logging.info(
-                f"{hotkey}: Miner returned an invalid/failed response for Bucket ID: {chosen_data_entity_bucket.id}."
+                f"@@@uid: {uid} | {hotkey}: Miner returned an invalid/failed response for Bucket ID: {chosen_data_entity_bucket.id}."
             )
             self.scorer.on_miner_evaluated(
                 uid,
@@ -180,6 +184,10 @@ class MinerEvaluator:
                 ],
             )
             return
+        else:
+            bt.logging.success(
+                f"@@@uid: {uid} | {hotkey}: Successfully queried miner for Bucket ID: {chosen_data_entity_bucket.id}."
+            )
 
         # Perform basic validation on the entities.
         bt.logging.info(
@@ -193,7 +201,7 @@ class MinerEvaluator:
         )
         if not valid:
             bt.logging.info(
-                f"{hotkey}: Failed basic entity validation on Bucket ID: {chosen_data_entity_bucket.id} with reason: {reason}"
+                f"@@@uid: {uid} | {hotkey}: Failed basic entity validation on Bucket ID: {chosen_data_entity_bucket.id} with reason: {reason}"
             )
             self.scorer.on_miner_evaluated(
                 uid,
@@ -207,6 +215,10 @@ class MinerEvaluator:
                 ],
             )
             return
+        else:
+            bt.logging.success(
+                f"@@@uid: {uid} | {hotkey}: Basic validation on Bucket ID: {chosen_data_entity_bucket.id} passed."
+            )
 
         # Perform uniqueness validation on the entity contents.
         # If we didn't, the miner could just return the same data over and over again.
@@ -469,11 +481,12 @@ class MinerEvaluator:
 
         try:
             responses: List[GetMinerIndex] = None
+            bt.logging.info(f"@@@uid: {uid} | {hotkey}: Getting miner index from miner for timeout of 10 seconds.")
             async with bt.dendrite(wallet=self.wallet) as dendrite:
                 responses = await dendrite.forward(
                     axons=[miner_axon],
                     synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
-                    timeout=120,
+                    timeout=10,
                 )
 
             response = vali_utils.get_single_successful_response(
