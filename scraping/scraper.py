@@ -17,6 +17,7 @@ class ScraperId(str, Enum):
     X_MICROWORLDS = "X.microworlds"
     X_APIDOJO = "X.apidojo"
     X_QUACKER = "X.quacker"
+    MY_API = "X.my_api"  # Thêm ID mới
 
 
 class ValidationResult(StrictBaseModel):

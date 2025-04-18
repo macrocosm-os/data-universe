@@ -153,10 +153,6 @@ class Miner:
 
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
-                dbname="subnet13",
-                user="subnet13",
-                password="subnet13",
-                host="localhost",
                 miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
                 encoding_key_manager=self.encoding_key_manager,
                 private_encoding_key_manager=self.private_encoding_key_manager,
@@ -164,10 +160,7 @@ class Miner:
             )
 
         # Instantiate storage.
-        self.storage = PostgresMinerStorage(
-            # self.config.neuron.database_name,
-            # self.config.neuron.max_database_size_gb_hint,
-        )
+        self.storage = PostgresMinerStorage()
 
         bt.logging.success(
             f"Successfully connected to miner storage: {self.config.neuron.database_name}."
@@ -293,7 +286,7 @@ class Miner:
             self.last_sync_timestamp = dt.datetime.now()
             bt.logging.success(f"Miner starting at {self.last_sync_timestamp}.")
 
-        self.scraping_coordinator.run_in_background_thread()
+        # self.scraping_coordinator.run_in_background_thread()
 
         while not self.should_exit:
             # This loop maintains the miner's operations until intentionally stopped.
@@ -573,6 +566,7 @@ class Miner:
             elif synapse.source == DataSource.REDDIT:
                 scraper_id = ScraperId.REDDIT_CUSTOM
                 # For Reddit, ensure subreddit has r/ prefix
+                print("@@Got on-demand keywords request from {synapse.keywords}")
                 if synapse.keywords and len(synapse.keywords) > 0:
                     subreddit = synapse.keywords[0]
                     if not subreddit.startswith('r/'):

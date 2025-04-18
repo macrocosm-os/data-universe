@@ -19,7 +19,10 @@ import psycopg2
 import contextlib
 import bittensor as bt
 import pandas as pd
+import os
+from dotenv import load_dotenv
 
+load_dotenv()
 
 # Use a timezone aware adapter for timestamp columns (not needed for psycopg2, handled natively).
 class PostgresMinerStorage(MinerStorage):
@@ -30,11 +33,11 @@ class PostgresMinerStorage(MinerStorage):
                                 datetime            TIMESTAMPTZ NOT NULL,
                                 timeBucketId        INTEGER     NOT NULL,
                                 source              INTEGER     NOT NULL,
-                                label               CHAR(32),
+                                label               CHAR(140),
                                 content             BYTEA       NOT NULL,
                                 contentSizeBytes    INTEGER     NOT NULL,
                                 PRIMARY KEY (uri, datetime)
-                                ) PARTITION BY RANGE (datetime)"""
+                                ) PARTITION BY RANGE (datetime);"""
 
     DELETE_OLD_INDEX = """DROP INDEX IF EXISTS data_entity_bucket_index"""
 
@@ -50,18 +53,19 @@ class PostgresMinerStorage(MinerStorage):
 
     def __init__(
         self,
-        dbname="subnet13",
-        user="subnet13",
-        password="subnet13",
-        host="localhost",
-        max_database_size_gb_hint=250,
+        dbname=os.getenv("PG_DB"),
+        user=os.getenv("PG_USERNAME"),
+        password=os.getenv("PG_PASSWORD"),
+        host=os.getenv("PG_HOST"),
+        max_database_size_gb_hint=int(os.getenv("PG_MAX_DB_SIZE_GB", "250")),
     ):
         self.dbname = dbname
         self.user = user
         self.password = password
         self.host = host
 
-        self.database_max_content_size_bytes = utils.gb_to_bytes(max_database_size_gb_hint)
+        self.database_max_content_size_bytes = utils.gb_to_bytes(
+            max_database_size_gb_hint)
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
@@ -103,20 +107,24 @@ class PostgresMinerStorage(MinerStorage):
             cursor = connection.cursor()
 
             # Check if the encodingKey column exists
-            cursor.execute("SELECT column_name FROM information_schema.columns WHERE table_name = 'hfmetadata'")
+            cursor.execute(
+                "SELECT column_name FROM information_schema.columns WHERE table_name = 'hfmetadata'")
             columns = [col[0] for col in cursor.fetchall()]
 
             if 'encodingkey' not in columns:
-                cursor.execute("ALTER TABLE HFMetaData ADD COLUMN encodingKey TEXT")
+                cursor.execute(
+                    "ALTER TABLE HFMetaData ADD COLUMN encodingKey TEXT")
                 bt.logging.info("Added encodingKey column to HFMetaData table")
 
             connection.commit()
 
     def store_data_entities(self, data_entities: List[DataEntity]):
         added_content_size = 0
-        current_utc_time = dt.datetime.now(dt.timezone.utc)  # Thời điểm hiện tại theo UTC
-        thirty_days_ago = current_utc_time - dt.timedelta(days=30)  # Giới hạn 30 ngày trư
-        
+        current_utc_time = dt.datetime.now(
+            dt.timezone.utc)  # Thời điểm hiện tại theo UTC
+        thirty_days_ago = current_utc_time - \
+            dt.timedelta(days=30)  # Giới hạn 30 ngày trư
+
         # Lọc các data_entities hợp lệ (không cũ hơn 30 ngày)
         valid_data_entities = []
 
@@ -124,13 +132,15 @@ class PostgresMinerStorage(MinerStorage):
             # Đảm bảo datetime là UTC (nếu chưa có tzinfo, gán UTC)
             entity_datetime = data_entity.datetime
             if entity_datetime.tzinfo is None:
-                entity_datetime = entity_datetime.replace(tzinfo=dt.timezone.utc)
-        
+                entity_datetime = entity_datetime.replace(
+                    tzinfo=dt.timezone.utc)
+
             # Kiểm tra nếu datetime cũ hơn 30 ngày
             if entity_datetime < thirty_days_ago:
-                bt.logging.debug(f"Skipping entity {data_entity.uri}: datetime {entity_datetime} is older than 30 days")
+                bt.logging.debug(
+                    f"Skipping entity {data_entity.uri}: datetime {entity_datetime} is older than 30 days")
                 continue
-            #add valid content
+            # add valid content
             valid_data_entities.append(data_entity)
 
             added_content_size += data_entity.content_size_bytes
@@ -141,9 +151,10 @@ class PostgresMinerStorage(MinerStorage):
             )
         # Nếu không có entity nào hợp lệ, thoát sớm
         if not valid_data_entities:
-            bt.logging.info("No valid data entities to store (all older than 30 days)")
+            bt.logging.info(
+                "No valid data entities to store (all older than 30 days)")
             return
-    
+
         with contextlib.closing(self._create_connection()) as connection:
             with self.clearing_space_lock:
                 cursor = connection.cursor()
@@ -163,7 +174,8 @@ class PostgresMinerStorage(MinerStorage):
             for data_entity in valid_data_entities:
                 label = None if data_entity.label is None else data_entity.label.value
                 data_entity.datetime.astimezone(dt.timezone.utc)
-                time_bucket_id = TimeBucket.from_datetime(data_entity.datetime).id
+                time_bucket_id = TimeBucket.from_datetime(
+                    data_entity.datetime).id
                 values.append(
                     (
                         data_entity.uri,
@@ -308,7 +320,8 @@ class PostgresMinerStorage(MinerStorage):
                         source=DataSource(row[2]),
                         content=row[4],
                         content_size_bytes=row[5],
-                        label=DataLabel(value=row[3]) if row[3] is not None else None
+                        label=DataLabel(
+                            value=row[3]) if row[3] is not None else None
                     )
                     data_entities.append(data_entity)
                     running_size += row[5]
@@ -321,15 +334,18 @@ class PostgresMinerStorage(MinerStorage):
     def refresh_compressed_index(self, time_delta: dt.timedelta):
         with self.cached_index_lock:
             if dt.datetime.now() - self.cached_index_updated <= time_delta:
-                bt.logging.trace(f"Skipping updating cached index. It is already fresher than {time_delta}.")
+                bt.logging.trace(
+                    f"Skipping updating cached index. It is already fresher than {time_delta}.")
                 return
             else:
-                bt.logging.info(f"Cached index out of {time_delta} freshness period. Refreshing cached index.")
+                bt.logging.info(
+                    f"Cached index out of {time_delta} freshness period. Refreshing cached index.")
 
         with self.cached_index_refresh_lock:
             with self.cached_index_lock:
                 if dt.datetime.now() - self.cached_index_updated <= time_delta:
-                    bt.logging.trace("After waiting on refresh lock the index was already refreshed.")
+                    bt.logging.trace(
+                        "After waiting on refresh lock the index was already refreshed.")
                     return
 
             with contextlib.closing(self._create_connection()) as connection:
@@ -364,7 +380,8 @@ class PostgresMinerStorage(MinerStorage):
                     )
                     bucket.sizes_bytes.append(size)
                     bucket.time_bucket_ids.append(row[1])
-                    buckets_by_source_by_label[DataSource(row[2])][label] = bucket
+                    buckets_by_source_by_label[DataSource(
+                        row[2])][label] = bucket
 
                 bt.logging.trace("Creating protocol 4 cached index.")
                 with self.cached_index_lock:
@@ -409,7 +426,8 @@ class PostgresMinerStorage(MinerStorage):
             )
             cursor.execute(
                 query,
-                time_bucket_ids_and_labels + [constants.BULK_CONTENTS_COUNT_LIMIT],
+                time_bucket_ids_and_labels +
+                [constants.BULK_CONTENTS_COUNT_LIMIT],
             )
 
             buckets_ids_to_contents = defaultdict(list)
@@ -420,9 +438,11 @@ class PostgresMinerStorage(MinerStorage):
                     data_entity_bucket_id = DataEntityBucketId(
                         time_bucket=TimeBucket(id=row[0]),
                         source=DataSource(row[1]),
-                        label=DataLabel(value=row[2]) if row[2] is not None else None
+                        label=DataLabel(
+                            value=row[2]) if row[2] is not None else None
                     )
-                    buckets_ids_to_contents[data_entity_bucket_id].append(row[3])
+                    buckets_ids_to_contents[data_entity_bucket_id].append(
+                        row[3])
                     running_size += row[4]
                 else:
                     break
@@ -434,13 +454,15 @@ class PostgresMinerStorage(MinerStorage):
         bucket_count_limit=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
     ) -> CompressedMinerIndex:
         self.refresh_compressed_index(
-            time_delta=(constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=10))
+            time_delta=(constants.MINER_CACHE_FRESHNESS +
+                        dt.timedelta(minutes=10))
         )
         with self.cached_index_lock:
             return self.cached_index_4
 
     def clear_content_from_oldest(self, content_bytes_to_clear: int):
-        bt.logging.debug(f"Database full. Clearing {content_bytes_to_clear} bytes.")
+        bt.logging.debug(
+            f"Database full. Clearing {content_bytes_to_clear} bytes.")
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
             cursor.execute(
@@ -489,7 +511,8 @@ class PostgresMinerStorage(MinerStorage):
                 data_entity_bucket_id = DataEntityBucketId(
                     time_bucket=TimeBucket(id=row[1]),
                     source=DataSource(row[2]),
-                    label=DataLabel(value=row[3]) if row[3] is not None else None
+                    label=DataLabel(
+                        value=row[3]) if row[3] is not None else None
                 )
                 data_entity_bucket = DataEntityBucket(
                     id=data_entity_bucket_id, size_bytes=size

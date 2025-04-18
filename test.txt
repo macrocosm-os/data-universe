@@ -1,0 +1,81 @@
+import json
+
+jsonData = '''
+[{
+  "type": "tweet",
+  "id": "1907279213159436544",
+  "url": "https://x.com/bsindia/status/1907279213159436544",
+  "twitterUrl": "https://twitter.com/bsindia/status/1907279213159436544",
+  "text": "Trump's 'Liberation Day': As tariff countdown begins, world braces for impact.\\n\\nRead @Barkha__Mathur's story, to know more: https://t.co/OcIpQ7xCNZ\\n\\n#Trump #tariffs",
+  "fullText": "Trump's 'Liberation Day': As tariff countdown begins, world braces for impact.\\n\\nRead @Barkha__Mathur's story, to know more: https://t.co/OcIpQ7xCNZ\\n\\n#Trump #tariffs",
+  "source": "Twitter Web App",
+  "retweetCount": 0,
+  "replyCount": 0,
+  "likeCount": 0,
+  "quoteCount": 0,
+  "createdAt": "Wed Apr 02 03:49:34 +0000 2025",
+  "bookmarkCount": 0,
+  "isReply": false,
+  "conversationId": "1907279213159436544",
+  "possiblySensitive": false,
+  "isPinned": false,
+  "extendedEntities": {},
+  "isRetweet": false,
+  "isQuote": false,
+  "media": [],
+  "isConversationControlled": false,
+  "author": {
+    "type": "user",
+    "userName": "bsindia"
+  },
+  "entities": {
+    "hashtags": [
+      {
+        "indices": [
+          149,
+          155
+        ],
+        "text": "Trump"
+      },
+      {
+        "indices": [
+          156,
+          164
+        ],
+        "text": "tariffs"
+      }
+    ],
+    "symbols": [],
+    "timestamps": [],
+    "urls": [
+      {
+        "display_url": "mybs.in/2em9muU",
+        "expanded_url": "https://mybs.in/2em9muU",
+        "url": "https://t.co/OcIpQ7xCNZ",
+        "indices": [
+          124,
+          147
+        ]
+      }
+    ],
+    "user_mentions": [
+      {
+        "id_str": "101540054",
+        "name": "Barkha Mathur",
+        "screen_name": "Barkha__Mathur",
+        "indices": [
+          85,
+          100
+        ]
+      }
+    ]
+  }
+}]
+'''
+
+try:
+    dataset = json.loads(jsonData)
+    print("JSON is valid!")
+except json.JSONDecodeError as e:
+    print(f"JSON is invalid: {e}")
+
