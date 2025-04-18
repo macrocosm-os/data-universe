@@ -17,10 +17,10 @@ from huggingface_utils.utils import(
     get_default_stats_structure
 )
 from huggingface_utils.encoding_system import EncodingKeyManager
+from huggingface_utils.s3_utils import S3Auth
 from common.data import HuggingFaceMetadata, DataSource
 from typing import List, Dict, Union, Any
 from huggingface_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
-from requests.exceptions import RequestException
 from functools import wraps
 
 
@@ -44,14 +44,21 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
 
 class HuggingFaceUploader:
     def __init__(self, db_path: str,
+                 miner_coldkey: str,
                  miner_hotkey: str,
+                 subtensor: bt.subtensor,  # need to commit the info into chain
+                 wallet: bt.wallet,  # need to commit the info into chain
                  encoding_key_manager: EncodingKeyManager,  # USED FOR ENCODING USERNAMES
                  private_encoding_key_manager: EncodingKeyManager,   # USED FOR ENCODING URLS
+                 s3_auth_url: str,  # For the getting upload credentials.
                  state_file: str,
                  output_dir: str = 'hf_storage',
                  chunk_size: int = 1_000_000):
         self.db_path = db_path
+        self.miner_coldkey = miner_coldkey
         self.miner_hotkey = miner_hotkey
+        self.subtensor = subtensor
+        self.wallet = wallet
         self.output_dir = os.path.join(output_dir, self.miner_hotkey)
         self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
@@ -60,6 +67,7 @@ class HuggingFaceUploader:
         self.hf_api = HfApi(token=self.hf_token)
         self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
         self.chunk_size = chunk_size
+        self.s3_auth = S3Auth(s3_auth_url) if s3_auth_url else None
         self.wal_size_limit_mb = 2000  # 2 GB WAL size limit
 
     @contextmanager
@@ -172,34 +180,59 @@ class HuggingFaceUploader:
         else:
             return preprocess_twitter_df(df, self.encoding_key_manager, self.private_encoding_key_manager)
 
-
     @retry_upload(max_retries=5)
-    def upload_parquet_to_hf(self, repo_id):
-        if not self.check_hf_connection():
-            bt.logging.error("Network connection is unstable. Upload aborted.")
-            return
+    def upload_parquet_to_hf(self, repo_id, s3_policy=None):
+        """Upload parquet files to HuggingFace and S3 if configured"""
+        success = False
 
+        # Try HuggingFace upload if token available
+        if self.hf_token and self.check_hf_connection():
+            try:
+                self.hf_api.upload_folder(
+                    token=self.hf_token,
+                    folder_path=self.output_dir,
+                    repo_id=repo_id,
+                    repo_type="dataset",
+                    path_in_repo='data/',
+                    allow_patterns="*.parquet",
+                )
+                bt.logging.info(f"Successfully uploaded files to HF repo {repo_id}")
+                success = True
+            except Exception as e:
+                bt.logging.error(f"Error during HF upload: {str(e)}")
+                # Don't re-raise so we can try S3 upload
+
+        # Try S3 upload if auth client available
         try:
+            if s3_policy:
+                # Upload all parquet files in directory to S3
+                s3_success_count = 0
+                total_files = 0
 
-            self.hf_api.upload_folder(
-                token=self.hf_token,
-                folder_path=self.output_dir,
-                repo_id=repo_id,
-                repo_type="dataset",
-                path_in_repo='data/',
-                allow_patterns="*.parquet",
-            )
-            bt.logging.info(f"Successfully uploaded files to {repo_id}")
+                for filename in os.listdir(self.output_dir):
+                    if filename.endswith(".parquet"):
+                        total_files += 1
+                        file_path = os.path.join(self.output_dir, filename)
+                        if self.s3_auth.upload_file(file_path, s3_policy):
+                            s3_success_count += 1
 
+                if s3_success_count > 0:
+                    bt.logging.info(f"Successfully uploaded {s3_success_count}/{total_files} files to S3")
+                    success = True
         except Exception as e:
-            bt.logging.error(f"Error during upload: {str(e)}")
-            raise  # Re-raise the exception to trigger the retry
+            bt.logging.error(f"Error during S3 upload: {str(e)}")
 
-        finally:
-            # Clean up local parquet files after upload attempt
+        # Only clean up if at least one upload method succeeded
+        if success:
             for filename in os.listdir(self.output_dir):
                 if filename.endswith(".parquet"):
                     os.remove(os.path.join(self.output_dir, filename))
+
+        # If both uploads failed, raise exception to trigger retry
+        if not success:
+            raise Exception("Both HuggingFace and S3 uploads failed")
+
+        return success
 
     def upload_sql_to_huggingface(self) -> List[HuggingFaceMetadata]:
         if not self.hf_token:
@@ -243,6 +276,16 @@ class HuggingFaceUploader:
             all_stats = {}
             new_rows = 0
 
+            # s3_creds = self.s3_auth.get_credentials(
+            #     coldkey=self.miner_coldkey,
+            #     hotkey=self.miner_hotkey,
+            #     source_name=platform,
+            #     subtensor=self.subtensor,
+            #     wallet=self.wallet,
+            #     netuid=13
+            # )
+
+            s3_creds = None # Todo update it after the Easter
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
                     bt.logging.info(f"Processing new DataFrame for source {source}")
@@ -280,7 +323,7 @@ class HuggingFaceUploader:
                     new_rows += len(df)
 
                     if chunk_count == 10:
-                        self.upload_parquet_to_hf(repo_id)
+                        self.upload_parquet_to_hf(repo_id, s3_creds)
                         bt.logging.info(f'Uploaded {chunk_count} chunks to {repo_id}')
                         next_chunk_id += chunk_count
                         chunk_count = 0
@@ -288,7 +331,7 @@ class HuggingFaceUploader:
                             self.manage_wal(conn)
 
                 if chunk_count > 0:
-                    self.upload_parquet_to_hf(repo_id)
+                    self.upload_parquet_to_hf(repo_id, s3_creds)
                     with self.get_db_connection() as conn:
                         self.manage_wal(conn)
                     bt.logging.info(f'Uploaded final {chunk_count} chunks to {repo_id}')

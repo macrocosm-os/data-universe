@@ -109,6 +109,13 @@ def add_args(neuron_type: NeuronType, parser):
         default=10_000, #TODO: change based on feedback
     )
 
+    parser.add_argument(
+        "--s3_auth_url",
+        type=str,
+        help="URL of the S3 authentication service",
+        default="https://sn13-data.api.macrocosmos.ai"
+    )
+
     if neuron_type == NeuronType.VALIDATOR:
         parser.add_argument(
             "--neuron.axon_off",
