@@ -90,6 +90,11 @@ class MinerEvaluator:
 
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous version of eval_miner."""
+        if uid != 8:
+            bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
+            return
+        else:
+            bt.logging.info(f"@@@ uid: {uid} ++++++++ RUNNING EVAL MINER")
         asyncio.run(self.eval_miner(uid))
 
     async def eval_miner(self, uid: int) -> None:
