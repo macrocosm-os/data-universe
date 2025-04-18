@@ -56,6 +56,7 @@ import json
 bt.logging.set_info(True)
 bt.logging.set_debug(True)
 
+
 class Miner:
     """The Glorious Miner."""
 
@@ -90,7 +91,8 @@ class Miner:
             # Each miner gets a unique identity (UID) in the network for differentiation.
             # TODO: Stop doing meaningful work in the constructor to make neurons more testable.
             if self.wallet.hotkey.ss58_address in self.metagraph.hotkeys:
-                self.uid = self.metagraph.hotkeys.index(self.wallet.hotkey.ss58_address)
+                self.uid = self.metagraph.hotkeys.index(
+                    self.wallet.hotkey.ss58_address)
                 bt.logging.info(
                     f"Running neuron on subnet: {self.config.netuid} with uid {self.uid} using network: {self.subtensor.chain_endpoint}."
                 )
@@ -146,14 +148,18 @@ class Miner:
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
         # Instantiate encoding keys
-        self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
-        self.private_encoding_key_manager = EncodingKeyManager(key_path=self.config.private_encoding_key_json_file)
+        self.encoding_key_manager = EncodingKeyManager(
+            key_path=self.config.encoding_key_json_file)
+        self.private_encoding_key_manager = EncodingKeyManager(
+            key_path=self.config.private_encoding_key_json_file)
 
-        bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
+        bt.logging.info(
+            "Initialized EncodingKeyManager for URL encoding/decoding.")
 
         if self.use_hf_uploader:
             self.hf_uploader = HuggingFaceUploader(
-                miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
+                miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(
+                    self.uid),
                 encoding_key_manager=self.encoding_key_manager,
                 private_encoding_key_manager=self.private_encoding_key_manager,
                 state_file=self.config.miner_upload_state_file
@@ -184,7 +190,8 @@ class Miner:
         # Configure per hotkey per request limits.
         self.request_lock = threading.RLock()
         self.last_cleared_request_limits = dt.datetime.now()
-        self.requests_by_type_by_hotkey = defaultdict(lambda: defaultdict(lambda: 0))
+        self.requests_by_type_by_hotkey = defaultdict(
+            lambda: defaultdict(lambda: 0))
 
     def refresh_index(self):
         """
@@ -196,12 +203,14 @@ class Miner:
                 self.storage.refresh_compressed_index(
                     time_delta=constants.MINER_CACHE_FRESHNESS
                 )
-                bt.logging.trace("Refresh index thread finished refreshing the index.")
+                bt.logging.trace(
+                    "Refresh index thread finished refreshing the index.")
                 # Wait freshness period + 1 minute to try refreshing again.
                 # Wait the additional minute to ensure that the next refresh sees a 'stale' index.
                 time.sleep(
                     (
-                        constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=1)
+                        constants.MINER_CACHE_FRESHNESS +
+                        dt.timedelta(minutes=1)
                     ).total_seconds()
                 )
             # In case of unforeseen errors, the refresh thread will log the error and continue operations.
@@ -220,13 +229,15 @@ class Miner:
             try:
                 current_datetime = dt.datetime.utcnow()
 
-                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
+                bt.logging.info(
+                    f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
 
                 # Check if it's a new day and we haven't updated yet
                 if last_update is None or current_datetime.date() > last_update.date():
                     bt.logging.info("Retrieving the latest dynamic lookup...")
                     sync_run_retrieval(self.config)
-                    bt.logging.info(f"New desirable data list has been written to total.json")
+                    bt.logging.info(
+                        f"New desirable data list has been written to total.json")
                     last_update = current_datetime
                     bt.logging.info(f"Updated dynamic lookup at {last_update}")
                 else:
@@ -251,9 +262,11 @@ class Miner:
 
         while not self.should_exit:
             try:
-                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the HuggingFaceUploader
+                # Assuming this exists in the HuggingFaceUploader
+                unique_id = self.hf_uploader.unique_id
                 if self.storage.should_upload_hf_data(unique_id):
-                    bt.logging.info("Trying to upload the data into HuggingFace.")
+                    bt.logging.info(
+                        "Trying to upload the data into HuggingFace.")
                     hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
                     if hf_metadata_list:
                         self.storage.store_hf_dataset_info(hf_metadata_list)
@@ -262,13 +275,15 @@ class Miner:
 
             time_sleep_val = dt.timedelta(minutes=90).total_seconds()
             time.sleep(time_sleep_val)
+
     def run(self):
         """
         Initiates and manages the main loop for the miner.
         """
 
         if self.config.offline:
-            bt.logging.success("Running in offline mode. Skipping axon serving.")
+            bt.logging.success(
+                "Running in offline mode. Skipping axon serving.")
         else:
             # Check that miner is registered on the network.
             self.sync()
@@ -278,13 +293,15 @@ class Miner:
             bt.logging.info(
                 f"Serving miner axon {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
             )
-            self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor)
+            self.axon.serve(netuid=self.config.netuid,
+                            subtensor=self.subtensor)
 
             # Start  starts the miner's axon, making it active on the network.
             self.axon.start()
 
             self.last_sync_timestamp = dt.datetime.now()
-            bt.logging.success(f"Miner starting at {self.last_sync_timestamp}.")
+            bt.logging.success(
+                f"Miner starting at {self.last_sync_timestamp}.")
 
         # self.scraping_coordinator.run_in_background_thread()
 
@@ -298,7 +315,8 @@ class Miner:
                 else:
                     # Epoch length defaults to 100 blocks at 12 seconds each for 20 minutes.
                     while dt.datetime.now() - self.last_sync_timestamp < (
-                        dt.timedelta(seconds=12 * self.config.neuron.epoch_length)
+                        dt.timedelta(
+                            seconds=12 * self.config.neuron.epoch_length)
                     ):
                         # Wait before checking again.
                         time.sleep(12)
@@ -335,7 +353,7 @@ class Miner:
         if not self.is_running:
             bt.logging.debug("Starting miner in background thread.")
             self.should_exit = False
-            
+
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
 
@@ -353,7 +371,7 @@ class Miner:
                 target=self.get_updated_lookup, daemon=True
             )
             self.lookup_thread.start()
-            
+
             self.is_running = True
             bt.logging.debug("Started")
 
@@ -405,9 +423,11 @@ class Miner:
 
     def _log_status(self, step: int):
         """Logs a summary of the miner status in the subnet."""
-        relative_incentive = self.metagraph.I[self.uid].item() / max(self.metagraph.I)
+        relative_incentive = self.metagraph.I[self.uid].item(
+        ) / max(self.metagraph.I)
         incentive_and_hk = zip(self.metagraph.I, self.metagraph.hotkeys)
-        incentive_and_hk = sorted(incentive_and_hk, key=lambda x: x[0], reverse=True)
+        incentive_and_hk = sorted(
+            incentive_and_hk, key=lambda x: x[0], reverse=True)
         position = -1
         for i, (_, hk) in enumerate(incentive_and_hk):
             if hk == self.wallet.hotkey.ss58_address:
@@ -426,13 +446,16 @@ class Miner:
 
     async def get_index(self, synapse: GetMinerIndex) -> GetMinerIndex:
         """Runs after the GetMinerIndex synapse has been deserialized (i.e. after synapse.data is available)."""
+        print(f"@@vmintam get_index at {dt.datetime.now()}")
+
         bt.logging.info(
             f"Got to a GetMinerIndex request from {synapse.dendrite.hotkey}."
         )
 
         # Only synapse.version 4 is supported at this time.
         if synapse.version < 4:
-            bt.logging.error(f"Unsupported protocol version: {synapse.version}.")
+            bt.logging.error(
+                f"Unsupported protocol version: {synapse.version}.")
             return synapse
 
         # Return the appropriate amount of max buckets based on protocol of the requesting validator.
@@ -441,7 +464,8 @@ class Miner:
         )
         synapse.compressed_index_serialized = compressed_index.model_dump_json()
 
-        print("@@synapse.compressed_index_serialized", synapse.compressed_index_serialized)
+        print("@@synapse.compressed_index_serialized",
+              synapse.compressed_index_serialized)
 
         bt.logging.success(
             f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
@@ -474,7 +498,8 @@ class Miner:
         )
         synapse.version = constants.PROTOCOL_VERSION
 
-        print("@@get_data_entity_bucket_##_synapse.data_entities", synapse.data_entities)
+        print("@@get_data_entity_bucket_##_synapse.data_entities",
+              synapse.data_entities)
 
         bt.logging.success(
             f"Returning Bucket ID: {str(synapse.data_entity_bucket_id)} with {len(synapse.data_entities)} entities to {synapse.dendrite.hotkey}."
@@ -483,15 +508,18 @@ class Miner:
         return synapse
 
     async def get_huggingface_metadata(self, synapse: GetHuggingFaceMetadata) -> GetHuggingFaceMetadata:
-        bt.logging.info(f"Got a GetHuggingFaceMetadata request from {synapse.dendrite.hotkey}.")
+        bt.logging.info(
+            f"Got a GetHuggingFaceMetadata request from {synapse.dendrite.hotkey}.")
 
         # Query the HuggingFace metadata from the database
-        synapse.metadata = self.storage.get_hf_metadata(unique_id=self.hf_uploader.unique_id)
+        synapse.metadata = self.storage.get_hf_metadata(
+            unique_id=self.hf_uploader.unique_id)
 
         print("@@get_huggingface_metadata_##_synapse.metadata", synapse.metadata)
 
         if not synapse.metadata:
-            bt.logging.info(f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
+            bt.logging.info(
+                f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
         else:
             bt.logging.success(
                 f"Returning {len(synapse.metadata)} HuggingFace metadata entries to {synapse.dendrite.hotkey}.")
@@ -500,15 +528,18 @@ class Miner:
 
     async def decode_urls(self, synapse: DecodeURLRequest) -> DecodeURLRequest:
         """Handle URL decoding requests using miner's keys."""
-        bt.logging.info(f"Processing URL decode request from {synapse.dendrite.hotkey}")
+        bt.logging.info(
+            f"Processing URL decode request from {synapse.dendrite.hotkey}")
 
         # Try decoding with both private and public keys
         decoded_urls = []
         for url in synapse.encoded_urls:
             # Try private key first, then public key if no result
-            result = decode_url(url, self.private_encoding_key_manager.get_fernet())
+            result = decode_url(
+                url, self.private_encoding_key_manager.get_fernet())
             if not result:
-                result = decode_url(url, self.encoding_key_manager.get_fernet())
+                result = decode_url(
+                    url, self.encoding_key_manager.get_fernet())
             decoded_urls.append(result if result else "")
 
         synapse.decoded_urls = decoded_urls
@@ -545,8 +576,9 @@ class Miner:
         Handle on-demand data requests from validators.
         Uses enhanced scraper for X data while maintaining protocol compatibility.
         """
-        bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
-        
+        bt.logging.info(
+            f"Got on-demand request from {synapse.dendrite.hotkey}")
+
         print("@@Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
@@ -557,7 +589,8 @@ class Miner:
                 # For X, combine keywords and usernames with appropriate label formatting
                 labels = []
                 if synapse.keywords:
-                    labels.extend([DataLabel(value=k) for k in synapse.keywords])
+                    labels.extend([DataLabel(value=k)
+                                  for k in synapse.keywords])
                 if synapse.usernames:
                     # Ensure usernames have @ prefix
                     labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
@@ -566,7 +599,8 @@ class Miner:
             elif synapse.source == DataSource.REDDIT:
                 scraper_id = ScraperId.REDDIT_CUSTOM
                 # For Reddit, ensure subreddit has r/ prefix
-                print("@@Got on-demand keywords request from {synapse.keywords}")
+                print(
+                    "@@Got on-demand keywords request from {synapse.keywords}")
                 if synapse.keywords and len(synapse.keywords) > 0:
                     subreddit = synapse.keywords[0]
                     if not subreddit.startswith('r/'):
@@ -587,7 +621,8 @@ class Miner:
                       if synapse.end_date else dt.datetime.now(dt.timezone.utc))
 
             # Log the labels being used
-            bt.logging.info(f"Searching with labels: {[l.value for l in labels]}")
+            bt.logging.info(
+                f"Searching with labels: {[l.value for l in labels]}")
 
             config = ScrapeConfig(
                 entity_limit=synapse.limit,
@@ -618,7 +653,8 @@ class Miner:
                         uri=content.url,
                         datetime=content.timestamp,
                         source=DataSource.X,
-                        label=DataLabel(value=content.tweet_hashtags[0].lower()) if content.tweet_hashtags else None,
+                        label=DataLabel(value=content.tweet_hashtags[0].lower(
+                        )) if content.tweet_hashtags else None,
                         # Store the full enhanced content as serialized JSON in the content field
                         content=json.dumps(api_response).encode('utf-8'),
                         content_size_bytes=len(json.dumps(api_response))
@@ -626,7 +662,8 @@ class Miner:
                     enhanced_data_entities.append(data_entity)
 
                 # Update response with enhanced data entities
-                synapse.data = enhanced_data_entities[:synapse.limit] if synapse.limit else enhanced_data_entities
+                synapse.data = enhanced_data_entities[:
+                                                      synapse.limit] if synapse.limit else enhanced_data_entities
             else:
                 # For Reddit, use the provider that's part of the coordinator
                 from scraping.provider import ScraperProvider
@@ -636,7 +673,8 @@ class Miner:
                 scraper = provider.get(scraper_id)
 
                 if not scraper:
-                    bt.logging.error(f"No scraper available for ID {scraper_id}")
+                    bt.logging.error(
+                        f"No scraper available for ID {scraper_id}")
                     synapse.data = []
                     return synapse
 
@@ -691,12 +729,13 @@ class Miner:
             (k, v) for k, v in buckets_to_contents.items()
         ]
 
-        print("@@get_contents_by_buckets_##_synapse.bucket_ids_to_contents", synapse.bucket_ids_to_contents)
+        print("@@get_contents_by_buckets_##_synapse.bucket_ids_to_contents",
+              synapse.bucket_ids_to_contents)
 
         synapse.version = constants.PROTOCOL_VERSION
 
         bt.logging.success(
-            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(contents) for (_,contents) in synapse.bucket_ids_to_contents)} entities to {synapse.dendrite.hotkey}."
+            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(contents) for (_, contents) in synapse.bucket_ids_to_contents)} entities to {synapse.dendrite.hotkey}."
         )
 
         return synapse
@@ -725,7 +764,7 @@ class Miner:
             )
 
         uid = self.metagraph.hotkeys.index(hotkey)
-        
+
         if not utils.is_validator(uid, self.metagraph, self.vpermit_rao_limit):
             return (
                 True,
