@@ -169,7 +169,7 @@ def get_validation_data(repo_id: str, files: List[str], num_rows: int = 10) -> T
     df = pd.DataFrame(selected_rows)
     encoded_urls = []
     if 'url_encoded' in df.columns:
-        encoded_urls = df['url_encoded'].dropna().tolist()[:10]
+        encoded_urls = df['url_encoded'].dropna().tolist()[:10] # Limit to 10 for validation
     return encoded_urls, df
 
 

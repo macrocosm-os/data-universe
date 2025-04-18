@@ -502,9 +502,11 @@ class MinerEvaluator:
             # Miner replied with a valid index. Store it and return it.
             miner_credibility = self.scorer.get_miner_credibility(uid)
             bt.logging.success(
-                f"{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
+                f"@@@ uid: {uid} | Hotkey: {hotkey} | miner_credibility: {miner_credibility} | Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
                 + f"across {CompressedMinerIndex.bucket_count(miner_index)} buckets."
             )
+
+
             self.storage.upsert_compressed_miner_index(
                 miner_index, hotkey, miner_credibility
             )

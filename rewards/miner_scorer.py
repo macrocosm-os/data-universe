@@ -66,12 +66,18 @@ class MinerScorer:
                 filepath,
             )
 
+            bt.logging.info("@@@ save state miner scorer:", filepath)
+
+
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
         state = torch.load(filepath)
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
+
+            bt.logging.info("@@@ Lấy độ tin cậy của miner từ file state:", self.miner_credibility)
+
             self.hf_boosts = state["hf_boosts"]
             self.hf_credibility = state["hf_credibility"]
 
@@ -95,8 +101,13 @@ class MinerScorer:
 
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
+
+        bt.logging.info(f"@@@ Lấy độ tin cậy của miner {uid}")
         with self.lock:
-            return self.miner_credibility[uid].item()
+            bt.logging.info(f"@@@ Độ tin cậy của toàn bộ miner: {self.miner_credibility}")
+            miner_credibility = self.miner_credibility[uid].item()
+            bt.logging.info(f"Độ tin cậy của miner {uid} là {miner_credibility:.2f}")
+            return miner_credibility
 
     def resize(self, num_neurons: int) -> None:
         """Resizes the score tensor to the new number of neurons.
@@ -132,11 +143,19 @@ class MinerScorer:
 
     def update_hf_boost_and_cred(self, uid: int, hf_vali_percentage: float) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
+        bt.logging.info(
+            f"@@@ Updating HF boost and credibility for miner {uid} with HF validation percentage {hf_vali_percentage}."
+        )
         max_boost = 10 * 10**6
         self.hf_boosts[uid] = hf_vali_percentage/100 * max_boost
+
+        bt.logging.info(
+            f"@@@ Before update: HF Boost = {self.hf_boosts[uid]}, HF Credibility = {self.hf_credibility[uid]}"
+        )
+
         self.hf_credibility[uid] = min(1, hf_vali_percentage/100 * self.hf_cred_alpha + (1-self.hf_cred_alpha) * self.hf_credibility[uid])
         bt.logging.info(
-            f"After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
+            f"@@@ After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
         )
 
     def on_miner_evaluated(
@@ -225,6 +244,8 @@ class MinerScorer:
                 for result in validation_results
             ) / float(total_bytes_validated)
 
+
+        bt.logging.info("@@all_miner_credibility:", self.miner_credibility)
         previous_credibility = self.miner_credibility[uid].clone().item()
 
         # Use EMA to update the miner's credibility.
@@ -233,7 +254,7 @@ class MinerScorer:
             + (1 - self.cred_alpha) * self.miner_credibility[uid]
         )
 
-        bt.logging.trace(
-            f"""Evaluated Miner {uid}. Percent of bytes validated succesfully this attempt={credibility * 100}. 
+        bt.logging.info(
+            f"""@@@ Evaluated Miner {uid}. Percent of bytes validated succesfully this attempt={credibility * 100}. 
                 Previous Credibility={previous_credibility}. New Credibility={self.miner_credibility[uid].item()}."""
         )
