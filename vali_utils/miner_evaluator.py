@@ -494,6 +494,9 @@ class MinerEvaluator:
                     timeout=10,
                 )
 
+            if uid == 11:
+                print("@@responses: ", responses)
+
             response = vali_utils.get_single_successful_response(
                 responses, GetMinerIndex
             )
