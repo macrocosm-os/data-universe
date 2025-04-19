@@ -263,9 +263,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 miner_credibility = result[2]
 
                 bt.logging.info(f"\n=== READ MINER INDEX Example ===")
-                bt.logging.info(f"Miner ID: {miner_id}")
-                bt.logging.info(f"Last Updated: {last_updated}")  
-                bt.logging.info(f"Credibility: {miner_credibility}")
+                bt.logging.info(f"result: {result}")
 
                 # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
                 sql_string = """WITH
