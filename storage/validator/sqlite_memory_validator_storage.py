@@ -262,6 +262,11 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 last_updated = result[1]
                 miner_credibility = result[2]
 
+                bt.logging.info(f"\n=== READ MINER INDEX Example ===")
+                bt.logging.info(f"Miner ID: {miner_id}")
+                bt.logging.info(f"Last Updated: {last_updated}")  
+                bt.logging.info(f"Credibility: {miner_credibility}")
+
                 # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
                 sql_string = """WITH
                                 TempBuckets AS (
@@ -303,10 +308,30 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                         )
                     )
 
+                # Debug log summary and sample buckets
+                bt.logging.info(f"Total buckets: {len(scored_data_entity_buckets)}")
+                total_size = sum(b.size_bytes for b in scored_data_entity_buckets)
+                total_scorable = sum(b.scorable_bytes for b in scored_data_entity_buckets)
+                bt.logging.info(f"Total size: {total_size:,} bytes")
+                bt.logging.info(f"Total scorable: {total_scorable:,} bytes")
+                
+                # Sample up to 3 buckets only
+                for bucket in scored_data_entity_buckets[:3]:
+                    bt.logging.info(f"""
+                    Sample Bucket:
+                    - Time bucket: {bucket.time_bucket_id}
+                    - Source: {bucket.source}
+                    - Label: {bucket.label}
+                    - Size bytes: {bucket.size_bytes:,}
+                    - Scorable bytes: {bucket.scorable_bytes:,}
+                    """)
+
                 scored_index = ScorableMinerIndex(
                     scorable_data_entity_buckets=scored_data_entity_buckets,
                     last_updated=last_updated,
                 )
+
+                bt.logging.info("============================\n")
 
                 return scored_index
 
@@ -436,4 +461,4 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                     "SELECT MAX(updated_at) FROM HFMetadata WHERE minerId = ?", (miner_id,)
                 )
                 result = cursor.fetchone()
-                return result[0] if result and result[0] is not None else None    
+                return result[0] if result and result[0] is not None else None
