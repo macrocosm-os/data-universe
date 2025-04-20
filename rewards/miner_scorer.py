@@ -7,7 +7,7 @@ from common.data import TimeBucket
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.scraper import ValidationResult, HFValidationResult
-
+import traceback
 
 class MinerScorer:
     """Tracks the score of each miner and handles updates to the scores.
@@ -246,7 +246,7 @@ class MinerScorer:
                 f"Evaluated Miner {uid}. Score={self.scores[uid].item()}. Credibility={self.miner_credibility[uid].item()}."
             )
 
-    def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
+    def _update_credibility_old(self, uid: int, validation_results: List[ValidationResult]):
         """Updates the miner's credibility based on the most recent set of validation_results.
 
         Requires: self.lock is held.
@@ -282,3 +282,93 @@ class MinerScorer:
             f"""@@@ Evaluated Miner {uid}. Percent of bytes validated succesfully this attempt={credibility * 100}. 
                 Previous Credibility={previous_credibility}. New Credibility={self.miner_credibility[uid].item()}."""
         )
+    def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
+        """Updates the miner's credibility based on the most recent set of validation_results.
+        Requires: self.lock is held.
+        """
+        
+        
+        bt.logging.info("\n========== CREDIBILITY UPDATE BACKTRACE ==========")
+        bt.logging.info(f"Called for UID: {uid}")
+        
+        # Get the stack and print last 10 calls
+        stack = traceback.extract_stack()
+        bt.logging.info("\nLast 10 function calls:")
+        for frame in stack[-11:-1]: # -1 excludes current function
+            bt.logging.info(f"File: {frame.filename}")
+            bt.logging.info(f"Function: {frame.name}")
+            bt.logging.info(f"Line: {frame.lineno}")
+            bt.logging.info("---")
+            
+        # Detailed validation results logging
+        bt.logging.info("\n========== VALIDATION RESULTS DETAILS ==========")
+        for idx, result in enumerate(validation_results):
+            bt.logging.info(f"\nValidation Result #{idx + 1}:")
+            bt.logging.info(f"Is Valid: {result.is_valid}")
+            bt.logging.info(f"Bytes Validated: {result.content_size_bytes_validated}")
+            bt.logging.info(f"Reason: {result.reason}")
+            # If there are any additional fields in ValidationResult, log them too
+            for field, value in result.dict().items():
+                if field not in ['is_valid', 'content_size_bytes_validated', 'reason']:
+                    bt.logging.info(f"{field}: {value}")
+            bt.logging.info("---")
+
+        # Original credibility calculation code
+        assert len(validation_results) > 0, "Must be provided at least 1 validation result."
+        
+        # Weight the current set of validation_results by the total content size validated
+        total_bytes_validated = sum(
+            result.content_size_bytes_validated for result in validation_results
+        )
+
+        bt.logging.info(f"\n=== CREDIBILITY UPDATE DETAILS FOR MINER {uid} ===")
+        bt.logging.info(f"Total bytes validated: {total_bytes_validated}")
+
+        # Log individual validation results
+        for i, result in enumerate(validation_results):
+            bt.logging.info(f"Validation #{i+1}:")
+            bt.logging.info(f"- Valid: {result.is_valid}")
+            bt.logging.info(f"- Bytes validated: {result.content_size_bytes_validated}")
+            bt.logging.info(f"- Reason: {result.reason}")
+
+        credibility = 0
+
+        if total_bytes_validated > 0:
+            valid_bytes = sum(
+                result.is_valid * result.content_size_bytes_validated
+                for result in validation_results
+            )
+            credibility = valid_bytes / float(total_bytes_validated)
+            bt.logging.info(f"Valid bytes: {valid_bytes}")
+            bt.logging.info(f"Calculated credibility this round: {credibility:.4f}")
+
+        previous_credibility = self.miner_credibility[uid].clone().item()
+        bt.logging.info(f"Previous credibility: {previous_credibility:.4f}")
+        bt.logging.info(f"EMA alpha value: {self.cred_alpha}")
+
+        # Calculate new credibility with EMA
+        new_credibility = self.cred_alpha * credibility + (1 - self.cred_alpha) * previous_credibility
+        
+        # Log the impact of each component
+        ema_new_component = self.cred_alpha * credibility
+        ema_old_component = (1 - self.cred_alpha) * previous_credibility
+        
+        bt.logging.info(f"EMA Components:")
+        bt.logging.info(f"- New data contribution (α * new_cred): {ema_new_component:.4f}")
+        bt.logging.info(f"- Historical contribution ((1-α) * old_cred): {ema_old_component:.4f}")
+        
+        # Determine if credibility increased or decreased
+        change = new_credibility - previous_credibility
+        change_direction = "increased" if change > 0 else "decreased" if change < 0 else "unchanged"
+        
+        bt.logging.info(f"Credibility {change_direction} by {abs(change):.4f}")
+        if change != 0:
+            if ema_new_component > ema_old_component:
+                bt.logging.info("Main factor: Current validation performance")
+            else:
+                bt.logging.info("Main factor: Historical credibility")
+
+        self.miner_credibility[uid] = new_credibility
+
+        bt.logging.info(f"Final new credibility: {self.miner_credibility[uid].item():.4f}")
+        bt.logging.info("=====================================\n")
