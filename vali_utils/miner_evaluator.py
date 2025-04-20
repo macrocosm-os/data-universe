@@ -145,7 +145,12 @@ class MinerEvaluator:
         current_block = int(self.metagraph.block)
         validation_info = self.hf_storage.get_validation_info(hotkey)
         hf_validation_result = None
-        if validation_info is None or (current_block - validation_info['block']) > 5100:  # ~17 hrs
+        #Để thay đổi thời gian kiểm tra từ 17 giờ xuống còn 5 giờ, chúng ta cần điều chỉnh số block.
+        #Trong Bittensor, mỗi block được tạo ra khoảng 12 giây một lần. Vì vậy:
+        #       5 giờ = 5 * 60 * 60 = 18,000 giây
+        #       Số block trong 5 giờ = 18,000 / 12 = 1,500 blocks
+        
+        if validation_info is None or (current_block - validation_info['block']) > 1500:  # ~5 hrs 
             hf_validation_result = await self._perform_hf_validation(hotkey, uid, axon_info, current_block)
         ##########
 
