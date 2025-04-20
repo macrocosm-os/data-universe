@@ -108,6 +108,11 @@ def hf_tweet_validation(validation_results: List[ValidationResult]):
     true_count = sum(1 for item in validation_results if item.is_valid)
     true_percentage = (true_count / total_count) * 100
 
+
+    bt.logging.info(
+        f"@@@hf_tweet_validation X.COM details: {true_count} out of {total_count} tweets are valid. True percentage: {true_percentage:.2f}%."
+    )
+
     return true_percentage >= 50, true_percentage
 
 

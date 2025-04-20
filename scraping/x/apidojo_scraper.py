@@ -222,6 +222,8 @@ class ApiDojoTwitterScraper(Scraper):
             )
 
         is_valid, valid_percent = utils.hf_tweet_validation(validation_results=results)
+
+
         return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent,
                                   reason=f"Validation Percentage = {valid_percent}")
 

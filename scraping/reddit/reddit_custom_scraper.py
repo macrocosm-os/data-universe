@@ -171,6 +171,10 @@ class RedditCustomScraper(Scraper):
             validation_results.append(validation_result)
 
         valid_percentage = sum(validation_results) / len(validation_results) * 100
+        bt.logging.info(
+            f"@@@validate_hf Reddit results: {sum(validation_results)} / {len(validation_results)} =  {valid_percentage}%."
+        )
+        
 
         # Check if at least 60% of the data is valid
         is_valid = valid_percentage >= 60
