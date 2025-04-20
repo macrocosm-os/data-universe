@@ -90,11 +90,11 @@ class MinerEvaluator:
 
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous version of eval_miner."""
-        # if uid != 11:
-        #     bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
-        #     return
-        # else:
-        #     bt.logging.info(f"@@@ uid: {uid} ++++++++ RUNNING EVAL MINER")
+        if uid != 11:
+            bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
+            return
+        else:
+            bt.logging.info(f"@@@ uid: {uid} ++++++++ RUNNING EVAL MINER")
         asyncio.run(self.eval_miner(uid))
 
     async def eval_miner(self, uid: int) -> None:
@@ -488,6 +488,7 @@ class MinerEvaluator:
             responses: List[GetMinerIndex] = None
             bt.logging.info(f"@@@uid: {uid} | {hotkey}: Getting miner index from miner for timeout of 10 seconds.")
             async with bt.dendrite(wallet=self.wallet) as dendrite:
+                bt.logging.debug(f"Starting dendrite.forward call to GetMinerIndex(version=constants.PROTOCOL_VERSION)")
                 responses = await dendrite.forward(
                     axons=[miner_axon],
                     synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
@@ -564,6 +565,7 @@ class MinerEvaluator:
         try:
             synapse = GetHuggingFaceMetadata(version=constants.PROTOCOL_VERSION)
             async with bt.dendrite(wallet=self.wallet) as dendrite:
+                bt.logging.debug(f"Starting dendrite.forward call to GetHuggingFaceMetadata")
                 responses = await dendrite.forward(
                     axons=[miner_axon],
                     synapse=synapse,
@@ -593,6 +595,10 @@ class MinerEvaluator:
         """
         try:
             async with bt.dendrite(wallet=self.wallet) as dendrite:
+                bt.logging.debug(f"Starting dendrite.forward call to DecodeURLRequest(encoded_urls=encoded_urls[:10],version=constants.PROTOCOL_VERSION)")
+
+                print(encoded_urls[:10])
+
                 responses = await dendrite.forward(
                     axons=[axon_info],
                     synapse=DecodeURLRequest(
