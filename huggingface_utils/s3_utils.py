@@ -6,37 +6,41 @@ from typing import Dict, Any, Optional
 
 
 class S3Auth:
-    """Handles S3 authentication with blockchain commitments"""
+    """Handles S3 authentication with blockchain commitments and Keypair signatures"""
 
     def __init__(self, s3_auth_url: str):
         self.s3_auth_url = s3_auth_url
 
     def get_credentials(self,
-                        coldkey: str,
-                        hotkey: str,
+                        wallet: bt.wallet,
                         source_name: str,
                         subtensor: bt.subtensor,
-                        wallet: bt.wallet,
                         netuid: int) -> Optional[Dict[str, Any]]:
-        """Get S3 credentials using blockchain commitments (non-async version)"""
+        """Get S3 credentials using blockchain commitments and hotkey signature"""
         try:
+            coldkey = wallet.get_coldkeypub().ss58_address
+            hotkey = wallet.hotkey.ss58_address
             timestamp = int(time.time())
-            commitment = f"s3:access:{coldkey}:{source_name}:{timestamp}"
 
-            bt.logging.info(f"Committing to blockchain: {commitment}")
+            commitment = f"s3:access:{coldkey}:{source_name}:{timestamp}"
+            bt.logging.info(f"\ud83d\ude80 Committing to blockchain: {commitment}")
             success = subtensor.commit(wallet=wallet, netuid=netuid, data=commitment)
 
             if not success:
-                bt.logging.error("Failed to commit to blockchain")
+                bt.logging.error("\u274c Failed to commit to blockchain")
                 return None
 
-            # Request credentials within 1-minute window
+            # Sign the commitment
+            signature = wallet.hotkey.sign(commitment.encode())
+            signature_hex = signature.hex()
+
             payload = {
                 "coldkey": coldkey,
                 "hotkey": hotkey,
                 "source": source_name,
                 "netuid": netuid,
-                "timestamp": timestamp
+                "timestamp": timestamp,
+                "signature": signature_hex
             }
 
             response = requests.post(
@@ -50,13 +54,13 @@ class S3Auth:
                     error_detail = response.json().get("detail", "Unknown error")
                 except Exception:
                     error_detail = response.text or "Unknown error"
-                bt.logging.error(f"Failed to get S3 credentials: {error_detail}")
+                bt.logging.error(f"\u274c Failed to get S3 credentials: {error_detail}")
                 return None
 
             return response.json()
 
         except Exception as e:
-            bt.logging.error(f"Error getting S3 credentials: {str(e)}")
+            bt.logging.error(f"\u274c Error getting S3 credentials: {str(e)}")
             return None
 
     def upload_file(self, file_path: str, creds: Dict[str, Any]) -> bool:
