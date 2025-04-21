@@ -258,9 +258,9 @@ class Miner:
 
         while not self.should_exit:
             try:
-                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the DualUploaderUploader
+                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the DualUploader
                 if self.storage.should_upload_hf_data(unique_id):
-                    bt.logging.info("Trying to upload the data into HuggingFace.")
+                    bt.logging.info("Trying to upload the data into HuggingFace and S3.")
                     hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
                     if hf_metadata_list:
                         self.storage.store_hf_dataset_info(hf_metadata_list)
