@@ -469,8 +469,8 @@ class Miner:
         )
         synapse.compressed_index_serialized = compressed_index.model_dump_json()
 
-        print("@@synapse.compressed_index_serialized",
-              synapse.compressed_index_serialized)
+        # print("@@synapse.compressed_index_serialized",
+        #       synapse.compressed_index_serialized)
 
         bt.logging.success(
             f"Returning compressed miner index of {CompressedMinerIndex.size_bytes(compressed_index)} bytes "
