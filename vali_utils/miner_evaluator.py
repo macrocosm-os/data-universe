@@ -90,11 +90,11 @@ class MinerEvaluator:
 
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous version of eval_miner."""
-        if uid != 11:
-            bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
-            return
-        else:
-            bt.logging.info(f"@@@ uid: {uid} ++++++++ RUNNING EVAL MINER")
+        # if uid != 11:
+        #     bt.logging.info(f"@@@ uid: {uid} ------- SKIPPING EVAL MINER")
+        #     return
+        # else:
+        #     bt.logging.info(f"@@@ uid: {uid} ++++++++ RUNNING EVAL MINER")
         asyncio.run(self.eval_miner(uid))
 
     async def eval_miner(self, uid: int) -> None:
@@ -150,7 +150,7 @@ class MinerEvaluator:
         #       5 giờ = 5 * 60 * 60 = 18,000 giây
         #       Số block trong 5 giờ = 18,000 / 12 = 1,500 blocks
 
-        if validation_info is None or (current_block - validation_info['block']) > 1500:  # ~5 hrs 
+        if validation_info is None or (current_block - validation_info['block']) > 5100:  # 1500~5 hrs | 5100~17 hrs
             hf_validation_result = await self._perform_hf_validation(hotkey, uid, axon_info, current_block)
         ##########
 

@@ -40,8 +40,7 @@ def validate_reddit_content(
         )
 
     # Check Reddit id
-    # @todo - tạm bỏ qua - phải trả lại
-    if False and content_to_validate.id != actual_content.id:
+    if content_to_validate.id != actual_content.id:
         bt.logging.info(
             f"Reddit ids do not match: {actual_content} != {content_to_validate}"
         )
