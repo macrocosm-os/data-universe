@@ -45,7 +45,7 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
 
 
 class HuggingFaceUploader:
-    def __init__(self, db_path: str,
+    def __init__(self,
                  miner_coldkey: str,
                  miner_hotkey: str,
                  subtensor: bt.subtensor,  # need to commit the info into chain
@@ -60,7 +60,6 @@ class HuggingFaceUploader:
         self.user = os.getenv("PG_USERNAME")
         self.password = os.getenv("PG_PASSWORD")
         self.host = os.getenv("PG_HOST")
-        self.db_path = db_path
         self.miner_coldkey = miner_coldkey
         self.miner_hotkey = miner_hotkey
         self.subtensor = subtensor
