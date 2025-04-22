@@ -40,7 +40,7 @@ from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
-from huggingface_utils.huggingface_uploader import HuggingFaceUploader
+from huggingface_utils.huggingface_uploader import DualUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
@@ -152,12 +152,10 @@ class Miner:
         bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
 
         if self.use_hf_uploader:
-            self.hf_uploader = HuggingFaceUploader(
+            self.hf_uploader = DualUploader(
                 db_path=self.config.neuron.database_name,
-                miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
                 encoding_key_manager=self.encoding_key_manager,
                 private_encoding_key_manager=self.private_encoding_key_manager,
-                miner_coldkey=self.wallet.get_coldkeypub().ss58_address,
                 wallet=self.wallet,
                 subtensor=self.subtensor,
                 state_file=self.config.miner_upload_state_file,
@@ -260,9 +258,9 @@ class Miner:
 
         while not self.should_exit:
             try:
-                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the HuggingFaceUploader
+                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the DualUploader
                 if self.storage.should_upload_hf_data(unique_id):
-                    bt.logging.info("Trying to upload the data into HuggingFace.")
+                    bt.logging.info("Trying to upload the data into HuggingFace and S3.")
                     hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
                     if hf_metadata_list:
                         self.storage.store_hf_dataset_info(hf_metadata_list)
