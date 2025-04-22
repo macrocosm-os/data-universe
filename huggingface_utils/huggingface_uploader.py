@@ -281,7 +281,6 @@ class DualUploader:
                 source_name=platform,
                 subtensor=self.subtensor,
                 wallet=self.wallet,
-                netuid=13
             )
 
             try:

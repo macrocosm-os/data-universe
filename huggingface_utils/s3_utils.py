@@ -14,8 +14,7 @@ class S3Auth:
     def get_credentials(self,
                         wallet: bt.wallet,
                         source_name: str,
-                        subtensor: bt.subtensor,
-                        netuid: int) -> Optional[Dict[str, Any]]:
+                        subtensor: bt.subtensor) -> Optional[Dict[str, Any]]:
         """Get S3 credentials using blockchain commitments and hotkey signature"""
         try:
             coldkey = wallet.get_coldkeypub().ss58_address
@@ -23,12 +22,8 @@ class S3Auth:
             timestamp = int(time.time())
 
             commitment = f"s3:access:{coldkey}:{source_name}:{timestamp}"
-            bt.logging.info(f"\ud83d\ude80 Committing to blockchain: {commitment}")
-            success = subtensor.commit(wallet=wallet, netuid=netuid, data=commitment)
-
-            if not success:
-                bt.logging.error("\u274c Failed to commit to blockchain")
-                return None
+            # bt.logging.info(f"\ud83d\ude80 Committing to blockchain: {commitment}") todo add if it's going to be necessary
+            # success = subtensor.commit(wallet=wallet, netuid=netuid, data=commitment)
 
             # Sign the commitment
             signature = wallet.hotkey.sign(commitment.encode())
@@ -38,7 +33,6 @@ class S3Auth:
                 "coldkey": coldkey,
                 "hotkey": hotkey,
                 "source": source_name,
-                "netuid": netuid,
                 "timestamp": timestamp,
                 "signature": signature_hex
             }
