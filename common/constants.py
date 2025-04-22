@@ -37,4 +37,4 @@ MINER_CACHE_FRESHNESS = dt.timedelta(minutes=20)
 NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # December 28, 2024 UTC
 
 # Date after which media content is required for tweets that contain media
-MEDIA_REQUIRED_DATE = dt.datetime(2025, 5, 15, tzinfo=dt.timezone.utc)  # May 15, 2025 UTC
+MEDIA_REQUIRED_DATE = dt.datetime(2025, 5, 23, tzinfo=dt.timezone.utc)  # May 23, 2025 UTC
