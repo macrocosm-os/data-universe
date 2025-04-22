@@ -149,7 +149,7 @@ class MinerEvaluator:
         #Trong Bittensor, mỗi block được tạo ra khoảng 12 giây một lần. Vì vậy:
         #       5 giờ = 5 * 60 * 60 = 18,000 giây
         #       Số block trong 5 giờ = 18,000 / 12 = 1,500 blocks
-        
+
         if validation_info is None or (current_block - validation_info['block']) > 1500:  # ~5 hrs 
             hf_validation_result = await self._perform_hf_validation(hotkey, uid, axon_info, current_block)
         ##########
@@ -249,6 +249,10 @@ class MinerEvaluator:
                 ],
             )
             return
+        else:
+            bt.logging.success(
+                f"@@@ {uid} | {hotkey}: Entity uniqueness checks on Bucket ID: {chosen_data_entity_bucket.id} passed."
+            )
 
         # print("@@data_entities: ", "Nhie")
 

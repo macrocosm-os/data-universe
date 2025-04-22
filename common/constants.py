@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from . import utils
 
 # Collection of constants for use throughout the codebase.
@@ -28,11 +28,13 @@ MAX_LABEL_LENGTH = 140
 PROTOCOL_VERSION = 4
 
 # Min evaluation period that must pass before a validator re-evaluates a miner.
-MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=60)
+MIN_EVALUATION_PERIOD = dt.timedelta(minutes=60)
 
 # Miner compressed index cache freshness.
-MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
+MINER_CACHE_FRESHNESS = dt.timedelta(minutes=20)
 
 # Date after which only x.com URLs are accepted
-NO_TWITTER_URLS_DATE = datetime.datetime(2024, 12, 28, tzinfo=datetime.timezone.utc)  # December 28, 2024 UTC
+NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # December 28, 2024 UTC
 
+# Date after which media content is required for tweets that contain media
+MEDIA_REQUIRED_DATE = dt.datetime(2025, 5, 15, tzinfo=dt.timezone.utc)  # May 15, 2025 UTC

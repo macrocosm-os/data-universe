@@ -351,6 +351,15 @@ class ApiDojoTwitterScraper(Scraper):
                 # Create a list of formatted tags with prefixes
                 tags = ["#" + item['text'] for item in sorted_tags]
 
+                # Extract media URLs from the data
+                media_urls = []
+                if 'media' in data and isinstance(data['media'], list):
+                    for media_item in data['media']:
+                        if isinstance(media_item, dict) and 'media_url_https' in media_item:
+                            media_urls.append(media_item['media_url_https'])
+                        elif isinstance(media_item, str):
+                            media_urls.append(media_item)
+
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
                 results.append(
@@ -362,6 +371,7 @@ class ApiDojoTwitterScraper(Scraper):
                             data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
+                        media=media_urls if media_urls else None,
                     )
                 )
             except Exception:
@@ -388,11 +398,24 @@ class ApiDojoTwitterScraper(Scraper):
 
             text = data['text']
             url = data['url']
-            results.append({"text": utils.sanitize_scraped_tweet(text),
-                            "url": url,
-                            "datetime": dt.datetime.strptime(
-                                data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
-                            ), })
+
+            # Extract media URLs
+            media_urls = []
+            if 'media' in data and isinstance(data['media'], list):
+                for media_item in data['media']:
+                    if isinstance(media_item, dict) and 'media_url_https' in media_item:
+                        media_urls.append(media_item['media_url_https'])
+                    elif isinstance(media_item, str):
+                        media_urls.append(media_item)
+
+            results.append({
+                "text": utils.sanitize_scraped_tweet(text),
+                "url": url,
+                "datetime": dt.datetime.strptime(
+                    data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
+                ),
+                "media": media_urls if media_urls else None
+            })
 
         return results
 
@@ -541,6 +564,6 @@ async def test_multi_thread_validate():
 
 if __name__ == "__main__":
     bt.logging.set_trace(True)
-    # asyncio.run(test_multi_thread_validate())
-    # asyncio.run(test_scrape())
+    asyncio.run(test_multi_thread_validate())
+    asyncio.run(test_scrape())
     asyncio.run(test_validate())

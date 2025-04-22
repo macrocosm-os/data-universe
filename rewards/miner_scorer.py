@@ -289,6 +289,7 @@ class MinerScorer:
         
         
         bt.logging.info("\n========== CREDIBILITY UPDATE BACKTRACE ==========")
+        bt.logging.info(f"Current function: {inspect.currentframe().f_code.co_name}")
         bt.logging.info(f"Called for UID: {uid}")
         
         # Get the stack and print last 10 calls
