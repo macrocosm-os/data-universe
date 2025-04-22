@@ -42,10 +42,12 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
     return decorator
 
 
-class HuggingFaceUploader:
+class DualUploader:
+    """
+    Dual uploader of miner data into HF and the S3 bucket
+    HF is going to be deprecated in forthcoming weeks.
+    """
     def __init__(self, db_path: str,
-                 miner_coldkey: str,
-                 miner_hotkey: str,
                  subtensor: bt.subtensor,  # need to commit the info into chain
                  wallet: bt.wallet,  # need to commit the info into chain
                  encoding_key_manager: EncodingKeyManager,  # USED FOR ENCODING USERNAMES
@@ -55,10 +57,9 @@ class HuggingFaceUploader:
                  output_dir: str = 'hf_storage',
                  chunk_size: int = 1_000_000):
         self.db_path = db_path
-        self.miner_coldkey = miner_coldkey
-        self.miner_hotkey = miner_hotkey
-        self.subtensor = subtensor
         self.wallet = wallet
+        self.miner_hotkey = self.wallet.hotkey.ss58_address
+        self.subtensor = subtensor
         self.output_dir = os.path.join(output_dir, self.miner_hotkey)
         self.unique_id = generate_static_integer(self.miner_hotkey)
         self.encoding_key_manager = encoding_key_manager
@@ -276,16 +277,12 @@ class HuggingFaceUploader:
             all_stats = {}
             new_rows = 0
 
-            # s3_creds = self.s3_auth.get_credentials(
-            #     coldkey=self.miner_coldkey,
-            #     hotkey=self.miner_hotkey,
-            #     source_name=platform,
-            #     subtensor=self.subtensor,
-            #     wallet=self.wallet,
-            #     netuid=13
-            # )
+            s3_creds = self.s3_auth.get_credentials(
+                source_name=platform,
+                subtensor=self.subtensor,
+                wallet=self.wallet,
+            )
 
-            s3_creds = None # Todo update it after the Easter
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
                     bt.logging.info(f"Processing new DataFrame for source {source}")
