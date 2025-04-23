@@ -131,7 +131,7 @@ def get_optimal_threads() -> int:
 def generate_static_integer(hotkey: str, max_value: int = 256) -> int:
     """Generate a static integer from a string key."""
     hash_value = hashlib.sha1(hotkey.encode()).digest()[:8]
-    return int.from_bytes(hash_value, byteorder='big') % max_value
+    return (int.from_bytes(hash_value, byteorder='big') % max_value) * 3
 
 
 def decode_content(content: bytes) -> Dict[str, Any]:

@@ -248,12 +248,13 @@ class HuggingFaceUploader:
 
         state = self.load_state()
         hf_metadata_list = []
-
+        hf_prefix = os.getenv("CUSTOM_HUGGINGFACE_PREFIX", "top10")
         for source in [DataSource.REDDIT.value, DataSource.X.value]:
-            platform = 'reddit' if source == DataSource.REDDIT.value else 'x'
+            # platform = 'reddit' if source == DataSource.REDDIT.value else 'x'
+            platform = 'r' if source == DataSource.REDDIT.value else 'w'
 
             # Define the repository ID for each platform
-            repo_id = f"{self.hf_api.whoami(self.hf_token)['name']}/{platform}_dataset_{self.unique_id}"
+            repo_id = f"{self.hf_api.whoami(self.hf_token)['name']}/{platform}_{hf_prefix}_{self.unique_id}"
 
             # Create DatasetCardGenerator instance for each platform
             card_generator = DatasetCardGenerator(
