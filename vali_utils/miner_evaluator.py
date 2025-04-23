@@ -49,7 +49,7 @@ from rewards.miner_scorer import MinerScorer
 class MinerEvaluator:
     """MinerEvaluator is responsible for evaluating miners and updating their scores."""
 
-    SCORER_FILENAME = "scorer.pickle"
+    SCORER_FILENAME = "testnet_scorer_1.pickle"
 
     # Mapping of scrapers to use based on the data source to validate.
     PREFERRED_SCRAPERS = {
@@ -419,8 +419,9 @@ class MinerEvaluator:
             t.join(timeout=timeout)
         bt.logging.trace(f"Finished waiting for {len(threads)} miner eval.")
 
-        # Run the next evaluation batch immediately.
-        return 0
+        # Wait to run the next evaluation batch for 10 mins anyway, to avoid testnet rate limiting
+        bt.logging.info("Waiting 10 mins before next evaluation batch...")
+        return 600
 
     def save_state(self):
         """Saves the state of the validator to a file."""
@@ -456,6 +457,7 @@ class MinerEvaluator:
                 )
 
             # Resize the scorer in case the loaded state is old and missing newly added neurons.
+            bt.logging.info(f"Resizing scorer to accomodate {len(self.metagraph.hotkeys)} uids")
             self.scorer.resize(len(self.metagraph.hotkeys))
 
     async def _update_and_get_miner_index(
@@ -608,6 +610,7 @@ class MinerEvaluator:
             # If so, we need to add new hotkeys and moving averages.
             if len(self.metagraph.hotkeys) < len(metagraph.hotkeys):
                 self.scorer.resize(len(metagraph.hotkeys))
+                bt.logging.info(f"Resizing metagraph from {len(self.metagraph.hotkeys)} to {len(metagraph.hotkeys)}")
 
             self.metagraph = copy.deepcopy(metagraph)
 

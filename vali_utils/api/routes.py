@@ -15,7 +15,7 @@ from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
 from vali_utils.miner_evaluator import MinerEvaluator
-
+from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
 from typing import List, Optional
@@ -28,6 +28,222 @@ def get_validator():
         raise HTTPException(503, "API server not initialized")
     return get_validator.api.validator
 
+
+
+@router.post("/on_demand_data_request_test_hotkey", response_model=QueryResponse)
+@endpoint_error_handler
+async def query_data(request: QueryRequest,
+                     target_hotkey: str = None,
+                     validator=Depends(get_validator),
+                     api_key: str = Depends(verify_api_key)):
+    """
+    Handle data queries targeting multiple miners with validation and incentives.
+    Now supports enhanced X content with rich metadata.
+    
+    For testing, this endpoint allows specifying a target miner by hotkey.
+    
+    Parameters:
+    - request: QueryRequest with source, usernames, keywords, dates, and limit
+    - target_hotkey: Optional hotkey of the miner to query (if not provided, defaults to a test miner)
+    """
+    try:
+        # Use provided target_hotkey if available, otherwise use default test miner
+        if not target_hotkey:
+            return {"status": "error", "message": "please provide hotkey"}
+        
+        bt.logging.info(f"TEST MODE: Targeting miner with hotkey {target_hotkey}")
+        
+        # Find the target miner's UID
+        target_uid = None
+        for i, hotkey in enumerate(validator.metagraph.hotkeys):
+            if hotkey == target_hotkey:
+                target_uid = i
+                break
+        
+        if target_uid is None:
+            return {
+                "status": "error",
+                "meta": {"error": f"Test miner with hotkey {target_hotkey} not found in the network"},
+                "data": []
+            }
+        
+        bt.logging.info(f"TEST MODE: Found miner with UID {target_uid}, hotkey {target_hotkey}")
+        
+        # Create request synapse
+        synapse = OnDemandRequest(
+            source=DataSource[request.source.upper()],
+            usernames=request.usernames,
+            keywords=request.keywords,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            limit=request.limit
+        )
+
+        # Query selected miner
+        bt.logging.info(f"Querying test miner: {target_uid}")
+        
+        async with bt.dendrite(wallet=validator.wallet) as dendrite:
+            axons = [validator.metagraph.axons[target_uid]]
+            responses = await dendrite.forward(
+                axons=axons,
+                synapse=synapse,
+                timeout=60  # Longer timeout for testing
+            )
+
+        # Process responses
+        if not responses or len(responses) == 0 or not responses[0]:
+            return {
+                "status": "error",
+                "meta": {"error": "No response from test miner"},
+                "data": []
+            }
+            
+        # Get the response
+        miner_response = responses[0]
+        best_data = getattr(miner_response, 'data', [])
+        
+        bt.logging.info(f"Received {len(best_data)} items from test miner")
+        
+        # Process the data for return
+        processed_data = []
+        for item in best_data:
+            # Check if this is an EnhancedXContent object (for X data)
+            if hasattr(item, 'to_api_response') and callable(getattr(item, 'to_api_response')):
+                # This is an EnhancedXContent object, use its to_api_response method
+                item_dict = item.to_api_response()
+                processed_data.append(item_dict)
+            else:
+                # This is a standard DataEntity or other object
+                item_dict = {
+                    'uri': item.uri if hasattr(item, 'uri') else None,
+                    'datetime': item.datetime.isoformat() if hasattr(item, 'datetime') else None,
+                    'source': DataSource(item.source).name if hasattr(item, 'source') else None,
+                    'label': item.label.value if hasattr(item, 'label') and item.label else None,
+                    'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content, bytes) else 
+                              item.content if hasattr(item, 'content') else None
+                }
+                processed_data.append(item_dict)
+
+        return {
+            "status": "success",
+            "data": processed_data[:request.limit],
+            "meta": {
+                "test_mode": "true",
+                "miner_hotkey": target_hotkey,
+                "miner_uid": target_uid,
+                "items_returned": len(processed_data)
+            }
+        }
+
+    except Exception as e:
+        bt.logging.error(f"Error processing request: {str(e)}")
+        raise HTTPException(500, str(e))
+
+
+
+@router.post("/on_demand_data_request_test", response_model=QueryResponse)
+@endpoint_error_handler
+async def query_data(request: QueryRequest,
+                     validator=Depends(get_validator),
+                     api_key: str = Depends(verify_api_key)):
+    """
+    Handle data queries targeting multiple miners with validation and incentives.
+    Now supports enhanced X content with rich metadata.
+    
+    For testing, this is temporarily configured to query only a specific miner.
+    """
+    try:
+        # TESTING MODE: Target a specific miner
+        target_hotkey = "5HSmU8zVqHRhVskecoyh2JWPD5erGuDRT6B6TBNtUwqJyopG"
+        
+        # Find the target miner's UID
+        target_uid = None
+        for i, hotkey in enumerate(validator.metagraph.hotkeys):
+            if hotkey == target_hotkey:
+                target_uid = i
+                break
+        
+        if target_uid is None:
+            return {
+                "status": "error",
+                "meta": {"error": f"Test miner with hotkey {target_hotkey} not found"},
+                "data": []
+            }
+        
+        bt.logging.info(f"TEST MODE: Targeting only miner with UID {target_uid}, hotkey {target_hotkey}")
+        
+        # Use only the target miner for this request
+        selected_miners = [target_uid]
+
+        # Create request synapse
+        synapse = OnDemandRequest(
+            source=DataSource[request.source.upper()],
+            usernames=request.usernames,
+            keywords=request.keywords,
+            start_date=request.start_date,
+            end_date=request.end_date,
+            limit=request.limit
+        )
+
+        # Query selected miners
+        bt.logging.info(f"Querying test miner: {target_uid}")
+        
+        async with bt.dendrite(wallet=validator.wallet) as dendrite:
+            axons = [validator.metagraph.axons[target_uid]]
+            responses = await dendrite.forward(
+                axons=axons,
+                synapse=synapse,
+                timeout=60  # Longer timeout for testing
+            )
+
+        # Process responses
+        if not responses or len(responses) == 0 or not responses[0]:
+            return {
+                "status": "error",
+                "meta": {"error": "No response from test miner"},
+                "data": []
+            }
+            
+        # Get the response
+        miner_response = responses[0]
+        best_data = getattr(miner_response, 'data', [])
+        
+        bt.logging.info(f"Received {len(best_data)} items from test miner")
+        
+        # Process the data for return
+        processed_data = []
+        for item in best_data:
+            # Check if this is an EnhancedXContent object (for X data)
+            if hasattr(item, 'to_api_response') and callable(getattr(item, 'to_api_response')):
+                # This is an EnhancedXContent object, use its to_api_response method
+                item_dict = item.to_api_response()
+                processed_data.append(item_dict)
+            else:
+                # This is a standard DataEntity or other object
+                item_dict = {
+                    'uri': item.uri if hasattr(item, 'uri') else None,
+                    'datetime': item.datetime.isoformat() if hasattr(item, 'datetime') else None,
+                    'source': DataSource(item.source).name if hasattr(item, 'source') else None,
+                    'label': item.label.value if hasattr(item, 'label') and item.label else None,
+                    'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content, bytes) else 
+                              item.content if hasattr(item, 'content') else None
+                }
+                processed_data.append(item_dict)
+
+        return {
+            "status": "success",
+            "data": processed_data[:request.limit],
+            "meta": {
+                "test_mode": "true",
+                "miner_hotkey": target_hotkey,
+                "miner_uid": target_uid,
+                "items_returned": len(processed_data)
+            }
+        }
+
+    except Exception as e:
+        bt.logging.error(f"Error processing request: {str(e)}")
+        raise HTTPException(500, str(e))
 
 @router.post("/on_demand_data_request", response_model=QueryResponse)
 @endpoint_error_handler
@@ -140,11 +356,26 @@ async def query_data(request: QueryRequest,
 
             # Perform a quick check to verify if data should exist
             try:
-                # Determine which scraper to use based on the source
-                scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
-                if not scraper_id:
+                if synapse.source == DataSource.X:
+                    # Use EnhancedApiDojoTwitterScraper for X content
+                    scraper = EnhancedApiDojoTwitterScraper()
+                elif synapse.source == DataSource.REDDIT:
+                    # Use the standard scraper for Reddit
+                    scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
+                    if not scraper_id:
+                        bt.logging.warning(f"No preferred scraper for source {synapse.source}")
+                        # Return empty result with consensus
+                        return {
+                            "status": "success",
+                            "data": [],
+                            "meta": {
+                                "miners_queried": len(selected_miners),
+                                "consensus": "no_data"
+                            }
+                        }
+                    scraper = ScraperProvider().get(scraper_id)
+                else:
                     bt.logging.warning(f"No preferred scraper for source {synapse.source}")
-                    # Return empty result with consensus
                     return {
                         "status": "success",
                         "data": [],
@@ -154,10 +385,8 @@ async def query_data(request: QueryRequest,
                         }
                     }
 
-                # Initialize the appropriate scraper
-                scraper = ScraperProvider().get(scraper_id)
                 if not scraper:
-                    bt.logging.warning(f"Could not initialize scraper {scraper_id}")
+                    bt.logging.warning(f"Could not initialize scraper for {synapse.source}")
                     return {
                         "status": "success",
                         "data": [],
@@ -169,7 +398,7 @@ async def query_data(request: QueryRequest,
 
                 # Create scrape config with limited scope (only check for a few items)
                 verify_config = ScrapeConfig(
-                    entity_limit=10,  # Just get a few items to verify data exists
+                    entity_limit=synapse.limit,  # Just get a few items to verify data exists
                     date_range=DateRange(
                         start=dt.datetime.fromisoformat(synapse.start_date) if synapse.start_date else dt.datetime.now(
                             dt.timezone.utc) - dt.timedelta(days=1),
@@ -180,8 +409,13 @@ async def query_data(request: QueryRequest,
                     [DataLabel(value=f"@{u.strip('@')}") for u in synapse.usernames] if synapse.usernames else []
                 )
 
-                # Directly fetch some data
-                verification_data = await scraper.scrape(verify_config)
+                # Directly fetch some data - use enhanced scraping for X
+                if synapse.source == DataSource.X:
+                    # For X content, use the enhanced scraper's special method to get rich content
+                    verification_data = await scraper.get_enhanced_data_entities(verify_config)
+                else:
+                    # For other sources, use standard scraping
+                    verification_data = await scraper.scrape(verify_config)
 
                 # If we found data but miners returned none, they should be penalized
                 if verification_data:
@@ -204,14 +438,21 @@ async def query_data(request: QueryRequest,
                     processed_data = []
                     for item in verification_data:
                         # Convert DataEntity to dict
-                        item_dict = {
-                            'uri': item.uri,
-                            'datetime': item.datetime.isoformat(),
-                            'source': DataSource(item.source).name,
-                            'label': item.label.value if item.label else None,
-                            'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
-                        }
-                        processed_data.append(item_dict)
+                        if synapse.source == DataSource.X and hasattr(item, 'to_api_response') and callable(
+                                getattr(item, 'to_api_response')):
+                            # For EnhancedXContent, use its to_api_response method
+                            processed_data.append(item.to_api_response())
+                        else:
+                            # Convert DataEntity to dict (for non-enhanced content)
+                            item_dict = {
+                                'uri': item.uri,
+                                'datetime': item.datetime.isoformat(),
+                                'source': DataSource(item.source).name,
+                                'label': item.label.value if item.label else None,
+                                'content': item.content.decode('utf-8') if isinstance(item.content,
+                                                                                      bytes) else item.content
+                            }
+                            processed_data.append(item_dict)
 
                     return {
                         "status": "warning",
@@ -428,6 +669,9 @@ async def query_data(request: QueryRequest,
     except Exception as e:
         bt.logging.error(f"Error processing request: {str(e)}")
         raise HTTPException(500, str(e))
+
+
+
 @router.get("/query_bucket/{source}")
 @endpoint_error_handler
 async def query_bucket(

@@ -35,7 +35,7 @@ class ValidatorAPI:
             title="Data Universe Validator API",
             description="API for on-demand data queries from the Data Universe network",
             version="1.0.0",
-            docs_url=None,    # Disable default docs routes
+            # docs_url=None,    # Disable default docs routes
         )
 
         # Add CORS middleware

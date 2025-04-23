@@ -44,7 +44,8 @@ from huggingface_utils.huggingface_uploader import HuggingFaceUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
-from common.data import DataLabel, DataSource
+import json
+from common.data import DataLabel, DataSource, DataEntity
 from common.protocol import OnDemandRequest
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, ScraperId
@@ -532,8 +533,8 @@ class Miner:
 
     async def handle_on_demand(self, synapse: OnDemandRequest) -> OnDemandRequest:
         """
-        Enhanced handle_on_demand method that uses EnhancedApiDojoTwitterScraper for X requests
-        to provide richer data.
+        Handle on-demand data requests from validators.
+        Uses enhanced scraper for X data while maintaining protocol compatibility.
         """
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
@@ -548,8 +549,7 @@ class Miner:
                     labels.extend([DataLabel(value=k) for k in synapse.keywords])
                 if synapse.usernames:
                     # Ensure usernames have @ prefix
-                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
-                                   synapse.usernames])
+                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in synapse.usernames])
 
             elif synapse.source == DataSource.REDDIT:
                 scraper_id = ScraperId.REDDIT_CUSTOM
@@ -569,9 +569,9 @@ class Miner:
 
             # Create date range
             start_dt = (dt.datetime.fromisoformat(synapse.start_date)
-                        if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
+                    if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
             end_dt = (dt.datetime.fromisoformat(synapse.end_date)
-                      if synapse.end_date else dt.datetime.now(dt.timezone.utc))
+                    if synapse.end_date else dt.datetime.now(dt.timezone.utc))
 
             # Log the labels being used
             bt.logging.info(f"Searching with labels: {[l.value for l in labels]}")
@@ -588,28 +588,51 @@ class Miner:
             # For X source, use the enhanced scraper directly
             if synapse.source == DataSource.X:
                 # Initialize the enhanced scraper directly instead of using the provider
-                from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper # TODO move it
+                from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
                 from scraping.x.on_demand_model import EnhancedXContent
-
+                import json
+                
                 enhanced_scraper = EnhancedApiDojoTwitterScraper()
                 await enhanced_scraper.scrape(config)
-
+                
                 # Get enhanced content
                 enhanced_content = enhanced_scraper.get_enhanced_content()
-
-                # Use the enhanced objects directly instead of converting to DataEntity
-                synapse.data = enhanced_content[:synapse.limit] if synapse.limit else enhanced_content
+                
+                # IMPORTANT: Convert EnhancedXContent to DataEntity to maintain protocol compatibility
+                # while keeping the rich data in serialized form
+                enhanced_data_entities = []
+                for content in enhanced_content:
+                    # Convert to DataEntity but store full rich content in serialized form
+                    api_response = content.to_api_response()
+                    data_entity = DataEntity(
+                        uri=content.url,
+                        datetime=content.timestamp,
+                        source=DataSource.X,
+                        label=DataLabel(value=content.tweet_hashtags[0].lower()) if content.tweet_hashtags else None,
+                        # Store the full enhanced content as serialized JSON in the content field
+                        content=json.dumps(api_response).encode('utf-8'),
+                        content_size_bytes=len(json.dumps(api_response))
+                    )
+                    enhanced_data_entities.append(data_entity)
+                    
+                # Update response with enhanced data entities
+                synapse.data = enhanced_data_entities[:synapse.limit] if synapse.limit else enhanced_data_entities
             else:
-                # Use regular scraper's scrape method for other sources
-                scraper = self.scraper_provider.get(scraper_id)
+                # For Reddit, use the provider that's part of the coordinator
+                from scraping.provider import ScraperProvider
+                
+                # Create a new scraper provider and get the appropriate scraper
+                provider = ScraperProvider()
+                scraper = provider.get(scraper_id)
+                
                 if not scraper:
                     bt.logging.error(f"No scraper available for ID {scraper_id}")
                     synapse.data = []
                     return synapse
-
+                    
                 data = await scraper.scrape(config)
                 synapse.data = data[:synapse.limit] if synapse.limit else data
-
+                
             synapse.version = constants.PROTOCOL_VERSION
 
             bt.logging.success(
