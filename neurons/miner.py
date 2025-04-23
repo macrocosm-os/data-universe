@@ -503,8 +503,7 @@ class Miner:
         )
         synapse.version = constants.PROTOCOL_VERSION
 
-        print("@@get_data_entity_bucket_##_synapse.data_entities",
-              synapse.data_entities)
+        print("@@get_data_entity_bucket_##_synapse.data_entities")
 
         bt.logging.success(
             f"Returning Bucket ID: {str(synapse.data_entity_bucket_id)} with {len(synapse.data_entities)} entities to {synapse.dendrite.hotkey}."
