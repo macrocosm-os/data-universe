@@ -5,7 +5,7 @@ import bittensor as bt
 from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_TWITTER_URLS_DATE
+from common.constants import NO_TWITTER_URLS_DATE, MEDIA_REQUIRED_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -124,15 +124,28 @@ def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> Va
     if tweet_to_verify.get('text') != actual_tweet.get('text'):
         return ValidationResult(is_valid=False, reason="Tweet texts do not match", content_size_bytes_validated=0)
 
-    # Check date (without time) TODO obfuscate and validate.
-    # try:
-    #     actual_date = dt.datetime.strptime(actual_tweet.get('datetime'), "%Y-%m-%d %H:%M:%S").date()
-    #     verify_date = dt.datetime.strptime(tweet_to_verify.get('datetime'), "%Y-%m-%d").date() # TODO
-    #
-    #     if actual_date != verify_date:
-    #         return {"is_valid": False, "reason": "Tweet dates do not match"}
-    # except ValueError:
-    #     return {"is_valid": False, "reason": "Invalid date format"}
+    # If we're after the media required date, validate media content
+    now = dt.datetime.now(dt.timezone.utc)
+    if now >= MEDIA_REQUIRED_DATE:
+        actual_media = actual_tweet.get('media', [])
+        verify_media = tweet_to_verify.get('media', [])
+
+        # Check if both have media or both don't have media
+        if bool(actual_media) != bool(verify_media):
+            return ValidationResult(
+                is_valid=False,
+                reason="Media presence mismatch - one has media while the other doesn't",
+                content_size_bytes_validated=0
+            )
+
+        # If both have media, check that they match
+        if actual_media and verify_media:
+            if len(actual_media) != len(verify_media):
+                return ValidationResult(
+                    is_valid=False,
+                    reason=f"Media count mismatch - expected {len(actual_media)}, got {len(verify_media)}",
+                    content_size_bytes_validated=0
+                )
 
     return ValidationResult(is_valid=True, reason="Tweet is valid", content_size_bytes_validated=0)
 
@@ -234,6 +247,45 @@ def validate_tweet_content(
             reason="Tweet hashtags do not match",
             content_size_bytes_validated=entity.content_size_bytes,
         )
+
+    # If we're after the media requirement date, check for media
+    # Get the current date/time
+    now = dt.datetime.now(dt.timezone.utc)
+
+    # After deadline: Check if media is required but missing
+    if now >= MEDIA_REQUIRED_DATE:
+        # Check if the actual tweet has media but the verified one doesn't
+        if actual_tweet.media and not tweet_to_verify.media:
+            bt.logging.info(f"Tweet is missing required media content.")
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet is missing required media content",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+    # ALWAYS validate: If miner claims to have media, validate it's legitimate
+    if tweet_to_verify.media:
+        # If miner claims media but actual tweet has none, reject it
+        if not actual_tweet.media:
+            bt.logging.info(f"Miner included media but the tweet has none")
+            return ValidationResult(
+                is_valid=False,
+                reason="Miner included fake media for a tweet with no media",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+        # Sort the URLs for consistent comparison
+        actual_urls = sorted(actual_tweet.media)
+        miner_urls = sorted(tweet_to_verify.media)
+
+        # Simple check: URLs must match exactly
+        if actual_urls != miner_urls:
+            bt.logging.info(f"Tweet media URLs don't match")
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet media URLs don't match actual content",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
 
     # Validate the model_config.
     if not _validate_model_config(tweet_to_verify.model_config):

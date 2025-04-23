@@ -104,6 +104,10 @@ task_ids:
 - **Subnet:** Bittensor Subnet 13
 - **Miner Hotkey:** {self.miner_hotkey}
 
+### Miner Data Compliance Agreement 
+
+In uploading this dataset, I am agreeing to the [Macrocosmos Miner Data Compliance Policy](https://github.com/macrocosm-os/data-universe/blob/add-miner-policy/docs/miner_policy.md). 
+
 ### Dataset Summary
 
 This dataset is part of the Bittensor Subnet 13 decentralized network, containing preprocessed Reddit data. The data is continuously updated by network miners, providing a real-time stream of Reddit content for various analytical and machine learning tasks.
@@ -229,6 +233,11 @@ For full statistics, please refer to the `stats.json` file in the repository.
 - **Repository:** {self.repo_id}
 - **Subnet:** Bittensor Subnet 13
 - **Miner Hotkey:** {self.miner_hotkey}
+
+### Miner Data Compliance Agreement 
+
+In uploading this dataset, I am agreeing to the [Macrocosmos Miner Data Compliance Policy](https://github.com/macrocosm-os/data-universe/blob/add-miner-policy/docs/miner_policy.md). 
+
 
 ### Dataset Summary
 

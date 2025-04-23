@@ -1,4 +1,4 @@
-import datetime
+import datetime as dt
 from . import utils
 
 # Collection of constants for use throughout the codebase.
@@ -31,8 +31,10 @@ PROTOCOL_VERSION = 4
 MIN_EVALUATION_PERIOD = datetime.timedelta(minutes=30) # shorter evaluation period for testnet
 
 # Miner compressed index cache freshness.
-MINER_CACHE_FRESHNESS = datetime.timedelta(minutes=20)
+MINER_CACHE_FRESHNESS = dt.timedelta(minutes=20)
 
 # Date after which only x.com URLs are accepted
-NO_TWITTER_URLS_DATE = datetime.datetime(2024, 12, 28, tzinfo=datetime.timezone.utc)  # December 28, 2024 UTC
+NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # December 28, 2024 UTC
 
+# Date after which media content is required for tweets that contain media
+MEDIA_REQUIRED_DATE = dt.datetime(2025, 5, 23, tzinfo=dt.timezone.utc)  # May 23, 2025 UTC

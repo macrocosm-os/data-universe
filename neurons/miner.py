@@ -40,16 +40,17 @@ from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
-from huggingface_utils.huggingface_uploader import HuggingFaceUploader
+from huggingface_utils.huggingface_uploader import DualUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
-import json
 from common.data import DataLabel, DataSource, DataEntity
 from common.protocol import OnDemandRequest
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, ScraperId
 
+from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
+import json
 
 # Enable logging to the miner TODO move it to some different location
 bt.logging.set_info(True)
@@ -153,12 +154,15 @@ class Miner:
         bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
 
         if self.use_hf_uploader:
-            self.hf_uploader = HuggingFaceUploader(
+            self.hf_uploader = DualUploader(
                 db_path=self.config.neuron.database_name,
-                miner_hotkey=self.wallet.hotkey.ss58_address if self.uid != 0 else str(self.uid),
                 encoding_key_manager=self.encoding_key_manager,
                 private_encoding_key_manager=self.private_encoding_key_manager,
-                state_file=self.config.miner_upload_state_file
+                wallet=self.wallet,
+                subtensor=self.subtensor,
+                state_file=self.config.miner_upload_state_file,
+                s3_auth_url=self.config.s3_auth_url,
+
             )
 
         # Instantiate storage.
@@ -256,9 +260,9 @@ class Miner:
 
         while not self.should_exit:
             try:
-                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the HuggingFaceUploader
+                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the DualUploader
                 if self.storage.should_upload_hf_data(unique_id):
-                    bt.logging.info("Trying to upload the data into HuggingFace.")
+                    bt.logging.info("Trying to upload the data into HuggingFace and S3.")
                     hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
                     if hf_metadata_list:
                         self.storage.store_hf_dataset_info(hf_metadata_list)
@@ -588,16 +592,13 @@ class Miner:
             # For X source, use the enhanced scraper directly
             if synapse.source == DataSource.X:
                 # Initialize the enhanced scraper directly instead of using the provider
-                from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
-                from scraping.x.on_demand_model import EnhancedXContent
-                import json
-                
+
                 enhanced_scraper = EnhancedApiDojoTwitterScraper()
                 await enhanced_scraper.scrape(config)
                 
                 # Get enhanced content
                 enhanced_content = enhanced_scraper.get_enhanced_content()
-                
+
                 # IMPORTANT: Convert EnhancedXContent to DataEntity to maintain protocol compatibility
                 # while keeping the rich data in serialized form
                 enhanced_data_entities = []
@@ -614,17 +615,17 @@ class Miner:
                         content_size_bytes=len(json.dumps(api_response))
                     )
                     enhanced_data_entities.append(data_entity)
-                    
+
                 # Update response with enhanced data entities
                 synapse.data = enhanced_data_entities[:synapse.limit] if synapse.limit else enhanced_data_entities
             else:
                 # For Reddit, use the provider that's part of the coordinator
                 from scraping.provider import ScraperProvider
-                
+
                 # Create a new scraper provider and get the appropriate scraper
                 provider = ScraperProvider()
                 scraper = provider.get(scraper_id)
-                
+
                 if not scraper:
                     bt.logging.error(f"No scraper available for ID {scraper_id}")
                     synapse.data = []

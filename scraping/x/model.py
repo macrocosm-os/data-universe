@@ -31,6 +31,10 @@ class XContent(BaseModel):
         default_factory=list,
         description="A list of hashtags associated with the tweet, in order they appear in the tweet. Note: it's critical this ordering is respected as the first tag is used as the DataLabel for the index.",
     )
+    media: Optional[List[str]] = Field(
+        default=None,
+        description="A list of media URLs associated with the tweet. Can be None if no media is present.",
+    )
 
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:

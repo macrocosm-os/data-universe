@@ -1,19 +1,23 @@
 from fastapi import APIRouter, HTTPException, Depends
 import bittensor as bt
 import datetime as dt
+from pathlib import Path
+import pandas as pd
 import random
-from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel
+import json
+from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel, DataEntity
 from common import constants
 from common.protocol import OnDemandRequest, GetDataEntityBucket
 from common import utils  # Import your utils
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, \
-    DesirabilityRequest
+    DesirabilityRequest, HfReposResponse
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
+from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
@@ -356,11 +360,20 @@ async def query_data(request: QueryRequest,
 
             # Perform a quick check to verify if data should exist
             try:
+<<<<<<< HEAD
                 if synapse.source == DataSource.X:
                     # Use EnhancedApiDojoTwitterScraper for X content
                     scraper = EnhancedApiDojoTwitterScraper()
                 elif synapse.source == DataSource.REDDIT:
                     # Use the standard scraper for Reddit
+=======
+                # For X data, use exactly the same approach as miners
+                if synapse.source == DataSource.X:
+                    # Initialize the enhanced scraper directly as miners do
+                    scraper = EnhancedApiDojoTwitterScraper()
+                elif synapse.source == DataSource.REDDIT:
+                    # For other sources, use the standard provider
+>>>>>>> main
                     scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
                     if not scraper_id:
                         bt.logging.warning(f"No preferred scraper for source {synapse.source}")
@@ -397,24 +410,66 @@ async def query_data(request: QueryRequest,
                     }
 
                 # Create scrape config with limited scope (only check for a few items)
+                # For X data, combine keywords and usernames with appropriate label formatting
+                labels = []
+                if synapse.keywords:
+                    labels.extend([DataLabel(value=k) for k in synapse.keywords])
+                if synapse.usernames:
+                    # Ensure usernames have @ prefix
+                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
+                                   synapse.usernames])
+
+                # Create scrape config matching the miner's configuration
                 verify_config = ScrapeConfig(
+<<<<<<< HEAD
                     entity_limit=synapse.limit,  # Just get a few items to verify data exists
+=======
+                    entity_limit=request.limit,  # Use requested limit
+>>>>>>> main
                     date_range=DateRange(
                         start=dt.datetime.fromisoformat(synapse.start_date) if synapse.start_date else dt.datetime.now(
                             dt.timezone.utc) - dt.timedelta(days=1),
                         end=dt.datetime.fromisoformat(synapse.end_date) if synapse.end_date else dt.datetime.now(
                             dt.timezone.utc)
                     ),
-                    labels=[DataLabel(value=k) for k in synapse.keywords] if synapse.keywords else
-                    [DataLabel(value=f"@{u.strip('@')}") for u in synapse.usernames] if synapse.usernames else []
+                    labels=labels,
                 )
 
+<<<<<<< HEAD
                 # Directly fetch some data - use enhanced scraping for X
                 if synapse.source == DataSource.X:
                     # For X content, use the enhanced scraper's special method to get rich content
                     verification_data = await scraper.get_enhanced_data_entities(verify_config)
                 else:
                     # For other sources, use standard scraping
+=======
+                # For X source, replicate exactly what miners do in handle_on_demand
+                if synapse.source == DataSource.X:
+                    await scraper.scrape(verify_config)
+
+                    # Get enhanced content
+                    enhanced_content = scraper.get_enhanced_content()
+
+                    # IMPORTANT: Convert EnhancedXContent to DataEntity to maintain protocol compatibility
+                    # while keeping the rich data in serialized form
+                    verification_data = []
+                    for content in enhanced_content:
+                        # Convert to DataEntity but store full rich content in serialized form
+                        api_response = content.to_api_response()
+                        data_entity = DataEntity(
+                            uri=content.url,
+                            datetime=content.timestamp,
+                            source=DataSource.X,
+                            label=DataLabel(
+                                value=content.tweet_hashtags[0].lower()) if content.tweet_hashtags else None,
+                            # Store the full enhanced content as serialized JSON in the content field
+                            content=json.dumps(api_response).encode('utf-8'),
+                            content_size_bytes=len(json.dumps(api_response))
+                        )
+                        verification_data.append(data_entity)
+                else:
+                    # For other sources, use standard scrape
+>>>>>>> main
                     verification_data = await scraper.scrape(verify_config)
 
                 # If we found data but miners returned none, they should be penalized
@@ -424,7 +479,6 @@ async def query_data(request: QueryRequest,
                     # Apply penalty to all miners for this request
                     for uid in selected_miners:
                         validation_results = [
-                            ValidationResult(is_valid=True, reason="", content_size_bytes_validated=95),
                             ValidationResult(is_valid=False, reason="Failed to return existing data",
                                              content_size_bytes_validated=5)
                         ]
@@ -434,9 +488,10 @@ async def query_data(request: QueryRequest,
                         # Update the miner's score with the mixed results
                         validator.evaluator.scorer._update_credibility(uid, validation_results)
 
-                    # Return the verification data to the user
+                    # Process the verification data to match exactly what miners would return
                     processed_data = []
                     for item in verification_data:
+<<<<<<< HEAD
                         # Convert DataEntity to dict
                         if synapse.source == DataSource.X and hasattr(item, 'to_api_response') and callable(
                                 getattr(item, 'to_api_response')):
@@ -444,13 +499,40 @@ async def query_data(request: QueryRequest,
                             processed_data.append(item.to_api_response())
                         else:
                             # Convert DataEntity to dict (for non-enhanced content)
+=======
+                        if synapse.source == DataSource.X:
+                            # For X data, miners store the API response as JSON in the content field
+                            # We need to decode it and parse it as JSON to match what miners return
+                            try:
+                                json_content = item.content.decode('utf-8') if isinstance(item.content,
+                                                                                          bytes) else item.content
+                                parsed_content = json.loads(json_content)
+                                processed_data.append(parsed_content)
+                            except Exception as e:
+                                bt.logging.error(f"Error parsing X content: {str(e)}")
+                                # Fallback if parsing fails
+                                processed_data.append({
+                                    'uri': item.uri,
+                                    'datetime': item.datetime.isoformat(),
+                                    'source': DataSource(item.source).name,
+                                    'label': item.label.value if item.label else None,
+                                    'content': str(item.content)[:1000]  # Truncate for safety
+                                })
+                        else:
+                            # For other sources, use standard format
+>>>>>>> main
                             item_dict = {
                                 'uri': item.uri,
                                 'datetime': item.datetime.isoformat(),
                                 'source': DataSource(item.source).name,
                                 'label': item.label.value if item.label else None,
+<<<<<<< HEAD
                                 'content': item.content.decode('utf-8') if isinstance(item.content,
                                                                                       bytes) else item.content
+=======
+                                'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else str(
+                                    item.content)
+>>>>>>> main
                             }
                             processed_data.append(item_dict)
 
@@ -623,23 +705,34 @@ async def query_data(request: QueryRequest,
         # Process the data for return
         processed_data = []
         for item in best_data:
-            # Check if this is an EnhancedXContent object (for X data)
-            if hasattr(item, 'to_api_response') and callable(getattr(item, 'to_api_response')):
-                # This is an EnhancedXContent object, use its to_api_response method
-                item_dict = item.to_api_response()
-                processed_data.append(item_dict)
-            else:
-                # This is a standard DataEntity or other object
-                item_dict = {
-                    'uri': item.uri if hasattr(item, 'uri') else None,
-                    'datetime': item.datetime.isoformat() if hasattr(item, 'datetime') else None,
-                    'source': DataSource(item.source).name if hasattr(item, 'source') else None,
-                    'label': item.label.value if hasattr(item, 'label') and item.label else None,
-                    'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content,
-                                                                                                       bytes) else
-                    item.content if hasattr(item, 'content') else None
-                }
-                processed_data.append(item_dict)
+            # For X content from miners, item.content already contains the serialized API response
+            # which needs to be parsed as JSON
+            if synapse.source == DataSource.X:
+                try:
+                    # Extract the content as string and parse it as JSON
+                    if hasattr(item, 'content') and item.content:
+                        content_str = item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
+                        try:
+                            item_dict = json.loads(content_str)
+                            processed_data.append(item_dict)
+                            continue
+                        except json.JSONDecodeError:
+                            # If JSON parsing fails, fall through to the standard processing
+                            pass
+                except Exception as e:
+                    bt.logging.error(f"Error processing X content: {str(e)}")
+
+            # Standard processing for non-X content or if JSON parsing failed
+            item_dict = {
+                'uri': item.uri if hasattr(item, 'uri') else None,
+                'datetime': item.datetime.isoformat() if hasattr(item, 'datetime') else None,
+                'source': DataSource(item.source).name if hasattr(item, 'source') else None,
+                'label': item.label.value if hasattr(item, 'label') and item.label else None,
+                'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content,
+                                                                                                   bytes) else
+                item.content if hasattr(item, 'content') else None
+            }
+            processed_data.append(item_dict)
 
         # Remove duplicates by converting to string representation
         seen = set()
@@ -671,7 +764,10 @@ async def query_data(request: QueryRequest,
         raise HTTPException(500, str(e))
 
 
+<<<<<<< HEAD
 
+=======
+>>>>>>> main
 @router.get("/query_bucket/{source}")
 @endpoint_error_handler
 async def query_bucket(
@@ -806,6 +902,34 @@ async def query_bucket(
         raise HTTPException(500, str(e))
 
 
+@router.get("/list_repo_names", response_model=HfReposResponse)
+@endpoint_error_handler
+async def list_hf_repo_names(
+        validator=Depends(get_validator),
+        api_key: str = Depends(verify_api_key)):
+    """
+    Returns a list of repository names from the hf_validation.parquet file,
+    excluding "no_dataset_provided".
+    """
+    try:
+        parquet_path = validator.config.hf_results_path
+        
+        df = pd.read_parquet(parquet_path)
+        
+        # Extract unique repo names, excluding "no_dataset_provided"
+        repo_names = [name for name in df['repo_name'].unique() if name != "no_dataset_provided"]
+        repo_names.sort()
+        
+        return {
+            "count": len(repo_names),
+            "repo_names": repo_names
+        }
+    except FileNotFoundError:
+        bt.logging.error("hf_validation.parquet file not found")
+        raise HTTPException(404, "Dataset file not found")
+    except Exception as e:
+        bt.logging.error(f"Error retrieving repository names: {str(e)}")
+        raise HTTPException(500, f"Error retrieving repository names: {str(e)}")
 
 
 @router.get("/health", response_model=HealthResponse)
