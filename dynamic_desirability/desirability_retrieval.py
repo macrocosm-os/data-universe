@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 import time
-from typing import Dict, Optional, Any
+from typing import Dict, Optional, Any, List
 import logging
 import shutil
 import bittensor as bt
@@ -61,70 +61,123 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
         os.chdir(original_dir)
 
 
+def convert_old_to_new_format(data: List[Dict[str, Any]], hotkey: str) -> List[Dict[str, Any]]:
+    """Convert old format to new job schema format."""
+    new_format = []
+    job_counter = 0
+    
+    for source in data:
+        source_name = source['source_name']
+        label_weights = source['label_weights']
+        
+        for label, weight in label_weights.items():
+            # Skip labels that are longer than 140 characters
+            if len(label) > 140:
+                continue
+                
+            job_counter += 1
+            new_format.append({
+                "id": f"{hotkey}_{job_counter}",
+                "weight": weight,
+                "params": {
+                    "job_type": "label",
+                    "platform": source_name.lower(),
+                    "topic": label,
+                    "post_start_datetime": None,
+                    "post_end_datetime": None
+                }
+            })
+    
+    return new_format
+
+
+def is_old_format(data: List[Dict[str, Any]]) -> bool:
+    """Determine if the data is in the old format."""
+    if not data:
+        return False
+    
+    # Check if first item has source_name and label_weights keys
+    return 'source_name' in data[0] and 'label_weights' in data[0]
+
+
+def is_new_format(data: List[Dict[str, Any]]) -> bool:
+    """Determine if the data is in the new format."""
+    if not data:
+        return False
+    
+    # Check if first item has id, weight, and params keys
+    return 'id' in data[0] and 'weight' in data[0] and 'params' in data[0]
+
+
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
                             total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
-    """Calculate total weights and write to total.json."""
-    total_weights: Dict[str, Dict[str, float]] = {}
+    """Calculate total weights and write to total.json. Works with both old and new formats."""
     subnet_weight = 1 - total_vali_weight
     normalizer = subnet_weight / AMPLICATION_FACTOR
-
-    # Adding default weights to total.
+    
+    # Initialize list for final aggregated jobs
+    total_jobs = []
+    
+    # Adding default weights to total
     try:
         with open(default_json_path, 'r') as f:
-            default_preferences = json.load(f)
-        for source in default_preferences:
-            source_name = source['source_name']
-            if source_name not in total_weights:
-                total_weights[source_name] = {}
-            for label, weight in source['label_weights'].items():
-                total_weights[source_name][label] = weight
+            default_jobs = json.load(f)
+            
+        # Initialize total_jobs with default jobs
+        total_jobs = default_jobs.copy()
     except FileNotFoundError:
         bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default weights.")
-
+    
+    # Process validator submissions
     # Calculating the sum of percent_stake for validators that have voted. Non-voting validators are excluded.
     total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('json'))
+    
     for hotkey, data in validator_data.items():
         if data['json']:
+            validator_jobs = []
+            
+            # Convert to new format if needed
+            if is_old_format(data['json']):
+                validator_jobs = convert_old_to_new_format(data['json'], hotkey)
+            elif is_new_format(data['json']):
+                validator_jobs = data['json']
+            else:
+                bt.logging.error(f"Unknown format in validator {hotkey}'s submission. Skipping.")
+                continue
+                
             stake_percentage = data.get('percent_stake', 1) / total_stake
             vali_weight = total_vali_weight * stake_percentage
-            for source in data['json']:
-                source_name = source['source_name']
-                if source_name not in total_weights:
-                    total_weights[source_name] = {}
-                for label, weight in source['label_weights'].items():
-                    # Skip labels that are longer than 140 characters
-                    if len(label) > 140:
-                        continue
-                    if label in total_weights[source_name]:
-                        total_weights[source_name][label] += vali_weight * weight / normalizer
-                    else:
-                        total_weights[source_name][label] = vali_weight * weight / normalizer
-                        
-                    if total_weights[source_name][label] > 5.0:
-                        total_weights[source_name][label] = 5.0
-
-    # At the end of aggregation, if some label weights are < default weight value, increase them to match. 
-    for source_name, label_weights in total_weights.items():
-        for label, weight in label_weights.items():
-            if weight < DEFAULT_SCALE_FACTOR:
-                label_weights[label] = DEFAULT_SCALE_FACTOR + 0.01
-
-    total_json = [
-        {
-            "source_name": source_name,
-            "label_weights": label_weights
-        }
-        for source_name, label_weights in total_weights.items()
-    ]
-
+            
+            # Apply validator's stake weight to each job
+            for job in validator_jobs:
+                # Scale the weight by validator's influence and normalizer
+                original_weight = job['weight']
+                scaled_weight = (vali_weight * original_weight) / normalizer
+                
+                # Cap weight at 5.0
+                if scaled_weight > 5.0:
+                    scaled_weight = 5.0
+                
+                # Ensure minimum weight threshold
+                if scaled_weight < DEFAULT_SCALE_FACTOR:
+                    scaled_weight = DEFAULT_SCALE_FACTOR + 0.01
+                
+                # Create a new job entry for the aggregated list
+                new_job = job.copy()
+                new_job['weight'] = scaled_weight
+                
+                # Add to total jobs list
+                total_jobs.append(new_job)
+    
+    # Write the aggregated jobs to the output file
     script_dir = os.path.dirname(os.path.abspath(__file__))
     total_path = os.path.join(script_dir, AGGREGATE_JSON_PATH)
     with open(total_path, 'w') as f:
-        json.dump(total_json, f, indent=4)
+        json.dump(total_jobs, f, indent=4)
 
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
-
+#TODO: change to_lookup with new DynamicLookup format
 def to_lookup(json_file: str) -> DataDesirabilityLookup:
     """Converts a json format to a LOOKUP format."""
     with open(json_file, 'r') as file:
