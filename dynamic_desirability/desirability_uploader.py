@@ -5,8 +5,9 @@ import os
 import shutil
 import subprocess
 import bittensor as bt
-from typing import List, Optional, Dict
+from typing import List, Optional, Dict, Any, Union
 from decimal import Decimal, ROUND_HALF_UP
+import datetime as dt
 from common.constants import MAX_LABEL_LENGTH
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
@@ -23,16 +24,177 @@ def run_command(command: List[str]) -> str:
         raise
 
 
-def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None) -> Optional[str]:
+def is_new_format(data: List[Dict]) -> bool:
     """
-    Normalize potentially invalid preferences JSONs and filter out labels longer than 140 characters
+    Determines if the provided data is in the new job format.
+    """
+    if not data:
+        return False
+    
+    # Check if the first item has the expected structure for the new format
+    first_item = data[0]
+    return ("id" in first_item and 
+            "weight" in first_item and 
+            "params" in first_item and 
+            isinstance(first_item["params"], dict))
+
+
+def validate_datetime_format(date_string: str) -> bool:
+    """
+    Validates that a datetime string is in the correct ISO format.
+    """
+    if not date_string:
+        return True
+        
+    try:
+        dt.datetime.fromisoformat(date_string)
+        return True
+    except ValueError:
+        return False
+
+
+def validate_datetime_order(start_date: str, end_date: str) -> bool:
+    """
+    Validates that start_date is before end_date.
+    """
+    if not start_date or not end_date:
+        return True
+        
+    try:
+        start = dt.datetime.fromisoformat(start_date)
+        end = dt.datetime.fromisoformat(end_date)
+        return start < end
+    except ValueError:
+        return False
+
+
+def normalize_new_format_jobs(jobs: List[Dict]) -> Optional[List[Dict]]:
+    """
+    Normalizes jobs in the new format and filters out invalid ones.
+    """
+    valid_jobs = []
+    job_weights = {}
+    
+    for job in jobs:
+        # Basic validation
+        if not all(k in job for k in ["id", "weight", "params"]):
+            bt.logging.warning(f"Skipping job, missing required fields: {job}")
+            continue
+            
+        params = job["params"]
+        if not all(k in params for k in ["job_type", "platform", "topic"]):
+            bt.logging.warning(f"Skipping job, missing required parameters: {params}")
+            continue
+            
+        # Validate job_type
+        if params["job_type"] not in ["keyword", "label"]:
+            bt.logging.warning(f"Skipping job with invalid job_type: {params['job_type']}")
+            continue
+            
+        # Validate platform
+        if params["platform"] not in VALID_SOURCES:
+            bt.logging.warning(f"Skipping job with invalid platform: {params['platform']}")
+            continue
+            
+        # Skip topics that are longer than MAX_LABEL_LENGTH
+        if len(params["topic"]) > MAX_LABEL_LENGTH:
+            bt.logging.warning(f"Skipping topic {params['topic']}: exceeds {MAX_LABEL_LENGTH} character limit")
+            continue
+            
+        # Validate datetime formats if present
+        start_date = params.get("post_start_datetime")
+        end_date = params.get("post_end_datetime")
+        
+        if start_date and not validate_datetime_format(start_date):
+            bt.logging.warning(f"Skipping job with invalid post_start_datetime format: {start_date}")
+            continue
+            
+        if end_date and not validate_datetime_format(end_date):
+            bt.logging.warning(f"Skipping job with invalid post_end_datetime format: {end_date}")
+            continue
+            
+        # Validate datetime order if both are present
+        if start_date and end_date and not validate_datetime_order(start_date, end_date):
+            bt.logging.warning(f"Skipping job where post_start_datetime is not before post_end_datetime")
+            continue
+            
+        # Only include jobs with positive weights
+        weight = Decimal(str(job["weight"]))
+        if weight <= Decimal('0'):
+            bt.logging.warning(f"Skipping job with non-positive weight: {weight}")
+            continue
+            
+        # Store valid job and its weight
+        valid_jobs.append(job)
+        job_weights[job["id"]] = weight
+    
+    if not valid_jobs:
+        bt.logging.error("No valid jobs found after filtering.")
+        return None
+        
+    # Calculate total weight
+    total_weight = sum(job_weights.values())
+    
+    # Normalize weights to sum to 1
+    for job in valid_jobs:
+        original_weight = job_weights[job["id"]]
+        job["weight"] = float(original_weight / total_weight)
+    
+    return valid_jobs
+
+
+def convert_old_to_new_format(data: List[Dict], hotkey: str) -> List[Dict]:
+    """
+    Converts the old preferences format to the new job format.
+    """
+    new_format_jobs = []
+    job_count = 0
+    
+    for source_dict in data:
+        source_name = source_dict.get("source_name", "").lower()
+        
+        if source_name not in VALID_SOURCES or "label_weights" not in source_dict:
+            continue
+            
+        for topic, weight in source_dict["label_weights"].items():
+            # Skip labels that are longer than MAX_LABEL_LENGTH
+            if len(topic) > MAX_LABEL_LENGTH:
+                bt.logging.warning(f"Skipping label {topic}: exceeds {MAX_LABEL_LENGTH} character limit")
+                continue
+                
+            weight_decimal = Decimal(str(weight))
+            if weight_decimal <= Decimal('0'):
+                continue
+                
+            job_count += 1
+            job_id = f"{hotkey}_{job_count}"
+            
+            new_format_jobs.append({
+                "id": job_id,
+                "weight": float(weight_decimal),
+                "params": {
+                    "job_type": "label",
+                    "platform": source_name,
+                    "topic": topic,
+                    "post_start_datetime": None,
+                    "post_end_datetime": None
+                }
+            })
+    
+    return new_format_jobs
+
+
+def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None, hotkey: str = None) -> Optional[str]:
+    """
+    Normalize potentially invalid preferences JSONs and filter out labels longer than 140 characters.
+    Works with both old and new formats.
     """
     if file_path:
         try:
             with open(file_path, 'r') as f:
                 if os.path.getsize(file_path) == 0:
                     bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
-                    return {}
+                    return json.dumps([])
                 data = json.load(f)
         except FileNotFoundError:
             bt.logging.error(f"File not found: {file_path}.")
@@ -40,62 +202,36 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
         except Exception as e:
             bt.logging.error(f"Unexpected error while reading file: {e}.")
             return None
-
     elif desirability_dict:
         data = desirability_dict
-
     else:
         bt.logging.info(f"Empty desirabilities submitted. Submitting empty vote.")
-        return {}
+        return json.dumps([])
 
-    all_label_weights = {}
-    valid_keys = {"source_name", "label_weights"}
+    # Check if the data is in the new format
+    if is_new_format(data):
+        bt.logging.info("Processing new format job configuration")
+        normalized_jobs = normalize_new_format_jobs(data)
+        if normalized_jobs is None:
+            return None
+        return json.dumps(normalized_jobs, indent=4)
     
-    # Taking all positive label weights across all sources that are valid.
-    try:
-        for source_dict in data:
-            source_dict["source_name"] = source_dict["source_name"].lower()
-            source_name = source_dict["source_name"]
-            source_prefix = VALID_SOURCES[source_name]
-
-            if source_dict.keys() == valid_keys and source_name in VALID_SOURCES.keys(): 
-                for label, weight in source_dict["label_weights"].items():
-                    # Skip labels that are longer than 140 characters.
-                    if len(label) > MAX_LABEL_LENGTH:
-                        bt.logging.warning(f"Skipping label {label}: exceeds 140 character limit")
-                        continue
-                        
-                    weight_decimal = Decimal(str(weight))
-                    if weight_decimal > Decimal('0') and label.startswith(source_prefix):
-                        all_label_weights[label] = all_label_weights.get(label, Decimal('0')) + weight_decimal
-    except Exception as e:
-        bt.logging.error(f"Error while parsing your JSON file: {e}.")
+    # Handle old format
+    bt.logging.info("Processing old format preferences, will convert to new format")
+    if not hotkey:
+        bt.logging.error("Hotkey required for converting old format to new format")
         return None
-
-    total_weight = sum(all_label_weights.values())
-    if total_weight <= 0:
-        bt.logging.error(f"Cannot normalize preferences file. Please see docs for correct preferences format.")
+        
+    # Convert old format to new format
+    new_format_jobs = convert_old_to_new_format(data, hotkey)
+    
+    # Apply normalization to the converted jobs
+    normalized_jobs = normalize_new_format_jobs(new_format_jobs)
+    if normalized_jobs is None:
         return None
+        
+    return json.dumps(normalized_jobs, indent=4)
 
-    # Normalize weights to sum to 1
-    normalized_weights = {
-        label: float(weight / total_weight)
-        for label, weight in all_label_weights.items()
-    }
-
-    # Remove sources with no label weights
-    updated_data = []
-    for source in data:
-        updated_label_weights = {
-            label: normalized_weights[label]
-            for label in source["label_weights"]
-            if label in normalized_weights and len(label) <= MAX_LABEL_LENGTH
-        }
-        if updated_label_weights:
-            source["label_weights"] = updated_label_weights
-            updated_data.append(source)
-
-    return json.dumps(updated_data, indent=4)
 
 def upload_to_github(json_content: str, hotkey: str) -> str:
     """Uploads the preferences json to Github."""
@@ -159,11 +295,7 @@ async def run_uploader(args):
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=my_hotkey, netuid=args.netuid)
 
     try:
-
-        json_content = normalize_preferences_json(file_path=args.file_path)
-        if isinstance(json_content, dict):
-            json_content = json.dumps(json_content, indent=4)
-
+        json_content = normalize_preferences_json(file_path=args.file_path, hotkey=my_hotkey)
         if not json_content:
             bt.logging.error("Please see docs for correct format. Not pushing to Github or chain.")
             return
@@ -184,11 +316,10 @@ def run_uploader_from_gravity(config, desirability_dict):
     subtensor = bt.subtensor(config=config)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
     try:
-
-        json_content = normalize_preferences_json(desirability_dict=desirability_dict)
-        if isinstance(json_content, dict):
-            json_content = json.dumps(json_content, indent=4)
-
+        json_content = normalize_preferences_json(
+            desirability_dict=desirability_dict,
+            hotkey=wallet.hotkey.ss58_address
+        )
         if not json_content:
             message = "Please see docs for correct format. Not pushing to Github or chain."
             bt.logging.error(message)
@@ -203,6 +334,7 @@ def run_uploader_from_gravity(config, desirability_dict):
     except Exception as e:
         error_message = f"An error occured: {str(e)}"
         return False, error_message
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Set desirabilities for Gravity.")
