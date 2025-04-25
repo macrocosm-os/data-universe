@@ -1,8 +1,117 @@
 import json
-from typing import Dict
-from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator
-
+from typing import Dict, Optional, List
+from datetime import datetime
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt, field_validator, model_validator
 from common.data import DataLabel, DataSource, StrictBaseModel
+
+
+class JobParams(StrictBaseModel):
+    """Parameters for a job in the new schema format."""
+    
+    job_type: str = Field(
+        description="Type of job, either 'keyword' or 'label'",
+    )
+
+    platform: str = Field(
+        description="Platform for the job, either 'reddit' or 'x'",
+    )
+
+    topic: str = Field(
+        description="Topic or label for the job",
+    )
+
+    post_start_datetime: Optional[str] = Field(
+        default=None, 
+        description="Earliest datetime in UTC that a post will receive score from",
+    )
+
+    post_end_datetime: Optional[str] = Field(
+        default=None, 
+        description="Latest datetime in UTC that a post will receive score from",
+    )
+    
+    @field_validator("post_start_datetime", "post_end_datetime")
+    def validate_datetimes(cls, value):
+        """Validate datetime strings are in correct format if provided."""
+        if value is not None:
+            try:
+                datetime.fromisoformat(value.replace('Z', '+00:00'))
+            except ValueError:
+                raise ValueError(f"Invalid datetime format: {value}. Expected ISO format.")
+        return value
+    
+    @field_validator("post_start_datetime", "post_end_datetime")
+    def validate_datetime_order(cls, value, info):
+        """Validate post_start_datetime is before post_end_datetime."""
+        if info.data.get("post_start_datetime") and info.data.get("post_end_datetime"):
+            start = datetime.fromisoformat(info.data["post_start_datetime"].replace('Z', '+00:00'))
+            end = datetime.fromisoformat(info.data["post_end_datetime"].replace('Z', '+00:00'))
+            if start >= end:
+                raise ValueError("post_start_datetime must be before post_end_datetime")
+        return value
+    
+
+class Job(StrictBaseModel):
+    """Represents a job in the new schema format."""
+    
+    id: str = Field(
+        description="Unique identifier for the job",
+    )
+    weight: float = Field(
+        ge=0, 
+        le=5,
+        description="Weight for the job", 
+    )
+    params: JobParams = Field(
+        description="Parameters for the job, including data platform, time range, etc.",
+    )
+
+
+class JobLookup(StrictBaseModel):
+    """Information about dynamic desirabilities across all Jobs."""
+
+    model_config = ConfigDict(frozen=True)
+
+    job_list: List[Job] = Field(
+        description="The list of all active jobs in Dynamic Desirability.",
+    )
+
+    platform_weights: Dict[str, float] = Field(
+        description="The platform names and associated platform weights. Weights must sum to 1 across all platforms.",
+    )
+
+    default_label_weight: float = Field(
+        default= 0.3,
+        description="The default weight for 'label' job types (subreddit, hashtag).",
+    )
+
+    default_keyword_weight: float = Field(
+        default=0.0,            # increased after keyword scoring
+        description="The default weight for 'keyword' job types.",
+    )
+
+    max_age_in_hours: PositiveInt = Field(
+        description="The maximum age of data that will receive rewards for jobs without a specified time range. Data older than this will score 0.",
+    )
+
+    @field_validator("platform_weights")
+    def validate_platform_weights(
+        cls, platform_weights: Dict[str, float]
+    ) -> Dict[str, float]:
+        """Validates that the platform weights sum to 1.0 exactly."""
+
+        if sum(platform_weights.values()) != 1.0:
+            raise ValueError("The platform weights must sum to 1.0")
+        return platform_weights
+    
+    @model_validator(mode="after")
+    def validate_platform_coverage(self) -> "JobLookup":
+        job_platforms = {job.params.platform for job in self.job_list}
+        weight_platforms = set(self.platform_weights.keys())
+        if not job_platforms.issubset(weight_platforms):
+            raise ValueError(f"All job platforms {job_platforms} must exist in platform_weights {weight_platforms}")
+        return self
+
 
 
 class DataSourceDesirability(StrictBaseModel):
