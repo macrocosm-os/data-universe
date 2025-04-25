@@ -81,6 +81,20 @@ class DataSource(IntEnum):
             DataSource.UNKNOWN_7: 0
         }
         return weights[self]
+    
+    @property
+    def name(self) -> str:
+        """Returns the lowercase string name of the platform for this data source."""
+        names = {
+            DataSource.REDDIT: "reddit",
+            DataSource.X: "x",
+            DataSource.UNKNOWN_3: "unknown_3",
+            DataSource.UNKNOWN_4: "unknown_4",
+            DataSource.UNKNOWN_5: "unknown_5",
+            DataSource.UNKNOWN_6: "unknown_6",
+            DataSource.UNKNOWN_7: "unknown_7"
+        }
+        return names[self]
 
 
 class DataLabel(StrictBaseModel):
