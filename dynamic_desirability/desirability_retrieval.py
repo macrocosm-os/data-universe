@@ -11,7 +11,7 @@ from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data, is_validator
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data import JobParams, Job, JobLookup
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
                                             DEFAULT_JSON_PATH,
@@ -177,33 +177,42 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
 
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
-#TODO: change to_lookup with new DynamicLookup format
-def to_lookup(json_file: str) -> DataDesirabilityLookup:
-    """Converts a json format to a LOOKUP format."""
+def to_lookup(json_file: str) -> JobLookup:
+    """Converts a JSON format to a JobLookup format."""
     with open(json_file, 'r') as file:
-        data = json.load(file)
+        jobs = json.load(file)
 
-    distribution = {}
-
-    for source in data:
-        source_name = source['source_name']
-        label_weights = source['label_weights']
-
-        source_weight = DataSource.REDDIT.weight if source_name.lower() == "reddit" else DataSource.X.weight
-
-        label_scale_factors = {
-            DataLabel(value=label): weight
-            for label, weight in label_weights.items()
-        }
-
-        distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
-            weight=source_weight,
-            default_scale_factor=DEFAULT_SCALE_FACTOR,  # number is subject to change
-            label_scale_factors=label_scale_factors
+    # Get platform weights from DataSource enum
+    platform_weights = {
+        "reddit": DataSource.REDDIT.weight,
+        "x": DataSource.X.weight
+    }
+    
+    # Create proper Job objects
+    job_list = [
+        Job(
+            id=job['id'],
+            weight=job['weight'],
+            params=JobParams(
+                job_type=job['params']['job_type'],
+                platform=job['params']['platform'],
+                topic=job['params']['topic'],
+                post_start_datetime=job['params']['post_start_datetime'],
+                post_end_datetime=job['params']['post_end_datetime']
+            )
         )
+        for job in jobs
+    ]
 
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
-    return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
+    
+    return JobLookup(
+        job_list=job_list,
+        platform_weights=platform_weights,
+        default_label_weight=0.3,
+        default_keyword_weight=0.0,
+        max_age_in_hours=max_age_in_hours
+    )
 
 
 def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
