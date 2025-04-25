@@ -9,7 +9,7 @@ class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""
 
     def __init__(self, model: JobLookup = None):
-        self.model = DataDesirabilityLookup.to_primitive_data_desirability_lookup(model)
+        self.model = model
         self._create_lookup_dicts() #lookup dictionaries for faster access while scoring
         
         
@@ -19,7 +19,7 @@ class DataValueCalculator:
         self.jobs_by_platform_type_topic: Dict[str, Dict[str, Dict[str, List[Job]]]] = {}
         
         for job in self.model.job_list:
-            platform = job.params.platform
+            platform = job.params.platform.lower()
             job_type = job.params.job_type
             topic = job.params.topic
             
@@ -38,30 +38,33 @@ class DataValueCalculator:
     def _calculate_job_score(
         self, 
         job: Job, 
-        data_datetime: dt.datetime,
-        current_time_bucket: TimeBucket,
         data_time_bucket_id: int,
+        current_time_bucket: TimeBucket,
         scorable_bytes: int
     ) -> float:
         """Calculate score based on job parameters and data attributes."""
         # Check time range if specified
         if job.params.post_start_datetime or job.params.post_end_datetime:
-            # Convert ISO string to datetime
-            start_time = None
+            # Convert ISO string to time bucket ID for comparison
+            start_bucket_id = None
             if job.params.post_start_datetime:
                 start_time = dt.datetime.fromisoformat(
                     job.params.post_start_datetime.replace('Z', '+00:00')
                 )
+                start_time = start_time.astimezone(dt.timezone.utc)
+                start_bucket_id = int(start_time.timestamp() // 3600)  # Convert to hours
             
-            end_time = None
+            end_bucket_id = None
             if job.params.post_end_datetime:
                 end_time = dt.datetime.fromisoformat(
                     job.params.post_end_datetime.replace('Z', '+00:00')
                 )
+                end_time = end_time.astimezone(dt.timezone.utc)
+                end_bucket_id = int(end_time.timestamp() // 3600)  # Convert to hours
             
-            # Check if data is within time range
-            if (start_time and data_datetime < start_time) or \
-               (end_time and data_datetime > end_time):
+            # Check if data time bucket is within time range
+            if (start_bucket_id and data_time_bucket_id < start_bucket_id) or \
+               (end_bucket_id and data_time_bucket_id > end_bucket_id):
                 return 0.0
             
             # If within range, reward at 0.5 (subject to change)
@@ -123,8 +126,7 @@ class DataValueCalculator:
         
         matching_jobs = self.jobs_by_platform_type_topic[platform][job_type][label]
         
-        # Calculate time bucket datetime
-        time_bucket_datetime = TimeBucket.to_datetime(scorable_data_entity_bucket.time_bucket_id)
+        data_time_bucket_id = scorable_data_entity_bucket.time_bucket_id
         
         best_score = 0.0
         
@@ -132,9 +134,8 @@ class DataValueCalculator:
         for job in matching_jobs:
             job_score = self._calculate_job_score(
                 job, 
-                time_bucket_datetime,
+                data_time_bucket_id,
                 current_time_bucket,
-                scorable_data_entity_bucket.time_bucket_id,
                 scorable_data_entity_bucket.scorable_bytes
             )
             best_score = max(best_score, job_score)     #TODO: max score or sum of scores?
@@ -142,21 +143,11 @@ class DataValueCalculator:
         # Apply platform weight
         return platform_weight * best_score
 
-    def _scale_factor_for_source_and_label(
-        self, data_source: DataSource, label: Optional[str]
-    ) -> float:
-        """Returns the score scalar for the given data source and label."""
-        data_source_reward = self.model.distribution[data_source]
-        label_factor = data_source_reward.label_scale_factors.get(
-            label, data_source_reward.default_scale_factor
-        )
-        return data_source_reward.weight * label_factor
-
 
     def _scale_factor_for_age(
         self, time_bucket_id: int, current_time_bucket_id: int
     ) -> float:
-        """Returns the score scalar for data ."""
+        """Returns the score scalar for data based on its age."""
         # Data age is scored using a linear depreciation function, where data from now is scored 1 and data
         # that is max_age_in_hours old is scored 0.5.
         # All data older than max_age_in_hours is scored 0.
