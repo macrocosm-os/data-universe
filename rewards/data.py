@@ -106,10 +106,13 @@ class JobLookup(StrictBaseModel):
     
     @model_validator(mode="after")
     def validate_platform_coverage(self) -> "JobLookup":
-        job_platforms = {job.params.platform for job in self.job_list}
-        weight_platforms = set(self.platform_weights.keys())
+        job_platforms = {job.params.platform.lower() for job in self.job_list}
+        weight_platforms = {key.lower() for key in self.platform_weights.keys()}
+        
         if not job_platforms.issubset(weight_platforms):
-            raise ValueError(f"All job platforms {job_platforms} must exist in platform_weights {weight_platforms}")
+            raise ValueError(
+                f"All job platforms {job_platforms} must exist in platform_weights {weight_platforms} (case-insensitive)"
+            )
         return self
 
 
