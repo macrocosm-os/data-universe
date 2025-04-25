@@ -15,20 +15,24 @@ class DataValueCalculator:
         
     def _create_lookup_dicts(self):
         """Create lookup dictionaries for faster job matching."""
-        # Group jobs by platform and topic for quicker lookup
-        self.jobs_by_platform_topic: Dict[str, Dict[str, List[Job]]] = {}
+        # Group jobs by platform, job_type, and topic for quicker lookup
+        self.jobs_by_platform_type_topic: Dict[str, Dict[str, Dict[str, List[Job]]]] = {}
         
         for job in self.model.job_list:
             platform = job.params.platform
+            job_type = job.params.job_type
             topic = job.params.topic
             
-            if platform not in self.jobs_by_platform_topic:
-                self.jobs_by_platform_topic[platform] = {}
+            if platform not in self.jobs_by_platform_type_topic:
+                self.jobs_by_platform_type_topic[platform] = {}
                 
-            if topic not in self.jobs_by_platform_topic[platform]:
-                self.jobs_by_platform_topic[platform][topic] = []
+            if job_type not in self.jobs_by_platform_type_topic[platform]:
+                self.jobs_by_platform_type_topic[platform][job_type] = {}
                 
-            self.jobs_by_platform_topic[platform][topic].append(job)
+            if topic not in self.jobs_by_platform_type_topic[platform][job_type]:
+                self.jobs_by_platform_type_topic[platform][job_type][topic] = []
+                
+            self.jobs_by_platform_type_topic[platform][job_type][topic].append(job)
 
 
     def _calculate_job_score(
@@ -83,14 +87,12 @@ class DataValueCalculator:
         2. Scaled based on matching jobs for the platform and label/topic.
         3. Scaled based on the age of the data or time ranges specified in jobs.
         """
-        # Map DataSource to platform string
-        platform = scorable_data_entity_bucket.source
+        platform = scorable_data_entity_bucket.source.name
         
-        # If this platform isn't in our model, return 0
         if platform not in self.model.platform_weights:
-            return 0.0
+            return 0.0      # Q: needed?
             
-        # Get the platform (data source) weight
+        # Platform / Data Source weight
         platform_weight = self.model.platform_weights[platform]
         
         # Find jobs that match this platform and label
@@ -105,9 +107,13 @@ class DataValueCalculator:
             )
             return default_weight * platform_weight * time_scalar * scorable_data_entity_bucket.scorable_bytes
         
-        # If this platform/label combination doesn't match any jobs
-        if (platform not in self.jobs_by_platform_topic or 
-            label not in self.jobs_by_platform_topic[platform]):
+        # Job type for data_entity_bucket is always "label"
+        job_type = "label"
+        
+        # If this platform/job_type/label combination doesn't match any jobs
+        if (platform not in self.jobs_by_platform_type_topic or 
+            job_type not in self.jobs_by_platform_type_topic[platform] or
+            label not in self.jobs_by_platform_type_topic[platform][job_type]):
             default_weight = self.model.default_label_weight
             time_scalar = self._scale_factor_for_age(
                 scorable_data_entity_bucket.time_bucket_id, 
@@ -115,7 +121,7 @@ class DataValueCalculator:
             )
             return default_weight * platform_weight * time_scalar * scorable_data_entity_bucket.scorable_bytes
         
-        matching_jobs = self.jobs_by_platform_topic[platform][label]
+        matching_jobs = self.jobs_by_platform_type_topic[platform][job_type][label]
         
         # Calculate time bucket datetime
         time_bucket_datetime = TimeBucket.to_datetime(scorable_data_entity_bucket.time_bucket_id)
