@@ -2,23 +2,33 @@ import asyncio
 import hashlib
 import traceback
 import random
+import re
 import bittensor as bt
-from typing import List, Dict, Any, Optional
+from typing import List, Dict, Any, Optional, Tuple
 import datetime as dt
+import os
+import json
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from googleapiclient.discovery import build
+from googleapiclient.errors import HttpError
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
 from scraping.youtube.model import YouTubeContent
-from scraping.youtube import utils
-import json
-import re
+from scraping.youtube import utils as yt_utils
+import isodate
+from dotenv import load_dotenv
 
+load_dotenv()
 
-class YouTubeTranscriptScraper(Scraper):
+bt.logging.set_trace(True)
+class EnhancedYouTubeTranscriptScraper(Scraper):
     """
-    Scrapes transcripts from YouTube videos using the YouTube Transcript API.
-    Also fetches basic metadata about the videos to provide context.
+    Enhanced YouTube scraper that combines:
+    1. Official YouTube Data API for reliable metadata
+    2. youtube-transcript-api for transcript extraction
+
+    This provides better quality metadata and more reliable transcript extraction.
     """
 
     # Maximum number of transcripts to fetch in a single request
@@ -31,10 +41,23 @@ class YouTubeTranscriptScraper(Scraper):
     DEFAULT_CHUNK_SIZE = 3000
 
     def __init__(self):
-        """Initialize the YouTube Transcript Scraper."""
+        """Initialize the Enhanced YouTube Transcript Scraper."""
+        # Get API key from environment variables
+        self.api_key = os.getenv('YOUTUBE_API_KEY')
+        if not self.api_key:
+            bt.logging.warning("YOUTUBE_API_KEY not found in environment variables")
+
         # Track rate limits to avoid API throttling
         self.last_request_time = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=10)
         self.request_interval = dt.timedelta(seconds=1)  # Minimum time between requests
+
+        # Initialize YouTube API client
+        try:
+            self.youtube = build("youtube", "v3", developerKey=self.api_key)
+            bt.logging.info("YouTube API client initialized successfully")
+        except Exception as e:
+            bt.logging.error(f"Failed to initialize YouTube API client: {str(e)}")
+            self.youtube = None
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """
@@ -50,7 +73,7 @@ class YouTubeTranscriptScraper(Scraper):
 
         # Extract channel or video IDs from the labels
         video_ids = []
-        channel_labels = []
+        channel_ids = []
 
         if scrape_config.labels:
             for label in scrape_config.labels:
@@ -59,10 +82,10 @@ class YouTubeTranscriptScraper(Scraper):
                     video_id = label.value.replace('#youtube_v_', '')
                     video_ids.append(video_id)
 
-                # Handle YouTube channel IDs or names
+                # Handle YouTube channel IDs
                 elif label.value.startswith('#youtube_c_'):
-                    channel_label = label.value
-                    channel_labels.append(channel_label)
+                    channel_id = label.value.replace('#youtube_c_', '')
+                    channel_ids.append(channel_id)
 
         # Limit the number of videos to scrape
         max_entities = scrape_config.entity_limit or self.MAX_TRANSCRIPTS_PER_REQUEST
@@ -72,18 +95,16 @@ class YouTubeTranscriptScraper(Scraper):
             return await self._scrape_video_ids(video_ids[:max_entities], scrape_config.date_range)
 
         # Otherwise, try to get videos from the specified channels
-        elif channel_labels:
-            # In a real implementation, you would fetch recent videos from these channels
-            # For this example, we'll just use some placeholder logic
+        elif channel_ids:
             return await self._scrape_channels(
-                channel_labels,
+                channel_ids,
                 max_entities,
                 scrape_config.date_range
             )
-
-        # If no specific videos or channels, get trending videos
         else:
-            return await self._scrape_trending(max_entities, scrape_config.date_range)
+            # If no specific videos or channels are specified, return empty list
+            bt.logging.warning("No video or channel IDs specified in scrape config")
+            return []
 
     async def _scrape_video_ids(self, video_ids: List[str], date_range: DateRange) -> List[DataEntity]:
         """
@@ -103,114 +124,100 @@ class YouTubeTranscriptScraper(Scraper):
             await self._wait_for_rate_limit()
 
             try:
-                # Get the transcript from the YouTube API
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                # Get video metadata from the YouTube API
+                video_metadata = await self._get_video_metadata_from_api(video_id)
 
-                # Prefer English transcript if available, otherwise use the first available
-                try:
-                    transcript = transcript_list.find_transcript(['en'])
-                except NoTranscriptFound:
-                    # Fall back to the first available transcript
-                    transcript = transcript_list.find_generated_transcript()
-
-                # Fetch the transcript data
-                transcript_data = transcript.fetch()
-
-                # Get video metadata (title, channel, etc.) - in a real implementation,
-                # you would use YouTube Data API to get this information
-                video_metadata = await self._get_video_metadata(video_id)
-
-                # Skip if the video is outside the date range
-                video_date = dt.datetime.fromisoformat(video_metadata.get('upload_date', ''))
-                if not self._is_within_date_range(video_date, date_range):
+                if not video_metadata:
+                    bt.logging.warning(f"No metadata found for video ID: {video_id}")
                     continue
 
-                # Create the content object
-                content = YouTubeContent(
-                    video_id=video_id,
-                    title=video_metadata.get('title', ''),
-                    channel_id=video_metadata.get('channel_id', ''),
-                    channel_name=video_metadata.get('channel_name', ''),
-                    upload_date=video_date,
-                    transcript=transcript_data,
-                    url=f"https://www.youtube.com/watch?v={video_id}",
-                    language=transcript.language,
-                    duration_seconds=video_metadata.get('duration_seconds', 0),
-                    compressed=True
+                # Parse the upload date
+                upload_date = dt.datetime.fromisoformat(
+                    video_metadata.get('publishedAt', '').replace('Z', '+00:00')
                 )
 
-                # Compress the transcript to reduce storage size
-                content = self._compress_transcript(content)
+                # Skip if the video is outside the date range
+                if not self._is_within_date_range(upload_date, date_range):
+                    continue
 
-                # Convert to DataEntity
-                results.append(YouTubeContent.to_data_entity(content))
+                # Try to get the transcript
+                try:
+                    transcript_data = await self._get_transcript(video_id)
 
-            except (TranscriptsDisabled, NoTranscriptFound) as e:
-                bt.logging.warning(f"No transcript available for video {video_id}: {str(e)}")
-                continue
+                    if not transcript_data:
+                        bt.logging.warning(f"No transcript found for video ID: {video_id}")
+                        continue
+
+                    # Create the content object
+                    content = YouTubeContent(
+                        video_id=video_id,
+                        title=video_metadata.get('title', ''),
+                        channel_id=video_metadata.get('channelId', ''),
+                        channel_name=video_metadata.get('channelTitle', ''),
+                        upload_date=upload_date,
+                        transcript=transcript_data,
+                        url=f"https://www.youtube.com/watch?v={video_id}",
+                        language=transcript_data[0].get('language', 'en') if transcript_data else 'en',
+                        duration_seconds=video_metadata.get('duration_seconds', 0)
+                    )
+
+                    # Compress the transcript to reduce storage size
+                    content = self._compress_transcript(content)
+
+                    # Convert to DataEntity
+                    results.append(YouTubeContent.to_data_entity(content))
+
+                except (TranscriptsDisabled, NoTranscriptFound) as e:
+                    bt.logging.warning(f"No transcript available for video {video_id}: {str(e)}")
+                    continue
+
             except Exception as e:
                 bt.logging.error(f"Error scraping transcript for video {video_id}: {str(e)}")
                 continue
 
         bt.logging.info(f"Scraped {len(results)} YouTube transcripts")
+        from pprint import pprint # todo remove
+        pprint(results)
         return results
 
-    async def _scrape_channels(self, channel_labels: List[str], max_entities: int, date_range: DateRange) -> List[
+    async def _scrape_channels(self, channel_ids: List[str], max_entities: int, date_range: DateRange) -> List[
         DataEntity]:
         """
         Scrape transcripts from specified YouTube channels.
 
         Args:
-            channel_labels: List of channel labels.
+            channel_ids: List of YouTube channel IDs.
             max_entities: Maximum number of videos to scrape.
             date_range: Date range for filtering.
 
         Returns:
             List of DataEntity objects.
         """
-        # In a real implementation, you would use the YouTube Data API to:
-        # 1. Get channel IDs from labels
-        # 2. Get recent videos from those channels
-        # 3. Filter by date range
-        # 4. Get transcripts for those videos
-
-        # For the example, we'll use a placeholder implementation
-        # that simulates fetching videos from channels
         results = []
-        channel_videos = await self._get_channel_videos(channel_labels, date_range)
+        total_videos = 0
 
-        # Limit to max_entities
-        video_ids = channel_videos[:max_entities]
+        for channel_id in channel_ids:
+            if total_videos >= max_entities:
+                break
 
-        if video_ids:
-            results = await self._scrape_video_ids(video_ids, date_range)
+            try:
+                # Get videos from the channel
+                channel_videos = await self._get_channel_videos(channel_id, date_range, max_entities - total_videos)
+
+                if not channel_videos:
+                    bt.logging.warning(f"No videos found for channel ID: {channel_id}")
+                    continue
+
+                # Scrape each video
+                channel_results = await self._scrape_video_ids([v['id'] for v in channel_videos], date_range)
+                results.extend(channel_results)
+                total_videos += len(channel_results)
+
+            except Exception as e:
+                bt.logging.error(f"Error scraping channel {channel_id}: {str(e)}")
+                continue
 
         return results
-
-    async def _scrape_trending(self, max_entities: int, date_range: DateRange) -> List[DataEntity]:
-        """
-        Scrape transcripts from trending YouTube videos.
-
-        Args:
-            max_entities: Maximum number of videos to scrape.
-            date_range: Date range for filtering.
-
-        Returns:
-            List of DataEntity objects.
-        """
-        # In a real implementation, you would use the YouTube Data API to:
-        # 1. Get trending videos
-        # 2. Filter by date range
-        # 3. Get transcripts for those videos
-
-        # For the example, we'll use a placeholder implementation
-        # that simulates fetching trending videos
-        video_ids = await self._get_trending_videos(date_range)
-
-        # Limit to max_entities
-        video_ids = video_ids[:max_entities]
-
-        return await self._scrape_video_ids(video_ids, date_range)
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """
@@ -242,64 +249,82 @@ class YouTubeTranscriptScraper(Scraper):
                 )
                 continue
 
-            # Validate the content by checking if the transcript is still available
+            # Validate the content by checking metadata and transcript
             attempt = 0
             while attempt < self.MAX_VALIDATION_ATTEMPTS:
                 try:
                     # Respect rate limiting
                     await self._wait_for_rate_limit()
 
-                    # Get the transcript from the YouTube API
-                    transcript_list = YouTubeTranscriptApi.list_transcripts(content_to_validate.video_id)
+                    # Verify metadata from the API
+                    video_metadata = await self._get_video_metadata_from_api(content_to_validate.video_id)
 
-                    # Try to get the same language transcript
+                    if not video_metadata:
+                        results.append(
+                            ValidationResult(
+                                is_valid=False,
+                                reason="Video not found or API error",
+                                content_size_bytes_validated=entity.content_size_bytes
+                            )
+                        )
+                        break
+
+                    # Verify basic metadata (title, channel)
+                    metadata_valid = self._verify_metadata(video_metadata, content_to_validate)
+
+                    if not metadata_valid:
+                        results.append(
+                            ValidationResult(
+                                is_valid=False,
+                                reason="Metadata does not match",
+                                content_size_bytes_validated=entity.content_size_bytes
+                            )
+                        )
+                        break
+
+                    # Verify transcript
                     try:
-                        transcript = transcript_list.find_transcript([content_to_validate.language])
-                    except NoTranscriptFound:
-                        # Fall back to any available transcript
-                        transcript = transcript_list.find_generated_transcript()
+                        transcript_data = await self._get_transcript(content_to_validate.video_id)
+                        transcript_valid = self._verify_transcript(transcript_data, content_to_validate.transcript)
 
-                    # Fetch the transcript data
-                    transcript_data = transcript.fetch()
+                        if transcript_valid:
+                            results.append(
+                                ValidationResult(
+                                    is_valid=True,
+                                    reason="Video validated successfully",
+                                    content_size_bytes_validated=entity.content_size_bytes
+                                )
+                            )
+                        else:
+                            results.append(
+                                ValidationResult(
+                                    is_valid=False,
+                                    reason="Transcript content does not match",
+                                    content_size_bytes_validated=entity.content_size_bytes
+                                )
+                            )
+                        break
 
-                    # If we got here, the transcript exists
-                    # Now we need to verify it matches what we have stored
-                    if self._verify_transcript(transcript_data, content_to_validate):
-                        results.append(
-                            ValidationResult(
-                                is_valid=True,
-                                reason="Transcript validated successfully",
-                                content_size_bytes_validated=entity.content_size_bytes
+                    except (TranscriptsDisabled, NoTranscriptFound):
+                        # If content has empty transcript, this is valid
+                        if not content_to_validate.transcript:
+                            results.append(
+                                ValidationResult(
+                                    is_valid=True,
+                                    reason="Correctly identified video without transcript",
+                                    content_size_bytes_validated=entity.content_size_bytes
+                                )
                             )
-                        )
-                    else:
-                        results.append(
-                            ValidationResult(
-                                is_valid=False,
-                                reason="Transcript content does not match",
-                                content_size_bytes_validated=entity.content_size_bytes
+                        else:
+                            results.append(
+                                ValidationResult(
+                                    is_valid=False,
+                                    reason="Transcript no longer available",
+                                    content_size_bytes_validated=entity.content_size_bytes
+                                )
                             )
-                        )
-                    break
-                except (TranscriptsDisabled, NoTranscriptFound):
-                    # If no transcript found, check if this is a valid error
-                    if self._is_valid_no_transcript_error(content_to_validate):
-                        results.append(
-                            ValidationResult(
-                                is_valid=True,
-                                reason="Correctly identified video without transcript",
-                                content_size_bytes_validated=entity.content_size_bytes
-                            )
-                        )
-                    else:
-                        results.append(
-                            ValidationResult(
-                                is_valid=False,
-                                reason="Transcript no longer available",
-                                content_size_bytes_validated=entity.content_size_bytes
-                            )
-                        )
-                    break
+                        break
+
                 except Exception as e:
                     # Only retry on temporary errors
                     if "429" in str(e) or "timeout" in str(e).lower():
@@ -348,7 +373,7 @@ class YouTubeTranscriptScraper(Scraper):
 
         for entity in entities:
             # Extract the video ID from the URL
-            video_id = utils.extract_video_id(entity.get('url', ''))
+            video_id = yt_utils.extract_video_id(entity.get('url', ''))
             if not video_id:
                 validation_results.append(False)
                 continue
@@ -357,31 +382,37 @@ class YouTubeTranscriptScraper(Scraper):
                 # Respect rate limiting
                 await self._wait_for_rate_limit()
 
-                # Get the transcript from the YouTube API
-                transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
+                # Verify metadata
+                video_metadata = await self._get_video_metadata_from_api(video_id)
+                if not video_metadata:
+                    validation_results.append(False)
+                    continue
 
-                # Try to get any transcript
-                transcript = transcript_list.find_generated_transcript()
-
-                # Fetch the transcript data
-                transcript_data = transcript.fetch()
-
-                # Check if the text field contains valid transcript content
+                # Check if the text field contains valid content
                 if entity.get('text'):
-                    # Simple verification by checking if key phrases from the transcript
-                    # appear in the stored text
-                    text_matches = self._verify_hf_transcript_text(entity.get('text'), transcript_data)
-                    validation_results.append(text_matches)
+                    # Verify transcript
+                    try:
+                        transcript_data = await self._get_transcript(video_id)
+                        if transcript_data:
+                            # Extract full text from transcript
+                            actual_text = " ".join([item.get('text', '') for item in transcript_data])
+
+                            # Compare with stored text (simplified comparison)
+                            similarity = self._calculate_text_similarity(actual_text, entity.get('text', ''))
+                            validation_results.append(similarity >= 0.7)  # 70% similarity threshold
+                        else:
+                            validation_results.append(False)
+                    except (TranscriptsDisabled, NoTranscriptFound):
+                        # If entity indicates no transcript, this is valid
+                        if entity.get('status') == 'no_transcript':
+                            validation_results.append(True)
+                        else:
+                            validation_results.append(False)
                 else:
                     validation_results.append(False)
 
-            except (TranscriptsDisabled, NoTranscriptFound):
-                # If the entity correctly indicates no transcript, mark as valid
-                if entity.get('status') == 'no_transcript':
-                    validation_results.append(True)
-                else:
-                    validation_results.append(False)
-            except Exception:
+            except Exception as e:
+                bt.logging.error(f"Error validating video {video_id}: {str(e)}")
                 validation_results.append(False)
 
         # Calculate the validation percentage
@@ -408,7 +439,7 @@ class YouTubeTranscriptScraper(Scraper):
             return content
 
         # Convert transcript to a more compact format
-        full_text = " ".join([item['text'] for item in content.transcript])
+        full_text = " ".join([item.get('text', '') for item in content.transcript])
 
         # Remove redundant whitespace
         full_text = re.sub(r'\s+', ' ', full_text).strip()
@@ -442,7 +473,7 @@ class YouTubeTranscriptScraper(Scraper):
         compressed_transcript = []
         total_duration = content.duration_seconds or sum(item.get('duration', 0) for item in content.transcript)
 
-        if chunks:
+        if chunks and total_duration > 0:
             chunk_duration = total_duration / len(chunks)
 
             for i, chunk in enumerate(chunks):
@@ -452,7 +483,7 @@ class YouTubeTranscriptScraper(Scraper):
                     'duration': chunk_duration
                 })
 
-        # Update the content with compressed transcript
+        # Return the content with compressed transcript
         return YouTubeContent(
             video_id=content.video_id,
             title=content.title,
@@ -462,95 +493,60 @@ class YouTubeTranscriptScraper(Scraper):
             transcript=compressed_transcript,
             url=content.url,
             language=content.language,
-            duration_seconds=content.duration_seconds,
-            compressed=True
+            duration_seconds=content.duration_seconds
         )
 
-    def _verify_transcript(self, actual_transcript: List[Dict[str, Any]], content_to_validate: YouTubeContent) -> bool:
+    def _verify_metadata(self, api_metadata: Dict[str, Any], content_to_validate: YouTubeContent) -> bool:
         """
-        Verify if the actual transcript matches the stored transcript.
+        Verify if the metadata from the API matches the stored metadata.
 
         Args:
-            actual_transcript: The transcript from the YouTube API.
+            api_metadata: The metadata from the YouTube API.
             content_to_validate: The YouTubeContent to validate.
 
         Returns:
-            True if the transcripts match sufficiently, False otherwise.
+            True if the metadata matches sufficiently, False otherwise.
         """
-        # If the stored transcript is compressed, we need a different comparison approach
-        if content_to_validate.compressed:
-            return self._verify_compressed_transcript(actual_transcript, content_to_validate.transcript)
-
-        # For uncompressed transcripts, compare directly
-        # Allow for small differences in timing and formatting
-        if len(actual_transcript) != len(content_to_validate.transcript):
+        # Check title (allow for minor differences)
+        if not self._texts_are_similar(api_metadata.get('title', ''), content_to_validate.title, threshold=0.8):
             return False
 
-        # Check a sample of the transcript (beginning, middle, end)
-        indices_to_check = [
-            0,
-            len(actual_transcript) // 2,
-            len(actual_transcript) - 1
-        ]
+        # Check channel ID (must match exactly)
+        if api_metadata.get('channelId', '') != content_to_validate.channel_id:
+            return False
 
-        for idx in indices_to_check:
-            actual_text = actual_transcript[idx]['text'].strip()
-            stored_text = content_to_validate.transcript[idx]['text'].strip()
-
-            # Compare text content (allowing for minor differences)
-            if not self._texts_are_similar(actual_text, stored_text):
-                return False
+        # Check channel name (allow for minor differences)
+        if not self._texts_are_similar(api_metadata.get('channelTitle', ''), content_to_validate.channel_name,
+                                       threshold=0.8):
+            return False
 
         return True
 
-    def _verify_compressed_transcript(self, actual_transcript: List[Dict[str, Any]],
-                                      compressed_transcript: List[Dict[str, Any]]) -> bool:
+    def _verify_transcript(self, api_transcript: List[Dict[str, Any]], stored_transcript: List[Dict[str, Any]]) -> bool:
         """
-        Verify if a compressed transcript matches the actual transcript.
+        Verify if the transcript from the API matches the stored transcript.
 
         Args:
-            actual_transcript: The full transcript from the YouTube API.
-            compressed_transcript: The compressed transcript to validate.
+            api_transcript: The transcript from the YouTube API.
+            stored_transcript: The transcript to validate.
 
         Returns:
             True if the transcripts match sufficiently, False otherwise.
         """
-        # Extract the full text from the actual transcript
-        actual_full_text = " ".join([item['text'] for item in actual_transcript]).strip()
-        actual_full_text = re.sub(r'\s+', ' ', actual_full_text)
+        # Extract the full text from the transcripts
+        api_full_text = " ".join([item.get('text', '') for item in api_transcript])
+        stored_full_text = " ".join([item.get('text', '') for item in stored_transcript])
 
-        # Extract the full text from the compressed transcript
-        compressed_full_text = " ".join([item['text'] for item in compressed_transcript]).strip()
-        compressed_full_text = re.sub(r'\s+', ' ', compressed_full_text)
+        # Clean up whitespace
+        api_full_text = re.sub(r'\s+', ' ', api_full_text).strip()
+        stored_full_text = re.sub(r'\s+', ' ', stored_full_text).strip()
 
-        # Check if the compressed text is a subset of the actual text
-        # or if they're similar enough
-        return self._texts_are_similar(actual_full_text, compressed_full_text, threshold=0.7)
-
-    def _verify_hf_transcript_text(self, stored_text: str, actual_transcript: List[Dict[str, Any]]) -> bool:
-        """
-        Verify if the text stored in HuggingFace matches the actual transcript.
-
-        Args:
-            stored_text: The text stored in the HuggingFace dataset.
-            actual_transcript: The transcript from the YouTube API.
-
-        Returns:
-            True if the text matches the transcript sufficiently, False otherwise.
-        """
-        # Extract the full text from the actual transcript
-        actual_full_text = " ".join([item['text'] for item in actual_transcript]).strip()
-        actual_full_text = re.sub(r'\s+', ' ', actual_full_text)
-
-        # Clean up the stored text
-        stored_text = re.sub(r'\s+', ' ', stored_text).strip()
-
-        # Check if the texts are similar enough
-        return self._texts_are_similar(actual_full_text, stored_text, threshold=0.7)
+        # Compare the texts (allow for compression differences)
+        return self._texts_are_similar(api_full_text, stored_full_text, threshold=0.7)
 
     def _texts_are_similar(self, text1: str, text2: str, threshold: float = 0.8) -> bool:
         """
-        Check if two texts are similar enough.
+        Check if two texts are similar enough using a simplified approach.
 
         Args:
             text1: First text.
@@ -560,31 +556,48 @@ class YouTubeTranscriptScraper(Scraper):
         Returns:
             True if the texts are similar enough, False otherwise.
         """
+        if not text1 or not text2:
+            return False
+
         # Simple approach: check if enough words from one text appear in the other
         words1 = set(text1.lower().split())
         words2 = set(text2.lower().split())
 
-        # Calculate overlap ratio
         if not words1 or not words2:
             return False
 
+        # Calculate overlap ratio
         overlap = len(words1.intersection(words2))
         similarity = overlap / max(len(words1), len(words2))
 
         return similarity >= threshold
 
-    def _is_valid_no_transcript_error(self, content: YouTubeContent) -> bool:
+    def _calculate_text_similarity(self, text1: str, text2: str) -> float:
         """
-        Check if a NoTranscriptFound error is valid for this content.
+        Calculate similarity between two texts using a word-based approach.
 
         Args:
-            content: The YouTubeContent.
+            text1: First text.
+            text2: Second text.
 
         Returns:
-            True if the error is valid, False otherwise.
+            Similarity score between 0 and 1.
         """
-        # If the content indicates it has no transcript, the error is valid
-        return content.transcript is None or len(content.transcript) == 0
+        if not text1 or not text2:
+            return 0.0
+
+        # Normalize and split into words
+        words1 = set(re.sub(r'[^\w\s]', '', text1.lower()).split())
+        words2 = set(re.sub(r'[^\w\s]', '', text2.lower()).split())
+
+        if not words1 or not words2:
+            return 0.0
+
+        # Calculate Jaccard similarity
+        intersection = len(words1.intersection(words2))
+        union = len(words1.union(words2))
+
+        return intersection / union if union > 0 else 0.0
 
     def _is_within_date_range(self, date: dt.datetime, date_range: DateRange) -> bool:
         """
@@ -610,82 +623,496 @@ class YouTubeTranscriptScraper(Scraper):
 
         self.last_request_time = dt.datetime.now(dt.timezone.utc)
 
-    async def _get_video_metadata(self, video_id: str) -> Dict[str, Any]:
+    async def _get_video_metadata_from_api(self, video_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get metadata for a YouTube video.
+        Get metadata for a YouTube video using the official API.
 
         Args:
             video_id: The YouTube video ID.
 
         Returns:
-            Dictionary containing video metadata.
+            Dictionary containing video metadata or None if not found.
         """
-        # In a real implementation, you would use the YouTube Data API
-        # For this example, we'll simulate a response
+        if not self.youtube or not self.api_key:
+            bt.logging.warning("YouTube API client not initialized or API key missing")
+            return self._get_fallback_video_metadata(video_id)
+
+        try:
+            # Make API request
+            response = self.youtube.videos().list(
+                id=video_id,
+                part="snippet,contentDetails,statistics"
+            ).execute()
+
+            if not response.get("items"):
+                bt.logging.warning(f"Video {video_id} not found or private")
+                return None
+
+            item = response["items"][0]
+            snippet = item.get("snippet", {})
+            content_details = item.get("contentDetails", {})
+
+            # Convert ISO 8601 duration to seconds
+            duration_str = content_details.get("duration", "PT0S")
+            duration_seconds = int(isodate.parse_duration(duration_str).total_seconds())
+
+            return {
+                "title": snippet.get("title", ""),
+                "channelId": snippet.get("channelId", ""),
+                "channelTitle": snippet.get("channelTitle", ""),
+                "publishedAt": snippet.get("publishedAt", ""),
+                "description": snippet.get("description", ""),
+                "duration_seconds": duration_seconds
+            }
+
+        except HttpError as e:
+            bt.logging.error(f"YouTube API error for video {video_id}: {str(e)}")
+            if "API key not valid" in str(e) or "quota" in str(e).lower():
+                # Fall back to non-API method if there are key or quota issues
+                return self._get_fallback_video_metadata(video_id)
+            return None
+        except Exception as e:
+            bt.logging.error(f"Error getting video metadata for {video_id}: {str(e)}")
+            return None
+
+    def _get_fallback_video_metadata(self, video_id: str) -> Dict[str, Any]:
+        """
+        Generate fallback metadata when the API is unavailable.
+        This is used only when the API key is invalid or quota is exceeded.
+
+        Args:
+            video_id: The YouTube video ID.
+
+        Returns:
+            Dictionary with basic metadata.
+        """
+        bt.logging.warning(f"Using fallback metadata generation for video {video_id}")
 
         # Create a deterministic but random-looking date based on the video ID
         hash_value = int(hashlib.md5(video_id.encode()).hexdigest(), 16)
-        days_ago = hash_value % 30  # 0-29 days ago
+        days_ago = hash_value % 365  # 0-364 days ago
         upload_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=days_ago)
 
         return {
-            'title': f"Video {video_id}",
-            'channel_id': f"UC{video_id[:10]}",
-            'channel_name': f"Channel {video_id[:5]}",
-            'upload_date': upload_date.isoformat(),
-            'duration_seconds': hash_value % 1800  # 0-1799 seconds (up to 30 minutes)
+            "title": f"Video {video_id}",
+            "channelId": f"UC{video_id[:10]}",
+            "channelTitle": f"Channel {video_id[:5]}",
+            "publishedAt": upload_date.isoformat(),
+            "description": f"Description for video {video_id}",
+            "duration_seconds": hash_value % 600  # 0-599 seconds
         }
 
-    async def _get_channel_videos(self, channel_labels: List[str], date_range: DateRange) -> List[str]:
+    async def _get_transcript(self, video_id: str) -> List[Dict[str, Any]]:
         """
-        Get video IDs from specified channels.
+        Get transcript for a YouTube video using the youtube-transcript-api.
 
         Args:
-            channel_labels: List of channel labels.
-            date_range: Date range for filtering.
+            video_id: The YouTube video ID.
 
         Returns:
-            List of video IDs.
+            List of transcript entries or empty list if no transcript is available.
         """
-        # In a real implementation, you would use the YouTube Data API
-        # For this example, we'll simulate a response with some hardcoded video IDs
-        # that are known to have transcripts
+        try:
+            # Get the transcript list for the video
+            transcript_list = YouTubeTranscriptApi.list_transcripts(video_id)
 
-        # Some example videos with transcripts
-        example_videos = [
-            "kJQP7kiw5Fk",  # "Despacito" by Luis Fonsi
-            "JGwWNGJdvx8",  # "Shape of You" by Ed Sheeran
-            "RgKAFK5djSk",  # "See You Again" by Wiz Khalifa
-            "9bZkp7q19f0",  # "Gangnam Style" by PSY
-            "OPf0YbXqDm0",  # "Uptown Funk" by Mark Ronson ft. Bruno Mars
-            "hT_nvWreIhg",  # "Counting Stars" by OneRepublic
-            "YQHsXMglC9A",  # "Hello" by Adele
-            "CevxZvSJLk8",  # "Roar" by Katy Perry
-            "JRfuAukYTKg",  # "Sorry" by Justin Bieber
-            "nfWlot6h_JM"  # "Shake It Off" by Taylor Swift
-        ]
+            # Try to get English transcript first
+            try:
+                transcript = transcript_list.find_transcript(['en'])
+            except NoTranscriptFound:
+                # Fall back to any available transcript
+                transcript = transcript_list.find_generated_transcript()
 
-        # Shuffle the list deterministically based on the first channel label
-        if channel_labels:
-            seed = int(hashlib.md5(channel_labels[0].encode()).hexdigest(), 16)
-            random.seed(seed)
-            random.shuffle(example_videos)
+            # Fetch the transcript data
+            fetched_transcript = transcript.fetch()
 
-        return example_videos
+            # Convert to raw data format (list of dicts with text, start, duration)
+            return fetched_transcript.to_raw_data()
 
-    async def _get_trending_videos(self, date_range: DateRange) -> List[str]:
+        except (TranscriptsDisabled, NoTranscriptFound) as e:
+            bt.logging.info(f"No transcript available for video {video_id}: {str(e)}")
+            raise
+        except Exception as e:
+            bt.logging.error(f"Error getting transcript for video {video_id}: {str(e)}")
+            bt.logging.error(traceback.format_exc())
+            return []
+    async def _get_channel_videos(self, channel_id: str, date_range: DateRange, max_results: int = 10) -> List[
+        Dict[str, Any]]:
         """
-        Get trending video IDs.
+        Get videos from a specific channel using the YouTube API.
 
         Args:
+            channel_id: The YouTube channel ID.
             date_range: Date range for filtering.
+            max_results: Maximum number of videos to return.
 
         Returns:
-            List of video IDs.
+            List of video metadata dictionaries.
         """
-        # In a real implementation, you would use the YouTube Data API
-        # For this example, we'll return the same example videos
-        return await self._get_channel_videos(["#trending"], date_range)
+        if not self.youtube or not self.api_key:
+            bt.logging.warning("YouTube API client not initialized or API key missing")
+            return self._get_fallback_channel_videos(channel_id, max_results)
+
+        try:
+            # First get the channel's uploads playlist ID
+            channels_response = self.youtube.channels().list(
+                id=channel_id,
+                part="contentDetails"
+            ).execute()
+
+            if not channels_response.get("items"):
+                bt.logging.warning(f"Channel {channel_id} not found")
+                return []
+
+            uploads_playlist_id = channels_response["items"][0]["contentDetails"]["relatedPlaylists"]["uploads"]
+
+            # Then get the videos from that playlist
+            videos = []
+            page_token = None
+
+            while len(videos) < max_results:
+                playlist_response = self.youtube.playlistItems().list(
+                    playlistId=uploads_playlist_id,
+                    part="snippet,contentDetails",
+                    maxResults=min(50, max_results - len(videos)),
+                    pageToken=page_token
+                ).execute()
+
+                # Process each video item
+                for item in playlist_response.get("items", []):
+                    video_date_str = item["snippet"]["publishedAt"]
+                    video_date = dt.datetime.fromisoformat(video_date_str.replace('Z', '+00:00'))
+
+                    # Skip videos outside our date range
+                    if not date_range.contains(video_date):
+                        continue
+
+                    video_id = item["contentDetails"]["videoId"]
+                    videos.append({
+                        "id": video_id,
+                        "title": item["snippet"]["title"],
+                        "publishedAt": video_date_str,
+                        "channelId": channel_id,
+                        "channelTitle": item["snippet"]["channelTitle"]
+                    })
+
+                    if len(videos) >= max_results:
+                        break
+
+                # Get the next page token, if any
+                page_token = playlist_response.get("nextPageToken")
+                if not page_token:
+                    break
+
+            return videos
+
+        except HttpError as e:
+            bt.logging.error(f"YouTube API error for channel {channel_id}: {str(e)}")
+            if "API key not valid" in str(e) or "quota" in str(e).lower():
+                # Fall back to non-API method if there are key or quota issues
+                return self._get_fallback_channel_videos(channel_id, max_results)
+            return []
+        except Exception as e:
+            bt.logging.error(f"Error getting videos for channel {channel_id}: {str(e)}")
+            return []
+
+# Test utility methods
+
+async def test_scrape_video():
+    """Test function for scraping a specific video."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Test video ID (Rick Astley - Never Gonna Give You Up)
+    video_id = "dQw4w9WgXcQ"
+
+    # Create a date range that includes all videos
+    date_range = DateRange(
+        start=dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+        end=dt.datetime.now(dt.timezone.utc)
+    )
+
+    # Scrape the video
+    entities = await scraper._scrape_video_ids([video_id], date_range)
+
+    # Print the results
+    bt.logging.info(f"Scraped {len(entities)} entities")
+    for entity in entities:
+        content = YouTubeContent.from_data_entity(entity)
+        bt.logging.info(f"Video: {content.title}")
+        bt.logging.info(f"Channel: {content.channel_name}")
+        bt.logging.info(f"Transcript length: {len(content.transcript)}")
+        if content.transcript:
+            bt.logging.info(f"First transcript chunk: {content.transcript[0]['text'][:100]}...")
+
+    return entities
+
+
+async def test_scrape_channel():
+    """Test function for scraping a channel."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Test channel ID (TED channel)
+    channel_id = "UCAuUUnT6oDeKwE6v1NGQxug"
+
+    # Create a date range that includes recent videos
+    date_range = DateRange(
+        start=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=365),
+        end=dt.datetime.now(dt.timezone.utc)
+    )
+
+    # Scrape the channel
+    entities = await scraper._scrape_channels([channel_id], 3, date_range)
+
+    # Print the results
+    bt.logging.info(f"Scraped {len(entities)} entities from channel")
+    for entity in entities:
+        content = YouTubeContent.from_data_entity(entity)
+        bt.logging.info(f"Video: {content.title}")
+        bt.logging.info(f"Channel: {content.channel_name}")
+        bt.logging.info(f"Transcript length: {len(content.transcript)}")
+
+    return entities
+
+
+async def test_validate_entity(entity: DataEntity):
+    """Test function for validating a specific entity."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Validate the entity
+    results = await scraper.validate([entity])
+
+    # Print the results
+    bt.logging.info(f"Validation results: {results}")
+
+    return results
+
+
+async def test_full_pipeline():
+    """Test the full scraping and validation pipeline."""
+    # 1. Scrape a specific video
+    bt.logging.info("STEP 1: Scraping a specific video")
+    entities = await test_scrape_video()
+
+    if not entities:
+        bt.logging.error("No entities scraped, can't continue with validation")
+        return
+
+    # 2. Validate the first entity
+    bt.logging.info("\nSTEP 2: Validating the scraped entity")
+    await test_validate_entity(entities[0])
+
+    # 3. Test channel scraping
+    bt.logging.info("\nSTEP 3: Scraping a channel")
+    await test_scrape_channel()
+
+    bt.logging.info("\nAll tests completed!")
+
+
+import asyncio
+import datetime as dt
+import bittensor as bt
+from common.date_range import DateRange
+from common.data import DataEntity
+from scraping.youtube.model import YouTubeContent
+
+
+async def test_scrape_video():
+    """Test function for scraping a specific video."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Test video ID (Rick Astley - Never Gonna Give You Up)
+    video_id = "dQw4w9WgXcQ"
+
+    # Create a date range that includes all videos
+    date_range = DateRange(
+        start=dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+        end=dt.datetime.now(dt.timezone.utc)
+    )
+
+    # Scrape the video
+    entities = await scraper._scrape_video_ids([video_id], date_range)
+
+    # Print the results
+    bt.logging.info(f"Scraped {len(entities)} entities")
+    for entity in entities:
+        content = YouTubeContent.from_data_entity(entity)
+        bt.logging.info(f"Video: {content.title}")
+        bt.logging.info(f"Channel: {content.channel_name}")
+        bt.logging.info(f"Transcript length: {len(content.transcript)}")
+        if content.transcript:
+            bt.logging.info(f"First transcript chunk: {content.transcript[0]['text'][:100]}...")
+
+    return entities
+
+
+async def test_scrape_channel():
+    """Test function for scraping a channel."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Test channel ID (TED channel)
+    channel_id = "UCAuUUnT6oDeKwE6v1NGQxug"
+
+    # Create a date range that includes recent videos
+    date_range = DateRange(
+        start=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=365),
+        end=dt.datetime.now(dt.timezone.utc)
+    )
+
+    # Scrape the channel
+    entities = await scraper._scrape_channels([channel_id], 3, date_range)
+
+    # Print the results
+    bt.logging.info(f"Scraped {len(entities)} entities from channel")
+    for entity in entities:
+        content = YouTubeContent.from_data_entity(entity)
+        bt.logging.info(f"Video: {content.title}")
+        bt.logging.info(f"Channel: {content.channel_name}")
+        bt.logging.info(f"Transcript length: {len(content.transcript)}")
+
+    return entities
+
+
+async def test_validate_entity(entity: DataEntity):
+    """Test function for validating a specific entity."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Validate the entity
+    results = await scraper.validate([entity])
+
+    # Print the results
+    bt.logging.info(f"Validation results: {results}")
+
+    return results
+
+
+async def test_full_pipeline():
+    """Test the full scraping and validation pipeline."""
+    # 1. Scrape a specific video
+    bt.logging.info("STEP 1: Scraping a specific video")
+    entities = await test_scrape_video()
+
+    if not entities:
+        bt.logging.error("No entities scraped, can't continue with validation")
+        return
+
+    # 2. Validate the first entity
+    bt.logging.info("\nSTEP 2: Validating the scraped entity")
+    await test_validate_entity(entities[0])
+
+    # 3. Test channel scraping
+    bt.logging.info("\nSTEP 3: Scraping a channel")
+    await test_scrape_channel()
+
+    bt.logging.info("\nAll tests completed!")
+
+
+async def test_scrape_specific_channel():
+    """Test function for scraping a specific channel."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Get channel ID from user input
+    channel_id = input("Enter YouTube channel ID: ")
+
+    # Create a date range for the past year
+    date_range = DateRange(
+        start=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=365),
+        end=dt.datetime.now(dt.timezone.utc)
+    )
+
+    # Get number of videos to scrape
+    try:
+        max_videos = int(input("Enter maximum number of videos to scrape (1-10): "))
+        max_videos = max(1, min(10, max_videos))  # Clamp between 1 and 10
+    except ValueError:
+        max_videos = 3  # Default value
+
+    bt.logging.info(f"Scraping up to {max_videos} videos from channel {channel_id}")
+
+    # Scrape the channel
+    entities = await scraper._scrape_channels([channel_id], max_videos, date_range)
+
+    # Print the results
+    bt.logging.info(f"Scraped {len(entities)} entities from channel")
+    for entity in entities:
+        content = YouTubeContent.from_data_entity(entity)
+        bt.logging.info(f"Video: {content.title}")
+        bt.logging.info(f"Channel: {content.channel_name}")
+        bt.logging.info(f"Transcript length: {len(content.transcript)}")
+        if content.transcript:
+            bt.logging.info(f"First transcript chunk: {content.transcript[0]['text'][:100]}...")
+
+    return entities
+
+
+async def test_scrape_specific_video():
+    """Test function for scraping a specific video."""
+    # Create an instance of the scraper
+    scraper = EnhancedYouTubeTranscriptScraper()
+
+    # Get video ID from user input
+    video_id = input("Enter YouTube video ID: ")
+
+    # Create a date range that includes all videos
+    date_range = DateRange(
+        start=dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+        end=dt.datetime.now(dt.timezone.utc)
+    )
+
+    bt.logging.info(f"Scraping video {video_id}")
+
+    # Scrape the video
+    entities = await scraper._scrape_video_ids([video_id], date_range)
+
+    # Print the results
+    bt.logging.info(f"Scraped {len(entities)} entities")
+    for entity in entities:
+        content = YouTubeContent.from_data_entity(entity)
+        bt.logging.info(f"Video: {content.title}")
+        bt.logging.info(f"Channel: {content.channel_name}")
+        bt.logging.info(f"Transcript length: {len(content.transcript)}")
+        if content.transcript:
+            bt.logging.info(f"Sample transcript: {content.transcript[0]['text'][:100]}...")
+            bt.logging.info(f"Total transcript chunks: {len(content.transcript)}")
+
+    return entities
+
+
+# Menu-based test runner
+async def main():
+    print("\nEnhanced YouTube Transcript Scraper - Test Menu")
+    print("=" * 50)
+    print("1. Run full pipeline test (default video and channel)")
+    print("2. Scrape a specific video (provide video ID)")
+    print("3. Scrape videos from a specific channel (provide channel ID)")
+    print("4. Exit")
+
+    choice = input("\nEnter your choice (1-4): ")
+
+    if choice == "1":
+        await test_full_pipeline()
+    elif choice == "2":
+        await test_scrape_specific_video()
+    elif choice == "3":
+        await test_scrape_specific_channel()
+    elif choice == "4":
+        print("Exiting test program.")
+        return
+    else:
+        print("Invalid choice. Please try again.")
+        await main()
+
+
+# Entry point for running the tests
+if __name__ == "__main__":
+    bt.logging.info("Starting YouTube scraper tests...")
+    asyncio.run(main())
 
 
 

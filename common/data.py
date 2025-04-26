@@ -93,15 +93,15 @@ class DataLabel(StrictBaseModel):
         description="The label. E.g. a subreddit for Reddit data.",
     )
 
-    @field_validator("value")  # Changed from validator
-    @classmethod
-    def lower_case_value(cls, value: str) -> str:
-        """Converts the value to lower case to consistent casing throughout the system."""
-        if len(value.lower()) > 140:
-            raise ValueError(
-                f"Label: {value} when is over 140 characters when .lower() is applied: {value.lower()}."
-            )
-        return value.lower()
+    # @field_validator("value")  # Changed from validator
+    # @classmethod
+    # def lower_case_value(cls, value: str) -> str:
+    #     """Converts the value to lower case to consistent casing throughout the system."""
+    #     if len(value.lower()) > 140:
+    #         raise ValueError(
+    #             f"Label: {value} when is over 140 characters when .lower() is applied: {value.lower()}."
+    #         )
+    #     return value.lower()
 
 
 class DataEntity(StrictBaseModel):
