@@ -1,10 +1,7 @@
 import datetime as dt
 from typing import Dict, List, Optional
 from pydantic.v1 import BaseModel, Field
-
-from common import constants
 from common.data import DataEntity, DataLabel, DataSource
-from scraping import utils
 
 
 class YouTubeContent(BaseModel):
@@ -56,19 +53,14 @@ class YouTubeContent(BaseModel):
         default=0
     )
 
-    compressed: bool = Field(
-        description="Whether the transcript has been compressed",
-        default=False
-    )
-
     @classmethod
     def to_data_entity(cls, content: "YouTubeContent") -> DataEntity:
         """Converts the YouTubeContent to a DataEntity."""
         entity_timestamp = content.upload_date
         content_bytes = content.json(exclude_none=True).encode("utf-8")
 
-        # Create a DataLabel from the video ID
-        label = DataLabel(value=f"#youtube_v_{content.video_id}")
+        # Create a DataLabel from the channel ID
+        label = DataLabel(value=f"#youtube_c_{content.channel_id}")
 
         return DataEntity(
             uri=content.url,
