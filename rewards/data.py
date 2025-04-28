@@ -18,7 +18,7 @@ class Job(StrictBaseModel):
     )
 
     job_weight: float = Field(
-        ge=0,
+        ge=-1,
         le=5,
         description="The reward for data associated with the job."
     )

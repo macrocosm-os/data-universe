@@ -52,7 +52,7 @@ class DataValueCalculator:
                 job_weight = job["job_weight"]
                 
                 # Calculate time scalar
-                if job["start_date"] or job["end_datetime"]:
+                if job["start_datetime"] or job["end_datetime"]:
                     # For jobs with date constraints, if we've reached here, the time bucket
                     # overlaps with the job's date range, so use full time scalar of 1.0
                     time_scalar = 1.0
