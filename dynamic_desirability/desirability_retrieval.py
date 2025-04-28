@@ -63,7 +63,8 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
 
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
                             total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
-    """Calculate total weights and write to total.json using the new job-based format."""
+    """Calculate total weights and write to total.json using the new job-based format.
+    Compatible with both old label_weights format and new job-based format."""
     aggregated_jobs = {}  # Using key (job_type, platform, topic) to track unique jobs
     subnet_weight = 1 - total_vali_weight
     normalizer = subnet_weight / AMPLICATION_FACTOR
@@ -73,6 +74,27 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
         with open(default_json_path, 'r') as f:
             default_jobs = json.load(f)
             
+        # Handle both formats for default jobs
+        if default_jobs and isinstance(default_jobs, list):
+            # Check if it's in the old format (list of dicts with source_name and label_weights)
+            if "source_name" in default_jobs[0] and "label_weights" in default_jobs[0]:
+                # Convert old format to new job-based format
+                converted_jobs = []
+                for source in default_jobs:
+                    platform = source["source_name"]
+                    for topic, weight in source["label_weights"].items():
+                        converted_jobs.append({
+                            "params": {
+                                "job_type": "label",
+                                "platform": platform,
+                                "topic": topic,
+                                "post_start_datetime": None,
+                                "post_end_datetime": None
+                            },
+                            "weight": weight
+                        })
+                default_jobs = converted_jobs
+                
         # Add default jobs to the aggregation
         for job in default_jobs:
             if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
@@ -98,7 +120,32 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
         stake_percentage = data.get('percent_stake', 1) / total_stake
         vali_weight = total_vali_weight * stake_percentage
         
-        for job in data['json']:
+        # Check if this validator's JSON is in old format or new format
+        validator_json = data['json']
+        
+        # Convert old format to new format if needed
+        if validator_json and isinstance(validator_json, list):
+            if "source_name" in validator_json[0] and "label_weights" in validator_json[0]:
+                # Old format detected, convert to new job-based format
+                converted_jobs = []
+                for source in validator_json:
+                    platform = source["source_name"]
+                    for topic, weight in source["label_weights"].items():
+                        converted_jobs.append({
+                            "params": {
+                                "job_type": "label",
+                                "platform": platform,
+                                "topic": topic,
+                                "post_start_datetime": None,
+                                "post_end_datetime": None
+                            },
+                            "weight": weight
+                        })
+                validator_json = converted_jobs
+                bt.logging.info(f"Converted validator {hotkey} submission from old format to new job-based format")
+        
+        # Process each job from the validator
+        for job in validator_json:
             if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
                 bt.logging.warning(f"Skipping malformed job from {hotkey}: {job}")
                 continue
