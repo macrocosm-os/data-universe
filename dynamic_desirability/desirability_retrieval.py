@@ -11,7 +11,7 @@ from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data, is_validator
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from rewards.data import DataSourceDesirability, DataDesirabilityLookup, Job, JobMatcher
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
                                             DEFAULT_JSON_PATH,
@@ -63,92 +63,152 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
 
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
                             total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
-    """Calculate total weights and write to total.json."""
-    total_weights: Dict[str, Dict[str, float]] = {}
+    """Calculate total weights and write to total.json using the new job-based format."""
+    aggregated_jobs = {}  # Using key (job_type, platform, topic) to track unique jobs
     subnet_weight = 1 - total_vali_weight
     normalizer = subnet_weight / AMPLICATION_FACTOR
 
-    # Adding default weights to total.
+    # Adding default jobs
     try:
         with open(default_json_path, 'r') as f:
-            default_preferences = json.load(f)
-        for source in default_preferences:
-            source_name = source['source_name']
-            if source_name not in total_weights:
-                total_weights[source_name] = {}
-            for label, weight in source['label_weights'].items():
-                total_weights[source_name][label] = weight
+            default_jobs = json.load(f)
+            
+        # Add default jobs to the aggregation
+        for job in default_jobs:
+            if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
+                bt.logging.warning(f"Skipping malformed default job: {job}")
+                continue
+                
+            job_key = (job["params"]["job_type"], job["params"]["platform"], job["params"]["topic"])
+            aggregated_jobs[job_key] = {
+                "weight": job.get("weight", 1.0),
+                "params": job["params"].copy()
+            }
     except FileNotFoundError:
-        bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default weights.")
+        bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default jobs.")
 
-    # Calculating the sum of percent_stake for validators that have voted. Non-voting validators are excluded.
+    # Calculate the total stake of validators who have voted
     total_stake = sum(v.get('percent_stake', 1) for v in validator_data.values() if v.get('json'))
+    
+    # Process each validator's job submissions
     for hotkey, data in validator_data.items():
-        if data['json']:
-            stake_percentage = data.get('percent_stake', 1) / total_stake
-            vali_weight = total_vali_weight * stake_percentage
-            for source in data['json']:
-                source_name = source['source_name']
-                if source_name not in total_weights:
-                    total_weights[source_name] = {}
-                for label, weight in source['label_weights'].items():
-                    # Skip labels that are longer than 140 characters
-                    if len(label) > 140:
-                        continue
-                    if label in total_weights[source_name]:
-                        total_weights[source_name][label] += vali_weight * weight / normalizer
-                    else:
-                        total_weights[source_name][label] = vali_weight * weight / normalizer
-                        
-                    if total_weights[source_name][label] > 5.0:
-                        total_weights[source_name][label] = 5.0
+        if not data.get('json'):
+            continue
+            
+        stake_percentage = data.get('percent_stake', 1) / total_stake
+        vali_weight = total_vali_weight * stake_percentage
+        
+        for job in data['json']:
+            if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
+                bt.logging.warning(f"Skipping malformed job from {hotkey}: {job}")
+                continue
+                
+            # Skip topics that are longer than MAX_LABEL_LENGTH
+            if len(job["params"]["topic"]) > constants.MAX_LABEL_LENGTH:
+                continue
+                
+            job_weight = job.get("weight", 1.0)
+            job_key = (job["params"]["job_type"], job["params"]["platform"], job["params"]["topic"])
+            
+            weighted_job_value = vali_weight * job_weight / normalizer
+            
+            if job_key in aggregated_jobs:
+                aggregated_jobs[job_key]["weight"] += weighted_job_value
+            else:
+                aggregated_jobs[job_key] = {
+                    "weight": weighted_job_value,
+                    "params": job["params"].copy()
+                }
+                
+            # Cap job weight at 5.0
+            if aggregated_jobs[job_key]["weight"] > 5.0:
+                aggregated_jobs[job_key]["weight"] = 5.0
 
-    # At the end of aggregation, if some label weights are < default weight value, increase them to match. 
-    for source_name, label_weights in total_weights.items():
-        for label, weight in label_weights.items():
-            if weight < DEFAULT_SCALE_FACTOR:
-                label_weights[label] = DEFAULT_SCALE_FACTOR + 0.01
+    # Apply floor weight - ensure no job is below DEFAULT_SCALE_FACTOR
+    for job_key, job_data in aggregated_jobs.items():
+        if job_data["weight"] < DEFAULT_SCALE_FACTOR:
+            job_data["weight"] = DEFAULT_SCALE_FACTOR + 0.01
 
-    total_json = [
-        {
-            "source_name": source_name,
-            "label_weights": label_weights
+    # Convert aggregated jobs to final format
+    final_jobs = []
+    for idx, (job_key, job_data) in enumerate(aggregated_jobs.items()):
+        job = {
+            "id": f"aggregate_{idx}",
+            "weight": job_data["weight"],
+            "params": job_data["params"]
         }
-        for source_name, label_weights in total_weights.items()
-    ]
+        final_jobs.append(job)
 
+    # Write aggregated jobs to the output file
     script_dir = os.path.dirname(os.path.abspath(__file__))
     total_path = os.path.join(script_dir, AGGREGATE_JSON_PATH)
     with open(total_path, 'w') as f:
-        json.dump(total_json, f, indent=4)
+        json.dump(final_jobs, f, indent=4)
 
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
 
 def to_lookup(json_file: str) -> DataDesirabilityLookup:
-    """Converts a json format to a LOOKUP format."""
+    """Converts the new job-based JSON format to a DataDesirabilityLookup."""
     with open(json_file, 'r') as file:
-        data = json.load(file)
+        jobs = json.load(file)
 
     distribution = {}
-
-    for source in data:
-        source_name = source['source_name']
-        label_weights = source['label_weights']
-
-        source_weight = DataSource.REDDIT.weight if source_name.lower() == "reddit" else DataSource.X.weight
-
-        label_scale_factors = {
-            DataLabel(value=label): weight
-            for label, weight in label_weights.items()
-        }
-
-        distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
-            weight=source_weight,
-            default_scale_factor=DEFAULT_SCALE_FACTOR,  # number is subject to change
-            label_scale_factors=label_scale_factors
-        )
-
+    
+    # Group jobs by platform (data source)
+    jobs_by_platform = {}
+    for job in jobs:
+        if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
+            continue
+            
+        platform = job["params"]["platform"].lower()
+        if platform not in jobs_by_platform:
+            jobs_by_platform[platform] = []
+        jobs_by_platform[platform].append(job)
+    
+    # Process each platform (data source)
+    for platform, platform_jobs in jobs_by_platform.items():
+        try:
+            data_source = getattr(DataSource, platform.upper())
+            
+            # Create a JobMatcher for this data source
+            job_list = []
+            for job_dict in platform_jobs:
+                # Create Job objects for each job
+                job = Job(
+                    job_type=job_dict["params"]["job_type"],
+                    topic=job_dict["params"]["topic"],
+                    job_weight=job_dict["weight"],
+                    start_date=job_dict["params"].get("post_start_datetime"),
+                    end_date=job_dict["params"].get("post_end_datetime")
+                )
+                job_list.append(job)
+                
+            # Create JobMatcher with all jobs for this platform
+            job_matcher = JobMatcher(jobs=job_list)
+            
+            # Create DataSourceDesirability for this platform
+            source_weight = data_source.weight
+            
+            distribution[data_source] = DataSourceDesirability(
+                weight=source_weight,
+                default_scale_factor=DEFAULT_SCALE_FACTOR,
+                job_matcher=job_matcher
+            )
+                
+        except (AttributeError, ValueError) as e:
+            bt.logging.warning(f"Skipping platform {platform}: {str(e)}")
+    
+    # If we have no valid distributions, ensure there's at least X and Reddit basic info 
+    if not distribution:
+        for source in [DataSource.X, DataSource.REDDIT]:
+            distribution[source] = DataSourceDesirability(
+                weight=source.weight,
+                default_scale_factor=DEFAULT_SCALE_FACTOR,
+                job_matcher=JobMatcher(jobs=[])
+            )
+    
+    # Create and return DataDesirabilityLookup
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
