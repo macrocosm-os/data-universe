@@ -148,70 +148,54 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
 
-def to_lookup(json_file: str) -> DataDesirabilityLookup:
-    """Converts the new job-based JSON format to a DataDesirabilityLookup."""
-    with open(json_file, 'r') as file:
-        jobs = json.load(file)
-
+def to_lookup(json_path):
+    with open(json_path, 'r') as f:
+        data = json.load(f)
+    
+    jobs = data.get('jobs', [])
     distribution = {}
     
-    # Group jobs by platform (data source)
-    jobs_by_platform = {}
-    for job in jobs:
-        if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
-            continue
-            
-        platform = job["params"]["platform"].lower()
-        if platform not in jobs_by_platform:
-            jobs_by_platform[platform] = []
-        jobs_by_platform[platform].append(job)
+    reddit_jobs = [job for job in jobs if job['params'].get('platform') == 'reddit']
+    x_jobs = [job for job in jobs if job['params'].get('platform') == 'x']
     
-    # Process each platform (data source)
-    for platform, platform_jobs in jobs_by_platform.items():
-        try:
-            data_source = getattr(DataSource, platform.upper())
-            
-            # Create a JobMatcher for this data source
-            job_list = []
-            for job_dict in platform_jobs:
-                # Create Job objects for each job
-                job = Job(
-                    job_type=job_dict["params"]["job_type"],
-                    topic=job_dict["params"]["topic"],
-                    job_weight=job_dict["weight"],
-                    start_datetime=job_dict["params"].get("post_start_datetime"),
-                    end_datetime=job_dict["params"].get("post_end_datetime")
-                )
-                job_list.append(job)
-                
-            # Create JobMatcher with all jobs for this platform
-            job_matcher = JobMatcher(jobs=job_list)
-            
-            # Create DataSourceDesirability for this platform
-            source_weight = data_source.weight
-            
-            distribution[data_source] = DataSourceDesirability(
-                weight=source_weight,
-                default_scale_factor=DEFAULT_SCALE_FACTOR,
-                job_matcher=job_matcher
-            )
-                
-        except (AttributeError, ValueError) as e:
-            bt.logging.warning(f"Skipping platform {platform}: {str(e)}")
+    # Create JobMatcher for Reddit
+    reddit_job_matcher = JobMatcher(jobs=[
+        Job(
+            job_type=job['params']['job_type'],
+            topic=job['params']['topic'],
+            job_weight=job['weight'],
+            start_datetime=job['params'].get('post_start_datetime'),
+            end_datetime=job['params'].get('post_end_datetime')
+        ) for job in reddit_jobs
+    ])
     
-    # If we have no valid distributions, ensure there's at least X and Reddit basic info 
-    if not distribution:
-        for source in [DataSource.X, DataSource.REDDIT]:
-            distribution[source] = DataSourceDesirability(
-                weight=source.weight,
-                default_scale_factor=DEFAULT_SCALE_FACTOR,
-                job_matcher=JobMatcher(jobs=[])
-            )
+    # Create JobMatcher for X
+    x_job_matcher = JobMatcher(jobs=[
+        Job(
+            job_type=job['params']['job_type'],
+            topic=job['params']['topic'],
+            job_weight=job['weight'],
+            start_datetime=job['params'].get('post_start_datetime'),
+            end_datetime=job['params'].get('post_end_datetime')
+        ) for job in x_jobs
+    ])
     
-    # Create and return DataDesirabilityLookup
-    max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
-    return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
+    # Create DataSourceDesirability objects and add them to distribution
+    distribution[DataSource.REDDIT] = DataSourceDesirability(
+        weight=DataSource.REDDIT.weight,
+        job_matcher=reddit_job_matcher
+    )
+    
+    distribution[DataSource.X] = DataSourceDesirability(
+        weight=DataSource.X.weight,
+        job_matcher=x_job_matcher
+    )
 
+    max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
+    return DataDesirabilityLookup(
+        distribution=distribution,
+        max_age_in_hours=max_age_in_hours
+    )
 
 def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
     """Gets the unscaled JSON submisson for a specified validator hotkey. 
