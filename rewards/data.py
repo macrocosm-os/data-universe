@@ -23,14 +23,14 @@ class Job(StrictBaseModel):
         description="The reward for data associated with the job."
     )
 
-    start_date: Optional[str] = Field(
+    start_datetime: Optional[str] = Field(
         default=None,
-        description="Optionally, the earliest viable date at which data is accepted."
+        description="Optionally, the earliest viable datetime at which data is accepted."
     )
 
-    end_date: Optional[str] = Field(
+    end_datetime: Optional[str] = Field(
         default=None,
-        description="Optionally, the latest viable date at which data is accepted."
+        description="Optionally, the latest viable datetime at which data is accepted."
     )
 
     @field_validator("job_type")
@@ -41,40 +41,55 @@ class Job(StrictBaseModel):
 
     @model_validator(mode='after')
     def check_date_order(self) -> 'Job':
-        if self.start_date and self.end_date:
+        if self.start_datetime and self.end_datetime:
             try:
-                start = datetime.fromisoformat(self.start_date)
-                end = datetime.fromisoformat(self.end_date)
+                start = datetime.fromisoformat(self.start_datetime)
+                end = datetime.fromisoformat(self.end_datetime)
                 if start > end:
-                    raise ValueError("start_date must be before or equal to end_date.")
+                    raise ValueError("start_datetime must be before or equal to end_datetime.")
             except ValueError as e:
                 raise ValueError(f"Invalid date format or order: {e}")
         return self
     
-    def matches(self, data_job_type: str, data_topic: str, data_datetime: str) -> bool:
-        """Check if the incoming data matches this job's criteria."""
+    def matches(self, data_job_type: str, data_topic: str, data_daterange: Tuple[str, str]) -> bool:
+        """Check if the incoming data matches this job's criteria.
+        
+        Args:
+            data_job_type: The job type of the incoming data
+            data_topic: The topic of the incoming data
+            data_daterange: A tuple of (start_datetime, end_datetime) for the data's date range
+        
+        Returns:
+            True if there's any overlap between the job's date range and the data's date range
+        """
         # First check job_type and topic match
         if data_job_type != self.job_type or data_topic != self.topic:
             return False
             
         # If we have date constraints, check them
-        dt = datetime.fromisoformat(data_datetime)
+        data_start, data_end = data_daterange
+        data_start_dt = datetime.fromisoformat(data_start)
+        data_end_dt = datetime.fromisoformat(data_end)
         
-        # Check start date constraint if it exists
-        if self.start_date and dt < datetime.fromisoformat(self.start_date):
-            return False
+        # If job has start date constraint, check if data's end is before job's start
+        if self.start_datetime:
+            job_start_dt = datetime.fromisoformat(self.start_datetime)
+            if data_end_dt < job_start_dt:
+                return False  # Data ends before job starts, no overlap
                 
-        # Check end date constraint if it exists
-        if self.end_date and dt > datetime.fromisoformat(self.end_date):
-            return False
+        # If job has end date constraint, check if data's start is after job's end
+        if self.end_datetime:
+            job_end_dt = datetime.fromisoformat(self.end_datetime)
+            if data_start_dt > job_end_dt:
+                return False  # Data starts after job ends, no overlap
             
-        # All criteria passed
+        # All criteria passed - there is an overlap or no date constraints
         return True
     
     def __str__(self) -> str:
         return (
             f"Job(type={self.job_type!r}, topic={self.topic!r}, weight={self.job_weight}, "
-            f"start={self.start_date}, end={self.end_date})"
+            f"start={self.start_datetime}, end={self.end_datetime})"
         )
 
     def __repr__(self) -> str:
@@ -86,8 +101,8 @@ class Job(StrictBaseModel):
             "job_type": self.job_type,
             "topic": self.topic,
             "job_weight": self.job_weight,
-            "start_date": self.start_date,
-            "end_date": self.end_date
+            "start_datetime": self.start_datetime,
+            "end_datetime": self.end_datetime
         }
 
 
@@ -117,26 +132,37 @@ class JobMatcher(StrictBaseModel):
             self.job_dict[key].append(job)
     
     def find_matching_jobs(self, data_job_type: str, data_topic: str, 
-                           data_datetime: str) -> List[Job]:
-        """Find all jobs matching the given criteria"""
+                           data_daterange: Tuple[str, str]) -> List[Job]:
+        """Find all jobs matching the given criteria
+        
+        Args:
+            data_job_type: The job type of the incoming data
+            data_topic: The topic of the incoming data
+            data_daterange: A tuple of (start_datetime, end_datetime) for the data's date range
+            
+        Returns:
+            List of matching Job objects
+        """
         key = (data_job_type, data_topic)
         
         # No jobs match this job_type and topic
         if key not in self.job_dict:
             return []
             
-        dt = datetime.fromisoformat(data_datetime)
+        data_start, data_end = data_daterange
+        data_start_dt = datetime.fromisoformat(data_start)
+        data_end_dt = datetime.fromisoformat(data_end)
         matching_jobs = []
         
         # Check each potential job for date viability
         for job in self.job_dict[key]:
-            # Check start date constraint if it exists
-            if job.start_date and dt < datetime.fromisoformat(job.start_date):
-                continue
+            # If job has start date constraint, check if data's end is before job's start
+            if job.start_datetime and data_end_dt < datetime.fromisoformat(job.start_datetime):
+                continue  # No overlap
                 
-            # Check end date constraint if it exists
-            if job.end_date and dt > datetime.fromisoformat(job.end_date):
-                continue
+            # If job has end date constraint, check if data's start is after job's end
+            if job.end_datetime and data_start_dt > datetime.fromisoformat(job.end_datetime):
+                continue  # No overlap
                 
             matching_jobs.append(job)
         
@@ -260,27 +286,38 @@ class PrimitiveDataSourceDesirability:
                 self._job_dict[key] = []
             self._job_dict[key].append(job)
     
-    def find_matching_jobs(self, data_job_type: str, data_topic: str, data_datetime: str) -> List[dict]:
-        """Find matching jobs using the optimized lookup structure."""
+    def find_matching_jobs(self, data_job_type: str, data_topic: str, data_daterange: Tuple[str, str]) -> List[dict]:
+        """Find matching jobs using the optimized lookup structure.
+        
+        Args:
+            data_job_type: The job type of the incoming data
+            data_topic: The topic of the incoming data
+            data_daterange: A tuple of (start_datetime, end_datetime) for the data's date range
+            
+        Returns:
+            List of matching job dictionaries
+        """
         key = (data_job_type, data_topic)
         
         # No jobs match this job_type and topic
         if key not in self._job_dict:
             return []
             
-        dt = datetime.fromisoformat(data_datetime)
+        data_start, data_end = data_daterange
+        data_start_dt = datetime.fromisoformat(data_start)
+        data_end_dt = datetime.fromisoformat(data_end)
         matching_jobs = []
         
         # Check each potential job for date viability - using direct dictionary access for speed
         for job in self._job_dict[key]:
-            # Check start date constraint if it exists
-            start_date = job.get("start_date")
-            if start_date and dt < datetime.fromisoformat(start_date):
+            # Check if job's start date is after data's end date (no overlap)
+            start_datetime = job.get("start_datetime")
+            if start_datetime and data_end_dt < datetime.fromisoformat(start_datetimes):
                 continue
                 
-            # Check end date constraint if it exists
-            end_date = job.get("end_date")
-            if end_date and dt > datetime.fromisoformat(end_date):
+            # Check if job's end date is before data's start date (no overlap)
+            end_datetime = job.get("end_datetime")
+            if end_datetime and data_start_dt > datetime.fromisoformat(end_datetime):
                 continue
 
             matching_jobs.append(job)
@@ -300,13 +337,23 @@ class PrimitiveDataDesirabilityLookup:
         self.max_age_in_hours = max_age_in_hours
     
     def find_matching_jobs(self, data_source: DataSource, job_type: str, 
-                           topic: str, datetime_str: str) -> List[Dict]:
-        """Find matching jobs for a specific data source and criteria."""
+                          topic: str, daterange: Tuple[str, str]) -> List[Dict]:
+        """Find matching jobs for a specific data source and criteria using date ranges.
+        
+        Args:
+            data_source: The data source to look for
+            job_type: The job type to match
+            topic: The topic to match
+            daterange: A tuple of (start_datetime, end_datetime) strings
+            
+        Returns:
+            List of matching job dictionaries
+        """
         if data_source not in self.distribution:
             return []
         
         return self.distribution[data_source].find_matching_jobs(
-            job_type, topic, datetime_str
+            job_type, topic, daterange
         )
     
     def get_default_scale_factor(self, data_source: DataSource) -> float:

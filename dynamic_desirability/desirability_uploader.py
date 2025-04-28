@@ -53,16 +53,16 @@ def validate_datetime_format(date_string: str) -> bool:
         return False
 
 
-def validate_datetime_order(start_date: str, end_date: str) -> bool:
+def validate_datetime_order(start_datetime: str, end_datetime: str) -> bool:
     """
-    Validates that start_date is before end_date.
+    Validates that start_datetime is before end_datetime.
     """
-    if not start_date or not end_date:
+    if not start_datetime or not end_datetime:
         return True
         
     try:
-        start = dt.datetime.fromisoformat(start_date)
-        end = dt.datetime.fromisoformat(end_date)
+        start = dt.datetime.fromisoformat(start_datetime)
+        end = dt.datetime.fromisoformat(end_datetime)
         return start < end
     except ValueError:
         return False
@@ -102,19 +102,19 @@ def normalize_new_format_jobs(jobs: List[Dict]) -> Optional[List[Dict]]:
             continue
             
         # Validate datetime formats if present
-        start_date = params.get("post_start_datetime")
-        end_date = params.get("post_end_datetime")
+        start_datetime = params.get("post_start_datetime")
+        end_datetime = params.get("post_end_datetime")
         
-        if start_date and not validate_datetime_format(start_date):
-            bt.logging.warning(f"Skipping job with invalid post_start_datetime format: {start_date}")
+        if start_datetime and not validate_datetime_format(start_datetime):
+            bt.logging.warning(f"Skipping job with invalid post_start_datetime format: {start_datetime}")
             continue
             
-        if end_date and not validate_datetime_format(end_date):
-            bt.logging.warning(f"Skipping job with invalid post_end_datetime format: {end_date}")
+        if end_datetime and not validate_datetime_format(end_datetime):
+            bt.logging.warning(f"Skipping job with invalid post_end_datetime format: {end_datetime}")
             continue
             
         # Validate datetime order if both are present
-        if start_date and end_date and not validate_datetime_order(start_date, end_date):
+        if start_datetime and end_datetime and not validate_datetime_order(start_datetime, end_datetime):
             bt.logging.warning(f"Skipping job where post_start_datetime is not before post_end_datetime")
             continue
             

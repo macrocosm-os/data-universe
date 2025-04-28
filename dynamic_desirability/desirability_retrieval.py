@@ -179,8 +179,8 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
                     job_type=job_dict["params"]["job_type"],
                     topic=job_dict["params"]["topic"],
                     job_weight=job_dict["weight"],
-                    start_date=job_dict["params"].get("post_start_datetime"),
-                    end_date=job_dict["params"].get("post_end_datetime")
+                    start_datetime=job_dict["params"].get("post_start_datetime"),
+                    end_datetime=job_dict["params"].get("post_end_datetime")
                 )
                 job_list.append(job)
                 
