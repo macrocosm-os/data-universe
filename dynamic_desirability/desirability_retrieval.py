@@ -197,9 +197,8 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
 
 def to_lookup(json_path):
     with open(json_path, 'r') as f:
-        data = json.load(f)
+        jobs = json.load(f)
     
-    jobs = data.get('jobs', [])
     distribution = {}
     
     reddit_jobs = [job for job in jobs if job['params'].get('platform') == 'reddit']
@@ -243,6 +242,7 @@ def to_lookup(json_path):
         distribution=distribution,
         max_age_in_hours=max_age_in_hours
     )
+
 
 def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
     """Gets the unscaled JSON submisson for a specified validator hotkey. 

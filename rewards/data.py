@@ -226,11 +226,18 @@ class DataDesirabilityLookup(StrictBaseModel):
     )
 
     def __str__(self) -> str:
+        distribution_dict = {}
+        for key, desirability in self.distribution.items():
+            try:
+                data_source = DataSource(key)  # Convert int to enum
+                key_name = data_source.name
+            except ValueError:
+                key_name = f"UNKNOWN_{key}"
+            
+            distribution_dict[key_name] = desirability.model_dump_json()
+        
         return json.dumps({
-            "distribution": {
-                data_source.name: desirability.model_dump_json()
-                for data_source, desirability in self.distribution.items()
-            },
+            "distribution": distribution_dict,
             "max_age_in_hours": self.max_age_in_hours
         }, indent=4)
 
