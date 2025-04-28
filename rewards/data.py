@@ -312,7 +312,7 @@ class PrimitiveDataSourceDesirability:
         for job in self._job_dict[key]:
             # Check if job's start date is after data's end date (no overlap)
             start_datetime = job.get("start_datetime")
-            if start_datetime and data_end_dt < datetime.fromisoformat(start_datetimes):
+            if start_datetime and data_end_dt < datetime.fromisoformat(start_datetime):
                 continue
                 
             # Check if job's end date is before data's start date (no overlap)
