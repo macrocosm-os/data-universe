@@ -54,18 +54,31 @@ class YouTubeContent(BaseModel):
     )
 
     @classmethod
-    def to_data_entity(cls, content: "YouTubeContent") -> DataEntity:
-        """Converts the YouTubeContent to a DataEntity."""
+    def to_data_entity(cls, content: "YouTubeContent", original_label: Optional[str] = None) -> DataEntity:
+        """Converts the YouTubeContent to a DataEntity.
+
+        Args:
+            content: The YouTubeContent object to convert
+            original_label: The original label type that was used for scraping (optional)
+
+        Returns:
+            A DataEntity with the appropriate label
+        """
         entity_timestamp = content.upload_date
         content_bytes = content.json(exclude_none=True).encode("utf-8")
 
-        # Create a DataLabel from the channel ID
-        label = DataLabel(value=f"#youtube_c_{content.channel_id}")
+        # Create a DataLabel based on the original label type if provided
+        if original_label and original_label.startswith('#youtube_v_'):
+            # If scraped with a video label, preserve it
+            label = DataLabel(value=f"#youtube_v_{content.video_id}")
+        else:
+            # Default to channel label
+            label = DataLabel(value=f"#youtube_c_{content.channel_id}")
 
         return DataEntity(
             uri=content.url,
             datetime=entity_timestamp,
-            source=DataSource.YOUTUBE,  # This enum will need to be added to DataSource
+            source=DataSource.YOUTUBE,
             label=label,
             content=content_bytes,
             content_size_bytes=len(content_bytes),
