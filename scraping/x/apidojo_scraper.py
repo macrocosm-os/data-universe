@@ -431,7 +431,7 @@ async def test_validate():
 
     true_entities = [
         DataEntity(
-            uri="https://twitter.com/0xedeon/status/1790788053960667309",
+            uri="https://x.com/0xedeon/status/1790788053960667309",
             datetime=dt.datetime(2024, 5, 15, 16, 55, 17, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#cryptocurrency"),
@@ -439,7 +439,7 @@ async def test_validate():
             content_size_bytes=391
         ),
         DataEntity(
-            uri="https://twitter.com/100Xpotential/status/1790785842967101530",
+            uri="https://x.com/100Xpotential/status/1790785842967101530",
             datetime=dt.datetime(2024, 5, 15, 16, 46, 30, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#catcoin"),
@@ -447,7 +447,7 @@ async def test_validate():
             content_size_bytes=933
         ),
         DataEntity(
-            uri="https://twitter.com/20nineCapitaL/status/1789488160688541878",
+            uri="https://x.com/20nineCapitaL/status/1789488160688541878",
             datetime=dt.datetime(2024, 5, 12, 2, 49, 59, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
@@ -455,7 +455,7 @@ async def test_validate():
             content_size_bytes=345
         ),
         DataEntity(
-            uri="https://twitter.com/AAAlviarez/status/1790787185047658838",
+            uri="https://x.com/AAAlviarez/status/1790787185047658838",
             datetime=dt.datetime(2024, 5, 15, 16, 51, 50, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#web3‌‌"),
@@ -463,7 +463,7 @@ async def test_validate():
             content_size_bytes=439
         ),
         DataEntity(
-            uri="https://twitter.com/AGariaparra/status/1789488091453091936",
+            uri="https://x.com/AGariaparra/status/1789488091453091936",
             datetime=dt.datetime(2024, 5, 12, 2, 49, 42, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
@@ -471,7 +471,7 @@ async def test_validate():
             content_size_bytes=269
         ),
         DataEntity(
-            uri="https://twitter.com/AGariaparra/status/1789488427546939525",
+            uri="https://x.com/AGariaparra/status/1789488427546939525",
             datetime=dt.datetime(2024, 5, 12, 2, 51, 2, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
@@ -479,7 +479,7 @@ async def test_validate():
             content_size_bytes=249
         ),
         DataEntity(
-            uri="https://twitter.com/AMikulanecs/status/1784324497895522673",
+            uri="https://x.com/AMikulanecs/status/1784324497895522673",
             datetime=dt.datetime(2024, 4, 27, 20, 51, 26, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#felix"),
@@ -487,7 +487,7 @@ async def test_validate():
             content_size_bytes=588
         ),
         DataEntity(
-            uri="https://twitter.com/AdamEShelton/status/1789490040751411475",
+            uri="https://x.com/AdamEShelton/status/1789490040751411475",
             datetime=dt.datetime(2024, 5, 12, 2, 57, 27, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
@@ -495,7 +495,7 @@ async def test_validate():
             content_size_bytes=199
         ),
         DataEntity(
-            uri="https://twitter.com/AfroWestor/status/1789488798406975580",
+            uri="https://x.com/AfroWestor/status/1789488798406975580",
             datetime=dt.datetime(2024, 5, 12, 2, 52, 31, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
@@ -503,7 +503,7 @@ async def test_validate():
             content_size_bytes=383
         ),
         DataEntity(
-            uri="https://twitter.com/AlexEmidio7/status/1789488453979189327",
+            uri="https://x.com/AlexEmidio7/status/1789488453979189327",
             datetime=dt.datetime(2024, 5, 12, 2, 51, 9, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
@@ -519,7 +519,7 @@ async def test_multi_thread_validate():
 
     true_entities = [
         DataEntity(
-            uri="https://twitter.com/bittensor_alert/status/1748585332935622672",
+            uri="https://x.com/bittensor_alert/status/1748585332935622672",
             datetime=dt.datetime(2024, 1, 20, 5, 56, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#Bittensor"),
@@ -527,7 +527,7 @@ async def test_multi_thread_validate():
             content_size_bytes=318,
         ),
         DataEntity(
-            uri="https://twitter.com/HadsonNery/status/1752011223330124021",
+            uri="https://x.com/HadsonNery/status/1752011223330124021",
             datetime=dt.datetime(2024, 1, 29, 16, 50, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#faleitoleve"),

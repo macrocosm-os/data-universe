@@ -19,7 +19,10 @@ Validators require at least 32 GB of RAM but do not require a GPU. We recommend 
 # Getting Started
 
 ## Prerequisites
-1. As of Jan 13th 2024, we support Twitter and Reddit scraping via Apify so you'll need to [setup your Apify API token](apify.md). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. Validators will default to using the personal reddit account for reliability but this can be changed editing the PREFERRED_SCRAPERS map in validator.py locally.
+1. As of Jan 13th 2024, we support Twitter and Reddit scraping via Apify so you'll need to [setup your Apify API token](apify.md).
+We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. 
+Validators will default to using the personal reddit account for reliability but this can be changed editing the PREFERRED_SCRAPERS map in validator.py locally.
+We also support YouTube Scraping via a [official youtube api](youtube.md) which is completely free. 
 
 2. Clone the repo
 

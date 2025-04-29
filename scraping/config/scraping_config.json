@@ -51,6 +51,24 @@
                     "max_data_entities": 100
                 }
             ]
+        },
+        {
+            "scraper_id": "YouTube.transcript",
+            "cadence_seconds": 100,
+            "labels_to_scrape": [
+                {
+                    "label_choices": [
+                        "#youtube_c_UCAuUUnT6oDeKwE6v1NGQxug",
+                        "#youtube_c_UCYO_jab_esuFRV4b17AJtAw",
+                        "#youtube_c_UCsXVk37bltHxD1rDPwtNM8Q",
+                        "#youtube_c_UCSHZKyawb77ixDdsGog4iWA",
+                        "#youtube_c_UCR93yACeNzxMSk6Y1cHM2pA",
+                        "#youtube_c_UCbLhGKVY-bJPcawebgtNfbw"
+                    ],
+                    "max_data_entities": 50,
+                     "max_age_hint_minutes": 43200
+                }
+            ]
         }
     ]
 }
