@@ -18,4 +18,13 @@ Step-by-Step Instructions
 `YOUTUBE_API_KEY=your_actual_api_key_here
 `
 
+### Working with proxies
+If you are using cloud provider that belong to popular cloud providers (like AWS, Google Cloud Platform, Azure, DO etc.),
+
+You will need to add WebShare proxy
+Once you have created a Webshare account and purchased a "Residential" proxy package that suits your workload 5 GB for a vali (make sure NOT to purchase "Proxy Server" or "Static Residential"!), 
+open the Webshare Proxy Settings to retrieve your "Proxy Username" and "Proxy Password". Using this information you can initialize the validator as follows:
+`WEB_SHARE_PROXY_USERNAME=WEB_SHARE_PROXY_USERNAME
+WEB_SHARE_PROXY_PASSWORD=WEB_SHARE_PROXY_PASSWORD`
+
 
