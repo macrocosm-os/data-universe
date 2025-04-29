@@ -129,26 +129,36 @@ def to_lookup(json_file: str) -> DataDesirabilityLookup:
     """Converts a json format to a LOOKUP format."""
     with open(json_file, 'r') as file:
         data = json.load(file)
-
+    
+    # Create distribution dictionary
     distribution = {}
-
+    
+    # Process data from JSON
     for source in data:
         source_name = source['source_name']
         label_weights = source['label_weights']
-
-        source_weight = DataSource.REDDIT.weight if source_name.lower() == "reddit" else DataSource.X.weight
-
+        source_weight = getattr(DataSource, source_name.upper()).weight
+        
         label_scale_factors = {
             DataLabel(value=label): weight
             for label, weight in label_weights.items()
         }
-
+        
         distribution[getattr(DataSource, source_name.upper())] = DataSourceDesirability(
             weight=source_weight,
             default_scale_factor=DEFAULT_SCALE_FACTOR,  # number is subject to change
             label_scale_factors=label_scale_factors
         )
-
+    
+    # Ensure all supported data sources are in the distribution
+    for source in [DataSource.REDDIT, DataSource.X, DataSource.YOUTUBE]:
+        if source not in distribution:
+            distribution[source] = DataSourceDesirability(
+                weight=source.weight,
+                default_scale_factor=DEFAULT_SCALE_FACTOR,
+                label_scale_factors={}
+            )
+    
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
     return DataDesirabilityLookup(distribution=distribution, max_age_in_hours=max_age_in_hours)
 
