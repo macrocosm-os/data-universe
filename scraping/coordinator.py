@@ -8,7 +8,7 @@ import datetime as dt
 from typing import Dict, List, Optional
 import numpy
 from pydantic import Field, PositiveInt, ConfigDict
-
+from common.date_range import DateRange
 from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScrapeConfig, ScraperId
@@ -65,48 +65,85 @@ class CoordinatorConfig(StrictBaseModel):
 
 
 def _choose_scrape_configs(
-    scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime
+        scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime
 ) -> List[ScrapeConfig]:
     """For the given scraper, returns a list of scrapes (defined by ScrapeConfig) to be run."""
     assert (
-        scraper_id in config.scraper_configs
+            scraper_id in config.scraper_configs
     ), f"Scraper Id {scraper_id} not in config"
+
+    # Ensure now has timezone information
+    if now.tzinfo is None:
+        now = now.replace(tzinfo=dt.timezone.utc)
 
     scraper_config = config.scraper_configs[scraper_id]
     results = []
+
     for label_config in scraper_config.labels_to_scrape:
         # First, choose a label
         labels_to_scrape = None
         if label_config.label_choices:
             labels_to_scrape = [random.choice(label_config.label_choices)]
 
-        # Now, choose a time bucket to scrape.
-        current_bucket = TimeBucket.from_datetime(now)
-        oldest_bucket = TimeBucket.from_datetime(
-            now - dt.timedelta(minutes=label_config.max_age_hint_minutes)
-        )
+        # Get max age from config or use default
+        max_age_minutes = label_config.max_age_hint_minutes
 
-        chosen_bucket = current_bucket
-        # If we have more than 1 bucket to choose from, choose a bucket in the range [oldest_bucket, current_bucket]
-        if oldest_bucket.id < current_bucket.id:
-            # Use a triangular distribution to choose a bucket in this range. We choose a triangular distribution because
-            # this roughly aligns with the linear depreciation scoring that the validators use for data freshness.
-            chosen_id = int(numpy.random.default_rng().triangular(
-                left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
-            ))
+        # For YouTube transcript scraper, use a wider date range
+        if scraper_id == ScraperId.YOUTUBE_TRANSCRIPT:
+            # Calculate the start time using max_age_minutes
+            start_time = now - dt.timedelta(minutes=max_age_minutes)
 
-            chosen_bucket = TimeBucket(id=chosen_id)
+            # Ensure start_time has timezone information
+            if start_time.tzinfo is None:
+                start_time = start_time.replace(tzinfo=dt.timezone.utc)
 
-        results.append(
-            ScrapeConfig(
-                entity_limit=label_config.max_data_entities,
-                date_range=TimeBucket.to_date_range(chosen_bucket),
-                labels=labels_to_scrape,
+            date_range = DateRange(start=start_time, end=now)
+
+            bt.logging.info(f"Created special date range for YouTube: {date_range.start} to {date_range.end}")
+            bt.logging.info(f"Date range span: {(date_range.end - date_range.start).total_seconds() / 3600} hours")
+
+            results.append(
+                ScrapeConfig(
+                    entity_limit=label_config.max_data_entities,
+                    date_range=date_range,
+                    labels=labels_to_scrape,
+                )
             )
-        )
+        else:
+            # For other scrapers, use the normal time bucket approach
+            current_bucket = TimeBucket.from_datetime(now)
+            oldest_bucket = TimeBucket.from_datetime(
+                now - dt.timedelta(minutes=max_age_minutes)
+            )
+
+            chosen_bucket = current_bucket
+            # If we have more than 1 bucket to choose from, choose a bucket in the range
+            if oldest_bucket.id < current_bucket.id:
+                # Use a triangular distribution for bucket selection
+                chosen_id = int(numpy.random.default_rng().triangular(
+                    left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
+                ))
+
+                chosen_bucket = TimeBucket(id=chosen_id)
+
+            date_range = TimeBucket.to_date_range(chosen_bucket)
+
+            # Ensure date_range has timezone info
+            if date_range.start.tzinfo is None:
+                date_range = DateRange(
+                    start=date_range.start.replace(tzinfo=dt.timezone.utc),
+                    end=date_range.end.replace(tzinfo=dt.timezone.utc)
+                )
+
+            results.append(
+                ScrapeConfig(
+                    entity_limit=label_config.max_data_entities,
+                    date_range=date_range,
+                    labels=labels_to_scrape,
+                )
+            )
 
     return results
-
 
 class ScraperCoordinator:
     """Coordinates all the scrapers necessary based on the specified target ScrapingDistribution."""
@@ -222,6 +259,7 @@ class ScraperCoordinator:
 
                 # Perform the scrape
                 data_entities = await scrape_fn()
+
                 self.storage.store_data_entities(data_entities)
                 self.queue.task_done()
             except Exception as e:
