@@ -8,6 +8,8 @@ from typing import List, Dict, Any, Optional, Tuple
 import datetime as dt
 import os
 import json
+from youtube_transcript_api.proxies import WebshareProxyConfig
+
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -759,8 +761,18 @@ class YouTubeTranscriptScraper(Scraper):
         """
         try:
             # Get the transcript for the video directly
-            transcript_data = YouTubeTranscriptApi.get_transcript(video_id)
 
+            if os.getenv('WEB_SHARE_PROXY_USERNAME', None):
+                proxy_config = WebshareProxyConfig(
+                    proxy_username=os.getenv('WEB_SHARE_PROXY_USERNAME'),
+                    proxy_password=os.getenv('WEB_SHARE_PROXY_PASSWORD'),
+                )
+            else:
+                proxy_config = None
+            ytt_api = YouTubeTranscriptApi(
+                proxy_config=proxy_config
+            )
+            transcript_data = ytt_api.fetch(video_id).to_raw_data()
             # The transcript_data is already a list of dictionaries with the format we need
             # Each item has keys: 'text', 'start', 'duration'
             return transcript_data
@@ -893,8 +905,19 @@ class YouTubeTranscriptScraper(Scraper):
 
                         # Check for transcript availability
                         try:
-                            transcript = YouTubeTranscriptApi.get_transcript(video_id)
+                            # transcript = YouTubeTranscriptApi.get_transcript(video_id)
+                            if os.getenv('WEB_SHARE_PROXY_USERNAME', None):
+                                proxy_config = WebshareProxyConfig(
+                                    proxy_username= os.getenv('WEB_SHARE_PROXY_USERNAME'),
+                                    proxy_password=os.getenv('WEB_SHARE_PROXY_PASSWORD'),
+                                )
+                            else:
+                                proxy_config = None
+                            ytt_api = YouTubeTranscriptApi(
+                                proxy_config=proxy_config
+                            )
 
+                            transcript = ytt_api.fetch(video_id).to_raw_data()
                             if transcript:
                                 videos.append({
                                     "id": video_id,
