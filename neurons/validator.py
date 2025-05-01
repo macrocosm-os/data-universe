@@ -120,6 +120,9 @@ class Validator:
         self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
 
+        # Add counter for evaluation cycles since startup
+        self.evaluation_cycles_since_startup = 0
+
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
@@ -378,6 +381,7 @@ class Validator:
 
     def _on_eval_batch_complete(self):
         with self.lock:
+            self.evaluation_cycles_since_startup += 1
             self.last_eval_time = dt.datetime.utcnow()
 
     def is_healthy(self) -> bool:
@@ -391,11 +395,20 @@ class Validator:
             return False
 
         with self.lock:
-            # Set weights every 20 minutes.
-            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(
-                minutes=20
-            )
+            # After a restart, we want to wait two evaluation cycles
+            # Check if we've completed at least two evaluation cycles since startup
+            if not self.evaluation_cycles_since_startup:
+                self.evaluation_cycles_since_startup = 0
+                bt.logging.info("Initializing evaluation cycles counter for delayed weight setting")
 
+            # If we've completed fewer than 2 evaluation cycles, don't set weights
+            if self.evaluation_cycles_since_startup < 2:
+                bt.logging.info(
+                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/2 evaluation cycles since startup")
+                return False
+
+            # Normal 20-minute interval check for subsequent weight settings
+            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(minutes=20)
     def _start_api_monitoring(self):
         """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
 
