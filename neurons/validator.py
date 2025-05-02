@@ -1103,7 +1103,7 @@ class Validator:
 
         return False, "Request accepted"
 
-    def organic_priority(self, synapse: OrganicRequest):
+    def organic_priority(self, synapse: OrganicRequest) -> float:
         caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
         priority = float(self.metagraph.S[caller_uid])
         bt.logging.trace(
