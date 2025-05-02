@@ -195,48 +195,41 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
 
 
-def to_lookup(json_path):
+def to_lookup(json_path: str):
+    """Converts a dynamic desirability json list into a DataDesirabilityLookup."""
     with open(json_path, 'r') as f:
         jobs = json.load(f)
     
     distribution = {}
     
-    reddit_jobs = [job for job in jobs if job['params'].get('platform') == 'reddit']
-    x_jobs = [job for job in jobs if job['params'].get('platform') == 'x']
+    # Get all data sources with weight > 0
+    active_data_sources = [ds for ds in DataSource if ds.weight > 0]
     
-    # Create JobMatcher for Reddit
-    reddit_job_matcher = JobMatcher(jobs=[
-        Job(
-            job_type=job['params']['job_type'],
-            topic=job['params']['topic'],
-            job_weight=job['weight'],
-            start_datetime=job['params'].get('post_start_datetime'),
-            end_datetime=job['params'].get('post_end_datetime')
-        ) for job in reddit_jobs
-    ])
+    # Process jobs for each active data source
+    for data_source in active_data_sources:
+        # Convert enum names to lowercase for matching with platform names in jobs
+        platform_name = data_source.name.lower()
+        
+        # Filter jobs for this platform
+        platform_jobs = [job for job in jobs if job['params'].get('platform') == platform_name]
+        
+        # Create JobMatcher for this platform
+        job_matcher = JobMatcher(jobs=[
+            Job(
+                job_type=job['params']['job_type'],
+                topic=job['params']['topic'],
+                job_weight=job['weight'],
+                start_datetime=job['params'].get('post_start_datetime'),
+                end_datetime=job['params'].get('post_end_datetime')
+            ) for job in platform_jobs
+        ])
+        
+        # Create DataSourceDesirability object and add to distribution
+        distribution[data_source] = DataSourceDesirability(
+            weight=data_source.weight,
+            job_matcher=job_matcher
+        )
     
-    # Create JobMatcher for X
-    x_job_matcher = JobMatcher(jobs=[
-        Job(
-            job_type=job['params']['job_type'],
-            topic=job['params']['topic'],
-            job_weight=job['weight'],
-            start_datetime=job['params'].get('post_start_datetime'),
-            end_datetime=job['params'].get('post_end_datetime')
-        ) for job in x_jobs
-    ])
-    
-    # Create DataSourceDesirability objects and add them to distribution
-    distribution[DataSource.REDDIT] = DataSourceDesirability(
-        weight=DataSource.REDDIT.weight,
-        job_matcher=reddit_job_matcher
-    )
-    
-    distribution[DataSource.X] = DataSourceDesirability(
-        weight=DataSource.X.weight,
-        job_matcher=x_job_matcher
-    )
-
     max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
     return DataDesirabilityLookup(
         distribution=distribution,
