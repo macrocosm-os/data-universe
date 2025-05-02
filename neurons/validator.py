@@ -27,16 +27,10 @@ import os
 import wandb
 import subprocess
 from common.metagraph_syncer import MetagraphSyncer
-import common.utils as utils
-import bittensor as bt
 from neurons.config import NeuronType, check_config, create_config
-from vali_utils.miner_evaluator import MinerEvaluator
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
-from common.organic_protocol import OrganicRequest
-from vali_utils.api.models import QueryRequest
-from vali_utils.organic_handler import process_organic_query, organic_blacklist
 from rich.table import Table
 from rich.console import Console
 import warnings
@@ -56,16 +50,18 @@ from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
-import datetime as dt
 import random
-
 
 load_dotenv()
 # Temporary solution to getting rid of annoying bittensor trace logs
-original_trace = bt.logging.trace 
+original_trace = bt.logging.trace
+
+
 def filtered_trace(message, *args, **kwargs):
     if "Unexpected header key encountered" not in message:
-        original_trace(message, *args, **kwargs) 
+        original_trace(message, *args, **kwargs)
+
+
 bt.logging.trace = filtered_trace 
 
 # Filter out the specific deprecation warning from datetime.utcnow()
@@ -77,8 +73,7 @@ warnings.filterwarnings(
 # import datetime after the warning filter
 import datetime as dt
 
-
-bt.logging.set_trace(True) # TODO remove it in future
+bt.logging.set_trace(True)  # TODO remove it in future
 
 
 class Validator:
@@ -181,7 +176,6 @@ class Validator:
         except Exception as e:
             bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
             bt.logging.exception("Exception details:")
-
 
     def get_version_tag(self):
         """Fetches version tag"""
@@ -436,6 +430,7 @@ class Validator:
 
             # Normal 20-minute interval check for subsequent weight settings
             return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(minutes=20)
+
     def _start_api_monitoring(self):
         """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
 
@@ -590,14 +585,11 @@ class Validator:
         This is the main handler that will be attached to the validator's axon.
 
         Args:
-            self: The axon
             synapse: The OrganicRequest synapse containing query parameters
 
         Returns:
             The modified synapse with response data
         """
-        # Access the validator through dendrite.receptor
-        validator = synapse.dendrite.receptor
         bt.logging.info(f"Processing organic query for source: {synapse.source}")
 
         try:
@@ -608,8 +600,8 @@ class Validator:
             MAX_PENALTY = 0.05
 
             # Get all miner UIDs and sort by incentive
-            miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid, validator.vpermit_rao_limit)
-            miner_scores = [(uid, float(validator.metagraph.I[uid])) for uid in miner_uids]
+            miner_uids = utils.get_miner_uids(self.metagraph, self.uid, 10000)
+            miner_scores = [(uid, float(self.metagraph.I[uid])) for uid in miner_uids]
             miner_scores.sort(key=lambda x: x[1], reverse=True)
 
             # Take top 60% of miners (but at least 5 if available)
@@ -630,7 +622,7 @@ class Validator:
             while len(selected_miners) < NUM_MINERS_TO_QUERY and top_miners:
                 idx = random.randint(0, len(top_miners) - 1)
                 uid, _ = top_miners.pop(idx)
-                coldkey = validator.metagraph.coldkeys[uid]
+                coldkey = self.metagraph.coldkeys[uid]
 
                 # Only add if we haven't selected too many miners from this coldkey
                 if coldkey not in selected_coldkeys or len(selected_coldkeys) < 2:
@@ -665,8 +657,8 @@ class Validator:
             miner_responses = {}
             miner_data_counts = {}
 
-            async with bt.dendrite(wallet=validator.wallet) as dendrite:
-                axons = [validator.metagraph.axons[uid] for uid in selected_miners]
+            async with bt.dendrite(wallet=self.wallet) as dendrite:
+                axons = [self.metagraph.axons[uid] for uid in selected_miners]
                 responses = await dendrite.forward(
                     axons=axons,
                     synapse=on_demand_synapse,
@@ -677,7 +669,7 @@ class Validator:
                 for i, response in enumerate(responses):
                     if i < len(selected_miners) and response is not None:
                         uid = selected_miners[i]
-                        hotkey = validator.metagraph.hotkeys[uid]
+                        hotkey = self.metagraph.hotkeys[uid]
 
                         # Check if response has data
                         data = getattr(response, 'data', [])
@@ -707,7 +699,7 @@ class Validator:
                         scraper = EnhancedApiDojoTwitterScraper()
                     elif on_demand_synapse.source == DataSource.REDDIT:
                         # For other sources, use the standard provider
-                        scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
+                        scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
                         if not scraper_id:
                             bt.logging.warning(f"No preferred scraper for source {on_demand_synapse.source}")
                             # Return empty result with consensus
@@ -806,7 +798,7 @@ class Validator:
                             bt.logging.info(f"Applying 5% penalty to miner {uid} for not returning data that exists")
 
                             # Update the miner's score with the mixed results
-                            validator.evaluator.scorer._update_credibility(uid, validation_results)
+                            self.evaluator.scorer._update_credibility(uid, validation_results)
 
                         # Process the verification data to match exactly what miners would return
                         processed_data = []
@@ -911,7 +903,7 @@ class Validator:
                             continue
 
                         # Use scraper to validate data
-                        scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
+                        scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
                         if not scraper_id:
                             bt.logging.warning(f"No preferred scraper for source {on_demand_synapse.source}")
                             continue
@@ -939,7 +931,7 @@ class Validator:
                             penalty = MIN_PENALTY + (0.5 - validation_rate) * 2 * (MAX_PENALTY - MIN_PENALTY)
 
                             # Ensure penalty doesn't make credibility negative
-                            current_cred = validator.evaluator.scorer.get_miner_credibility(uid)
+                            current_cred = self.evaluator.scorer.get_miner_credibility(uid)
                             safe_penalty = min(current_cred * 0.2, penalty)  # Never reduce by more than 20%
 
                             bt.logging.info(f"Applying penalty of {safe_penalty:.4f} to miner {uid}")
@@ -952,8 +944,8 @@ class Validator:
                             )
 
                             # Update the miner's score with this result
-                            index = validator.evaluator.storage.read_miner_index(validator.metagraph.hotkeys[uid])
-                            validator.evaluator.scorer.on_miner_evaluated(uid, index, [validation_result])
+                            index = self.evaluator.storage.read_miner_index(self.metagraph.hotkeys[uid])
+                            self.evaluator.scorer.on_miner_evaluated(uid, index, [validation_result])
 
                             # Remove this miner from consistent miners if it was there
                             if uid in consistent_miners:
@@ -976,7 +968,7 @@ class Validator:
                 best_meta = {
                     "source": "validated",
                     "miner_uid": best_uid,
-                    "miner_hotkey": validator.metagraph.hotkeys[best_uid],
+                    "miner_hotkey": self.metagraph.hotkeys[best_uid],
                     "validation_rate": validated_miners[best_uid]
                 }
 
@@ -989,7 +981,7 @@ class Validator:
                 best_meta = {
                     "source": "consistent",
                     "miner_uid": best_uid,
-                    "miner_hotkey": validator.metagraph.hotkeys[best_uid]
+                    "miner_hotkey": self.metagraph.hotkeys[best_uid]
                 }
 
             # Last resort: take data from any miner that returned something
@@ -1002,7 +994,7 @@ class Validator:
                 best_meta = {
                     "source": "inconsistent",
                     "miner_uid": median_uid,
-                    "miner_hotkey": validator.metagraph.hotkeys[median_uid]
+                    "miner_hotkey": self.metagraph.hotkeys[median_uid]
                 }
 
             # Process the data for return
@@ -1071,37 +1063,17 @@ class Validator:
 
     async def organic_blacklist(self, synapse: OrganicRequest) -> Tuple[bool, str]:
         """
-        Blacklist function for organic requests.
-
-        Args:
-            self: The axon
-            synapse: The OrganicRequest synapse
-
-        Returns:
-            Tuple of (is_blacklisted, reason)
+        Simplified blacklist function that only checks whitelist membership
         """
-        # Access the validator through dendrite.receptor
-        validator = synapse.dendrite.receptor
-
-        # Check if the requester is in the whitelist
-        if hasattr(validator.config, 'organic_whitelist') and validator.config.organic_whitelist:
-            if synapse.dendrite.hotkey not in validator.config.organic_whitelist:
+        # Only allow hotkeys in the whitelist
+        if hasattr(self.config, 'organic_whitelist') and self.config.organic_whitelist:
+            if synapse.dendrite.hotkey in self.config.organic_whitelist:
+                return False, "Request accepted from whitelisted hotkey"
+            else:
                 return True, f"Sender {synapse.dendrite.hotkey} not in whitelist"
 
-        try:
-            # Check if requester has sufficient stake
-            caller_uid = validator.metagraph.hotkeys.index(synapse.dendrite.hotkey)
-            min_stake = getattr(validator.config, 'organic_min_stake', 100.0)
-
-            if float(validator.metagraph.S[caller_uid]) < min_stake:
-                return True, f"Insufficient stake (minimum: {min_stake})"
-        except ValueError:
-            return True, f"Hotkey {synapse.dendrite.hotkey} not found in metagraph"
-        except Exception as e:
-            bt.logging.error(f"Error in organic_blacklist: {str(e)}")
-            return True, f"Error checking requester: {str(e)}"
-
-        return False, "Request accepted"
+        # If no whitelist is defined, reject all requests
+        return True, "No whitelist configured"
 
     def organic_priority(self, synapse: OrganicRequest) -> float:
         caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
