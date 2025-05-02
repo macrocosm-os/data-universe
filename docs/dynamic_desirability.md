@@ -97,6 +97,7 @@ An example of a valid JSON submission is given below:
             "post_end_datetime": null
         }
     }
+]
 ```
 
 
