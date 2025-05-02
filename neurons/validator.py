@@ -34,6 +34,9 @@ from vali_utils.miner_evaluator import MinerEvaluator
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
 from rewards.data_value_calculator import DataValueCalculator
+from common.organic_protocol import OrganicRequest
+from vali_utils.api.models import QueryRequest
+from vali_utils.organic_handler import process_organic_query, organic_blacklist
 from rich.table import Table
 from rich.console import Console
 import warnings
@@ -351,6 +354,13 @@ class Validator:
 
         try:
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
+            # Import and attach organic synapse
+            self.axon.attach(
+                forward_fn=process_organic_query,
+                blacklist_fn=organic_blacklist,
+                synapse=OrganicRequest # todo
+            )
+
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
             if self.config.neuron.api_on:
                 try:
