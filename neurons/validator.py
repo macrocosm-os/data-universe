@@ -358,7 +358,7 @@ class Validator:
             self.axon.attach(
                 forward_fn=process_organic_query,
                 blacklist_fn=organic_blacklist,
-                synapse=OrganicRequest # todo
+                priority_fn=lambda synapse: 10.0  # Give it high priority
             )
 
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
