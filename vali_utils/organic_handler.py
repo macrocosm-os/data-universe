@@ -1,80 +1,35 @@
-from common.organic_protocol import OrganicRequest
-from vali_utils.api.models import QueryRequest
-import datetime as dt
-from fastapi import APIRouter, HTTPException, Depends
 import bittensor as bt
-import datetime as dt
-from pathlib import Path
-import pandas as pd
-import random
+from typing import Tuple
 import json
-from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel, DataEntity
+from common.organic_protocol import OrganicRequest
+from common.data import DataSource, DataLabel, DataEntity
 from common import constants
 from common.protocol import OnDemandRequest
-from common import utils  # Import your utils
-
-from scraping.scraper import ScrapeConfig
+from common import utils
+from scraping.scraper import ScrapeConfig, ValidationResult
 from common.date_range import DateRange
 from scraping.provider import ScraperProvider
-from scraping.scraper import ValidationResult
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
+import datetime as dt
+import random
 
 
 async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
-    """Handler for organic queries through the axon"""
-    try:
-        bt.logging.info(f"Processing organic query for source: {synapse.source}")
-
-        # Convert to QueryRequest format
-        request = QueryRequest(
-            source=synapse.source,
-            usernames=synapse.usernames,
-            keywords=synapse.keywords,
-            start_date=synapse.start_date,
-            end_date=synapse.end_date,
-            limit=synapse.limit
-        )
-
-        # Execute core query logic
-        result = await handle_data_query(self, request)
-
-        # Map result to synapse response
-        synapse.status = result.get("status", "error")
-        synapse.data = result.get("data", [])
-        synapse.meta = result.get("meta", {})
-
-    except Exception as e:
-        bt.logging.error(f"Error in organic query: {str(e)}")
-        synapse.status = "error"
-        synapse.meta = {"error": str(e)}
-        synapse.data = []
-
-    return synapse
-
-
-def organic_blacklist(self, synapse) -> tuple[bool, str]:
-    """Filter for organic requests"""
-    if hasattr(self.config, 'organic_whitelist') and self.config.organic_whitelist:
-        if synapse.dendrite.hotkey not in self.config.organic_whitelist:
-            return True, "Sender not in whitelist"
-
-    try:
-        caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
-        min_stake = getattr(self.config, 'organic_min_stake', 100.0)
-        if self.metagraph.S[caller_uid] < min_stake:
-            return True, f"Insufficient stake (minimum: {min_stake})"
-    except ValueError:
-        return True, "Hotkey not found in metagraph"
-
-    return False, "Request accepted"
-
-
-async def handle_data_query(validator, request: QueryRequest):
     """
-    Handle data queries targeting multiple miners with validation and incentives.
-    Now supports enhanced X content with rich metadata.
+    Process organic queries through the validator axon.
+    This is the main handler that will be attached to the validator's axon.
+
+    Args:
+        self: The validator instance 
+        synapse: The OrganicRequest synapse containing query parameters
+
+    Returns:
+        The modified synapse with response data
     """
+    validator = self
+    bt.logging.info(f"Processing organic query for source: {synapse.source}")
+
     try:
         # Constants for miner selection and validation
         NUM_MINERS_TO_QUERY = 5
@@ -83,7 +38,7 @@ async def handle_data_query(validator, request: QueryRequest):
         MAX_PENALTY = 0.05
 
         # Get all miner UIDs and sort by incentive
-        miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid, 10_000)
+        miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid, validator.vpermit_rao_limit)
         miner_scores = [(uid, float(validator.metagraph.I[uid])) for uid in miner_uids]
         miner_scores.sort(key=lambda x: x[1], reverse=True)
 
@@ -92,11 +47,10 @@ async def handle_data_query(validator, request: QueryRequest):
         top_miners = miner_scores[:top_count]
 
         if len(top_miners) < 2:
-            return {
-                "status": "error",
-                "meta": {"error": "Not enough miners available to service request"},
-                "data": []
-            }
+            synapse.status = "error"
+            synapse.meta = {"error": "Not enough miners available to service request"}
+            synapse.data = []
+            return synapse
 
         # Select a diverse set of miners
         selected_miners = []
@@ -125,14 +79,15 @@ async def handle_data_query(validator, request: QueryRequest):
 
         bt.logging.info(f"Selected {len(selected_miners)} miners for on-demand query")
 
-        # Create request synapse
-        synapse = OnDemandRequest(
-            source=DataSource[request.source.upper()],
-            usernames=request.usernames,
-            keywords=request.keywords,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            limit=request.limit
+        # Create OnDemandRequest synapse to forward to miners
+        on_demand_synapse = OnDemandRequest(
+            source=DataSource[synapse.source.upper()],
+            usernames=synapse.usernames,
+            keywords=synapse.keywords,
+            start_date=synapse.start_date,
+            end_date=synapse.end_date,
+            limit=synapse.limit,
+            version=constants.PROTOCOL_VERSION
         )
 
         # Query selected miners
@@ -144,7 +99,7 @@ async def handle_data_query(validator, request: QueryRequest):
             axons = [validator.metagraph.axons[uid] for uid in selected_miners]
             responses = await dendrite.forward(
                 axons=axons,
-                synapse=synapse,
+                synapse=on_demand_synapse,
                 timeout=30
             )
 
@@ -164,11 +119,10 @@ async def handle_data_query(validator, request: QueryRequest):
                     bt.logging.info(f"Miner {uid} ({hotkey}) returned {data_count} items")
 
         if not miner_responses:
-            return {
-                "status": "error",
-                "meta": {"error": "No miners responded to the query"},
-                "data": []
-            }
+            synapse.status = "error"
+            synapse.meta = {"error": "No miners responded to the query"}
+            synapse.data = []
+            return synapse
 
         # Step 1: Check if we have a consensus on "no data"
         no_data_consensus = all(count == 0 for count in miner_data_counts.values())
@@ -178,70 +132,69 @@ async def handle_data_query(validator, request: QueryRequest):
             # Perform a quick check to verify if data should exist
             try:
                 # For X data, use exactly the same approach as miners
-                if synapse.source == DataSource.X:
+                if on_demand_synapse.source == DataSource.X:
                     # Initialize the enhanced scraper directly as miners do
                     scraper = EnhancedApiDojoTwitterScraper()
-                elif synapse.source == DataSource.REDDIT:
+                elif on_demand_synapse.source == DataSource.REDDIT:
                     # For other sources, use the standard provider
-                    scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
+                    scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
                     if not scraper_id:
-                        bt.logging.warning(f"No preferred scraper for source {synapse.source}")
+                        bt.logging.warning(f"No preferred scraper for source {on_demand_synapse.source}")
                         # Return empty result with consensus
-                        return {
-                            "status": "success",
-                            "data": [],
-                            "meta": {
-                                "miners_queried": len(selected_miners),
-                                "consensus": "no_data"
-                            }
+                        synapse.status = "success"
+                        synapse.data = []
+                        synapse.meta = {
+                            "miners_queried": len(selected_miners),
+                            "consensus": "no_data"
                         }
+                        return synapse
                     scraper = ScraperProvider().get(scraper_id)
                 else:
-                    bt.logging.warning(f"No preferred scraper for source {synapse.source}")
-                    return {
-                        "status": "success",
-                        "data": [],
-                        "meta": {
-                            "miners_queried": len(selected_miners),
-                            "consensus": "no_data"
-                        }
+                    bt.logging.warning(f"No preferred scraper for source {on_demand_synapse.source}")
+                    synapse.status = "success"
+                    synapse.data = []
+                    synapse.meta = {
+                        "miners_queried": len(selected_miners),
+                        "consensus": "no_data"
                     }
+                    return synapse
 
                 if not scraper:
-                    bt.logging.warning(f"Could not initialize scraper for {synapse.source}")
-                    return {
-                        "status": "success",
-                        "data": [],
-                        "meta": {
-                            "miners_queried": len(selected_miners),
-                            "consensus": "no_data"
-                        }
+                    bt.logging.warning(f"Could not initialize scraper for {on_demand_synapse.source}")
+                    synapse.status = "success"
+                    synapse.data = []
+                    synapse.meta = {
+                        "miners_queried": len(selected_miners),
+                        "consensus": "no_data"
                     }
+                    return synapse
 
                 # Create scrape config with limited scope (only check for a few items)
                 # For X data, combine keywords and usernames with appropriate label formatting
                 labels = []
-                if synapse.keywords:
-                    labels.extend([DataLabel(value=k) for k in synapse.keywords])
-                if synapse.usernames:
+                if on_demand_synapse.keywords:
+                    labels.extend([DataLabel(value=k) for k in on_demand_synapse.keywords])
+                if on_demand_synapse.usernames:
                     # Ensure usernames have @ prefix
                     labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
-                                   synapse.usernames])
+                                   on_demand_synapse.usernames])
 
                 # Create scrape config matching the miner's configuration
                 verify_config = ScrapeConfig(
-                    entity_limit=request.limit,  # Use requested limit
+                    entity_limit=synapse.limit,  # Use requested limit
                     date_range=DateRange(
-                        start=dt.datetime.fromisoformat(synapse.start_date) if synapse.start_date else dt.datetime.now(
+                        start=dt.datetime.fromisoformat(
+                            on_demand_synapse.start_date) if on_demand_synapse.start_date else dt.datetime.now(
                             dt.timezone.utc) - dt.timedelta(days=1),
-                        end=dt.datetime.fromisoformat(synapse.end_date) if synapse.end_date else dt.datetime.now(
+                        end=dt.datetime.fromisoformat(
+                            on_demand_synapse.end_date) if on_demand_synapse.end_date else dt.datetime.now(
                             dt.timezone.utc)
                     ),
                     labels=labels,
                 )
 
                 # For X source, replicate exactly what miners do in handle_on_demand
-                if synapse.source == DataSource.X:
+                if on_demand_synapse.source == DataSource.X:
                     await scraper.scrape(verify_config)
 
                     # Get enhanced content
@@ -287,7 +240,7 @@ async def handle_data_query(validator, request: QueryRequest):
                     # Process the verification data to match exactly what miners would return
                     processed_data = []
                     for item in verification_data:
-                        if synapse.source == DataSource.X:
+                        if on_demand_synapse.source == DataSource.X:
                             # For X data, miners store the API response as JSON in the content field
                             # We need to decode it and parse it as JSON to match what miners return
                             try:
@@ -317,38 +270,35 @@ async def handle_data_query(validator, request: QueryRequest):
                             }
                             processed_data.append(item_dict)
 
-                    return {
-                        "status": "warning",
-                        "data": processed_data[:request.limit],
-                        "meta": {
-                            "miners_queried": len(selected_miners),
-                            "miners_responded": len(miner_responses),
-                            "verification_message": "Miners returned no data, but data was found. Results are from validator's direct check.",
-                            "items_returned": len(processed_data)
-                        }
+                    synapse.status = "warning"
+                    synapse.data = processed_data[:synapse.limit]
+                    synapse.meta = {
+                        "miners_queried": len(selected_miners),
+                        "miners_responded": len(miner_responses),
+                        "verification_message": "Miners returned no data, but data was found. Results are from validator's direct check.",
+                        "items_returned": len(processed_data)
                     }
+                    return synapse
             except Exception as e:
                 bt.logging.error(f"Error during verification check: {str(e)}")
 
             # If verification failed or no data was found, return original empty result
-            return {
-                "status": "success",
-                "data": [],
-                "meta": {
-                    "miners_queried": len(selected_miners),
-                    "consensus": "no_data"
-                }
+            synapse.status = "success"
+            synapse.data = []
+            synapse.meta = {
+                "miners_queried": len(selected_miners),
+                "consensus": "no_data"
             }
+            return synapse
 
         # Step 2: Check consistency of responses from miners that returned data
         miners_with_data = [uid for uid, count in miner_data_counts.items() if count > 0]
 
         if not miners_with_data:
-            return {
-                "status": "error",
-                "meta": {"error": "No miners returned valid data"},
-                "data": []
-            }
+            synapse.status = "error"
+            synapse.meta = {"error": "No miners returned valid data"}
+            synapse.data = []
+            return synapse
 
         # Get the median data count as a reference point
         data_counts = [count for count in miner_data_counts.values() if count > 0]
@@ -390,9 +340,9 @@ async def handle_data_query(validator, request: QueryRequest):
                         continue
 
                     # Use scraper to validate data
-                    scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(synapse.source)
+                    scraper_id = MinerEvaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
                     if not scraper_id:
-                        bt.logging.warning(f"No preferred scraper for source {synapse.source}")
+                        bt.logging.warning(f"No preferred scraper for source {on_demand_synapse.source}")
                         continue
 
                     scraper = ScraperProvider().get(scraper_id)
@@ -431,7 +381,7 @@ async def handle_data_query(validator, request: QueryRequest):
                         )
 
                         # Update the miner's score with this result
-                        index = validator.storage.read_miner_index(validator.metagraph.hotkeys[uid])
+                        index = validator.evaluator.storage.read_miner_index(validator.metagraph.hotkeys[uid])
                         validator.evaluator.scorer.on_miner_evaluated(uid, index, [validation_result])
 
                         # Remove this miner from consistent miners if it was there
@@ -488,7 +438,7 @@ async def handle_data_query(validator, request: QueryRequest):
         for item in best_data:
             # For X content from miners, item.content already contains the serialized API response
             # which needs to be parsed as JSON
-            if synapse.source == DataSource.X:
+            if on_demand_synapse.source == DataSource.X:
                 try:
                     # Extract the content as string and parse it as JSON
                     if hasattr(item, 'content') and item.content:
@@ -534,12 +484,48 @@ async def handle_data_query(validator, request: QueryRequest):
             "items_returned": len(unique_data)
         })
 
-        return {
-            "status": "success",
-            "data": unique_data[:request.limit],
-            "meta": best_meta
-        }
+        synapse.status = "success"
+        synapse.data = unique_data[:synapse.limit]
+        synapse.meta = best_meta
+        return synapse
 
     except Exception as e:
-        bt.logging.error(f"Error processing request: {str(e)}")
-        raise HTTPException(500, str(e))
+        bt.logging.error(f"Error in organic query: {str(e)}")
+        synapse.status = "error"
+        synapse.meta = {"error": str(e)}
+        synapse.data = []
+        return synapse
+
+
+async def organic_blacklist(self, synapse) -> Tuple[bool, str]:
+    """
+    Blacklist function for organic requests.
+
+    Args:
+        self: The validator instance
+        synapse: The OrganicRequest synapse
+
+    Returns:
+        Tuple of (is_blacklisted, reason)
+    """
+    validator = self
+
+    # Check if the requester is in the whitelist
+    if hasattr(validator.config, 'organic_whitelist') and validator.config.organic_whitelist:
+        if synapse.dendrite.hotkey not in validator.config.organic_whitelist:
+            return True, f"Sender {synapse.dendrite.hotkey} not in whitelist"
+
+    try:
+        # Check if requester has sufficient stake
+        caller_uid = validator.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        min_stake = getattr(validator.config, 'organic_min_stake', 100.0)
+
+        if float(validator.metagraph.S[caller_uid]) < min_stake:
+            return True, f"Insufficient stake (minimum: {min_stake})"
+    except ValueError:
+        return True, f"Hotkey {synapse.dendrite.hotkey} not found in metagraph"
+    except Exception as e:
+        bt.logging.error(f"Error in organic_blacklist: {str(e)}")
+        return True, f"Error checking requester: {str(e)}"
+
+    return False, "Request accepted"
