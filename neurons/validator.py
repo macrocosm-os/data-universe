@@ -375,7 +375,7 @@ class Validator:
             self.axon.attach(
                 forward_fn=self.process_organic_query,
                 blacklist_fn=self.organic_blacklist,
-                priority_fn=lambda synapse: 10.0  # Give it high priority
+                priority_fn=self.organic_priority
             )
 
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
@@ -1102,6 +1102,14 @@ class Validator:
             return True, f"Error checking requester: {str(e)}"
 
         return False, "Request accepted"
+
+    def organic_priority(self, synapse: OrganicRequest):
+        caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
+        priority = float(self.metagraph.S[caller_uid])
+        bt.logging.trace(
+            f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}.",
+        )
+        return priority
 
 
 def main():
