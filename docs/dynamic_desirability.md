@@ -38,7 +38,7 @@ In total, the subnet owner Macrocosmos has a total voting power of 30%, and the 
 
 There is a provided JSON creation tool (json_maker.ipynb) located in the Data Desirability folder to assist validators in creating a valid submission. The guidelines for a valid JSON submission are outlined below. 
 
-Validators will split their votes in JSON format according to the following conditions: 
+Validators will split their votes in JSON format normalized to the following conditions: 
 
 1. Label weights must be between (0,1]. 
     - The label weight now represents the percentage of the validator’s own voting power that they would like to place on the given label. For instance, a validator with 20% stake in the subnet for 14% total voting power placing 0.9 weight on a label would result in that label getting 12.6% of the total vote. 
@@ -46,11 +46,7 @@ Validators will split their votes in JSON format according to the following cond
 2. Label weights must sum to between 0 and 1. 
     - This comes as a consequence of the previous condition: at most a validator can choose to use 100% of their voting power to specify labels and associated label weights. 
 
-3. Each label weight must be in an increment of 0.1.
-    - This is done to incentivize maximization of validator voting power - spreading weight across too many labels weakens the strength of each individual label choice. 
-    - As a byproduct of this rule, the maximum number of incentivized labels a validator can specify is 10. 
-
-4. Weights must be from subnet data sources: Reddit or X.
+2. Weights must be from subnet data sources: Reddit, X, or YouTube.
 
 
 
@@ -58,26 +54,49 @@ An example of a valid JSON submission is given below:
 ```
 [
     {
-        "source_name": "reddit",
-        "label_weights": {
-            "r/Bitcoin": 0.1,
-            "r/BitcoinCash": 0.1,
-            "r/Bittensor_": 0.1,
-            "r/Btc": 0.1,
-            "r/Cryptocurrency": 0.1,
-            "r/Cryptomarkets": 0.1,
-            "r/EthereumClassic": 0.1
+        "id": "default_0",
+        "weight": 0.25,
+        "params": {
+            "job_type": "label",
+            "platform": "reddit",
+            "topic": "r/Bitcoin",
+            "post_start_datetime": null,
+            "post_end_datetime": null
         }
     },
     {
-        "source_name": "x",
-        "label_weights": {
-            "#bitcoin": 0.1,
-            "#bitcoincharts": 0.1,
-            "#bitcoiner": 0.1
+        "id": "default_1",
+        "weight": 0.25,
+        "params": {
+            "job_type": "label",
+            "platform": "reddit",
+            "topic": "r/BitcoinCash",
+            "post_start_datetime": null,
+            "post_end_datetime": null
+        }
+    },
+    {
+        "id": "default_2",
+        "weight": 0.25,
+        "params": {
+            "job_type": "label",
+            "platform": "reddit",
+            "topic": "r/Bittensor_",
+            "post_start_datetime": null,
+            "post_end_datetime": null
+        }
+    },
+    {
+        "id": "default_3",
+        "weight": 0.25,
+        "params": {
+            "job_type": "label",
+            "platform": "x",
+            "topic": "#macrocosmos",
+            "post_start_datetime": null,
+            "post_end_datetime": null
         }
     }
-]
 ```
 
 
