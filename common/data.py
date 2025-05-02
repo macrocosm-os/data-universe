@@ -63,7 +63,7 @@ class DataSource(IntEnum):
 
     REDDIT = 1
     X = 2
-    UNKNOWN_3 = 3
+    YOUTUBE = 3
     UNKNOWN_4 = 4
     UNKNOWN_5 = 5
     UNKNOWN_6 = 6
@@ -72,9 +72,9 @@ class DataSource(IntEnum):
     @property
     def weight(self):
         weights = {
-            DataSource.REDDIT: 0.6,
-            DataSource.X: 0.4,
-            DataSource.UNKNOWN_3: 0,
+            DataSource.REDDIT: 0.55,
+            DataSource.X: 0.35,
+            DataSource.YOUTUBE: 0.1,
             DataSource.UNKNOWN_4: 0,
             DataSource.UNKNOWN_5: 0,
             DataSource.UNKNOWN_6: 0,
@@ -93,13 +93,32 @@ class DataLabel(StrictBaseModel):
         description="The label. E.g. a subreddit for Reddit data.",
     )
 
+
     @field_validator("value")  # Changed from validator
     @classmethod
     def lower_case_value(cls, value: str) -> str:
-        """Converts the value to lower case to consistent casing throughout the system."""
+        """Handles value casing based on the type of label.
+
+        YouTube channel and video IDs are preserved in their original case,
+        while other labels are converted to lowercase.
+        """
+        # Special cases where we need to preserve the original case
+        if value.startswith('#youtube_c_') or value.startswith('#youtube_v_'):
+            # Extract the prefix and the ID parts
+            parts = value.split('_', 2)
+            if len(parts) < 3:
+                return value  # Return as is if the format is unexpected
+
+            prefix = '_'.join(parts[:2]).lower()  # '#youtube_c' or '#youtube_v' in lowercase
+            id_part = parts[2]  # Keep the ID with original case
+
+            # Reassemble with lowercase prefix but preserve ID case
+            return f"{prefix}_{id_part}"
+
+        # For all other labels, convert to lowercase as before
         if len(value.lower()) > 140:
             raise ValueError(
-                f"Label: {value} when is over 140 characters when .lower() is applied: {value.lower()}."
+                f"Label: {value} is over 140 characters when .lower() is applied: {value.lower()}."
             )
         return value.lower()
 
