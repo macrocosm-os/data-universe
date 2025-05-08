@@ -50,6 +50,7 @@ from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
+from vali_utils.load_balancer.validator_registry import ValidatorRegistry
 import random
 
 load_dotenv()
@@ -117,6 +118,8 @@ class Validator:
             self._on_metagraph_updated, netuids=[self.config.netuid]
         )
         bt.logging.info(f"Metagraph: {self.metagraph}.")
+        
+        self.validator_registry = ValidatorRegistry(metagraph=self.metagraph, organic_whitelist=self.config.organic_whitelist)
 
         # Create asyncio event loop to manage async tasks.
         self.loop = asyncio.get_event_loop()
