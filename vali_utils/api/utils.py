@@ -88,7 +88,7 @@ async def query_validator(
             response = await dendrite.forward(
                 axons=[axon_info],
                 synapse=synapse,
-                timeout=120  # 2 minute timeout
+                timeout=180  # 3 minute timeout
             )
             
         if not response or len(response) == 0:
