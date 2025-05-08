@@ -68,15 +68,13 @@ async def query_data(
     # Prepare the OrganicRequest from the QueryRequest
     try:
         # Convert dates to ISO format if provided
-        start_date = request.start_date.isoformat() if request.start_date else None
-        end_date = request.end_date.isoformat() if request.end_date else None
         
         organic_request = OrganicRequest(
             source=request.source.upper(),
             usernames=request.usernames or [],
             keywords=request.keywords or [],
-            start_date=start_date,
-            end_date=end_date,
+            start_date=request.start_date,
+            end_date=request.end_date,
             limit=request.limit or 100 # default request is 100 items
         )
     except Exception as e:
@@ -108,31 +106,33 @@ async def query_data(
                 wallet=wallet,
                 validator_host=host,
                 validator_port=port,
+                validator_hotkey=queried_validator.hotkey,
                 source=request.source,
                 keywords=request.keywords or [],
                 usernames=request.usernames or [],
-                start_date=start_date,
-                end_date=end_date,
+                start_date=request.start_date,
+                end_date=request.end_date,
                 limit=request.limit or 100
             )
             
             # Check if we got a valid response
-            if response and hasattr(response, 'status'):
+            status = response.get('status') if isinstance(response, dict) else getattr(response, 'status', 'unknown')
+            if response and status:
                 # Update validator status based on response
-                validator_registry.update_validators(uid, response.status)
+                validator_registry.update_validators(uid, status)
                 
                 # If successful, break the loop
-                if response.status == "success" or response.status == "warning":
+                if status == "success" or status == "warning":
                     bt.logging.info(f"Validator {uid} returned successful response")
                     break
                 else:
-                    bt.logging.warning(f"Validator {uid} returned error response: {response.status}")
+                    bt.logging.warning(f"Validator {uid} returned error response: {status}")
                     last_error = f"Validator error: {response.meta.get('error', 'Unknown error')}" if hasattr(response, 'meta') else "Unknown validator error"
             else:
                 # Mark as error if response is invalid
                 validator_registry.update_validators(uid, "error")
                 bt.logging.warning(f"Invalid response from validator {uid}")
-                last_error = "Invalid response from validator"
+                last_error = f"Invalid response from validator: {response}"
                 
         except Exception as e:
             # Mark as error on exception
@@ -141,8 +141,8 @@ async def query_data(
             last_error = str(e)
     
     # If we didn't get a successful response from any validator
-    if not response or not hasattr(response, 'status') or response.status not in ["success", "warning"]:
-        bt.logging.error("All validators failed to process request")
+    if not response or not status or status not in ["success", "warning"]:
+        bt.logging.error(f"All validators failed to process request. Status: {status}")
         raise HTTPException(
             status_code=502,
             detail=f"Failed to get valid response from any validator. Last error: {last_error}"
@@ -151,12 +151,12 @@ async def query_data(
     # Process the successful response
     try:
         # Extract data and metadata
-        data = response.data if hasattr(response, 'data') else []
-        meta = response.meta if hasattr(response, 'meta') else {}
+        data = response.get('data', []) if isinstance(response, dict) else getattr(response, 'data', [])
+        meta = response.get('meta', {}) if isinstance(response, dict) else getattr(response, 'meta', {})
         
         # Construct and return the response
         return QueryResponse(
-            status=response.status,
+            status=status,
             data=data,
             meta={
                 **meta,

@@ -35,6 +35,7 @@ async def query_validator(
     wallet: bt.wallet,
     validator_host: str,
     validator_port: int,
+    validator_hotkey: str,
     source: str,
     keywords: list = [],
     usernames: list = [],
@@ -49,6 +50,7 @@ async def query_validator(
         wallet: Bittensor wallet for signing the request
         validator_host: Validator IP address or hostname
         validator_port: Validator port number
+        validator_hotkey: Validator hotkey (str)
         source: Data source (X or REDDIT)
         keywords: List of keywords to search for
         usernames: List of usernames to search for
@@ -66,7 +68,7 @@ async def query_validator(
         ip=validator_host, 
         port=validator_port,
         ip_type=0,  # v4
-        hotkey="",  # We'll get this from the validator's response
+        hotkey=validator_hotkey, 
         coldkey="",  # Not needed
         protocol=0,
         version=1
