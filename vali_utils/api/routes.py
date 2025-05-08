@@ -67,8 +67,6 @@ async def query_data(
     
     # Prepare the OrganicRequest from the QueryRequest
     try:
-        # Convert dates to ISO format if provided
-        
         organic_request = OrganicRequest(
             source=request.source.upper(),
             usernames=request.usernames or [],
@@ -84,6 +82,7 @@ async def query_data(
     # Go through validators until successful response received
     response = None
     last_error = None
+    status = None
     
     for uid in available_validators:
         queried_validator = validator_registry.validators[uid]
@@ -129,13 +128,11 @@ async def query_data(
                     bt.logging.warning(f"Validator {uid} returned error response: {status}")
                     last_error = f"Validator error: {response.meta.get('error', 'Unknown error')}" if hasattr(response, 'meta') else "Unknown validator error"
             else:
-                # Mark as error if response is invalid
                 validator_registry.update_validators(uid, "error")
                 bt.logging.warning(f"Invalid response from validator {uid}")
                 last_error = f"Invalid response from validator: {response}"
                 
         except Exception as e:
-            # Mark as error on exception
             validator_registry.update_validators(uid, "error")
             bt.logging.error(f"Error querying validator {uid}: {str(e)}")
             last_error = str(e)

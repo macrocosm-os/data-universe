@@ -18,15 +18,10 @@ class Validator(BaseModel):
 
     def update_failure(self, status: str) -> int:
         """
-        Update the validator's failure count based on the operation status.
-
-        - If the operation was successful (status_code == 200), decrease the failure count (ensuring it doesn't go below 0).
-        - If the operation failed, increase the failure count.
-        - If the failure count exceeds MAX_FAILURES, return 1 to indicate the validator should be deactivated.
-        Otherwise, return 0.
+        Update the validator's timeout based on failure status.
         """
         current_time = time.time()
-        if status == "error":
+        if status != "error":
             self.timeout = 1
             self.available_at = current_time
         else:
@@ -43,12 +38,12 @@ class Validator(BaseModel):
 class ValidatorRegistry(BaseModel):
     """
     Class to store the success of forwards to validator axons.
-    Validators that routinely fail to respond to scoring requests are removed.
+    Validators that routinely fail to respond to requests are timed out.
     """
 
     # Using a default factory ensures validators is always a dict.
     validators: dict[int, Validator] = Field(default_factory=dict)
-    max_retries: ClassVar[int] = 4
+    current_index: int = Field(default=0)
 
     def __init__(self, metagraph: bt.metagraph = None, organic_whitelist: List[str] = None, **data):
         super().__init__(**data)
@@ -69,31 +64,30 @@ class ValidatorRegistry(BaseModel):
             }
         bt.logging.info(f"Validator registry for organics: {self.validators}")
 
-    def get_available_validators(self) -> List[Validator]:
+    def get_available_validators(self) -> List[int]:
         """
-        Given a list of validators, return only those that are not in their cooldown period.
+        Get a list of available validators, starting from the current index for cycling.
         """
-        return [uid for uid, validator in self.validators.items() if validator.is_available()]
-
-    def get_available_axon(self) -> Optional[Tuple[int, List[str], str]]:
-        """
-        Returns a tuple (uid, axon, hotkey) for a randomly selected validator based on stake weighting,
-        if spot checking conditions are met. Otherwise, returns None.
-        """
-        if not self.validators:
-            return None
-        for _ in range(self.max_retries):
-            validator_list = self.get_available_validators()
-            if validator_list:
-                break
-            else:
-                time.sleep(5)
-        if not validator_list:
-            bt.logging.error(f"Could not find available validator after {self.max_retries}")
-            return None
-        weights = [self.validators[uid].stake for uid in validator_list]
-        chosen = self.validators[random.choices(validator_list, weights=weights, k=1)[0]]
-        return chosen.uid, chosen.axon, chosen.hotkey
+        available = [uid for uid, validator in self.validators.items() if validator.is_available()]
+        
+        if not available:
+            return []
+        available.sort()
+        
+        # Reorder the list to start from current_index for cycling
+        if self.current_index >= len(available):
+            self.current_index = 0  
+            
+        # If current_index points to a validator that's no longer available,
+        # just start from the beginning
+        if self.current_index >= len(available):
+            ordered_validators = available
+        else:
+            # Start the list from current_index
+            ordered_validators = available[self.current_index:] + available[:self.current_index]
+            self.current_index = (self.current_index + 1) % max(1, len(available))
+            
+        return ordered_validators
 
     def update_validators(self, uid: int, response_code: int) -> None:
         """
