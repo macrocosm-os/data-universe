@@ -797,10 +797,10 @@ class Validator:
                                     ValidationResult(is_valid=False, reason="Failed to respond to query", content_size_bytes_validated=0)
                                 ]
                                 
-                                bt.logging.info(f"Would usually apply a 5% credibility penalty to miner {uid} for not responding. Skipping for now...")
+                                bt.logging.info(f"Applying a 5% credibility penalty to miner {uid} for not responding.")
                                 
                                 # Update the miner's score with the validation results
-                                # self.evaluator.scorer._update_credibility(uid, validation_results) # TODO: uncomment
+                                self.evaluator.scorer._update_credibility(uid, validation_results) # TODO: uncomment
 
                         # Process the verification data to match exactly what miners would return
                         processed_data = []
