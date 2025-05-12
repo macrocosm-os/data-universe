@@ -3,7 +3,7 @@
         "id": "default_0",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/Bitcoin",
             "post_start_datetime": null,
@@ -14,7 +14,7 @@
         "id": "default_1",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/BitcoinCash",
             "post_start_datetime": null,
@@ -25,7 +25,7 @@
         "id": "default_2",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/Bittensor_",
             "post_start_datetime": null,
@@ -36,7 +36,7 @@
         "id": "default_3",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/Btc",
             "post_start_datetime": null,
@@ -47,7 +47,7 @@
         "id": "default_4",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/Cryptocurrency",
             "post_start_datetime": null,
@@ -58,7 +58,7 @@
         "id": "default_5",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/Cryptomarkets",
             "post_start_datetime": null,
@@ -69,7 +69,7 @@
         "id": "default_6",
         "weight": 0.8,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/worldpolitics",
             "post_start_datetime": null,
@@ -80,7 +80,7 @@
         "id": "default_7",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/worldnews",
             "post_start_datetime": null,
@@ -91,7 +91,7 @@
         "id": "default_8",
         "weight": 0.7,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/WallstreetBets",
             "post_start_datetime": null,
@@ -102,7 +102,7 @@
         "id": "default_9",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
             "topic": "r/politics",
             "post_start_datetime": null,
@@ -113,7 +113,7 @@
         "id": "default_10",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#bitcoin",
             "post_start_datetime": null,
@@ -124,7 +124,7 @@
         "id": "default_11",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#bitcoiner",
             "post_start_datetime": null,
@@ -135,7 +135,7 @@
         "id": "default_12",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#bitcoinnews",
             "post_start_datetime": null,
@@ -146,7 +146,7 @@
         "id": "default_13",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#btc",
             "post_start_datetime": null,
@@ -157,7 +157,7 @@
         "id": "default_14",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#crypto",
             "post_start_datetime": null,
@@ -168,7 +168,7 @@
         "id": "default_15",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#defi",
             "post_start_datetime": null,
@@ -179,7 +179,7 @@
         "id": "default_16",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#decentralizedfinance",
             "post_start_datetime": null,
@@ -190,7 +190,7 @@
         "id": "default_17",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#tao",
             "post_start_datetime": null,
@@ -201,7 +201,7 @@
         "id": "default_18",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#Israel",
             "post_start_datetime": null,
@@ -212,7 +212,7 @@
         "id": "default_19",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#Ukraine",
             "post_start_datetime": null,
@@ -223,7 +223,7 @@
         "id": "default_20",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#Trump",
             "post_start_datetime": null,
@@ -234,7 +234,7 @@
         "id": "default_21",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#Harris",
             "post_start_datetime": null,
@@ -245,7 +245,7 @@
         "id": "default_22",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#macrocosmos",
             "post_start_datetime": null,
@@ -256,7 +256,7 @@
         "id": "default_23",
         "weight": 1.0,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
             "topic": "#MacrocosmosAI",
             "post_start_datetime": null,
