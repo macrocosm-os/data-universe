@@ -65,7 +65,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                             total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
     """Calculate total weights and write to total.json using the new job-based format.
     Compatible with both old label_weights format and new job-based format."""
-    aggregated_jobs = {}  # Using key (job_type, platform, topic) to track unique jobs
+    aggregated_jobs = {}  # Using key (keyword, platform, topic) to track unique jobs
     subnet_weight = 1 - total_vali_weight
     normalizer = subnet_weight / AMPLICATION_FACTOR
 
@@ -85,7 +85,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                     for topic, weight in source["label_weights"].items():
                         converted_jobs.append({
                             "params": {
-                                "job_type": "label",
+                                "keyword": None,
                                 "platform": platform,
                                 "topic": topic,
                                 "post_start_datetime": None,
@@ -97,11 +97,11 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 
         # Add default jobs to the aggregation
         for job in default_jobs:
-            if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
+            if "params" not in job or not all(k in job["params"] for k in ["keyword", "platform", "topic"]):
                 bt.logging.warning(f"Skipping malformed default job: {job}")
                 continue
                 
-            job_key = (job["params"]["job_type"], job["params"]["platform"], job["params"]["topic"])
+            job_key = (job["params"]["keyword"], job["params"]["platform"], job["params"]["topic"])
             aggregated_jobs[job_key] = {
                 "weight": job.get("weight", 1.0),
                 "params": job["params"].copy()
@@ -133,7 +133,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                     for topic, weight in source["label_weights"].items():
                         converted_jobs.append({
                             "params": {
-                                "job_type": "label",
+                                "keyword": None,
                                 "platform": platform,
                                 "topic": topic,
                                 "post_start_datetime": None,
@@ -146,7 +146,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
         
         # Process each job from the validator
         for job in validator_json:
-            if "params" not in job or not all(k in job["params"] for k in ["job_type", "platform", "topic"]):
+            if "params" not in job or not all(k in job["params"] for k in ["keyword", "platform", "topic"]):
                 bt.logging.warning(f"Skipping malformed job from {hotkey}: {job}")
                 continue
                 
@@ -155,7 +155,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 continue
                 
             job_weight = job.get("weight", 1.0)
-            job_key = (job["params"]["job_type"], job["params"]["platform"], job["params"]["topic"])
+            job_key = (job["params"]["keyword"], job["params"]["platform"], job["params"]["topic"])
             
             weighted_job_value = vali_weight * job_weight / normalizer
             
@@ -216,7 +216,7 @@ def to_lookup(json_path: str):
         # Create JobMatcher for this platform
         job_matcher = JobMatcher(jobs=[
             Job(
-                job_type=job['params']['job_type'],
+                keyword=job['params']['keyword'],
                 topic=job['params']['topic'],
                 job_weight=job['weight'],
                 start_datetime=job['params'].get('post_start_datetime'),
