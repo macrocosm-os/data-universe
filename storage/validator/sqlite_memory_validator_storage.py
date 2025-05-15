@@ -246,49 +246,54 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         miner_hotkey: str,
     ) -> Optional[ScorableMinerIndex]:
         """Gets a scored index for all of the data that a specific miner promises to provide."""
-
         with self.lock:
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
+
+                # locate miner
                 cursor.execute(
-                    "SELECT minerId, lastUpdated, credibility from Miner WHERE hotkey = ?",
+                    "SELECT minerId, lastUpdated FROM Miner WHERE hotkey = ?",
                     [miner_hotkey],
                 )
-                result = cursor.fetchone()
-                if result is None:
+                row = cursor.fetchone()
+                if row is None:
                     return None
+                miner_id, last_updated = row
 
-                miner_id = result[0]
-                last_updated = result[1]
-                miner_credibility = result[2]
+                # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets, credibility-free.
+                sql = """
+                WITH
+                  TempBuckets AS (
+                      SELECT source, labelId, timeBucketId
+                      FROM   MinerIndex
+                      WHERE  minerId = :mine
+                  ),
+                  TotalContent AS (
+                      SELECT source,
+                             labelId,
+                             timeBucketId,
+                             SUM(contentSizeBytes) AS bucketTotalBytes
+                      FROM   MinerIndex
+                      JOIN   TempBuckets USING (source, labelId, timeBucketId)
+                      GROUP  BY source, labelId, timeBucketId
+                  )
+                SELECT  mi.source,
+                        mi.labelId,
+                        mi.timeBucketId,
+                        mi.contentSizeBytes,
+                        (mi.contentSizeBytes * mi.contentSizeBytes * 1.0
+                         / NULLIF(TotalContent.bucketTotalBytes, 0)) AS scorableBytes
+                FROM    MinerIndex AS mi
+                JOIN    TotalContent USING (source, labelId, timeBucketId)
+                WHERE   mi.minerId = :mine;
+                """
+                cursor.execute(sql, {"mine": miner_id})
 
-                # Get all the DataEntityBuckets for this miner joined to the total content size of like buckets.
-                sql_string = """WITH
-                                TempBuckets AS (
-                                    SELECT source, labelId, timeBucketId
-                                    FROM MinerIndex
-                                    WHERE MinerId = ?
-                                ),
-                                TempAgg AS (
-                                    SELECT source, labelId, timeBucketId,
-                                    SUM(contentSizeBytes * credibility) as totalAdjContentSizeBytes
-                                    FROM MinerIndex
-                                    INNER JOIN TempBuckets USING (source, labelId, timeBucketId)
-                                    JOIN Miner USING (minerId)
-                                    GROUP BY source, labelId, timeBucketId
-                                )
-                                SELECT source, labelId, timeBucketId, contentSizeBytes,
-                                    (contentSizeBytes * (contentSizeBytes * ?) / TempAgg.totalAdjContentSizeBytes) as scorableBytes
-                                FROM MinerIndex
-                                LEFT JOIN TempAgg USING (source, labelId, timeBucketId)
-                                WHERE minerId = ?"""
-
-                cursor.execute(sql_string, [miner_id, miner_credibility, miner_id])
-
-                # Create to a list to hold each of the ScorableDataEntityBuckets we generate for this miner.
+                # bucket-building loop
                 scored_data_entity_buckets = []
 
-                # For each row (representing a DataEntityBucket and Uniqueness) turn it into a ScorableDataEntityBucket.
+                # For each row (representing a DataEntityBucket and Uniqueness)
+                # turn it into a ScorableDataEntityBucket.
                 for row in cursor:
                     label_value = self.label_dict.get_by_id(row[1])
 
