@@ -331,7 +331,7 @@ def validate_tweet_content(
         return ValidationResult(
             is_valid=False,
             reason="The claimed bytes must not exceed the actual tweet size.",
-            content_size_bytes_validated=tweet_entity.content_size_bytes,  # Only validate actual bytes
+            content_size_bytes_validated=entity.content_size_bytes,  # Only validate actual bytes
         )
 
     if not DataEntity.are_non_content_fields_equal(normalized_tweet_entity, normalized_entity):
