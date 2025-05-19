@@ -248,6 +248,115 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
+    # Validate the enhanced fields if they exist in the miner's submission
+    # user_id
+    if tweet_to_verify.user_id is not None and actual_tweet.user_id is not None:
+        if tweet_to_verify.user_id != actual_tweet.user_id:
+            bt.logging.info(
+                f"Tweet user_id does not match: {tweet_to_verify.user_id} != {actual_tweet.user_id}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet user_id does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # user_display_name
+    if tweet_to_verify.user_display_name is not None and actual_tweet.user_display_name is not None:
+        if tweet_to_verify.user_display_name != actual_tweet.user_display_name:
+            bt.logging.info(
+                f"Tweet user_display_name does not match: {tweet_to_verify.user_display_name} != {actual_tweet.user_display_name}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet user_display_name does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # user_verified
+    if tweet_to_verify.user_verified is not None and actual_tweet.user_verified is not None:
+        if tweet_to_verify.user_verified != actual_tweet.user_verified:
+            bt.logging.info(
+                f"Tweet user_verified does not match: {tweet_to_verify.user_verified} != {actual_tweet.user_verified}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet user_verified does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # tweet_id
+    if tweet_to_verify.tweet_id is not None and actual_tweet.tweet_id is not None:
+        if tweet_to_verify.tweet_id != actual_tweet.tweet_id:
+            bt.logging.info(
+                f"Tweet tweet_id does not match: {tweet_to_verify.tweet_id} != {actual_tweet.tweet_id}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet tweet_id does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # is_reply
+    if tweet_to_verify.is_reply is not None and actual_tweet.is_reply is not None:
+        if tweet_to_verify.is_reply != actual_tweet.is_reply:
+            bt.logging.info(
+                f"Tweet is_reply does not match: {tweet_to_verify.is_reply} != {actual_tweet.is_reply}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet is_reply does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # is_quote
+    if tweet_to_verify.is_quote is not None and actual_tweet.is_quote is not None:
+        if tweet_to_verify.is_quote != actual_tweet.is_quote:
+            bt.logging.info(
+                f"Tweet is_quote does not match: {tweet_to_verify.is_quote} != {actual_tweet.is_quote}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet is_quote does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # conversation_id
+    if tweet_to_verify.conversation_id is not None and actual_tweet.conversation_id is not None:
+        if tweet_to_verify.conversation_id != actual_tweet.conversation_id:
+            bt.logging.info(
+                f"Tweet conversation_id does not match: {tweet_to_verify.conversation_id} != {actual_tweet.conversation_id}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet conversation_id does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # in_reply_to_user_id
+    if tweet_to_verify.in_reply_to_user_id is not None and actual_tweet.in_reply_to_user_id is not None:
+        if tweet_to_verify.in_reply_to_user_id != actual_tweet.in_reply_to_user_id:
+            bt.logging.info(
+                f"Tweet in_reply_to_user_id does not match: {tweet_to_verify.in_reply_to_user_id} != {actual_tweet.in_reply_to_user_id}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet in_reply_to_user_id does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # in_reply_to_username
+    if tweet_to_verify.in_reply_to_username is not None and actual_tweet.in_reply_to_username is not None:
+        if tweet_to_verify.in_reply_to_username != actual_tweet.in_reply_to_username:
+            bt.logging.info(
+                f"Tweet in_reply_to_username does not match: {tweet_to_verify.in_reply_to_username} != {actual_tweet.in_reply_to_username}."
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet in_reply_to_username does not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
     # If we're after the media requirement date, check for media
     # Get the current date/time
     now = dt.datetime.now(dt.timezone.utc)

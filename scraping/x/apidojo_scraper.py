@@ -309,7 +309,7 @@ class ApiDojoTwitterScraper(Scraper):
         """Performs a best effort parsing of Apify dataset into List[XContent]
 
         Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}] or not dataset:  # Todo remove first statement if it's not necessary
+        if dataset == [{"zero_result": True}] or not dataset:
             return [], []
 
         results: List[XContent] = []
@@ -325,10 +325,6 @@ class ApiDojoTwitterScraper(Scraper):
                     continue
 
                 text = data['text']
-
-                # Apidojo returns cashtags separately under symbols.
-                # These are returned as list of dicts where the indices key is the first/last index and text is the tag.
-                # If there are no hashtags or cashtags they are empty lists.
 
                 # Safely retrieve hashtags and symbols lists using dictionary.get() method
                 hashtags = data.get('entities', {}).get('hashtags', [])
@@ -348,12 +344,52 @@ class ApiDojoTwitterScraper(Scraper):
                             media_urls.append(media_item['media_url_https'])
                         elif isinstance(media_item, str):
                             media_urls.append(media_item)
+                
+                # Check for media in extendedEntities as well
+                if 'extendedEntities' in data and isinstance(data['extendedEntities'], dict) and 'media' in data['extendedEntities']:
+                    for media_item in data['extendedEntities'].get('media', []):
+                        if isinstance(media_item, dict) and 'media_url_https' in media_item:
+                            media_urls.append(media_item['media_url_https'])
 
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
+                
+                # Enhanced fields
+                user_id = None
+                user_display_name = None
+                user_verified = None
+                
+                # Extract user information from author object if it exists
+                if 'author' in data and isinstance(data['author'], dict):
+                    user_id = data['author'].get('id')
+                    user_display_name = data['author'].get('name')
+                    # Handle different verification field names that might appear
+                    user_verified = data['author'].get('isVerified', False) or \
+                                    data['author'].get('isBlueVerified', False) or \
+                                    data['author'].get('verified', False)
+                
+                # Non-dynamic tweet metadata
+                tweet_id = data.get('id')  # Use the direct id rather than extracting from URL
+                is_reply = data.get('isReply', False)
+                is_quote = data.get('isQuote', False)
+                
+                # Additional metadata
+                conversation_id = data.get('conversationId')
+                
+                # Handle the in_reply_to fields
+                in_reply_to_user_id = None
+                in_reply_to_username = None
+                
+                # If this is a reply, we might find the in_reply_to info
+                if is_reply:
+                    in_reply_to_user_id = data.get('inReplyToUserId')
+                    # Check if there's an explicit inReplyToUser object
+                    if 'inReplyToUser' in data and isinstance(data['inReplyToUser'], dict):
+                        in_reply_to_username = data['inReplyToUser'].get('userName')
+                
                 results.append(
                     XContent(
-                        username=data['author']['userName'],  # utils.extract_user(data["url"]),
+                        username=data['author']['userName'],
                         text=utils.sanitize_scraped_tweet(text),
                         url=data["url"],
                         timestamp=dt.datetime.strptime(
@@ -361,6 +397,18 @@ class ApiDojoTwitterScraper(Scraper):
                         ),
                         tweet_hashtags=tags,
                         media=media_urls if media_urls else None,
+                        # Enhanced fields
+                        user_id=user_id,
+                        user_display_name=user_display_name,
+                        user_verified=user_verified,
+                        # Non-dynamic tweet metadata
+                        tweet_id=tweet_id,
+                        is_reply=is_reply,
+                        is_quote=is_quote,
+                        # Additional metadata
+                        conversation_id=conversation_id,
+                        in_reply_to_user_id=in_reply_to_user_id,
+                        in_reply_to_username=in_reply_to_username,
                     )
                 )
             except Exception:
