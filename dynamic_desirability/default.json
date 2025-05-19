@@ -5,7 +5,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/Bitcoin",
+            "label": "r/Bitcoin",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -16,7 +16,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/BitcoinCash",
+            "label": "r/BitcoinCash",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -27,7 +27,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/Bittensor_",
+            "label": "r/Bittensor_",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -38,7 +38,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/Btc",
+            "label": "r/Btc",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -49,7 +49,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/Cryptocurrency",
+            "label": "r/Cryptocurrency",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -60,7 +60,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/Cryptomarkets",
+            "label": "r/Cryptomarkets",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -71,7 +71,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/worldpolitics",
+            "label": "r/worldpolitics",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -82,7 +82,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/worldnews",
+            "label": "r/worldnews",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -93,7 +93,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/WallstreetBets",
+            "label": "r/WallstreetBets",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -104,7 +104,7 @@
         "params": {
             "keyword": null,
             "platform": "reddit",
-            "topic": "r/politics",
+            "label": "r/politics",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -115,7 +115,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#bitcoin",
+            "label": "#bitcoin",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -126,7 +126,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#bitcoiner",
+            "label": "#bitcoiner",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -137,7 +137,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#bitcoinnews",
+            "label": "#bitcoinnews",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -148,7 +148,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#btc",
+            "label": "#btc",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -159,7 +159,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#crypto",
+            "label": "#crypto",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -170,7 +170,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#defi",
+            "label": "#defi",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -181,7 +181,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#decentralizedfinance",
+            "label": "#decentralizedfinance",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -192,7 +192,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#tao",
+            "label": "#tao",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -203,7 +203,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#Israel",
+            "label": "#Israel",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -214,7 +214,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#Ukraine",
+            "label": "#Ukraine",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -225,7 +225,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#Trump",
+            "label": "#Trump",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -236,7 +236,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#Harris",
+            "label": "#Harris",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -247,7 +247,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#macrocosmos",
+            "label": "#macrocosmos",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -258,7 +258,7 @@
         "params": {
             "keyword": null,
             "platform": "x",
-            "topic": "#MacrocosmosAI",
+            "label": "#MacrocosmosAI",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
