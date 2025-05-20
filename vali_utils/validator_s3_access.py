@@ -5,6 +5,10 @@ import threading
 import bittensor as bt
 from typing import Dict, Optional, Any, List
 import os
+# Parse the XML response
+import xml.etree.ElementTree as ET
+from io import StringIO
+
 
 
 class ValidatorS3Access:
@@ -120,9 +124,6 @@ class ValidatorS3Access:
             if response.status_code != 200:
                 return []
 
-            # Parse the XML response
-            import xml.etree.ElementTree as ET
-            from io import StringIO
 
             root = ET.fromstring(response.text)
 
