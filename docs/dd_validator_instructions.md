@@ -64,9 +64,9 @@ An example of a valid JSON submission is given below:
         "id": "default_0",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
-            "topic": "r/Bitcoin",
+            "label": "r/Bitcoin",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -75,9 +75,9 @@ An example of a valid JSON submission is given below:
         "id": "default_1",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
-            "topic": "r/BitcoinCash",
+            "label": "r/BitcoinCash",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -86,9 +86,9 @@ An example of a valid JSON submission is given below:
         "id": "default_2",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
-            "topic": "r/Bittensor_",
+            "label": "r/Bittensor_",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -97,9 +97,9 @@ An example of a valid JSON submission is given below:
         "id": "default_3",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
-            "topic": "#macrocosmos",
+            "label": "#macrocosmos",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
