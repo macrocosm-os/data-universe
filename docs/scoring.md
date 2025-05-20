@@ -88,7 +88,7 @@ Note: Credibility has a direct influence on the Final Score, while the Incentive
 
 ## Desirable Data
 
-For the list of desirable data sources and their jobs, please refer to the [data_desirability_lookup.py](/rewards/data_desirability_lookup.py) file.
+For the current list of desirable data sources and their jobs, run with the `--gravity` tag.
 
 ## Important Notes
 
