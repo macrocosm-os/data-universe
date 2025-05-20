@@ -30,15 +30,14 @@ class DataValueCalculator:
         # Convert time_bucket to daterange for job matching
         bucket_daterange = self._time_bucket_to_iso_daterange(scorable_data_entity_bucket.time_bucket_id)
         
-        # Always use "label" as the job_type
-        job_type = "label"
-        topic = scorable_data_entity_bucket.label
+        keyword = None  # Currently only accepting label-only jobs.
+        label = scorable_data_entity_bucket.label
         
-        # Find matching jobs
+        # Find matching jobs with the new parameter names
         matching_jobs = self.model.find_matching_jobs(
             scorable_data_entity_bucket.source, 
-            job_type, 
-            topic, 
+            keyword,  # This replaces the old fixed "label" job_type
+            label, 
             bucket_daterange
         )
         

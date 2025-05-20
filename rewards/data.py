@@ -13,8 +13,8 @@ class Job(StrictBaseModel):
         description="Optionally, the keyword associated with the job."
     )
 
-    topic: str = Field(
-        description="The actual incentivized label or keyword."
+    label: str = Field(
+        description="The actual incentivized label (subreddit or hashtag)"
     )
 
     job_weight: float = Field(
@@ -45,19 +45,19 @@ class Job(StrictBaseModel):
                 raise ValueError(f"Invalid date format or order: {e}")
         return self
     
-    def matches(self, data_keyword: str, data_topic: str, data_daterange: Tuple[str, str]) -> bool:
+    def matches(self, data_keyword: str, data_label: str, data_daterange: Tuple[str, str]) -> bool:
         """Check if the incoming data matches this job's criteria.
         
         Args:
             data_keyword: The keyword of the incoming data
-            data_topic: The topic of the incoming data
+            data_label: The label of the incoming data
             data_daterange: A tuple of (start_datetime, end_datetime) for the data's date range
         
         Returns:
             True if there's any overlap between the job's date range and the data's date range
         """
-        # First check job_type and topic match
-        if data_keyword != self.keyword or data_topic != self.topic:
+        # First check keyword and label match
+        if data_keyword != self.keyword or data_label != self.label:
             return False
             
         # If we have date constraints, check them
@@ -79,10 +79,10 @@ class Job(StrictBaseModel):
             
         # All criteria passed - there is an overlap or no date constraints
         return True
-    
+   
     def __str__(self) -> str:
         return (
-            f"Job(keyword={self.keyword!r}, topic={self.topic!r}, weight={self.job_weight}, "
+            f"Job(keyword={self.keyword!r}, label={self.label!r}, weight={self.job_weight}, "
             f"start={self.start_datetime}, end={self.end_datetime})"
         )
 
@@ -93,7 +93,7 @@ class Job(StrictBaseModel):
         """Convert to primitive dictionary representation"""
         return {
             "keyword": self.keyword,
-            "topic": self.topic,
+            "label": self.label,
             "job_weight": self.job_weight,
             "start_datetime": self.start_datetime,
             "end_datetime": self.end_datetime
@@ -120,27 +120,26 @@ class JobMatcher(StrictBaseModel):
         """Build the job dictionary for efficient lookups"""
         self.job_dict.clear()
         for job in self.jobs:
-            key = (job.keyword, job.topic)
+            key = (job.keyword, job.label)
             if key not in self.job_dict:
                 self.job_dict[key] = []
             self.job_dict[key].append(job)
     
-    def find_matching_jobs(self, data_keyword: str, data_topic: str, 
-                           data_daterange: Tuple[str, str]) -> List[Job]:
-        """Find all jobs matching the given criteria
+    def find_matching_jobs(self, data_keyword: str, data_label: str, data_daterange: Tuple[str, str]) -> List[dict]:
+        """Find matching jobs using the optimized lookup structure.
         
         Args:
-            data_keyword: The optional keyword of the incoming data
-            data_topic: The topic of the incoming data
+            data_keyword: The keyword of the incoming data
+            data_label: The label of the incoming data
             data_daterange: A tuple of (start_datetime, end_datetime) for the data's date range
             
         Returns:
-            List of matching Job objects
+            List of matching job dictionaries
         """
-        key = (data_keyword, data_topic)
+        key = (data_keyword, data_label)
         
-        # No jobs match this keyword and topic
-        if key not in self.job_dict:
+        # No jobs match this keyword and label
+        if key not in self._job_dict:
             return []
             
         data_start, data_end = data_daterange
@@ -148,16 +147,18 @@ class JobMatcher(StrictBaseModel):
         data_end_dt = datetime.fromisoformat(data_end)
         matching_jobs = []
         
-        # Check each potential job for date viability
-        for job in self.job_dict[key]:
-            # If job has start date constraint, check if data's end is before job's start
-            if job.start_datetime and data_end_dt < datetime.fromisoformat(job.start_datetime):
-                continue  # No overlap
+        # Check each potential job for date viability - using direct dictionary access for speed
+        for job in self._job_dict[key]:
+            # Check if job's start date is after data's end date (no overlap)
+            start_datetime = job.get("start_datetime")
+            if start_datetime and data_end_dt < datetime.fromisoformat(start_datetime):
+                continue
                 
-            # If job has end date constraint, check if data's start is after job's end
-            if job.end_datetime and data_start_dt > datetime.fromisoformat(job.end_datetime):
-                continue  # No overlap
-                
+            # Check if job's end date is before data's start date (no overlap)
+            end_datetime = job.get("end_datetime")
+            if end_datetime and data_start_dt > datetime.fromisoformat(end_datetime):
+                continue
+
             matching_jobs.append(job)
         
         return matching_jobs
@@ -282,25 +283,25 @@ class PrimitiveDataSourceDesirability:
         # Build lookup structure
         self._job_dict = {}
         for job in jobs:
-            key = (job["keyword"], job["topic"])
+            key = (job["keyword"], job["label"])
             if key not in self._job_dict:
                 self._job_dict[key] = []
             self._job_dict[key].append(job)
     
-    def find_matching_jobs(self, data_keyword: str, data_topic: str, data_daterange: Tuple[str, str]) -> List[dict]:
+    def find_matching_jobs(self, data_keyword: str, data_label: str, data_daterange: Tuple[str, str]) -> List[dict]:
         """Find matching jobs using the optimized lookup structure.
         
         Args:
             data_keyword: The keyword of the incoming data
-            data_topic: The topic of the incoming data
+            data_label: The label of the incoming data
             data_daterange: A tuple of (start_datetime, end_datetime) for the data's date range
             
         Returns:
             List of matching job dictionaries
         """
-        key = (data_keyword, data_topic)
+        key = (data_keyword, data_label)
         
-        # No jobs match this job_type and topic
+        # No jobs match this job_type and label
         if key not in self._job_dict:
             return []
             
@@ -338,13 +339,13 @@ class PrimitiveDataDesirabilityLookup:
         self.max_age_in_hours = max_age_in_hours
     
     def find_matching_jobs(self, data_source: DataSource, keyword: str, 
-                          topic: str, daterange: Tuple[str, str]) -> List[Dict]:
+                          label: str, daterange: Tuple[str, str]) -> List[Dict]:
         """Find matching jobs for a specific data source and criteria using date ranges.
         
         Args:
             data_source: The data source to look for
             keyword: The job type to match
-            topic: The topic to match
+            label: The label to match
             daterange: A tuple of (start_datetime, end_datetime) strings
             
         Returns:
@@ -354,7 +355,7 @@ class PrimitiveDataDesirabilityLookup:
             return []
         
         return self.distribution[data_source].find_matching_jobs(
-            keyword, topic, daterange
+            keyword, label, daterange
         )
     
     def get_default_scale_factor(self, data_source: DataSource) -> float:

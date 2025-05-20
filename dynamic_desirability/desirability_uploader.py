@@ -5,10 +5,9 @@ import os
 import shutil
 import subprocess
 import bittensor as bt
-from typing import List, Optional, Dict, Any, Union, Tuple
-from decimal import Decimal
+from typing import List, Optional, Dict, Tuple
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
-from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
+from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER
 from dynamic_desirability.data import normalize_preferences
 
 
