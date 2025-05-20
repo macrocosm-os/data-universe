@@ -11,12 +11,12 @@ The following is a conceptual overview of Dynamic Desirability (Gravity). We rec
 
 [Dynamic Desirability](../dynamic_desirability) takes the previous system of manually setting subnet preferences for data scraping at scale to an organic, democratic mechanism. This introduces a voting system for both the subnet owner and participating validators, where each will set their own weight preferences through an adaptable list of incentivized labels. Validators choose weights and submit them as JSONs into the desirability repository called [Gravity](https://github.com/macrocosm-os/gravity/tree/main). These weights are then committed to the chain, where they can be later read and used to create an aggregate DataDesirabilityLookup object used for scoring. 
 
-Dynamically incentivized jobs are given label scale factors of anywhere from (`default_scale_factor` + 1) up to 5.0, depending on the volume of requests and demand for that particular topic. Dynamic Desirability jobs have the following parameters: 
+Dynamically incentivized jobs are given label scale factors of anywhere from (`default_scale_factor` + 1) up to 5.0, depending on the volume of requests and demand for that particular label. Dynamic Desirability jobs have the following parameters: 
 
-1. `job_type`
-    - Either "label" or "keyword" (soon to come). "label" job types refer to jobs rewarded in the main validation loop that contain subreddits or hashtags.
-2. `topic`
-    - The actual incentivized label or keyword. In "label" type jobs, this is the subreddit name or the hashtag.
+1. `keyword`
+    - Optionally, the incentivized keyword/phrase. (Scoring supported soon)
+2. `label`
+    - The actual incentivized label - the subreddit name or the hashtag.
 3. `job_weight`
     - The scale factor received in scoring for providing data that completes this given job. This is at minimum (`default_scale_factor` + 1), and at maximum 5.
 4. `start_date`
@@ -73,9 +73,9 @@ An example of a valid JSON submission is given below:
         "id": "default_0",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
-            "topic": "r/Bitcoin",
+            "label": "r/Bitcoin",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -84,9 +84,9 @@ An example of a valid JSON submission is given below:
         "id": "default_1",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
-            "topic": "r/BitcoinCash",
+            "label": "r/BitcoinCash",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -95,9 +95,9 @@ An example of a valid JSON submission is given below:
         "id": "default_2",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "reddit",
-            "topic": "r/Bittensor_",
+            "label": "r/Bittensor_",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
@@ -106,9 +106,9 @@ An example of a valid JSON submission is given below:
         "id": "default_3",
         "weight": 0.25,
         "params": {
-            "job_type": "label",
+            "keyword": null,
             "platform": "x",
-            "topic": "#macrocosmos",
+            "label": "#macrocosmos",
             "post_start_datetime": null,
             "post_end_datetime": null
         }
