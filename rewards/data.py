@@ -284,7 +284,7 @@ class PrimitiveDataSourceDesirability:
         # Build lookup structure
         self._job_dict = {}
         for job in jobs:
-            key = (job["keyword"], job["label"])  # Changed from "topic" to "label"
+            key = (job["keyword"], job["label"])  
             if key not in self._job_dict:
                 self._job_dict[key] = []
             self._job_dict[key].append(job)

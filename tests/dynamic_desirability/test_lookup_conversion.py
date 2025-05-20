@@ -30,7 +30,7 @@ class TestDataDesirabilityLookupConversion(unittest.TestCase):
                 "params": {
                     "keyword": None,  
                     "platform": "reddit",
-                    "topic": "technology"  
+                    "label": "technology"  
                 }
             },
             {
@@ -39,7 +39,7 @@ class TestDataDesirabilityLookupConversion(unittest.TestCase):
                 "params": {
                     "keyword": "ai", 
                     "platform": "x",
-                    "topic": "ai_news",  
+                    "label": "ai_news",  
                     "post_start_datetime": self.now_str,
                     "post_end_datetime": self.future_str
                 }
@@ -50,7 +50,7 @@ class TestDataDesirabilityLookupConversion(unittest.TestCase):
                 "params": {
                     "keyword": None,  
                     "platform": "reddit",
-                    "topic": "science" 
+                    "label": "science" 
                 }
             }
         ]

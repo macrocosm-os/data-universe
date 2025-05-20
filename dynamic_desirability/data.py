@@ -69,7 +69,7 @@ class JobParams(BaseModel):
     """Model for job parameters in the new format"""
     keyword: Optional[str] = Field(None, description="Optional keyword to search for")
     platform: str = Field(description="Platform to search (e.g., 'reddit', 'x', 'youtube')")
-    topic: Optional[str] = Field(None, description="Optional topic or label to search for")
+    label: Optional[str] = Field(None, description="Optional label or label to search for")
     post_start_datetime: Optional[str] = Field(None, description="Start date for posts in ISO format")
     post_end_datetime: Optional[str] = Field(None, description="End date for posts in ISO format")
     
@@ -81,14 +81,14 @@ class JobParams(BaseModel):
             raise ValueError(f"Invalid platform: {platform}. Must be one of {VALID_SOURCES}")
         return platform_lower
     
-    @field_validator('topic')
+    @field_validator('label')
     @classmethod
-    def validate_topic_length(cls, topic: Optional[str]) -> Optional[str]:
-        if topic is None:
+    def validate_label_length(cls, label: Optional[str]) -> Optional[str]:
+        if label is None:
             return None
-        if len(topic) > MAX_LABEL_LENGTH:
-            raise ValueError(f"Topic exceeds {MAX_LABEL_LENGTH} character limit: {topic}")
-        return topic
+        if len(label) > MAX_LABEL_LENGTH:
+            raise ValueError(f"Label exceeds {MAX_LABEL_LENGTH} character limit: {label}")
+        return label
     
     @field_validator('keyword')
     @classmethod
@@ -113,9 +113,9 @@ class JobParams(BaseModel):
     
     @model_validator(mode='after')
     def validate_job_params(self) -> 'JobParams':
-        # Validate that at least one of keyword or topic is provided
-        if self.keyword is None and self.topic is None:
-            raise ValueError("At least one of 'keyword' or 'topic' must be provided")
+        # Validate that at least one of keyword or label is provided
+        if self.keyword is None and self.label is None:
+            raise ValueError("At least one of 'keyword' or 'label' must be provided")
             
         # Validate datetime order if both are present
         start = self.post_start_datetime
@@ -222,7 +222,7 @@ class PreferencesData(BaseModel):
         job_count = 0
         
         for source in sources:
-            for topic, weight in source.label_weights.items():
+            for label, weight in source.label_weights.items():
                 job_count += 1
                 job_id = f"{hotkey}_{job_count}"
                 
@@ -232,7 +232,7 @@ class PreferencesData(BaseModel):
                     params=JobParams(
                         keyword=None,
                         platform=source.source_name,
-                        topic=topic,
+                        label=label,
                         post_start_datetime=None,
                         post_end_datetime=None
                     )
