@@ -424,6 +424,7 @@ class Validator:
 
             #  if we've completed fewer than the allotted number of evaluation cycles, don't set weights
             if self.evaluation_cycles_since_startup < constants.EVALUATION_ON_STARTUP:
+
                 bt.logging.info(
                     f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/15 evaluation cycles since startup")
                 return False
