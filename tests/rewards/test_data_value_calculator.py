@@ -14,84 +14,67 @@ import datetime as dt
 
 class TestDataValueCalculator(unittest.TestCase):
     def setUp(self):
-        # Create a job matcher for Reddit with different jobs, including both "label" and "keyword" types
+        # Convert datetime strings to time buckets for date-constrained job
+        dated_label_start = dt.datetime.fromisoformat("2023-12-10T00:00:00+00:00")
+        dated_label_end = dt.datetime.fromisoformat("2023-12-15T00:00:00+00:00")
+        dated_label_start_timebucket = utils.time_bucket_id_from_datetime(dated_label_start)
+        dated_label_end_timebucket = utils.time_bucket_id_from_datetime(dated_label_end)
+        
+        # Create a job matcher for Reddit with different jobs, all with keyword=None
         reddit_job_matcher = JobMatcher(jobs=[
             Job(
-                job_type="label",
-                topic="testlabel",
+                keyword=None,  # Currently only accepting jobs with keyword=None
+                label="testlabel", 
                 job_weight=1.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             Job(
-                job_type="label",
-                topic="unscoredlabel",
+                keyword=None,
+                label="unscoredlabel",
                 job_weight=0.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             Job(
-                job_type="label",
-                topic="penalizedlabel",
+                keyword=None,
+                label="penalizedlabel",
                 job_weight=-1.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             # Add a job with date constraints
             Job(
-                job_type="label",
-                topic="dated-label",
+                keyword=None,
+                label="dated-label",
                 job_weight=2.0,
-                start_datetime="2023-12-10T00:00:00+00:00",
-                end_datetime="2023-12-15T00:00:00+00:00",
-            ),
-            # Add keyword job types
-            Job(
-                job_type="keyword",
-                topic="test-keyword",
-                job_weight=1.5,
-                start_datetime=None,
-                end_datetime=None,
-            ),
-            Job(
-                job_type="keyword",
-                topic="dated-keyword",
-                job_weight=2.5,
-                start_datetime="2023-12-11T00:00:00+00:00",
-                end_datetime="2023-12-14T00:00:00+00:00",
+                start_timebucket=dated_label_start_timebucket,  # Converted from start_datetime
+                end_timebucket=dated_label_end_timebucket,  # Converted from end_datetime
             ),
         ])
 
-        # Create a job matcher for X with different jobs, including both "label" and "keyword" types
+        # Create a job matcher for X with different jobs, all with keyword=None
         x_job_matcher = JobMatcher(jobs=[
             Job(
-                job_type="label",
-                topic="#testlabel",
+                keyword=None,
+                label="#testlabel",
                 job_weight=1.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             Job(
-                job_type="label",
-                topic="#unscoredlabel",
+                keyword=None,
+                label="#unscoredlabel",
                 job_weight=0.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             Job(
-                job_type="label",
-                topic="#penalizedlabel",
+                keyword=None,
+                label="#penalizedlabel",
                 job_weight=-1.0,
-                start_datetime=None,
-                end_datetime=None,
-            ),
-            # Add keyword job types
-            Job(
-                job_type="keyword",
-                topic="#test-keyword",
-                job_weight=1.2,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
         ])
 
@@ -275,21 +258,27 @@ class TestDataValueCalculator(unittest.TestCase):
         now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
         current_time_bucket = TimeBucket.from_datetime(now)
         
-        # Create a custom model with multiple overlapping jobs
+        # Convert datetime strings to time buckets
+        multi_match_start = dt.datetime.fromisoformat("2023-12-10T00:00:00+00:00")
+        multi_match_end = dt.datetime.fromisoformat("2023-12-15T00:00:00+00:00")
+        multi_match_start_timebucket = utils.time_bucket_id_from_datetime(multi_match_start)
+        multi_match_end_timebucket = utils.time_bucket_id_from_datetime(multi_match_end)
+        
+        # Create a custom model with multiple overlapping jobs, all with keyword=None
         reddit_job_matcher = JobMatcher(jobs=[
             Job(
-                job_type="label",
-                topic="multi-match",
+                keyword=None,
+                label="multi-match",  
                 job_weight=1.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             Job(
-                job_type="label",
-                topic="multi-match",
+                keyword=None,
+                label="multi-match",
                 job_weight=2.0,
-                start_datetime="2023-12-10T00:00:00+00:00",
-                end_datetime="2023-12-15T00:00:00+00:00",
+                start_timebucket=multi_match_start_timebucket,  # Converted from start_datetime
+                end_timebucket=multi_match_end_timebucket,  # Converted from end_datetime
             ),
         ])
         
@@ -329,182 +318,6 @@ class TestDataValueCalculator(unittest.TestCase):
         # Job 2: data_source_weight(0.75) * job_weight(2.0) * time_scalar(1.0) * scorable_bytes(100) = 150.0
         # Total: 75.0 + 150.0 = 225.0
         self.assertAlmostEqual(score, 225.0, places=5)
-
-    def test_keyword_job_type(self):
-        """Tests scoring for data entity buckets that match keyword job types."""
-        now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
-        current_time_bucket = TimeBucket.from_datetime(now)
-        time_bucket_id = utils.time_bucket_id_from_datetime(now)
-
-        # Mock the _time_bucket_to_iso_daterange method to return a controlled daterange
-        original_method = self.value_calculator._time_bucket_to_iso_daterange
-        
-        def mock_time_bucket_to_iso_daterange(time_bucket_id):
-            return ("2023-12-12T12:00:00+00:00", "2023-12-12T13:00:00+00:00")
-        
-        # Apply the mock
-        self.value_calculator._time_bucket_to_iso_daterange = mock_time_bucket_to_iso_daterange
-        
-        try:
-            # Test with a keyword job type (no date constraints)
-            bucket = ScorableDataEntityBucket(
-                time_bucket_id=time_bucket_id,
-                source=DataSource.REDDIT,
-                label="test-keyword",  # This should match our "keyword" job type
-                size_bytes=200,
-                scorable_bytes=100,
-            )
-            
-            # Call the method but with job_type explicitly set to "keyword"
-            # Mocking the internal call to find_matching_jobs where job_type would be set to "keyword"
-            original_find_matching_jobs = self.value_calculator.model.find_matching_jobs
-            
-            def mock_find_matching_jobs(data_source, job_type, topic, daterange):
-                # Override to always use "keyword" as job_type for this test
-                if topic == "test-keyword":
-                    job_type = "keyword"
-                return original_find_matching_jobs(data_source, job_type, topic, daterange)
-            
-            self.value_calculator.model.find_matching_jobs = mock_find_matching_jobs
-            
-            score = self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            )
-            
-            # Expected score: data_source_weight(0.75) * job_weight(1.5) * time_scalar(1.0) * scorable_bytes(100) = 112.5
-            self.assertAlmostEqual(score, 112.5, places=5)
-            
-            # Test with a dated keyword job type
-            bucket = ScorableDataEntityBucket(
-                time_bucket_id=time_bucket_id,
-                source=DataSource.REDDIT,
-                label="dated-keyword",
-                size_bytes=200,
-                scorable_bytes=100,
-            )
-            
-            def mock_find_matching_jobs_dated(data_source, job_type, topic, daterange):
-                # Override to always use "keyword" as job_type for this test
-                if topic == "dated-keyword":
-                    job_type = "keyword"
-                return original_find_matching_jobs(data_source, job_type, topic, daterange)
-            
-            self.value_calculator.model.find_matching_jobs = mock_find_matching_jobs_dated
-            
-            score = self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            )
-            
-            # Expected score: data_source_weight(0.75) * job_weight(2.5) * time_scalar(1.0) * scorable_bytes(100) = 187.5
-            self.assertAlmostEqual(score, 187.5, places=5)
-            
-            # Test with X source
-            bucket = ScorableDataEntityBucket(
-                time_bucket_id=time_bucket_id,
-                source=DataSource.X,
-                label="#test-keyword",
-                size_bytes=200,
-                scorable_bytes=100,
-            )
-            
-            def mock_find_matching_jobs_x(data_source, job_type, topic, daterange):
-                # Override to always use "keyword" as job_type for this test
-                if topic == "#test-keyword":
-                    job_type = "keyword"
-                return original_find_matching_jobs(data_source, job_type, topic, daterange)
-            
-            self.value_calculator.model.find_matching_jobs = mock_find_matching_jobs_x
-            
-            score = self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            )
-            
-            # Expected score: data_source_weight(0.25) * job_weight(1.2) * time_scalar(1.0) * scorable_bytes(100) = 30.0
-            self.assertAlmostEqual(score, 30.0, places=5)
-            
-        finally:
-            # Restore original methods
-            self.value_calculator._time_bucket_to_iso_daterange = original_method
-            self.value_calculator.model.find_matching_jobs = original_find_matching_jobs
-
-    def test_combined_job_types(self):
-        """Tests scoring when a data entity bucket matches both label and keyword jobs."""
-        now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
-        current_time_bucket = TimeBucket.from_datetime(now)
-        
-        # Create a custom model with both label and keyword jobs for the same topic
-        reddit_job_matcher = JobMatcher(jobs=[
-            Job(
-                job_type="label",
-                topic="dual-match",
-                job_weight=1.0,
-                start_datetime=None,
-                end_datetime=None,
-            ),
-            Job(
-                job_type="keyword",
-                topic="dual-match",
-                job_weight=2.0,
-                start_datetime=None,
-                end_datetime=None,
-            ),
-        ])
-        
-        custom_model = DataDesirabilityLookup(
-            distribution={
-                DataSource.REDDIT: DataSourceDesirability(
-                    weight=0.75,
-                    default_scale_factor=0.5,
-                    job_matcher=reddit_job_matcher,
-                ),
-                DataSource.X: DataSourceDesirability(
-                    weight=0.25,
-                    default_scale_factor=0.8,
-                    job_matcher=JobMatcher(),  # Empty job matcher
-                ),
-            },
-            max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
-        )
-        custom_calculator = DataValueCalculator(model=custom_model)
-        
-        # Create a bucket that should potentially match both job types
-        time_bucket_id = utils.time_bucket_id_from_datetime(now)
-        bucket = ScorableDataEntityBucket(
-            time_bucket_id=time_bucket_id,
-            source=DataSource.REDDIT,
-            label="dual-match",
-            size_bytes=200,
-            scorable_bytes=100,
-        )
-        
-        # Mock the find_matching_jobs method to return both job types
-        original_find_matching_jobs = custom_calculator.model.find_matching_jobs
-        
-        def mock_find_matching_jobs(data_source, job_type, topic, daterange):
-            if topic == "dual-match":
-                # Return both the label and keyword jobs
-                return [
-                    {"job_type": "label", "topic": "dual-match", "job_weight": 1.0, "start_datetime": None, "end_datetime": None},
-                    {"job_type": "keyword", "topic": "dual-match", "job_weight": 2.0, "start_datetime": None, "end_datetime": None}
-                ]
-            return []
-        
-        try:
-            custom_calculator.model.find_matching_jobs = mock_find_matching_jobs
-            
-            score = custom_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            )
-            
-            # Expected score is the sum of both job contributions:
-            # Label job: data_source_weight(0.75) * job_weight(1.0) * time_scalar(1.0) * scorable_bytes(100) = 75.0
-            # Keyword job: data_source_weight(0.75) * job_weight(2.0) * time_scalar(1.0) * scorable_bytes(100) = 150.0
-            # Total: 75.0 + 150.0 = 225.0
-            self.assertAlmostEqual(score, 225.0, places=5)
-            
-        finally:
-            # No need to restore original method as we used a custom calculator instance
-            pass
 
 
 if __name__ == "__main__":

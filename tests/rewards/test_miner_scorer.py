@@ -1,4 +1,6 @@
 import random
+import cProfile
+import pstats
 import time
 import unittest
 from unittest.mock import MagicMock, Mock, patch
@@ -30,39 +32,38 @@ class TestMinerScorer(unittest.TestCase):
         # Create a job matcher for Reddit with test jobs
         reddit_job_matcher = JobMatcher(jobs=[
             Job(
-                job_type="label",
-                topic="testlabel",
+                keyword=None,  # currently only accepting label-only jobs
+                label="testlabel",  
                 job_weight=1.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             Job(
-                job_type="label",
-                topic="otherlabel", 
+                keyword=None,  
+                label="otherlabel",  
                 job_weight=0.75,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
-            # Add more jobs as needed for testing
         ])
 
         # Create a job matcher for X with test jobs
         x_job_matcher = JobMatcher(jobs=[
             Job(
-                job_type="label",
-                topic="#testlabel",
+                keyword=None,  
+                label="#testlabel",  
                 job_weight=1.0,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
             Job(
-                job_type="label",
-                topic="#otherlabel",
+                keyword=None,  
+                label="#otherlabel",  
                 job_weight=0.75,
-                start_datetime=None,
-                end_datetime=None,
+                start_timebucket=None,
+                end_timebucket=None,
             ),
-            # Add more jobs as needed for testing
+
         ])
         
         self.value_calculator = rewards.data_value_calculator.DataValueCalculator(
@@ -556,13 +557,16 @@ class TestMinerScorer(unittest.TestCase):
     def test_job_with_date_constraints(self):
         """Tests that buckets with date-constrained jobs are scored correctly."""
         # Create a custom model with date-constrained jobs
+        now_timebucket = utils.time_bucket_id_from_datetime(self.now)
+        future_timebucket = utils.time_bucket_id_from_datetime(self.now + dt.timedelta(days=5))
+        
         reddit_job_matcher = JobMatcher(jobs=[
             Job(
-                job_type="label",
-                topic="dated-label",
+                keyword=None,  
+                label="dated-label",  
                 job_weight=2.0,
-                start_datetime=self.now.strftime("%Y-%m-%dT%H:%M:%S%z"),
-                end_datetime=(self.now + dt.timedelta(days=5)).strftime("%Y-%m-%dT%H:%M:%S%z"),
+                start_timebucket=now_timebucket,  # Convert datetime string to time bucket ID
+                end_timebucket=future_timebucket,  # Convert datetime string to time bucket ID
             ),
         ])
         

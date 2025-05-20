@@ -19,27 +19,22 @@ class DataValueCalculator:
         scorable_data_entity_bucket: ScorableDataEntityBucket,
         current_time_bucket: TimeBucket
     ) -> float:
-        """Returns the score for the given data entity bucket.
-        
-        A data entity bucket is scored as follows:
-        1. If there are matching jobs, score is based on the sum of those job weights 
-           multiplied by data source weight
-        2. If there are no matching jobs, score uses default scale factor
-        3. All scores are scaled based on data age if applicable
-        """
-        # Convert time_bucket to daterange for job matching
-        bucket_daterange = self._time_bucket_to_iso_daterange(scorable_data_entity_bucket.time_bucket_id)
-        
-        keyword = None  # Currently only accepting label-only jobs.
+        """Returns the score for the given data entity bucket."""
+        # Extract frequently used values
+        time_bucket_id = scorable_data_entity_bucket.time_bucket_id
         label = scorable_data_entity_bucket.label
+        source = scorable_data_entity_bucket.source
         
-        # Find matching jobs with the new parameter names
-        matching_jobs = self.model.find_matching_jobs(
-            scorable_data_entity_bucket.source, 
-            keyword,  # This replaces the old fixed "label" job_type
-            label, 
-            bucket_daterange
-        )
+        # Calculate time scalar
+        time_scalar = self._scale_factor_for_age(time_bucket_id, current_time_bucket.id)
+        if time_scalar == 0.0:
+            return 0.0  # No need to do further processing
+        
+        # Find matching jobs directly using time bucket ID
+        # No need to convert to date range strings!
+        matching_jobs = self.model.find_matching_jobs(source, None, label, time_bucket_id)
+        
+        # Rest of method remains the same...
         
         data_source_weight = self.model.get_data_source_weight(scorable_data_entity_bucket.source)
         
@@ -51,7 +46,7 @@ class DataValueCalculator:
                 job_weight = job["job_weight"]
                 
                 # Calculate time scalar
-                if job["start_datetime"] or job["end_datetime"]:
+                if job["start_timebucket"] or job["end_timebucket"]:
                     # For jobs with date constraints, if we've reached here, the time bucket
                     # overlaps with the job's date range, so use full time scalar of 1.0
                     time_scalar = 1.0
