@@ -6,11 +6,12 @@ import time
 from typing import Dict, Optional, Any
 import logging
 import shutil
+from datetime import datetime
 import bittensor as bt
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
-from common.utils import get_validator_data, is_validator
+from common.utils import get_validator_data, is_validator, time_bucket_id_from_datetime
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup, Job, JobMatcher
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
@@ -216,11 +217,12 @@ def to_lookup(json_path: str):
         # Create JobMatcher for this platform
         job_matcher = JobMatcher(jobs=[
             Job(
-                keyword=job['params']['keyword'],
-                topic=job['params']['topic'],
+                keyword=job['params'].get('keyword'),  # Use get() with default None to handle missing keys
+                label=job['params'].get('topic'),      # Use topic as label
                 job_weight=job['weight'],
-                start_datetime=job['params'].get('post_start_datetime'),
-                end_datetime=job['params'].get('post_end_datetime')
+                # Convert datetime strings to time bucket IDs during initial parsing
+                start_timebucket=datetime_to_timebucket(job['params'].get('post_start_datetime')),
+                end_timebucket=datetime_to_timebucket(job['params'].get('post_end_datetime'))
             ) for job in platform_jobs
         ])
         
@@ -236,6 +238,19 @@ def to_lookup(json_path: str):
         max_age_in_hours=max_age_in_hours
     )
 
+def datetime_to_timebucket(datetime_str: Optional[str]) -> Optional[int]:
+    """Helper function to convert datetime string to time bucket ID."""
+    if not datetime_str:
+        return None
+    
+    try:
+        # Import datetime class correctly
+        dt_obj = datetime.fromisoformat(datetime_str)
+        return time_bucket_id_from_datetime(dt_obj)
+    except (ValueError, TypeError) as e:
+        # Log an error or warning
+        print(f"Warning: Could not parse datetime string: {datetime_str}. Error: {e}")
+        return None
 
 def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
     """Gets the unscaled JSON submisson for a specified validator hotkey. 
