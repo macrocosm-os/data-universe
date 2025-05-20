@@ -14,6 +14,7 @@ class DataValueCalculator:
         # Convert to primitive version for performance optimization
         self.model = model.to_primitive_data_desirability_lookup()
     
+    
     def get_score_for_data_entity_bucket(
         self,
         scorable_data_entity_bucket: ScorableDataEntityBucket,
@@ -77,11 +78,6 @@ class DataValueCalculator:
                 * scorable_data_entity_bucket.scorable_bytes
             )
     
-    def _time_bucket_to_iso_daterange(self, time_bucket_id: int) -> Tuple[str, str]:
-        """Converts a time bucket ID to an ISO formatted date range tuple."""
-        start_dt = utils.datetime_from_hours_since_epoch(time_bucket_id)
-        end_dt = utils.datetime_from_hours_since_epoch(time_bucket_id + 1)
-        return (start_dt.isoformat(), end_dt.isoformat())
     
     def _scale_factor_for_age(
         self, time_bucket_id: int, current_time_bucket_id: int
