@@ -713,14 +713,13 @@ class YouTubeTranscriptScraper(Scraper):
             }
 
         except HttpError as e:
-            bt.logging.error(f"YouTube API error for video {video_id}: {str(e)}")
-            if "API key not valid" in str(e) or "quota" in str(e).lower():
-                # Fall back to non-API method if there are key or quota issues
-                return self._get_fallback_video_metadata(video_id)
+            bt.logging.error(
+                "YouTube API error (%s) for video %s: %s",
+                e.resp.status, video_id, self._sanitize_http_error(e)
+            )
+
             return None
-        except Exception as e:
-            bt.logging.error(f"Error getting video metadata for {video_id}: {str(e)}")
-            return None
+
 
     def _get_fallback_video_metadata(self, video_id: str) -> Dict[str, Any]:
         """
@@ -954,6 +953,14 @@ class YouTubeTranscriptScraper(Scraper):
             bt.logging.error(f"Error getting videos for channel {channel_id}: {str(e)}")
             bt.logging.error(traceback.format_exc())
             return []
+
+    def _sanitize_http_error(self, e: HttpError | Exception) -> str:
+        """
+        Return a safe string of any exception, with YouTube API keys removed.
+        """
+        _KEY_RE = re.compile(r"(?:key|apiKey)=[^&\s]+")
+        return _KEY_RE.sub("key=REDACTED", str(e))
+
 # Test utility methods
 
 async def test_scrape_video():

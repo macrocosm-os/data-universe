@@ -5,7 +5,7 @@ import bittensor as bt
 from typing import Dict, List
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_TWITTER_URLS_DATE, MEDIA_REQUIRED_DATE
+from common.constants import NO_TWITTER_URLS_DATE, MEDIA_REQUIRED_DATE, BYTE_ALLOWANCE_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -327,16 +327,15 @@ def validate_tweet_content(
         content_size_bytes=entity.content_size_bytes
     )
 
-    # Allow a 10 byte difference to account for timestamp serialization differences.
     byte_difference_allowed = 10
+    if dt.datetime.now(dt.timezone.utc) >= BYTE_ALLOWANCE_DATE:
+        byte_difference_allowed = 0
 
-    if (
-            entity.content_size_bytes - tweet_entity.content_size_bytes
-    ) > byte_difference_allowed:
+    if (entity.content_size_bytes - tweet_entity.content_size_bytes) > byte_difference_allowed:
         return ValidationResult(
             is_valid=False,
-            reason="The claimed bytes are too big compared to the actual tweet.",
-            content_size_bytes_validated=entity.content_size_bytes,
+            reason="The claimed bytes must not exceed the actual tweet size.",
+            content_size_bytes_validated=entity.content_size_bytes,  # Only validate actual bytes
         )
 
     if not DataEntity.are_non_content_fields_equal(normalized_tweet_entity, normalized_entity):
