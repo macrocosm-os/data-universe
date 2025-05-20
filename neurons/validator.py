@@ -423,9 +423,9 @@ class Validator:
                 bt.logging.info("Initializing evaluation cycles counter for delayed weight setting")
 
             # If we've completed fewer than 2 evaluation cycles, don't set weights
-            if self.evaluation_cycles_since_startup < 2:
+            if self.evaluation_cycles_since_startup < constants.EVALUATION_ON_STARTUP:
                 bt.logging.info(
-                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/2 evaluation cycles since startup")
+                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/15 evaluation cycles since startup")
                 return False
 
             # Normal 20-minute interval check for subsequent weight settings
