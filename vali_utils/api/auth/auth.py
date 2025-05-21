@@ -113,7 +113,7 @@ class APIKeyManager:
             self._clean_old_requests()
 
             is_master = self.is_master_key(api_key)
-            rate_limit = 1000 if is_master else 100  # Master key gets higher limit
+            rate_limit = 1000 if is_master else 50  # Master key gets higher limit, lowered testnet rate limit
 
             with sqlite3.connect(self.db_path) as conn:
                 # Count recent requests
