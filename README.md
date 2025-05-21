@@ -46,7 +46,7 @@ While Macrocosmos does not directly collect or process data, and seeks to avoid 
 3. Data Minimization
     - Only collect and process data that is strictly necessary for your stated purpose.
     - Avoid collecting sensitive personal data unless absolutely required and lawful.
-4. Upholding Individuals’ Rights
+4. Upholding Individuals' Rights
     - Be prepared to handle requests or objections from individuals regarding their right to access, rectify, limit processing of or delete their personal data in compliance with GDPR.
 5. Data Security
     - Implement robust security measures to protect any data you collect from unauthorized access or breaches.
@@ -78,7 +78,7 @@ Macrocosmos is committed to supporting miners in understanding and meeting their
 
 ## **GDPR Guidance and Resources**
 1. Overview of GDPR Requirements
-    - The UK Information Commissioner’s Office (ICO) provides a comprehensive guide to GDPR obligations, including lawful bases for processing, data minimization, and security requirements:
+    - The UK Information Commissioner's Office (ICO) provides a comprehensive guide to GDPR obligations, including lawful bases for processing, data minimization, and security requirements:
     - [ICO Guide to GDPR](https://ico.org.uk/media/for-organisations/guide-to-data-protection/guide-to-the-general-data-protection-regulation-gdpr-1-1.pdf)
 2. Lawful Basis for Processing Data
     - Understand the six lawful bases for processing personal data as defined under GDPR:
@@ -119,9 +119,59 @@ Macrocosmos is committed to supporting miners in understanding and meeting their
 
 # Introduction
 
-Data is a critical pillar of AI and Data Universe is that pillar for Bittensor.
+Subnet 13, Data Universe, is a data-scraping and sentiment analysis subnet owned by Macrocosmos.ai. It collects and stores large amounts of data from across a wide-range of sources for use by other Subnets and businesses. Data Universe scrapes real-time data from X (formerly known as Twitter), Reddit, and YouTube transcripts.
 
-Data Universe is a Bittensor subnet for collecting and storing large amounts of data from across a wide-range of sources, for use by other Subnets. It was built from the ground-up with a focus on decentralization and scalability. There is no centralized entity that controls the data; the data is stored across all Miner's on the network and is queryable via the Validators. At launch, Data Universe is able to support up to 50 Petabytes of data across 200 miners, while only requiring ~10GB of storage on the Validator.
+Data Universe is currently the world's largest open-source social media dataset, highlighting its efficiency and business use cases. Its datasets are easy to access, so businesses and other subnets can use them quickly and with low-friction.
+
+Data Universe was built from the ground-up with a focus on decentralization and scalability. There is no centralized entity that controls the data; the data is stored across all Miners on the network, and is queryable via the Validators. At launch, Data Universe is able to support up to 50 Petabytes of data across 200 miners, while only requiring ~10GB of storage on the Validator.
+
+# Products
+
+Macrocosmos has launched its own products built with subnet 13:
+
+## Gravity
+
+This flagship product allows you to send data-scraping jobs to the network, choosing specific key terms and phrases to collect. This functions on both X and Reddit, with YouTube scraping support coming soon. Gravity is a highly accessible no-code tool that can be used by anyone, regardless of technical background. It's also a low-cost solution to data-scraping and sentiment analysis, undercutting many centralized and decentralized alternatives on the market.
+
+- Try Gravity here: https://app.macrocosmos.ai/gravity
+- Learn more about Gravity here: https://docs.macrocosmos.ai/constellation-user-guides/gravity 
+- Access Gravity via the API: https://docs.macrocosmos.ai/developers/api-documentation/sn13-data-universe  
+
+## Mission Commander
+
+This is an agentic LLM chatbot built into Gravity, designed to help you pick the right terms and phrases for your data-scraping needs. Simply tell it what information you want, and it'll offer suggestions and help with brainstorming. Mission Commander is built with Subnet 1, Apex, also owned by Macrocosmos.
+
+- Try Mission Commander via the Gravity app: https://app.macrocosmos.ai/gravity
+
+## Nebula
+
+This is our data-scraping visualizer. It allows you to see your scraped data mapped out on a 3-dimensional plane. It also shows sentiment analysis. Nebula is especially valuable for people who prefer visual aids when looking through data.
+
+- Try Nebula here: https://nebula.macrocosmos.ai/
+- Learn more about Nebula here: https://docs.macrocosmos.ai/constellation-user-guides/nebula 
+
+## MCP
+
+You can integrate subnet 13, Data-Universe, directly into Claude and Cursor via our MCP. This allows you to access our data-scraping information about X and Reddit, rather than only from our website.
+
+- Try the MCP by following our guide here: https://docs.macrocosmos.ai/developers/tools/macrocosmos-mcp
+
+# Team
+
+Subnet 13 is owned by Macrocosmos.ai, one of the largest companies on Bittensor. Key team members include:
+
+- **Will Squires, Co-Founder and CEO**: Will is an entrepreneur with experience building AI startups. He has a Master of Engineering degree in civil engineering and sustainability from the University of Warwick.
+
+- **Steffen Cruz, Co-Founder and CTO**: Steffen formerly worked at OpenTensor Foundation (the organization behind Bittensor) as their CTO, and is the original architect of Subnet 1, Apex's codebase. He has a PhD in Experimental Nuclear Physics.
+
+- **[Arrmlet](https://github.com/Arrmlet)**: Our subnet lead is the leading designer for Data-Universe with a Masters in Physics from the University of Lviv, Ukraine.
+
+- **[ewekazoo](https://github.com/ewekazoo), Software Engineer**: With a B.S. in Computer Science from Columbia University, our subnet engineer works on maintaining, expanding, and strengthening subnet 13. 
+
+# Market and Partnerships
+
+Subnet 13 has a clear product-market fit, with Gravity functioning as a service that allows businesses to scrape specific social media data for market research purposes at a low cost. Companies can also get sentiment analysis included within their scraping tasks, helping to quickly gauge public perception, identify emerging trends, and make data-driven decisions.
+
 
 # Overview
 
@@ -131,16 +181,12 @@ In the Data Universe, Miners scrape data from a defined set of sources, called D
 
 Validators periodically query each Miner to fetch their latest MinerIndexes and store them in a local database. This gives the Validator a complete understanding of all data that's stored on the network, as well as which Miners to query for specific types of data. Validators also periodically verify the correctness of the data stored on Miners and reward Miners based on the amount of [valuable data](#data-value) the Miner has. Validators log to [wandb](https://wandb.ai/macrocosmos/data-universe-validators) anonymously by default.
 
+Miners upload their local stores to either HuggingFace or S3-compatible storage for public dataset access. This data is anonymized for privacy purposes to comply with the Terms of Service per each data source.
 
+- For HuggingFace setup, see the [HuggingFace documentation](docs/huggingface_setup.md).
+- For S3 storage setup, see the [S3 Storage documentation](https://github.com/macrocosm-os/data-universe-api).
 
-  Miners upload their local stores to either HuggingFace or S3-compatible storage for public dataset access. This data is anonymized for privacy purposes to comply with the Terms of
-  Service per each data source.
-
-  - For HuggingFace setup, see the [HuggingFace documentation](docs/huggingface_setup.md).
-  - For S3 storage setup, see the [S3 Storage documentation](https://github.com/macrocosm-os/data-universe-api).
-
-  The S3 storage option provides improved scalability, security, and performance, especially for large datasets. It uses a folder-based structure with blockchain authentication to
-  ensure miners can only access their own data while validators can efficiently access all miners' data.
+The S3 storage option provides improved scalability, security, and performance, especially for large datasets. It uses a folder-based structure with blockchain authentication to ensure miners can only access their own data while validators can efficiently access all miners' data.
 
 See the [Miner](docs/miner.md) and [Validator](docs/validator.md) docs for more information about how they work, as well as setup instructions.
 
@@ -176,9 +222,22 @@ Validators remain suspicious of Miners and so they periodically check a sample o
 
 # Data Universe Dashboard
 
-As you can see from the above, Data Universe rewards diversity of data (storing 200 copies of the same data isn't exactly beneficial!) 
+As you can see from the above, Data Universe rewards diversity of data (storing 200 copies of the same data isn't exactly beneficial!)
 
 To help understand the current data on the Subnet, the Data Universe team hosts a dashboard (https://sn13-dashboard.api.macrocosmos.ai/), showing the amount of each type of data (by DataEntityBucketId) on the Subnet. Miners are strongly encouraged to use this dashboard to customize their [Miner Configuration](./docs/miner.md#configuring-the-miner), to maximize their rewards.
+
+# Use Cases
+
+Subnet 13, Data Universe, has a range of use-cases:
+
+- Low-cost data-scraping that undercuts centralized and decentralized alternatives.
+- Aid in market research in any industry by collecting social media results on pressing topics.
+- Help boost the accuracy of predictive tools by injecting them with freshly scraped social media data.
+- Understand global online sentiment on any topic, to help inform businesses on their goals.
+- Track sports analytics on social media (used by Subnet 44, Score).
+- Forecast performance of assets (used by Subnet 64, Chutes, via Squad.ai).
+
+Data-Universe's potential is extensive, as anybody can use it to build datasets on whatever topics are meaningful to them. By tapping into Bittensor's miner and validator communities, people can access data scraping and analysis at a fast and affordable rate.
 
 # Getting Started
 
@@ -188,10 +247,9 @@ See [Validator Setup](docs/validator.md#validator_setup) to learn how to setup a
 
 # Upcoming Features
 
-1. A Validator API to allow other Subnets to query the data.
-2. Private storage
-3. More datasources feel free to add by yourself in [this repo](https://github.com/macrocosm-os/scrapers)! 
-4. Post/Comment metadata
+1. Private storage
+2. More datasources feel free to add by yourself in [this repo](https://github.com/macrocosm-os/scrapers)! 
+3. Youtube multilanguage support
 
 # Terminology
 
