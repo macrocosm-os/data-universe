@@ -3,7 +3,7 @@ from typing import Dict, List, Optional, Union
 from datetime import datetime
 import bittensor as bt
 from decimal import Decimal
-from common.constants import MAX_LABEL_LENGTH  # Assuming this is 140 chars
+from common.constants import MAX_LABEL_LENGTH  
 from dynamic_desirability.constants import VALID_SOURCES
 import json
 
@@ -67,9 +67,19 @@ class OldFormatPreference(BaseModel):
 
 class JobParams(BaseModel):
     """Model for job parameters in the new format"""
-    keyword: Optional[str] = Field(None, description="Optional keyword to search for")
+    keyword: Optional[str] = Field(
+        None, 
+        description="Optional keyword to search for",
+        min_length=1,
+        max_length=MAX_LABEL_LENGTH
+    )
     platform: str = Field(description="Platform to search (e.g., 'reddit', 'x', 'youtube')")
-    label: Optional[str] = Field(None, description="Optional label or label to search for")
+    label: Optional[str] = Field(
+        None, 
+        description="Optional label or label to search for",
+        min_length=1,
+        max_length=MAX_LABEL_LENGTH
+    )
     post_start_datetime: Optional[str] = Field(None, description="Start date for posts in ISO format")
     post_end_datetime: Optional[str] = Field(None, description="End date for posts in ISO format")
     
@@ -80,24 +90,6 @@ class JobParams(BaseModel):
         if platform_lower not in VALID_SOURCES:
             raise ValueError(f"Invalid platform: {platform}. Must be one of {VALID_SOURCES}")
         return platform_lower
-    
-    @field_validator('label')
-    @classmethod
-    def validate_label_length(cls, label: Optional[str]) -> Optional[str]:
-        if label is None:
-            return None
-        if len(label) > MAX_LABEL_LENGTH:
-            raise ValueError(f"Label exceeds {MAX_LABEL_LENGTH} character limit: {label}")
-        return label
-    
-    @field_validator('keyword')
-    @classmethod
-    def validate_keyword_length(cls, keyword: Optional[str]) -> Optional[str]:
-        if keyword is None:
-            return None
-        if len(keyword) > MAX_LABEL_LENGTH:
-            raise ValueError(f"Keyword exceeds {MAX_LABEL_LENGTH} character limit: {keyword}")
-        return keyword
     
     @field_validator('post_start_datetime', 'post_end_datetime')
     @classmethod

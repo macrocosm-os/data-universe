@@ -35,29 +35,6 @@ class Job(StrictBaseModel):
         description="Optionally, the latest viable time bucket at which data is accepted."
     )
 
-    # Add methods to convert between datetime strings and time buckets
-    @classmethod
-    def from_datetime_strings(cls, keyword, label, job_weight, start_timebucket=None, end_timebucket=None):
-        """Create a Job using datetime strings, converting to time buckets internally."""
-        start_timebucket = None
-        end_timebucket = None
-        
-        if start_timebucket:
-            start_dt = datetime.fromisoformat(start_timebucket)
-            start_timebucket = utils.time_bucket_id_from_datetime(start_dt)
-            
-        if end_timebucket:
-            end_dt = datetime.fromisoformat(end_timebucket)
-            end_timebucket = utils.time_bucket_id_from_datetime(end_dt)
-            
-        return cls(
-            keyword=keyword,
-            label=label,
-            job_weight=job_weight,
-            start_timebucket=start_timebucket,
-            end_timebucket=end_timebucket
-        )
-
     def matches(self, data_keyword: str, data_label: str, data_timebucket: int) -> bool:
         """Check if the incoming data matches this job's criteria using time buckets directly."""
         # First check keyword and label match
