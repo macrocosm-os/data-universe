@@ -8,22 +8,26 @@ from typing import List, Dict, Any, Optional, Tuple
 import datetime as dt
 import os
 import json
-from youtube_transcript_api.proxies import WebshareProxyConfig
+from xml.etree.ElementTree import ParseError
+from youtube_transcript_api.proxies import WebshareProxyConfig, GenericProxyConfig
 
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
-from googleapiclient.discovery import build
-from googleapiclient.errors import HttpError
+import httpx
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
 from scraping.youtube.model import YouTubeContent
 import isodate
 from dotenv import load_dotenv
+import logging
+
 
 load_dotenv()
 
 bt.logging.set_trace(True)
+logging.getLogger("httpx").setLevel(logging.WARNING) # Keep this so httpx dos not log api key
 
+_KEY_RE = re.compile(r"(?:key|apiKey)=[^&\s]+", re.I)
 
 class YouTubeTranscriptScraper(Scraper):
     """
@@ -44,23 +48,19 @@ class YouTubeTranscriptScraper(Scraper):
     DEFAULT_CHUNK_SIZE = 3000
 
     def __init__(self):
-        """Initialize the Enhanced YouTube Transcript Scraper."""
-        # Get API key from environment variables
-        self.api_key = os.getenv('YOUTUBE_API_KEY')
+        """Initialize the scraper without googleapiclient."""
+        # API key
+        self.api_key = os.getenv("YOUTUBE_API_KEY")
         if not self.api_key:
             bt.logging.warning("YOUTUBE_API_KEY not found in environment variables")
 
-        # Track rate limits to avoid API throttling
+        # Rate-limit bookkeeping
         self.last_request_time = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=10)
-        self.request_interval = dt.timedelta(seconds=1)  # Minimum time between requests
+        self.request_interval  = dt.timedelta(seconds=1)
 
-        # Initialize YouTube API client
-        try:
-            self.youtube = build("youtube", "v3", developerKey=self.api_key)
-            bt.logging.info("YouTube API client initialized successfully")
-        except Exception as e:
-            bt.logging.error(f"Failed to initialize YouTube API client: {str(e)}")
-            self.youtube = None
+        # REST base + httpx timeout
+        self._yt_base       = "https://www.googleapis.com/youtube/v3"
+        self._http_timeout  = httpx.Timeout(10.0)
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """
@@ -670,55 +670,65 @@ class YouTubeTranscriptScraper(Scraper):
 
         self.last_request_time = dt.datetime.now(dt.timezone.utc)
 
-    async def _get_video_metadata_from_api(self, video_id: str) -> Optional[Dict[str, Any]]:
+    async def _get_video_metadata_from_api(
+        self,
+        video_id: str
+    ) -> Optional[Dict[str, Any]]:
         """
-        Get metadata for a YouTube video using the official API.
-
-        Args:
-            video_id: The YouTube video ID.
-
-        Returns:
-            Dictionary containing video metadata or None if not found.
+        Fetch snippet & contentDetails for one video via `_yt_get`.
         """
-        if not self.youtube or not self.api_key:
-            bt.logging.warning("YouTube API client not initialized or API key missing")
-            return self._get_fallback_video_metadata(video_id)
+        resp = await self._yt_get(
+            "videos",
+            {"id": video_id, "part": "snippet,contentDetails,statistics"},
+        )
+        if not resp or not resp.get("items"):
+            bt.logging.warning(f"Video {video_id} not found or private")
+            return None
+
+        item            = resp["items"][0]
+        snippet         = item.get("snippet", {})
+        content_details = item.get("contentDetails", {})
+
+        duration_str     = content_details.get("duration", "PT0S")
+        duration_seconds = int(isodate.parse_duration(duration_str).total_seconds())
+
+        return {
+            "title"           : snippet.get("title", ""),
+            "channelId"       : snippet.get("channelId", ""),
+            "channelTitle"    : snippet.get("channelTitle", ""),
+            "publishedAt"     : snippet.get("publishedAt", ""),
+            "description"     : snippet.get("description", ""),
+            "duration_seconds": duration_seconds,
+        }
+
+
+    async def _yt_get(self, path: str, params: dict) -> dict | None:
+        """
+        One REST call to YouTube Data API v3.  Returns parsed JSON or None.
+        """
+        if not self.api_key:
+            bt.logging.warning("YOUTUBE_API_KEY missing - cannot call YouTube Data API")
+            return None
+
+        await self._wait_for_rate_limit()
+
+        qs = params.copy()
+        qs["key"] = self.api_key
+        url = f"{self._yt_base}/{path}"
 
         try:
-            # Make API request
-            response = self.youtube.videos().list(
-                id=video_id,
-                part="snippet,contentDetails,statistics"
-            ).execute()
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                r: httpx.Response = await client.get(url, params=qs)
+                r.raise_for_status()
 
-            if not response.get("items"):
-                bt.logging.warning(f"Video {video_id} not found or private")
-                return None
+                bt.logging.debug(f"HTTP {r.status_code} {self._sanitize(r)}")
+                return r.json()
 
-            item = response["items"][0]
-            snippet = item.get("snippet", {})
-            content_details = item.get("contentDetails", {})
-
-            # Convert ISO 8601 duration to seconds
-            duration_str = content_details.get("duration", "PT0S")
-            duration_seconds = int(isodate.parse_duration(duration_str).total_seconds())
-
-            return {
-                "title": snippet.get("title", ""),
-                "channelId": snippet.get("channelId", ""),
-                "channelTitle": snippet.get("channelTitle", ""),
-                "publishedAt": snippet.get("publishedAt", ""),
-                "description": snippet.get("description", ""),
-                "duration_seconds": duration_seconds
-            }
-
-        except HttpError as e:
-            bt.logging.error(
-                "YouTube API error (%s) for video %s: %s",
-                e.resp.status, video_id, self._sanitize_http_error(e)
-            )
-
-            return None
+        except httpx.HTTPStatusError as e:
+            bt.logging.error(f"YouTube API HTTP {e.response.status_code}: {self._sanitize(e)}")
+        except Exception as e:
+            bt.logging.error(f"YouTube API request failed: {self._sanitize(e)}")
+        return None
 
 
     def _get_fallback_video_metadata(self, video_id: str) -> Dict[str, Any]:
@@ -748,42 +758,99 @@ class YouTubeTranscriptScraper(Scraper):
             "duration_seconds": hash_value % 600  # 0-599 seconds
         }
 
-    async def _get_transcript(self, video_id: str) -> List[Dict[str, Any]]:
+    async def _get_transcript(
+        self,
+        video_id: str,
+        max_retries: int = 3
+    ):
         """
-        Get transcript for a YouTube video using the youtube-transcript-api.
+        Fetch a raw transcript list for a single YouTube video,
+        with up to `max_retries` attempts if there are transient errors.
+        Wait 5 seconds between each retry attempt.
 
-        Args:
-            video_id: The YouTube video ID.
-
-        Returns:
-            List of transcript entries or empty list if no transcript is available.
+        If a transcript is disabled or not found, we short-circuit immediately.
+        If there's an XML parse error (like 'no element found'), we log a simpler
+        warning without printing the full traceback.
         """
-        try:
-            # Get the transcript for the video directly
+        # Local helper to mask credentials from logs
+        def _masked(url: str) -> str:
+            from urllib.parse import urlparse, urlunparse
+            parts = urlparse(url)
+            netloc = parts.hostname or ""
+            if parts.port:
+                netloc += f":{parts.port}"
+            return urlunparse((parts.scheme, netloc, "", "", "", ""))
 
-            if os.getenv('WEB_SHARE_PROXY_USERNAME', None):
-                proxy_config = WebshareProxyConfig(
-                    proxy_username=os.getenv('WEB_SHARE_PROXY_USERNAME'),
-                    proxy_password=os.getenv('WEB_SHARE_PROXY_PASSWORD'),
-                )
-            else:
-                proxy_config = None
-            ytt_api = YouTubeTranscriptApi(
-                proxy_config=proxy_config
+        # Inline proxy config
+        proxy_config = None
+        host = os.getenv("YTT_PROXY_HOST")
+        port = os.getenv("YTT_PROXY_PORT")
+
+        if host and port:
+            user = os.getenv("YTT_PROXY_USERNAME", "")
+            pwd = os.getenv("YTT_PROXY_PASSWORD", "")
+            cred = f"{user}:{pwd}@" if user and pwd else ""
+            http_url = f"http://{cred}{host}:{port}"
+            https_url = f"https://{cred}{host}:{port}"
+            bt.logging.info(f"Using GenericProxyConfig -> {_masked(http_url)}")
+            proxy_config = GenericProxyConfig(http_url=http_url, https_url=https_url)
+        elif os.getenv("WEB_SHARE_PROXY_USERNAME"):
+            bt.logging.info("Using WebshareProxyConfig")
+            proxy_config = WebshareProxyConfig(
+                proxy_list=os.getenv("WEB_SHARE_PROXY_LIST_ID"),
+                proxy_username=os.getenv("WEB_SHARE_PROXY_USERNAME"),
+                proxy_password=os.getenv("WEB_SHARE_PROXY_PASSWORD"),
             )
-            transcript_data = ytt_api.fetch(video_id).to_raw_data()
-            # The transcript_data is already a list of dictionaries with the format we need
-            # Each item has keys: 'text', 'start', 'duration'
-            return transcript_data
+        else:
+            bt.logging.info("No proxy configured for YouTubeTranscriptApi")
 
-        except (TranscriptsDisabled, NoTranscriptFound) as e:
-            bt.logging.info(f"No transcript available for video {video_id}: {str(e)}")
-            raise
-        except Exception as e:
-            bt.logging.error(f"Error getting transcript for video {video_id}: {str(e)}")
-            bt.logging.error(traceback.format_exc())
-            return []
+        for attempt in range(max_retries):
+            try:
+                ytt_api = YouTubeTranscriptApi(proxy_config=proxy_config)
+                return ytt_api.fetch(video_id).to_raw_data()
 
+            except (TranscriptsDisabled, NoTranscriptFound) as e:
+                # Known "no transcript" errors → no retries needed
+                bt.logging.warning(
+                    f"Transcript fetch failed (no transcript) for {video_id}: {e!s}"
+                )
+                return None
+
+            except ParseError as e:
+                # Typically "no element found: line 1, column 0" means
+                # an empty or invalid response from YouTube.
+                bt.logging.warning(
+                    f"[Attempt {attempt+1}/{max_retries}] Transcript parse error "
+                    f"for video {video_id}: {e}"
+                )
+                # Optionally: no big traceback here, just a simpler log message.
+                if attempt < max_retries - 1:
+                    bt.logging.info("Retrying in 5s..")
+                    await asyncio.sleep(5)
+                else:
+                    bt.logging.warning(
+                        f"Giving up after {max_retries} attempts for {video_id}."
+                    )
+                    return None
+
+            except Exception as e:
+                # General fallback for other errors (network, SSL, etc.)
+                bt.logging.warning(
+                    f"[Attempt {attempt+1}/{max_retries}] Transcript fetch failed "
+                    f"for {video_id}: {e!s}"
+                )
+
+                bt.logging.warning(traceback.format_exc())
+
+                if attempt < max_retries - 1:
+                    bt.logging.info("Retrying in 5s...")
+                    await asyncio.sleep(5)
+                else:
+                    bt.logging.warning(
+                        f"Giving up after {max_retries} attempts for {video_id}."
+                    )
+                    return None
+                           
     def _extract_video_id(self, url: str) -> Optional[str]:
         """
         Extract YouTube video ID from a URL.
@@ -807,159 +874,103 @@ class YouTubeTranscriptScraper(Scraper):
 
         return None
 
-    async def _get_channel_videos(self, channel_id: str, date_range: DateRange, max_results: int = 10) -> List[
-        Dict[str, Any]]:
+
+    async def _get_channel_videos(
+        self,
+        channel_id: str,
+        date_range: DateRange,
+        max_results: int = 10,
+    ) -> List[Dict[str, Any]]:
         """
-        Get videos from a specific channel that have transcripts and fall within the date range.
-
-        Args:
-            channel_id: YouTube channel ID
-            date_range: Date range to filter videos
-            max_results: Maximum number of videos to return
-
-        Returns:
-            List of video information dictionaries
+        Get up to `max_results` videos with transcripts from a channel, limited to
+        `date_range`.  Uses `_yt_get` for metadata and `_get_transcript` (proxy-ready)
+        to verify transcript availability.
         """
-        try:
-            # Ensure date_range has timezone info
-            start_date = date_range.start
-            end_date = date_range.end
-
-            # Add timezone if missing
-            if start_date.tzinfo is None:
-                start_date = start_date.replace(tzinfo=dt.timezone.utc)
-            if end_date.tzinfo is None:
-                end_date = end_date.replace(tzinfo=dt.timezone.utc)
-
-            # Get channel uploads playlist
-            channels_response = self.youtube.channels().list(
-                id=channel_id,
-                part="contentDetails,snippet"
-            ).execute()
-
-            if not channels_response.get("items"):
-                bt.logging.warning(f"Channel {channel_id} not found")
-                return []
-
-            channel_info = channels_response["items"][0]
-            channel_name = channel_info["snippet"]["title"]
-            uploads_playlist_id = channel_info["contentDetails"]["relatedPlaylists"]["uploads"]
-
-            bt.logging.info(f"Found channel: {channel_name}")
-
-            # Get videos from the uploads playlist
-            videos = []
-            page_token = None
-            api_calls = 0
-            max_api_calls = 5  # Limit API calls to prevent quota issues
-
-            while len(videos) < max_results and api_calls < max_api_calls:
-                api_calls += 1
-
-                try:
-                    playlist_response = self.youtube.playlistItems().list(
-                        playlistId=uploads_playlist_id,
-                        part="snippet,contentDetails",
-                        maxResults=50  # Maximum allowed by API
-                    ).execute()
-
-                    if not playlist_response.get("items"):
-                        bt.logging.info("No more items in playlist")
-                        break
-
-                    # Process each video
-                    for item in playlist_response.get("items", []):
-                        video_id = item["contentDetails"]["videoId"]
-
-                        # Parse published date properly with timezone handling
-                        try:
-                            published_at_str = item["snippet"]["publishedAt"]
-
-                            # Ensure the string has timezone info
-                            if published_at_str.endswith('Z'):
-                                published_at_str = published_at_str.replace('Z', '+00:00')
-
-                            # Parse with timezone
-                            published_at = dt.datetime.fromisoformat(published_at_str)
-
-                            # Ensure timezone is UTC
-                            if published_at.tzinfo is None:
-                                published_at = published_at.replace(tzinfo=dt.timezone.utc)
-
-                        except Exception as e:
-                            bt.logging.error(f"Error parsing date for video {video_id}: {str(e)}")
-                            continue
-
-                        # Check if the video is within the date range using timezone-aware comparison
-                        in_range = start_date <= published_at <= end_date
-
-                        bt.logging.debug(
-                            f"Video {video_id} published at {published_at.isoformat()}, "
-                            f"within range {start_date.isoformat()} to {end_date.isoformat()}: {in_range}"
-                        )
-
-                        if not in_range:
-                            bt.logging.debug(f"Video {video_id} outside date range, skipping")
-                            continue
-
-                        # Check for transcript availability
-                        try:
-                            # transcript = YouTubeTranscriptApi.get_transcript(video_id)
-                            if os.getenv('WEB_SHARE_PROXY_USERNAME', None):
-                                proxy_config = WebshareProxyConfig(
-                                    proxy_username= os.getenv('WEB_SHARE_PROXY_USERNAME'),
-                                    proxy_password=os.getenv('WEB_SHARE_PROXY_PASSWORD'),
-                                )
-                            else:
-                                proxy_config = None
-                            ytt_api = YouTubeTranscriptApi(
-                                proxy_config=proxy_config
-                            )
-
-                            transcript = ytt_api.fetch(video_id).to_raw_data()
-                            if transcript:
-                                videos.append({
-                                    "id": video_id,
-                                    "title": item["snippet"]["title"],
-                                    "publishedAt": published_at.isoformat(),
-                                    "channelId": channel_id,
-                                    "channelTitle": channel_name
-                                })
-
-                                if len(videos) >= max_results:
-                                    bt.logging.info(f"Reached maximum videos limit ({max_results})")
-                                    break
-                        except (TranscriptsDisabled, NoTranscriptFound):
-                            bt.logging.debug(f"No transcript for video {video_id}, skipping")
-                            continue
-                        except Exception as e:
-                            bt.logging.error(f"Error checking transcript for video {video_id}: {str(e)}")
-                            continue
-
-                    # Get next page token
-                    page_token = playlist_response.get("nextPageToken")
-                    if not page_token:
-                        break
-
-                except Exception as e:
-                    bt.logging.error(f"Error processing playlist page: {str(e)}")
-                    bt.logging.error(traceback.format_exc())
-                    break
-
-            bt.logging.info(f"Found {len(videos)} videos with transcripts within the date range")
-            return videos
-
-        except Exception as e:
-            bt.logging.error(f"Error getting videos for channel {channel_id}: {str(e)}")
-            bt.logging.error(traceback.format_exc())
+        chan_resp = await self._yt_get(
+            "channels",
+            {"id": channel_id, "part": "contentDetails,snippet"},
+        )
+        if not chan_resp or not chan_resp.get("items"):
+            bt.logging.warning(f"Channel {channel_id} not found")
             return []
 
-    def _sanitize_http_error(self, e: HttpError | Exception) -> str:
+        channel_info        = chan_resp["items"][0]
+        channel_name        = channel_info["snippet"]["title"]
+        uploads_playlist_id = channel_info["contentDetails"]["relatedPlaylists"]["uploads"]
+
+        bt.logging.info(f"Found channel: {channel_name}")
+
+        collected   : list[dict] = []
+        page_token  : str | None = None
+        api_calls             = 0
+        MAX_API_CALLS         = 5
+
+        while len(collected) < max_results and api_calls < MAX_API_CALLS:
+            api_calls += 1
+            pl_resp = await self._yt_get(
+                "playlistItems",
+                {
+                    "playlistId": uploads_playlist_id,
+                    "part": "snippet,contentDetails",
+                    "maxResults": 50,
+                    "pageToken": page_token or "",
+                },
+            )
+            if not pl_resp or not pl_resp.get("items"):
+                break
+
+            for item in pl_resp["items"]:
+                video_id = item["contentDetails"]["videoId"]
+
+                # Parse publish date
+                pub_str      = item["snippet"]["publishedAt"].replace("Z", "+00:00")
+                try:
+                    published = dt.datetime.fromisoformat(pub_str)
+                except Exception as e:
+                    bt.logging.error(f"Bad date for {video_id}: {e}")
+                    continue
+
+                if not date_range.contains(published):
+                    continue
+
+                # Proxy-aware transcript check
+                transcript = await self._get_transcript(video_id)
+                if not transcript:
+                    continue
+
+                collected.append(
+                    {
+                        "id"          : video_id,
+                        "title"       : item["snippet"]["title"],
+                        "publishedAt" : published.isoformat(),
+                        "channelId"   : channel_id,
+                        "channelTitle": channel_name,
+                    }
+                )
+
+                if len(collected) >= max_results:
+                    break
+
+            page_token = pl_resp.get("nextPageToken")
+            if not page_token:
+                break
+
+        bt.logging.info(f"Collected {len(collected)} videos from channel {channel_id}")
+        return collected
+
+    def _sanitize(self, obj: object) -> str:
         """
-        Return a safe string of any exception, with YouTube API keys removed.
+        Return *obj* as str with any YouTube API key stripped from query strings.
+        Accepts str, httpx.Request/Response, exceptions, etc.
         """
-        _KEY_RE = re.compile(r"(?:key|apiKey)=[^&\s]+")
-        return _KEY_RE.sub("key=REDACTED", str(e))
+        if isinstance(obj, httpx.Request):
+            target = str(obj.url)
+        elif isinstance(obj, httpx.Response):
+            target = str(obj.request.url)
+        else:
+            target = str(obj)
+
+        return _KEY_RE.sub("key=REDACTED", target)
 
 # Test utility methods
 
@@ -1253,6 +1264,3 @@ async def main():
 if __name__ == "__main__":
     bt.logging.info("Starting YouTube scraper tests...")
     asyncio.run(main())
-
-
-
