@@ -82,12 +82,13 @@ Note: Credibility has a direct influence on the Final Score, while the Incentive
 - Min Evaluation Period: 60 minutes
 
 ## Data Source Weights
-- Reddit: 60% (weight: 0.6)
-- X (Twitter): 40% (weight: 0.4)
+- Reddit: 55% (weight: 0.55)
+- X (Twitter): 35% (weight: 0.35)
+- Youtube: 10% (weight: 0.1)
 
 ## Desirable Data
 
-For the list of desirable data sources and their scale factors, please refer to the [data_desirability_lookup.py](/rewards/data_desirability_lookup.py) file.
+For the current list of desirable data sources and their jobs, run with the `--gravity` tag.
 
 ## Important Notes
 

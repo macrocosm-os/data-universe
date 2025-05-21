@@ -11,6 +11,22 @@ The following is a conceptual overview of Dynamic Desirability (Gravity). We rec
 
 [Dynamic Desirability](../dynamic_desirability) takes the previous system of manually setting subnet preferences for data scraping at scale to an organic, democratic mechanism. This introduces a voting system for both the subnet owner and participating validators, where each will set their own weight preferences through an adaptable list of incentivized labels. Validators choose weights and submit them as JSONs into the desirability repository called [Gravity](https://github.com/macrocosm-os/gravity/tree/main). These weights are then committed to the chain, where they can be later read and used to create an aggregate DataDesirabilityLookup object used for scoring. 
 
+Dynamically incentivized jobs are given label scale factors of anywhere from (`default_scale_factor` + 1) up to 5.0, depending on the volume of requests and demand for that particular label. Dynamic Desirability jobs have the following parameters: 
+
+1. `keyword`
+    - Optionally, the incentivized keyword/phrase. (Scoring supported soon)
+2. `label`
+    - The actual incentivized label - the subreddit name or the hashtag.
+3. `job_weight`
+    - The scale factor received in scoring for providing data that completes this given job. This is at minimum (`default_scale_factor` + 1), and at maximum 5.
+4. `start_date`
+    - Optionally, the earliest viable date at which data scraped for this job will be rewarded.
+5. `end_date`
+    - Optionally, the latest viable date at which data scraped for this job will be rewarded.
+  
+### Important Notes for Scoring: 
+If a job does not have a `start_date` and `end_date`, it will be scored as normal with a linear deprecation function and 30-day freshness period. Otherwise if a job has a time range, data returned within the time range will be given a `time_scalar` of 1.0 (number subject to change), and data outside of the job's given time range will receive a `time_scalar` of 0. 
+
 ## Gravity Repository
 
 Dynamic Desirability uses the Gravity repo as a part of the validator preference submission pipeline. Read-access is public and encouraged! 
@@ -38,7 +54,7 @@ In total, the subnet owner Macrocosmos has a total voting power of 30%, and the 
 
 There is a provided JSON creation tool (json_maker.ipynb) located in the Data Desirability folder to assist validators in creating a valid submission. The guidelines for a valid JSON submission are outlined below. 
 
-Validators will split their votes in JSON format according to the following conditions: 
+Validators will split their votes in JSON format normalized to the following conditions upon upload into Github: 
 
 1. Label weights must be between (0,1]. 
     - The label weight now represents the percentage of the validator’s own voting power that they would like to place on the given label. For instance, a validator with 20% stake in the subnet for 14% total voting power placing 0.9 weight on a label would result in that label getting 12.6% of the total vote. 
@@ -46,11 +62,7 @@ Validators will split their votes in JSON format according to the following cond
 2. Label weights must sum to between 0 and 1. 
     - This comes as a consequence of the previous condition: at most a validator can choose to use 100% of their voting power to specify labels and associated label weights. 
 
-3. Each label weight must be in an increment of 0.1.
-    - This is done to incentivize maximization of validator voting power - spreading weight across too many labels weakens the strength of each individual label choice. 
-    - As a byproduct of this rule, the maximum number of incentivized labels a validator can specify is 10. 
-
-4. Weights must be from subnet data sources: Reddit or X.
+2. Weights must be from subnet data sources: Reddit, X, or YouTube.
 
 
 
@@ -58,23 +70,47 @@ An example of a valid JSON submission is given below:
 ```
 [
     {
-        "source_name": "reddit",
-        "label_weights": {
-            "r/Bitcoin": 0.1,
-            "r/BitcoinCash": 0.1,
-            "r/Bittensor_": 0.1,
-            "r/Btc": 0.1,
-            "r/Cryptocurrency": 0.1,
-            "r/Cryptomarkets": 0.1,
-            "r/EthereumClassic": 0.1
+        "id": "default_0",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "reddit",
+            "label": "r/Bitcoin",
+            "post_start_datetime": null,
+            "post_end_datetime": null
         }
     },
     {
-        "source_name": "x",
-        "label_weights": {
-            "#bitcoin": 0.1,
-            "#bitcoincharts": 0.1,
-            "#bitcoiner": 0.1
+        "id": "default_1",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "reddit",
+            "label": "r/BitcoinCash",
+            "post_start_datetime": null,
+            "post_end_datetime": null
+        }
+    },
+    {
+        "id": "default_2",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "reddit",
+            "label": "r/Bittensor_",
+            "post_start_datetime": null,
+            "post_end_datetime": null
+        }
+    },
+    {
+        "id": "default_3",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "x",
+            "label": "#macrocosmos",
+            "post_start_datetime": null,
+            "post_end_datetime": null
         }
     }
 ]
