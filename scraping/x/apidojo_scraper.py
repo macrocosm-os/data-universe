@@ -307,9 +307,9 @@ class ApiDojoTwitterScraper(Scraper):
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
-
         Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}] or not dataset:
+
+        if dataset == [{"zero_result": True}] or not dataset:  # Todo remove first statement if it's not necessary
             return [], []
 
         results: List[XContent] = []

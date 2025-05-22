@@ -2,13 +2,33 @@ import datetime as dt
 import re
 import traceback
 import bittensor as bt
-from typing import Dict, List
+from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from common.data import DataEntity
 from common.constants import NO_TWITTER_URLS_DATE, MEDIA_REQUIRED_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
+
+# Define validation fields with their display names
+TWEET_VALIDATION_FIELDS = [
+    # Basic fields
+    ("username", "usernames"),
+    ("text", "texts"),
+    ("url", "urls"),
+    ("tweet_hashtags", "hashtags"),
+    
+    # Enhanced fields
+    ("user_id", "user_id"),
+    ("user_display_name", "user_display_name"),
+    ("user_verified", "user_verified"),
+    ("tweet_id", "tweet_id"),
+    ("is_reply", "is_reply"),
+    ("is_quote", "is_quote"),
+    ("conversation_id", "conversation_id"),
+    ("in_reply_to_user_id", "in_reply_to_user_id"),
+    ("in_reply_to_username", "in_reply_to_username"),
+]
 
 
 def _validate_model_config(model_config: Dict[str, str]) -> bool:
@@ -150,72 +170,47 @@ def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> Va
     return ValidationResult(is_valid=True, reason="Tweet is valid", content_size_bytes_validated=0)
 
 
-def validate_tweet_content(
-        actual_tweet: XContent, entity: DataEntity, is_retweet: bool
-) -> ValidationResult:
-    """Validates the tweet is valid by the definition provided by entity."""
-    tweet_to_verify = None
-    try:
-        tweet_to_verify = XContent.from_data_entity(entity)
-    except Exception:
-        bt.logging.error(
-            f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}."
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Failed to decode data entity",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
-
-    # Check Tweet username
-    if remove_at_sign_from_username(tweet_to_verify.username) != remove_at_sign_from_username(actual_tweet.username):
-        bt.logging.info(
-            f"Tweet usernames do not match: {tweet_to_verify} != {actual_tweet}."
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Tweet usernames do not match",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
-
-    # Check Tweet text
-    if tweet_to_verify.text != actual_tweet.text:
-        bt.logging.info(
-            f"Tweet texts do not match: {tweet_to_verify} != {actual_tweet}."
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Tweet texts do not match",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
-
-    # Check Tweet url
-    if normalize_url(tweet_to_verify.url) != normalize_url(actual_tweet.url):
-        bt.logging.info(
-            f"Tweet urls do not match: {tweet_to_verify} != {actual_tweet}."
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Tweet urls do not match",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
-
-    # After deadline, reject twitter.com URLs
-    if dt.datetime.now(dt.timezone.utc) >= NO_TWITTER_URLS_DATE:
-        if "twitter.com" in tweet_to_verify.url or "twitter.com" in actual_tweet.url:
+def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
+    """Validate all tweet fields between submitted and actual tweet data.
+    
+    Returns:
+        ValidationResult if validation fails, None if all validations pass
+    """
+    for field_name, display_name in TWEET_VALIDATION_FIELDS:
+        submitted_value = getattr(tweet_to_verify, field_name, None)
+        actual_value = getattr(actual_tweet, field_name, None)
+        
+        # Skip validation if either value is None 
+        if submitted_value is None or actual_value is None:
+            continue
+            
+        # Apply field-specific validation logic
+        if field_name == "username":
+            is_valid = remove_at_sign_from_username(submitted_value) == remove_at_sign_from_username(actual_value)
+        elif field_name == "url":
+            is_valid = normalize_url(submitted_value) == normalize_url(actual_value)
+        elif field_name == "tweet_hashtags":
+            is_valid = are_hashtags_valid(submitted_value, actual_value)
+        else:
+            is_valid = submitted_value == actual_value
+            
+        if not is_valid:
             bt.logging.info(
-                f"Twitter.com URLs are not accepted after December 27, 2024"
+                f"Tweet {display_name} do not match: {submitted_value} != {actual_value}."
             )
             return ValidationResult(
                 is_valid=False,
-                reason="Only x.com URLs are accepted after December 27, 2024",
+                reason=f"Tweet {display_name} do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
+    
+    return None
 
-    # Timestamps on the contents within the entities must be obfuscated to the minute.
-    actual_tweet_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(
-        actual_tweet.timestamp
-    )
+
+def validate_timestamp(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
+    """Validate tweet timestamp with obfuscation logic."""
+    actual_tweet_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_tweet.timestamp)
+    
     if tweet_to_verify.timestamp != actual_tweet_obfuscated_timestamp:
         # Check if this is specifically because the entity was not obfuscated.
         if tweet_to_verify.timestamp == actual_tweet.timestamp:
@@ -236,136 +231,30 @@ def validate_tweet_content(
                 reason="Tweet timestamps do not match to the minute",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
+    return None
 
-    # Check Tweet hashtags.
-    if not are_hashtags_valid(tweet_to_verify.tweet_hashtags, actual_tweet.tweet_hashtags):
-        bt.logging.info(
-            f"Tweet hashtags do not match: {tweet_to_verify.tweet_hashtags} not subset of {actual_tweet.tweet_hashtags}."
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Tweet hashtags do not match",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
 
-    # Validate the enhanced fields if they exist in the miner's submission
-    # user_id
-    if tweet_to_verify.user_id is not None and actual_tweet.user_id is not None:
-        if tweet_to_verify.user_id != actual_tweet.user_id:
-            bt.logging.info(
-                f"Tweet user_id does not match: {tweet_to_verify.user_id} != {actual_tweet.user_id}."
-            )
+def validate_twitter_url_deadline(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
+    """Validate twitter.com URL deadline restriction."""
+    if dt.datetime.now(dt.timezone.utc) >= NO_TWITTER_URLS_DATE:
+        if "twitter.com" in tweet_to_verify.url or "twitter.com" in actual_tweet.url:
+            bt.logging.info("Twitter.com URLs are not accepted after December 27, 2024")
             return ValidationResult(
                 is_valid=False,
-                reason="Tweet user_id does not match",
+                reason="Only x.com URLs are accepted after December 27, 2024",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-    
-    # user_display_name
-    if tweet_to_verify.user_display_name is not None and actual_tweet.user_display_name is not None:
-        if tweet_to_verify.user_display_name != actual_tweet.user_display_name:
-            bt.logging.info(
-                f"Tweet user_display_name does not match: {tweet_to_verify.user_display_name} != {actual_tweet.user_display_name}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet user_display_name does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-    
-    # user_verified
-    if tweet_to_verify.user_verified is not None and actual_tweet.user_verified is not None:
-        if tweet_to_verify.user_verified != actual_tweet.user_verified:
-            bt.logging.info(
-                f"Tweet user_verified does not match: {tweet_to_verify.user_verified} != {actual_tweet.user_verified}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet user_verified does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-    
-    # tweet_id
-    if tweet_to_verify.tweet_id is not None and actual_tweet.tweet_id is not None:
-        if tweet_to_verify.tweet_id != actual_tweet.tweet_id:
-            bt.logging.info(
-                f"Tweet tweet_id does not match: {tweet_to_verify.tweet_id} != {actual_tweet.tweet_id}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet tweet_id does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-    
-    # is_reply
-    if tweet_to_verify.is_reply is not None and actual_tweet.is_reply is not None:
-        if tweet_to_verify.is_reply != actual_tweet.is_reply:
-            bt.logging.info(
-                f"Tweet is_reply does not match: {tweet_to_verify.is_reply} != {actual_tweet.is_reply}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet is_reply does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-    
-    # is_quote
-    if tweet_to_verify.is_quote is not None and actual_tweet.is_quote is not None:
-        if tweet_to_verify.is_quote != actual_tweet.is_quote:
-            bt.logging.info(
-                f"Tweet is_quote does not match: {tweet_to_verify.is_quote} != {actual_tweet.is_quote}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet is_quote does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-    
-    # conversation_id
-    if tweet_to_verify.conversation_id is not None and actual_tweet.conversation_id is not None:
-        if tweet_to_verify.conversation_id != actual_tweet.conversation_id:
-            bt.logging.info(
-                f"Tweet conversation_id does not match: {tweet_to_verify.conversation_id} != {actual_tweet.conversation_id}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet conversation_id does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-    
-    # in_reply_to_user_id
-    if tweet_to_verify.in_reply_to_user_id is not None and actual_tweet.in_reply_to_user_id is not None:
-        if tweet_to_verify.in_reply_to_user_id != actual_tweet.in_reply_to_user_id:
-            bt.logging.info(
-                f"Tweet in_reply_to_user_id does not match: {tweet_to_verify.in_reply_to_user_id} != {actual_tweet.in_reply_to_user_id}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet in_reply_to_user_id does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-    
-    # in_reply_to_username
-    if tweet_to_verify.in_reply_to_username is not None and actual_tweet.in_reply_to_username is not None:
-        if tweet_to_verify.in_reply_to_username != actual_tweet.in_reply_to_username:
-            bt.logging.info(
-                f"Tweet in_reply_to_username does not match: {tweet_to_verify.in_reply_to_username} != {actual_tweet.in_reply_to_username}."
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet in_reply_to_username does not match",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
+    return None
 
-    # If we're after the media requirement date, check for media
-    # Get the current date/time
+
+def validate_media_content(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
+    """Validate media content requirements and matching."""
     now = dt.datetime.now(dt.timezone.utc)
-
+    
     # After deadline: Check if media is required but missing
     if now >= MEDIA_REQUIRED_DATE:
-        # Check if the actual tweet has media but the verified one doesn't
         if actual_tweet.media and not tweet_to_verify.media:
-            bt.logging.info(f"Tweet is missing required media content.")
+            bt.logging.info("Tweet is missing required media content.")
             return ValidationResult(
                 is_valid=False,
                 reason="Tweet is missing required media content",
@@ -376,7 +265,7 @@ def validate_tweet_content(
     if tweet_to_verify.media:
         # If miner claims media but actual tweet has none, reject it
         if not actual_tweet.media:
-            bt.logging.info(f"Miner included media but the tweet has none")
+            bt.logging.info("Miner included media but the tweet has none")
             return ValidationResult(
                 is_valid=False,
                 reason="Miner included fake media for a tweet with no media",
@@ -389,31 +278,17 @@ def validate_tweet_content(
 
         # Simple check: URLs must match exactly
         if actual_urls != miner_urls:
-            bt.logging.info(f"Tweet media URLs don't match")
+            bt.logging.info("Tweet media URLs don't match")
             return ValidationResult(
                 is_valid=False,
                 reason="Tweet media URLs don't match actual content",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
+    return None
 
-    # Validate the model_config.
-    if not _validate_model_config(tweet_to_verify.model_config):
-        bt.logging.info(
-            f"Tweet content contains an invalid model_config: {tweet_to_verify.model_config}"
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason="Tweet content contains an invalid model_config",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
 
-    if is_retweet:
-        return ValidationResult(
-            is_valid=False,
-            reason="Retweets are no longer eligible after July 6, 2024.",
-            content_size_bytes_validated=entity.content_size_bytes
-        )
-
+def validate_data_entity_fields(actual_tweet: XContent, entity: DataEntity) -> ValidationResult:
+    """Validate DataEntity fields against the actual tweet."""
     # Create DataEntity instances with normalization for comparison
     tweet_entity = XContent.to_data_entity(content=actual_tweet)
 
@@ -439,9 +314,7 @@ def validate_tweet_content(
     # Allow a 10 byte difference to account for timestamp serialization differences.
     byte_difference_allowed = 10
 
-    if (
-            entity.content_size_bytes - tweet_entity.content_size_bytes
-    ) > byte_difference_allowed:
+    if (entity.content_size_bytes - tweet_entity.content_size_bytes) > byte_difference_allowed:
         return ValidationResult(
             is_valid=False,
             reason="The claimed bytes are too big compared to the actual tweet.",
@@ -460,3 +333,59 @@ def validate_tweet_content(
         reason="Good job, you honest miner!",
         content_size_bytes_validated=entity.content_size_bytes,
     )
+
+
+def validate_tweet_content(
+        actual_tweet: XContent, entity: DataEntity, is_retweet: bool
+) -> ValidationResult:
+    """Validates the tweet is valid by the definition provided by entity."""
+    # Decode tweet from entity
+    try:
+        tweet_to_verify = XContent.from_data_entity(entity)
+    except Exception:
+        bt.logging.error(f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}.")
+        return ValidationResult(
+            is_valid=False,
+            reason="Failed to decode data entity",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Check for retweets early
+    if is_retweet:
+        return ValidationResult(
+            is_valid=False,
+            reason="Retweets are no longer eligible after July 6, 2024.",
+            content_size_bytes_validated=entity.content_size_bytes
+        )
+
+    # Validate all basic fields using the unified function
+    field_validation_result = validate_tweet_fields(tweet_to_verify, actual_tweet, entity)
+    if field_validation_result is not None:
+        return field_validation_result
+
+    # Validate timestamp with special obfuscation logic
+    timestamp_validation_result = validate_timestamp(tweet_to_verify, actual_tweet, entity)
+    if timestamp_validation_result is not None:
+        return timestamp_validation_result
+
+    # Validate twitter.com URL deadline
+    url_deadline_result = validate_twitter_url_deadline(tweet_to_verify, actual_tweet, entity)
+    if url_deadline_result is not None:
+        return url_deadline_result
+
+    # Validate media content
+    media_validation_result = validate_media_content(tweet_to_verify, actual_tweet, entity)
+    if media_validation_result is not None:
+        return media_validation_result
+
+    # Validate the model_config
+    if not _validate_model_config(tweet_to_verify.model_config):
+        bt.logging.info(f"Tweet content contains an invalid model_config: {tweet_to_verify.model_config}")
+        return ValidationResult(
+            is_valid=False,
+            reason="Tweet content contains an invalid model_config",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Final DataEntity validation
+    return validate_data_entity_fields(actual_tweet, entity)
