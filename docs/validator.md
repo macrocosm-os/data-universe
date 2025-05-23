@@ -40,12 +40,11 @@ python -m pip install -e .
 
 5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
-6. (Optional) Setup a wandb account and login so your validator can store logs beyond 7 days. From your virtual environment, run
+6. (Optional) Setup a wandb account to store logs beyond 7 days. You can do this by setting the `WANDB_API_KEY` environment variable with your API key from https://wandb.ai/authorize. Alternatively, you can run the following command from your virtual environment:
 ```shell
 wandb login
 ```
-
-This will prompt you to navigate to https://wandb.ai/authorize and copy your api key back into the terminal.
+This will prompt you to navigate to https://wandb.ai/authorize and copy your API key back into the terminal.
 
 ## Running the Validator
 
