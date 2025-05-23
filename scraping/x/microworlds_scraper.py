@@ -420,9 +420,48 @@ class MicroworldsTwitterScraper(Scraper):
                 # Extract hashtags
                 hashtags = data.get('entities', {}).get('hashtags', [])
                 tags = ["#" + item['text'] for item in hashtags]
+                
+                # Extract media URLs if available
+                media_urls = []
+                
+                # Check for media in the entities object
+                if 'entities' in data and 'media' in data['entities']:
+                    for media_item in data['entities']['media']:
+                        if 'media_url_https' in media_item:
+                            media_urls.append(media_item['media_url_https'])
+                
+                # Check for extended entities which typically contain higher quality media
+                if 'extended_entities' in data and 'media' in data['extended_entities']:
+                    for media_item in data['extended_entities']['media']:
+                        if 'media_url_https' in media_item and media_item['media_url_https'] not in media_urls:
+                            media_urls.append(media_item['media_url_https'])
 
                 is_retweet = data.get('retweeted', False)
                 is_retweets.append(is_retweet)
+                
+                # Extract user information
+                user_id = None
+                user_display_name = None
+                user_verified = None
+                
+                if 'user' in data and isinstance(data['user'], dict):
+                    user_id = data['user'].get('id_str')
+                    user_display_name = data['user'].get('name')
+                    user_verified = data['user'].get('verified')
+                
+                # Extract tweet metadata
+                tweet_id = data.get('id_str')
+                
+                # Extract reply information
+                is_reply = data.get('in_reply_to_status_id_str') is not None
+                is_quote = data.get('is_quote_status', False)
+                
+                # Get conversation ID (may not be available in all API responses)
+                conversation_id = data.get('conversation_id_str')
+                
+                # Get in-reply-to information
+                in_reply_to_user_id = data.get('in_reply_to_user_id_str')
+                in_reply_to_username = data.get('in_reply_to_screen_name')
 
                 results.append(
                     XContent(
@@ -433,6 +472,19 @@ class MicroworldsTwitterScraper(Scraper):
                             data["created_at"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
+                        media=media_urls if media_urls else None,
+                        # Enhanced fields
+                        user_id=user_id,
+                        user_display_name=user_display_name,
+                        user_verified=user_verified,
+                        # Non-dynamic tweet metadata
+                        tweet_id=tweet_id,
+                        is_reply=is_reply,
+                        is_quote=is_quote,
+                        # Additional metadata
+                        conversation_id=conversation_id,
+                        in_reply_to_user_id=in_reply_to_user_id,
+                        in_reply_to_username=in_reply_to_username,
                     )
                 )
             except Exception:
