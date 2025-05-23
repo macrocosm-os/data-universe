@@ -30,6 +30,7 @@ from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
+from vali_utils.validator_s3_access import ValidatorS3Access
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
@@ -1107,8 +1108,9 @@ def main():
     metagraph_syncer.do_initial_sync()
     metagraph_syncer.start()
 
+    s3_reader = ValidatorS3Access(wallet=wallet, s3_auth_url=config.s3_auth_url)
     evaluator = MinerEvaluator(
-        config=config, uid=uid, metagraph_syncer=metagraph_syncer
+        config=config, uid=uid, metagraph_syncer=metagraph_syncer, s3_reader=s3_reader
     )
 
     with Validator(
