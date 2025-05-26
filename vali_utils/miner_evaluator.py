@@ -141,7 +141,11 @@ class MinerEvaluator:
 
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
-            vali_utils.choose_data_entity_bucket_to_query(index)
+            vali_utils.choose_data_entity_bucket_to_query(
+                index,
+                hotkey,
+                current_block,
+            )
         )
         bt.logging.info(
             f"{hotkey} Querying miner for Bucket ID: {chosen_data_entity_bucket.id}."

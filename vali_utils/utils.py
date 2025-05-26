@@ -15,27 +15,33 @@ from common.date_range import DateRange
 from common.protocol import GetMinerIndex
 from scraping.x import utils as x_utils
 
+from random import Random
 
-def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
-    """Chooses a random DataEntityBucket to query from a MinerIndex.
+def choose_data_entity_bucket_to_query(
+    index: ScorableMinerIndex,
+    hotkey: str,
+    block_number: int,
+) -> DataEntityBucket:
+    """Securely pick one DataEntityBucket to validate.
 
-    The random selection is done based on choosing a random scorable byte in the total index to query, and then
-    selecting that DataEntityBucket.
+    Uses a deterministic seed (SHA256(hotkey - block_number)) so every honest
+    validator samples the same bucket while the choice remains unpredictable
+    to the miner until the block is final.
     """
-    total_size = sum(
-        scorable_bucket.scorable_bytes
-        for scorable_bucket in index.scorable_data_entity_buckets
-    )
-    chosen_byte = random.uniform(0, total_size)
-    iterated_bytes = 0
-    for scorable_bucket in index.scorable_data_entity_buckets:
-        if iterated_bytes + scorable_bucket.scorable_bytes >= chosen_byte:
-            return scorable_bucket.to_data_entity_bucket()
-        iterated_bytes += scorable_bucket.scorable_bytes
-    assert (
-        False
-    ), "Failed to choose a DataEntityBucket to query... which should never happen"
+    total_size = sum(b.scorable_bytes for b in index.scorable_data_entity_buckets)
 
+    seed_input = f"{hotkey}:{block_number}"
+    seed = int(hashlib.sha256(seed_input.encode()).hexdigest(), 16) % (2**32)
+    rng = Random(seed)
+
+    chosen_byte = rng.uniform(0, total_size)
+
+    iterated = 0
+    for b in index.scorable_data_entity_buckets:
+        if iterated + b.scorable_bytes >= chosen_byte:
+            return b.to_data_entity_bucket()
+        iterated += b.scorable_bytes
+    assert False
 
 def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""

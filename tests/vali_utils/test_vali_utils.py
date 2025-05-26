@@ -21,10 +21,9 @@ from common import utils
 
 class TestValiUtils(unittest.TestCase):
     def test_choose_data_entity_bucket_to_query(self):
-        """Calls choose_data_entity_bucket_to_query 10000 times and ensures the distribution of buckets chosen is as expected."""
-        # We use scorable bytes when selecting, so keep size bytes identical.
+        """Distribution should match scorable-byte weights 100:200:300 → 1:2:3."""
         index = ScorableMinerIndex(
-            hotkey="abc123",
+            hotkey="ignore",   # not used for sampling
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
                     time_bucket_id=utils.time_bucket_id_from_datetime(
@@ -57,18 +56,22 @@ class TestValiUtils(unittest.TestCase):
             last_updated=dt.datetime.now(tz=dt.timezone.utc),
         )
 
-        # Sample the buckets, counting how often each is chosen
         counts = [0, 0, 0]
-        for _ in range(10000):
-            chosen_bucket = vali_utils.choose_data_entity_bucket_to_query(index)
-            self.assertIsInstance(chosen_bucket, DataEntityBucket)
-            counts[int(chosen_bucket.id.label.value)] += 1
+        for i in range(10_000):
+            # vary hotkey so each draw uses a different deterministic seed
+            chosen = vali_utils.choose_data_entity_bucket_to_query(
+                index,
+                f"miner_{i}",
+                123456,          # block number fixed for reproducibility
+            )
+            counts[int(chosen.id.label.value)] += 1
 
         total = sum(counts)
-        ratios = [count / total for count in counts]
+        ratios = [c / total for c in counts]
         self.assertAlmostEqual(ratios[0], 1 / 6, delta=0.05)
         self.assertAlmostEqual(ratios[1], 1 / 3, delta=0.05)
-        self.assertAlmostEqual(ratios[2], 0.5, delta=0.05)
+        self.assertAlmostEqual(ratios[2], 0.5,   delta=0.05)
+
 
     def test_choose_entities_to_verify(self):
         """Calls choose_entity_to_verify 10000 times and verifies the distribution of entities chosen is as expected."""
@@ -492,7 +495,7 @@ class TestValiUtils(unittest.TestCase):
                 content_size_bytes=482,
             ),
             DataEntity(
-                uri="https://twitter.com/DorisCeciliaCa6/status/1773902901280129234",
+                uri="https://x.com/DorisCeciliaCa6/status/1773902901280129234",
                 datetime=datetime,
                 source=DataSource.X,
                 label=label,
