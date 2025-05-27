@@ -344,20 +344,9 @@ class ApiDojoTwitterScraper(Scraper):
                             media_urls.append(media_item['media_url_https'])
                         elif isinstance(media_item, str):
                             media_urls.append(media_item)
-                
-                # Check for media in extendedEntities as well
-                if 'extendedEntities' in data and isinstance(data['extendedEntities'], dict) and 'media' in data['extendedEntities']:
-                    for media_item in data['extendedEntities'].get('media', []):
-                        if isinstance(media_item, dict) and 'media_url_https' in media_item:
-                            media_urls.append(media_item['media_url_https'])
 
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
-                
-                # Enhanced fields
-                user_id = None
-                user_display_name = None
-                user_verified = None
                 
                 # Extract user information from author object if it exists
                 if 'author' in data and isinstance(data['author'], dict):
@@ -373,12 +362,7 @@ class ApiDojoTwitterScraper(Scraper):
                 is_reply = data.get('isReply', False)
                 is_quote = data.get('isQuote', False)
                 
-                # Additional metadata
                 conversation_id = data.get('conversationId')
-                
-                # Handle the in_reply_to fields
-                in_reply_to_user_id = None
-                in_reply_to_username = None
                 
                 # If this is a reply, we might find the in_reply_to info
                 if is_reply:

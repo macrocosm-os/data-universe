@@ -147,15 +147,6 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                             media_urls.append(media_item)
                             media_types.append('photo')
 
-                # Handle extended entities media if present
-                if 'extendedEntities' in data and 'media' in data['extendedEntities']:
-                    for media_item in data['extendedEntities']['media']:
-                        if isinstance(media_item, dict):
-                            media_url = media_item.get('media_url_https')
-                            if media_url and media_url not in media_urls:  # Avoid duplicates
-                                media_urls.append(media_url)
-                                media_types.append(media_item.get('type', 'photo'))
-
                 # Create timestamp from createdAt
                 timestamp = None
                 if 'createdAt' in data:
