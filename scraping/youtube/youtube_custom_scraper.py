@@ -10,7 +10,8 @@ import os
 import json
 from youtube_transcript_api.proxies import WebshareProxyConfig
 
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, RequestBlocked
+from xml.etree.ElementTree import ParseError
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from common.data import DataEntity, DataLabel, DataSource
@@ -371,6 +372,11 @@ class YouTubeTranscriptScraper(Scraper):
                                 )
                             )
                         break
+
+                # These are common errors that can be retried
+                except (RequestBlocked, ParseError):
+                    attempt += 1
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
                 except Exception as e:
                     # Only retry on temporary errors
@@ -783,7 +789,7 @@ class YouTubeTranscriptScraper(Scraper):
         except Exception as e:
             bt.logging.error(f"Error getting transcript for video {video_id}: {str(e)}")
             bt.logging.error(traceback.format_exc())
-            return []
+            raise
 
     def _extract_video_id(self, url: str) -> Optional[str]:
         """
