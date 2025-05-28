@@ -1,6 +1,7 @@
 import bittensor as bt
 import hashlib
 import random
+import time
 from typing import List, Optional, Tuple, Type, Union
 import datetime as dt
 from common import constants
@@ -19,29 +20,30 @@ from random import Random
 
 def choose_data_entity_bucket_to_query(
     index: ScorableMinerIndex,
-    hotkey: str,
-    block_number: int,
 ) -> DataEntityBucket:
     """Securely pick one DataEntityBucket to validate.
-
-    Uses a deterministic seed (SHA256(hotkey - block_number)) so every honest
-    validator samples the same bucket while the choice remains unpredictable
-    to the miner until the block is final.
+    Uses a deterministic seed based on system time (SHA256(current_timestamp)),
+    so the choice is deterministic for a given time period.
     """
-    total_size = sum(b.scorable_bytes for b in index.scorable_data_entity_buckets)
-
-    seed_input = f"{hotkey}:{block_number}"
-    seed = int(hashlib.sha256(seed_input.encode()).hexdigest(), 16) % (2**32)
+    total_size = sum(
+        scorable_bucket.scorable_bytes 
+        for scorable_bucket in index.scorable_data_entity_buckets
+    )
+    
+    # Use current system time as seed input
+    current_time = time.time()
+    seed = int(hashlib.sha256(str(current_time).encode()).hexdigest(), 16) % (2**32)
     rng = Random(seed)
-
     chosen_byte = rng.uniform(0, total_size)
-
-    iterated = 0
-    for b in index.scorable_data_entity_buckets:
-        if iterated + b.scorable_bytes >= chosen_byte:
-            return b.to_data_entity_bucket()
-        iterated += b.scorable_bytes
-    assert False
+    
+    iterated_bytes = 0
+    for scorable_bucket in index.scorable_data_entity_buckets:
+        if iterated_bytes + scorable_bucket.scorable_bytes >= chosen_byte:
+            return scorable_bucket.to_data_entity_bucket()
+        iterated_bytes += scorable_bucket.scorable_bytes
+    assert (
+        False
+    ), "Failed to choose a DataEntityBucket to query... which should never happen"
 
 def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""
