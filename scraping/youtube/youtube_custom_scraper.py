@@ -10,7 +10,8 @@ import os
 import json
 from youtube_transcript_api.proxies import WebshareProxyConfig
 
-from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
+from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound, RequestBlocked
+from xml.etree.ElementTree import ParseError
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
 from common.data import DataEntity, DataLabel, DataSource
@@ -371,6 +372,11 @@ class YouTubeTranscriptScraper(Scraper):
                                 )
                             )
                         break
+
+                # These are common errors that can be retried
+                except (RequestBlocked, ParseError):
+                    attempt += 1
+                    await asyncio.sleep(2 ** attempt)  # Exponential backoff
 
                 except Exception as e:
                     # Only retry on temporary errors
@@ -782,7 +788,7 @@ class YouTubeTranscriptScraper(Scraper):
         except Exception as e:
             bt.logging.error(f"Error getting transcript for video {video_id}: {str(e)}")
             bt.logging.error(traceback.format_exc())
-            return []
+            raise
 
     def _extract_video_id(self, url: str) -> Optional[str]:
         """
@@ -982,102 +988,6 @@ async def test_scrape_video():
 
     # Print the results
     bt.logging.info(f"Scraped {len(entities)} entities")
-    for entity in entities:
-        content = YouTubeContent.from_data_entity(entity)
-        bt.logging.info(f"Video: {content.title}")
-        bt.logging.info(f"Channel: {content.channel_name}")
-        bt.logging.info(f"Transcript length: {len(content.transcript)}")
-        if content.transcript:
-            bt.logging.info(f"First transcript chunk: {content.transcript[0]['text'][:100]}...")
-
-    return entities
-
-
-async def test_scrape_channel():
-    """Test function for scraping a channel."""
-    # Create an instance of the scraper
-    scraper = YouTubeTranscriptScraper()
-
-    # Test channel ID (TED channel)
-    channel_id = "UCAuUUnT6oDeKwE6v1NGQxug"
-
-    # Create a date range that includes recent videos
-    date_range = DateRange(
-        start=dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=365),
-        end=dt.datetime.now(dt.timezone.utc)
-    )
-
-    # Scrape the channel
-    entities = await scraper._scrape_channels([channel_id], 3, date_range)
-
-    # Print the results
-    bt.logging.info(f"Scraped {len(entities)} entities from channel")
-    for entity in entities:
-        content = YouTubeContent.from_data_entity(entity)
-        bt.logging.info(f"Video: {content.title}")
-        bt.logging.info(f"Channel: {content.channel_name}")
-        bt.logging.info(f"Transcript length: {len(content.transcript)}")
-
-    return entities
-
-
-async def test_validate_entity(entity: DataEntity):
-    """Test function for validating a specific entity."""
-    # Create an instance of the scraper
-    scraper = YouTubeTranscriptScraper()
-
-    # Validate the entity
-    results = await scraper.validate([entity])
-
-    # Print the results
-    bt.logging.info(f"Validation results: {results}")
-
-    return results
-
-
-async def test_full_pipeline():
-    """Test the full scraping and validation pipeline."""
-    # 1. Scrape a specific video
-    bt.logging.info("STEP 1: Scraping a specific video")
-    entities = await test_scrape_video()
-
-    if not entities:
-        bt.logging.error("No entities scraped, can't continue with validation")
-        return
-
-    # 2. Validate the first entity
-    bt.logging.info("\nSTEP 2: Validating the scraped entity")
-    await test_validate_entity(entities[0])
-
-    # 3. Test channel scraping
-    bt.logging.info("\nSTEP 3: Scraping a channel")
-    await test_scrape_channel()
-
-    bt.logging.info("\nAll tests completed!")
-
-
-
-
-async def test_scrape_video():
-    """Test function for scraping a specific video."""
-    # Create an instance of the scraper
-    scraper = YouTubeTranscriptScraper()
-
-    # Test video ID (Rick Astley - Never Gonna Give You Up)
-    video_id = "dQw4w9WgXcQ"
-
-    # Create a date range that includes all videos
-    date_range = DateRange(
-        start=dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
-        end=dt.datetime.now(dt.timezone.utc)
-    )
-
-    # Scrape the video
-    entities = await scraper._scrape_video_ids([video_id], date_range)
-
-    # Print the results
-    bt.logging.info(f"Scraped {len(entities)} entities")
-
     for entity in entities:
         content = YouTubeContent.from_data_entity(entity)
         bt.logging.info(f"Video: {content.title}")
