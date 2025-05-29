@@ -445,8 +445,8 @@ class MicroworldsTwitterScraper(Scraper):
                 tweet_id = data.get('id_str')
                 
                 # Extract reply information
-                is_reply = data.get('in_reply_to_status_id_str') is not None
-                is_quote = data.get('is_quote_status', False)
+                is_reply = data.get('in_reply_to_status_id_str', None)
+                is_quote = data.get('is_quote_status', None)
                 
                 # Get conversation ID
                 conversation_id = data.get('conversation_id_str')

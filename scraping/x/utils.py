@@ -10,15 +10,15 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
 
-# Define validation fields with their display names
-TWEET_VALIDATION_FIELDS = [
-    # Basic fields
+# Validation fields with their display names
+REQUIRED_FIELDS = [
     ("username", "usernames"),
     ("text", "texts"),
     ("url", "urls"),
     ("tweet_hashtags", "hashtags"),
-    
-    # Enhanced fields
+]
+
+OPTIONAL_FIELDS = [
     ("user_id", "user_id"),
     ("user_display_name", "user_display_name"),
     ("user_verified", "user_verified"),
@@ -176,31 +176,63 @@ def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, ent
     Returns:
         ValidationResult if validation fails, None if all validations pass
     """
-    for field_name, display_name in TWEET_VALIDATION_FIELDS:
+    # Validate REQUIRED fields - these must never be None
+    for field_name, display_name in REQUIRED_FIELDS:
         submitted_value = getattr(tweet_to_verify, field_name, None)
         actual_value = getattr(actual_tweet, field_name, None)
         
-        # Skip validation if either value is None 
-        if submitted_value is None or actual_value is None:
-            continue
+        # REQUIRED fields cannot be None
+        if submitted_value is None:
+            bt.logging.info(f"Required field {field_name} is missing from submitted tweet")
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Required field '{field_name}' is missing",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
             
-        # Apply field-specific validation logic
+        if actual_value is None:
+            bt.logging.info(f"Required field {field_name} is missing from actual tweet - this shouldn't happen")
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Required field '{field_name}' missing from actual tweet",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        
+        # Apply field-specific validation logic for required fields
         if field_name == "username":
             is_valid = remove_at_sign_from_username(submitted_value) == remove_at_sign_from_username(actual_value)
         elif field_name == "url":
             is_valid = normalize_url(submitted_value) == normalize_url(actual_value)
         elif field_name == "tweet_hashtags":
             is_valid = are_hashtags_valid(submitted_value, actual_value)
-        else:
+        else: 
             is_valid = submitted_value == actual_value
             
         if not is_valid:
-            bt.logging.info(
-                f"Tweet {display_name} do not match: {submitted_value} != {actual_value}."
-            )
+            bt.logging.info(f"Required field {display_name} do not match: {submitted_value} != {actual_value}")
             return ValidationResult(
                 is_valid=False,
-                reason=f"Tweet {display_name} do not match",
+                reason=f"Field: {display_name} do not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # Validate OPTIONAL fields - skip if either is None
+    for field_name, display_name in OPTIONAL_FIELDS:
+        submitted_value = getattr(tweet_to_verify, field_name, None)
+        actual_value = getattr(actual_tweet, field_name, None)
+        
+        # Skip validation if either value is None (this is OK for optional fields)
+        if submitted_value is None or actual_value is None:
+            continue
+            
+        # Both values exist, so validate them
+        is_valid = submitted_value == actual_value
+            
+        if not is_valid:
+            bt.logging.info(f"Optional field {display_name} do not match: {submitted_value} != {actual_value}")
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Field: {display_name} do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
     
