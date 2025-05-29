@@ -103,7 +103,7 @@ class DataLabel(StrictBaseModel):
         while other labels are converted to lowercase.
         """
         # Special cases where we need to preserve the original case
-        if value.startswith('#youtube_c_') or value.startswith('#youtube_v_'):
+        if value.startswith('#ytc_c_') or value.startswith('#ytc_v_'):
             # Extract the prefix and the ID parts
             parts = value.split('_', 2)
             if len(parts) < 3:

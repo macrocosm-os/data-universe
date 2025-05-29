@@ -67,13 +67,13 @@ class YouTubeContent(BaseModel):
         entity_timestamp = content.upload_date
         content_bytes = content.json(exclude_none=True).encode("utf-8")
 
-        # Create a DataLabel based on the original label type if provided
-        if original_label and original_label.startswith('#youtube_v_'):
-            # If scraped with a video label, preserve it
-            label = DataLabel(value=f"#youtube_v_{content.video_id}")
+        # Create a DataLabel - ALWAYS use NEW format for output, but check BOTH old and new for input
+        if original_label and (original_label.startswith('#youtube_v_') or original_label.startswith('#ytc_v_')):
+            # If scraped with a video label, use NEW video label format
+            label = DataLabel(value=f"#ytc_v_{content.video_id}")
         else:
-            # Default to channel label
-            label = DataLabel(value=f"#youtube_c_{content.channel_id}")
+            # Default to NEW channel label format
+            label = DataLabel(value=f"#ytc_c_{content.channel_id}")
 
         return DataEntity(
             uri=content.url,

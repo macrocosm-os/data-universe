@@ -110,14 +110,22 @@ class YouTubeTranscriptScraper(Scraper):
 
         if scrape_config.labels:
             for label in scrape_config.labels:
-                # Handle YouTube video IDs
-                if label.value.startswith('#youtube_v_'):
-                    video_id = label.value.replace('#youtube_v_', '')
+                # Handle YouTube video IDs - BOTH old and new formats
+                if (label.value.startswith('#youtube_v_') or
+                        label.value.startswith('#ytc_v_')):
+                    if label.value.startswith('#youtube_v_'):
+                        video_id = label.value.replace('#youtube_v_', '')
+                    else:
+                        video_id = label.value.replace('#ytc_v_', '')
                     video_ids.append(video_id)
 
-                # Handle YouTube channel IDs
-                elif label.value.startswith('#youtube_c_'):
-                    channel_id = label.value.replace('#youtube_c_', '')
+                # Handle YouTube channel IDs - BOTH old and new formats
+                elif (label.value.startswith('#youtube_c_') or
+                      label.value.startswith('#ytc_c_')):
+                    if label.value.startswith('#youtube_c_'):
+                        channel_id = label.value.replace('#youtube_c_', '')
+                    else:
+                        channel_id = label.value.replace('#ytc_c_', '')
                     channel_ids.append(channel_id)
 
         # Limit the number of videos to scrape
