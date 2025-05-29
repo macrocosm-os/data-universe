@@ -1,14 +1,14 @@
 import asyncio
 import hashlib
 import traceback
-import random
 import re
 import bittensor as bt
 from typing import List, Dict, Any, Optional, Tuple
 import datetime as dt
 import os
-import json
-from youtube_transcript_api.proxies import WebshareProxyConfig
+import httpx
+from xml.etree.ElementTree import ParseError
+from youtube_transcript_api.proxies import WebshareProxyConfig, GenericProxyConfig
 
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from googleapiclient.discovery import build
