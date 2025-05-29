@@ -2,7 +2,7 @@ import asyncio
 import threading
 import traceback
 import bittensor as bt
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
@@ -307,67 +307,119 @@ class ApiDojoTwitterScraper(Scraper):
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
-
         Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}] or not dataset:  # Todo remove first statement if it's not necessary
+
+        if dataset == [{"zero_result": True}] or not dataset:
             return [], []
 
         results: List[XContent] = []
         is_retweets: List[bool] = []
+        
         for data in dataset:
             try:
                 # Check that we have the required fields.
-                if (
-                        ("text" not in data)
-                        or "url" not in data
-                        or "createdAt" not in data
-                ):
+                if not all(field in data for field in ["text", "url", "createdAt"]):
                     continue
 
-                text = data['text']
-
-                # Apidojo returns cashtags separately under symbols.
-                # These are returned as list of dicts where the indices key is the first/last index and text is the tag.
-                # If there are no hashtags or cashtags they are empty lists.
-
-                # Safely retrieve hashtags and symbols lists using dictionary.get() method
-                hashtags = data.get('entities', {}).get('hashtags', [])
-                cashtags = data.get('entities', {}).get('symbols', [])
-
-                # Combine hashtags and cashtags into one list and sort them by their first index
-                sorted_tags = sorted(hashtags + cashtags, key=lambda x: x['indices'][0])
-
-                # Create a list of formatted tags with prefixes
-                tags = ["#" + item['text'] for item in sorted_tags]
-
-                # Extract media URLs from the data
-                media_urls = []
-                if 'media' in data and isinstance(data['media'], list):
-                    for media_item in data['media']:
-                        if isinstance(media_item, dict) and 'media_url_https' in media_item:
-                            media_urls.append(media_item['media_url_https'])
-                        elif isinstance(media_item, str):
-                            media_urls.append(media_item)
+                # Extract reply information (tuple of (user_id, username))
+                reply_info = self._extract_reply_info(data)
+                
+                # Extract user information
+                user_info = self._extract_user_info(data)
+                
+                # Extract hashtags and media
+                tags = self._extract_tags(data)
+                media_urls = self._extract_media_urls(data)
 
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
+                
                 results.append(
                     XContent(
-                        username=data['author']['userName'],  # utils.extract_user(data["url"]),
-                        text=utils.sanitize_scraped_tweet(text),
+                        username=data['author']['userName'],
+                        text=utils.sanitize_scraped_tweet(data['text']),
                         url=data["url"],
                         timestamp=dt.datetime.strptime(
                             data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
                         media=media_urls if media_urls else None,
+                        # Enhanced fields
+                        user_id=user_info['id'],
+                        user_display_name=user_info['display_name'],
+                        user_verified=user_info['verified'],
+                        # Non-dynamic tweet metadata
+                        tweet_id=data.get('id'),
+                        is_reply=data.get('isReply', False),
+                        is_quote=data.get('isQuote', False),
+                        # Additional metadata
+                        conversation_id=data.get('conversationId'),
+                        in_reply_to_user_id=reply_info[0],
+                        in_reply_to_username=reply_info[1],
                     )
                 )
             except Exception:
                 bt.logging.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
+        
         return results, is_retweets
+
+    def _extract_reply_info(self, data: dict) -> Tuple[Optional[str], Optional[str]]:
+        """Extract reply information, returning (user_id, username) or (None, None)"""
+        if not data.get('isReply', False):
+            return None, None
+        
+        user_id = data.get('inReplyToUserId')
+        username = None
+        
+        if 'inReplyToUser' in data and isinstance(data['inReplyToUser'], dict):
+            username = data['inReplyToUser'].get('userName')
+        
+        return user_id, username
+
+    def _extract_user_info(self, data: dict) -> dict:
+        """Extract user information from tweet"""
+        if 'author' not in data or not isinstance(data['author'], dict):
+            return {'id': None, 'display_name': None, 'verified': False}
+        
+        author = data['author']
+        return {
+            'id': author.get('id'),
+            'display_name': author.get('name'),
+            'verified': any([
+                author.get('isVerified', False),
+                author.get('isBlueVerified', False),
+                author.get('verified', False)
+            ])
+        }
+
+    def _extract_tags(self, data: dict) -> List[str]:
+        """Extract and format hashtags and cashtags from tweet"""
+        entities = data.get('entities', {})
+        hashtags = entities.get('hashtags', [])
+        cashtags = entities.get('symbols', [])
+        
+        # Combine and sort by index
+        all_tags = sorted(hashtags + cashtags, key=lambda x: x['indices'][0])
+        
+        return ["#" + item['text'] for item in all_tags]
+
+    def _extract_media_urls(self, data: dict) -> List[str]:
+        """Extract media URLs from tweet"""
+        media_urls = []
+        media_data = data.get('media', [])
+        
+        if not isinstance(media_data, list):
+            return media_urls
+        
+        for media_item in media_data:
+            if isinstance(media_item, dict) and 'media_url_https' in media_item:
+                media_urls.append(media_item['media_url_https'])
+            elif isinstance(media_item, str):
+                media_urls.append(media_item)
+        
+        return media_urls
 
     def _best_effort_parse_hf_dataset(self, dataset: List[dict]) -> List[dict]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
