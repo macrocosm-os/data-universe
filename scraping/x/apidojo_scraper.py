@@ -355,7 +355,6 @@ class ApiDojoTwitterScraper(Scraper):
                         # Additional metadata
                         conversation_id=data.get('conversationId'),
                         in_reply_to_user_id=reply_info[0],
-                        in_reply_to_username=reply_info[1],
                     )
                 )
             except Exception:

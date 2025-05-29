@@ -453,7 +453,6 @@ class MicroworldsTwitterScraper(Scraper):
                 
                 # Get in-reply-to information
                 in_reply_to_user_id = data.get('in_reply_to_user_id_str')
-                in_reply_to_username = data.get('in_reply_to_screen_name')
 
                 # Create URL if not present (construct from tweet ID)
                 url = data.get('url')
@@ -481,7 +480,6 @@ class MicroworldsTwitterScraper(Scraper):
                         # Additional metadata
                         conversation_id=conversation_id,
                         in_reply_to_user_id=in_reply_to_user_id,
-                        in_reply_to_username=in_reply_to_username,
                     )
                 )
             except Exception:

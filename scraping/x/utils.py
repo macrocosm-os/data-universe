@@ -27,7 +27,6 @@ OPTIONAL_FIELDS = [
     ("is_quote", "is_quote"),
     ("conversation_id", "conversation_id"),
     ("in_reply_to_user_id", "in_reply_to_user_id"),
-    ("in_reply_to_username", "in_reply_to_username"),
 ]
 
 

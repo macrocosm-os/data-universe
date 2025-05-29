@@ -49,7 +49,6 @@ class XContent(BaseModel):
     # Additional metadata
     conversation_id: Optional[str] = None
     in_reply_to_user_id: Optional[str] = None
-    in_reply_to_username: Optional[str] = None
 
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:
