@@ -2,7 +2,7 @@ import asyncio
 import threading
 import traceback
 import bittensor as bt
-from typing import List, Tuple
+from typing import List, Tuple, Optional
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
@@ -307,67 +307,118 @@ class ApiDojoTwitterScraper(Scraper):
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
-
         Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}] or not dataset:  # Todo remove first statement if it's not necessary
+
+        if dataset == [{"zero_result": True}] or not dataset:
             return [], []
 
         results: List[XContent] = []
         is_retweets: List[bool] = []
+        
         for data in dataset:
             try:
                 # Check that we have the required fields.
-                if (
-                        ("text" not in data)
-                        or "url" not in data
-                        or "createdAt" not in data
-                ):
+                if not all(field in data for field in ["text", "url", "createdAt"]):
                     continue
 
-                text = data['text']
-
-                # Apidojo returns cashtags separately under symbols.
-                # These are returned as list of dicts where the indices key is the first/last index and text is the tag.
-                # If there are no hashtags or cashtags they are empty lists.
-
-                # Safely retrieve hashtags and symbols lists using dictionary.get() method
-                hashtags = data.get('entities', {}).get('hashtags', [])
-                cashtags = data.get('entities', {}).get('symbols', [])
-
-                # Combine hashtags and cashtags into one list and sort them by their first index
-                sorted_tags = sorted(hashtags + cashtags, key=lambda x: x['indices'][0])
-
-                # Create a list of formatted tags with prefixes
-                tags = ["#" + item['text'] for item in sorted_tags]
-
-                # Extract media URLs from the data
-                media_urls = []
-                if 'media' in data and isinstance(data['media'], list):
-                    for media_item in data['media']:
-                        if isinstance(media_item, dict) and 'media_url_https' in media_item:
-                            media_urls.append(media_item['media_url_https'])
-                        elif isinstance(media_item, str):
-                            media_urls.append(media_item)
+                # Extract reply information (tuple of (user_id, username))
+                reply_info = self._extract_reply_info(data)
+                
+                # Extract user information
+                user_info = self._extract_user_info(data)
+                
+                # Extract hashtags and media
+                tags = self._extract_tags(data)
+                media_urls = self._extract_media_urls(data)
 
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
+                
                 results.append(
                     XContent(
-                        username=data['author']['userName'],  # utils.extract_user(data["url"]),
-                        text=utils.sanitize_scraped_tweet(text),
+                        username=data['author']['userName'],
+                        text=utils.sanitize_scraped_tweet(data['text']),
                         url=data["url"],
                         timestamp=dt.datetime.strptime(
                             data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
                         media=media_urls if media_urls else None,
+                        # Enhanced fields
+                        user_id=user_info['id'],
+                        user_display_name=user_info['display_name'],
+                        user_verified=user_info['verified'],
+                        # Non-dynamic tweet metadata
+                        tweet_id=data.get('id'),
+                        is_reply=data.get('isReply', None),
+                        is_quote=data.get('isQuote', None),
+                        # Additional metadata
+                        conversation_id=data.get('conversationId'),
+                        in_reply_to_user_id=reply_info[0],
                     )
                 )
             except Exception:
                 bt.logging.warning(
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
+        
         return results, is_retweets
+
+    def _extract_reply_info(self, data: dict) -> Tuple[Optional[str], Optional[str]]:
+        """Extract reply information, returning (user_id, username) or (None, None)"""
+        if not data.get('isReply', False):
+            return None, None
+        
+        user_id = data.get('inReplyToUserId')
+        username = None
+        
+        if 'inReplyToUser' in data and isinstance(data['inReplyToUser'], dict):
+            username = data['inReplyToUser'].get('userName')
+        
+        return user_id, username
+
+    def _extract_user_info(self, data: dict) -> dict:
+        """Extract user information from tweet"""
+        if 'author' not in data or not isinstance(data['author'], dict):
+            return {'id': None, 'display_name': None, 'verified': False}
+        
+        author = data['author']
+        return {
+            'id': author.get('id'),
+            'display_name': author.get('name'),
+            'verified': any([
+                author.get('isVerified', False),
+                author.get('isBlueVerified', False),
+                author.get('verified', False)
+            ])
+        }
+
+    def _extract_tags(self, data: dict) -> List[str]:
+        """Extract and format hashtags and cashtags from tweet"""
+        entities = data.get('entities', {})
+        hashtags = entities.get('hashtags', [])
+        cashtags = entities.get('symbols', [])
+        
+        # Combine and sort by index
+        all_tags = sorted(hashtags + cashtags, key=lambda x: x['indices'][0])
+        
+        return ["#" + item['text'] for item in all_tags]
+
+    def _extract_media_urls(self, data: dict) -> List[str]:
+        """Extract media URLs from tweet"""
+        media_urls = []
+        media_data = data.get('media', [])
+        
+        if not isinstance(media_data, list):
+            return media_urls
+        
+        for media_item in media_data:
+            if isinstance(media_item, dict) and 'media_url_https' in media_item:
+                media_urls.append(media_item['media_url_https'])
+            elif isinstance(media_item, str):
+                media_urls.append(media_item)
+        
+        return media_urls
 
     def _best_effort_parse_hf_dataset(self, dataset: List[dict]) -> List[dict]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
@@ -435,7 +486,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 15, 16, 55, 17, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#cryptocurrency"),
-            content='{"username": "@0xedeon", "text": "Deux frères ont manipulé les protocoles Ethereum pour voler 25M $ selon le Département de la Justice 🕵️‍♂️💰 #Cryptocurrency #JusticeDept", "url": "https://twitter.com/0xedeon/status/1790788053960667309", "timestamp": "2024-05-15T16:55:00+00:00", "tweet_hashtags": ["#Cryptocurrency", "#JusticeDept"]}',
+            content='{"username": "@0xedeon", "text": "Deux frères ont manipulé les protocoles Ethereum pour voler 25M $ selon le Département de la Justice 🕵️‍♂️💰 #Cryptocurrency #JusticeDept", "url": "https://x.com/0xedeon/status/1790788053960667309", "timestamp": "2024-05-15T16:55:00+00:00", "tweet_hashtags": ["#Cryptocurrency", "#JusticeDept"]}',
             content_size_bytes=391
         ),
         DataEntity(
@@ -443,7 +494,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 15, 16, 46, 30, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#catcoin"),
-            content='{"username": "@100Xpotential", "text": "As i said green candles incoming 🚀🫡👇👇\\n\\nAround 15% price surge in #CatCoin 📊💸🚀🚀\\n\\n𝐂𝐨𝐦𝐦𝐞𝐧𝐭 |  𝐋𝐢𝐤𝐞 |  𝐑𝐞𝐭𝐰𝐞𝐞𝐭 |  𝐅𝐨𝐥𝐥𝐨𝐰\\n\\n#Binance #Bitcoin #PiNetwork #Blockchain #NFT #BabyDoge #Solana #PEPE #Crypto #1000x #cryptocurrency #Catcoin #100x", "url": "https://twitter.com/100Xpotential/status/1790785842967101530", "timestamp": "2024-05-15T16:46:00+00:00", "tweet_hashtags": ["#CatCoin", "#Binance", "#Bitcoin", "#PiNetwork", "#Blockchain", "#NFT", "#BabyDoge", "#Solana", "#PEPE", "#Crypto", "#1000x", "#cryptocurrency", "#Catcoin", "#100x"]}',
+            content='{"username": "@100Xpotential", "text": "As i said green candles incoming 🚀🫡👇👇\\n\\nAround 15% price surge in #CatCoin 📊💸🚀🚀\\n\\n𝐂𝐨𝐦𝐦𝐞𝐧𝐭 |  𝐋𝐢𝐤𝐞 |  𝐑𝐞𝐭𝐰𝐞𝐞𝐭 |  𝐅𝐨𝐥𝐥𝐨𝐰\\n\\n#Binance #Bitcoin #PiNetwork #Blockchain #NFT #BabyDoge #Solana #PEPE #Crypto #1000x #cryptocurrency #Catcoin #100x", "url": "https://x.com/100Xpotential/status/1790785842967101530", "timestamp": "2024-05-15T16:46:00+00:00", "tweet_hashtags": ["#CatCoin", "#Binance", "#Bitcoin", "#PiNetwork", "#Blockchain", "#NFT", "#BabyDoge", "#Solana", "#PEPE", "#Crypto", "#1000x", "#cryptocurrency", "#Catcoin", "#100x"]}',
             content_size_bytes=933
         ),
         DataEntity(
@@ -451,7 +502,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 12, 2, 49, 59, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
-            content='{"username": "@20nineCapitaL", "text": "Yup! We agreed to. \\n\\n@MetaMaskSupport #Bitcoin #Investors #DigitalAssets #EthereumETF #Airdrops", "url": "https://twitter.com/20nineCapitaL/status/1789488160688541878", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin", "#Investors", "#DigitalAssets", "#EthereumETF", "#Airdrops"]}',
+            content='{"username": "@20nineCapitaL", "text": "Yup! We agreed to. \\n\\n@MetaMaskSupport #Bitcoin #Investors #DigitalAssets #EthereumETF #Airdrops", "url": "https://x.com/20nineCapitaL/status/1789488160688541878", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin", "#Investors", "#DigitalAssets", "#EthereumETF", "#Airdrops"]}',
             content_size_bytes=345
         ),
         DataEntity(
@@ -459,7 +510,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 15, 16, 51, 50, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#web3‌‌"),
-            content='{"username": "@AAAlviarez", "text": "1/3🧵\\n\\nOnce a month dozens of #web3‌‌  users show our support to one of the projects that is doing an excellent job in services and #cryptocurrency adoption.\\n\\nDo you know what Leo Power Up Day is all about?", "url": "https://twitter.com/AAAlviarez/status/1790787185047658838", "timestamp": "2024-05-15T16:51:00+00:00", "tweet_hashtags": ["#web3‌‌", "#cryptocurrency"]}',
+            content='{"username": "@AAAlviarez", "text": "1/3🧵\\n\\nOnce a month dozens of #web3‌‌  users show our support to one of the projects that is doing an excellent job in services and #cryptocurrency adoption.\\n\\nDo you know what Leo Power Up Day is all about?", "url": "https://x.com/AAAlviarez/status/1790787185047658838", "timestamp": "2024-05-15T16:51:00+00:00", "tweet_hashtags": ["#web3‌‌", "#cryptocurrency"]}',
             content_size_bytes=439
         ),
         DataEntity(
@@ -467,7 +518,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 12, 2, 49, 42, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
-            content='{"username": "@AGariaparra", "text": "J.P Morgan, Wells Fargo hold #Bitcoin now: Why are they interested in BTC? - AMBCrypto", "url": "https://twitter.com/AGariaparra/status/1789488091453091936", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
+            content='{"username": "@AGariaparra", "text": "J.P Morgan, Wells Fargo hold #Bitcoin now: Why are they interested in BTC? - AMBCrypto", "url": "https://x.com/AGariaparra/status/1789488091453091936", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
             content_size_bytes=269
         ),
         DataEntity(
@@ -475,7 +526,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 12, 2, 51, 2, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
-            content='{"username": "@AGariaparra", "text": "We Asked ChatGPT if #Bitcoin Will Enter a Massive Bull Run in 2024", "url": "https://twitter.com/AGariaparra/status/1789488427546939525", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
+            content='{"username": "@AGariaparra", "text": "We Asked ChatGPT if #Bitcoin Will Enter a Massive Bull Run in 2024", "url": "https://x.com/AGariaparra/status/1789488427546939525", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
             content_size_bytes=249
         ),
         DataEntity(
@@ -483,7 +534,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 4, 27, 20, 51, 26, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#felix"),
-            content='{"username": "@AMikulanecs", "text": "$FELIX The new Dog with OG Vibes... \\nWe have a clear vision for success.\\nNew Dog $FELIX \\n➡️Follow @FelixInuETH \\n➡️Join➡️Visit#memecoins #BTC #MemeCoinSeason #Bullrun2024 #Ethereum #altcoin #Crypto #meme #SOL #BaseChain #Binance", "url": "https://twitter.com/AMikulanecs/status/1784324497895522673", "timestamp": "2024-04-27T20:51:00+00:00", "tweet_hashtags": ["#FELIX", "#FELIX", "#memecoins", "#BTC", "#MemeCoinSeason", "#Bullrun2024", "#Ethereum", "#altcoin", "#Crypto", "#meme", "#SOL", "#BaseChain", "#Binance"]}',
+            content='{"username": "@AMikulanecs", "text": "$FELIX The new Dog with OG Vibes... \\nWe have a clear vision for success.\\nNew Dog $FELIX \\n➡️Follow @FelixInuETH \\n➡️Join➡️Visit#memecoins #BTC #MemeCoinSeason #Bullrun2024 #Ethereum #altcoin #Crypto #meme #SOL #BaseChain #Binance", "url": "https://x.com/AMikulanecs/status/1784324497895522673", "timestamp": "2024-04-27T20:51:00+00:00", "tweet_hashtags": ["#FELIX", "#FELIX", "#memecoins", "#BTC", "#MemeCoinSeason", "#Bullrun2024", "#Ethereum", "#altcoin", "#Crypto", "#meme", "#SOL", "#BaseChain", "#Binance"]}',
             content_size_bytes=588
         ),
         DataEntity(
@@ -491,7 +542,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 12, 2, 57, 27, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
-            content='{"username": "@AdamEShelton", "text": "#bitcoin  love", "url": "https://twitter.com/AdamEShelton/status/1789490040751411475", "timestamp": "2024-05-12T02:57:00+00:00", "tweet_hashtags": ["#bitcoin"]}',
+            content='{"username": "@AdamEShelton", "text": "#bitcoin  love", "url": "https://x.com/AdamEShelton/status/1789490040751411475", "timestamp": "2024-05-12T02:57:00+00:00", "tweet_hashtags": ["#bitcoin"]}',
             content_size_bytes=199
         ),
         DataEntity(
@@ -499,7 +550,7 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 12, 2, 52, 31, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
-            content='{"username": "@AfroWestor", "text": "Given is for Prince and princess form inheritances  to kingdom. \\n\\nWe the #BITCOIN family we Gain profits for ever. \\n\\nSo if you embrace #BTC that means you have a Kingdom to pass on for ever.", "url": "https://twitter.com/AfroWestor/status/1789488798406975580", "timestamp": "2024-05-12T02:52:00+00:00", "tweet_hashtags": ["#BITCOIN", "#BTC"]}',
+            content='{"username": "@AfroWestor", "text": "Given is for Prince and princess form inheritances  to kingdom. \\n\\nWe the #BITCOIN family we Gain profits for ever. \\n\\nSo if you embrace #BTC that means you have a Kingdom to pass on for ever.", "url": "https://x.com/AfroWestor/status/1789488798406975580", "timestamp": "2024-05-12T02:52:00+00:00", "tweet_hashtags": ["#BITCOIN", "#BTC"]}',
             content_size_bytes=383
         ),
         DataEntity(
@@ -507,11 +558,13 @@ async def test_validate():
             datetime=dt.datetime(2024, 5, 12, 2, 51, 9, tzinfo=dt.timezone.utc),
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
-            content='{"username": "@AlexEmidio7", "text": "Bip47 V3 V4 #Bitcoin", "url": "https://twitter.com/AlexEmidio7/status/1789488453979189327", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
+            content='{"username": "@AlexEmidio7", "text": "Bip47 V3 V4 #Bitcoin", "url": "https://x.com/AlexEmidio7/status/1789488453979189327", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
             content_size_bytes=203
         ),
     ]
     results = await scraper.validate(entities=true_entities)
+    for result in results:
+        print(result)
 
 
 async def test_multi_thread_validate():

@@ -5,11 +5,10 @@ import os
 import shutil
 import subprocess
 import bittensor as bt
-from typing import List, Optional, Dict
-from decimal import Decimal, ROUND_HALF_UP
-from common.constants import MAX_LABEL_LENGTH
+from typing import List, Optional, Dict, Tuple
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
-from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER, VALID_SOURCES
+from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER
+from dynamic_desirability.data import normalize_preferences
 
 
 def run_command(command: List[str]) -> str:
@@ -23,16 +22,17 @@ def run_command(command: List[str]) -> str:
         raise
 
 
-def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None) -> Optional[str]:
+def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None, hotkey: str = None) -> Optional[str]:
     """
-    Normalize potentially invalid preferences JSONs and filter out labels longer than 140 characters
+    Normalize potentially invalid preferences JSONs using Pydantic models.
+    Works with both old and new formats.
     """
     if file_path:
         try:
             with open(file_path, 'r') as f:
                 if os.path.getsize(file_path) == 0:
                     bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
-                    return {}
+                    return json.dumps([])
                 data = json.load(f)
         except FileNotFoundError:
             bt.logging.error(f"File not found: {file_path}.")
@@ -40,62 +40,14 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
         except Exception as e:
             bt.logging.error(f"Unexpected error while reading file: {e}.")
             return None
-
     elif desirability_dict:
         data = desirability_dict
-
     else:
         bt.logging.info(f"Empty desirabilities submitted. Submitting empty vote.")
-        return {}
+        return json.dumps([])
 
-    all_label_weights = {}
-    valid_keys = {"source_name", "label_weights"}
-    
-    # Taking all positive label weights across all sources that are valid.
-    try:
-        for source_dict in data:
-            source_dict["source_name"] = source_dict["source_name"].lower()
-            source_name = source_dict["source_name"]
-            source_prefix = VALID_SOURCES[source_name]
+    return normalize_preferences(data, hotkey)
 
-            if source_dict.keys() == valid_keys and source_name in VALID_SOURCES.keys(): 
-                for label, weight in source_dict["label_weights"].items():
-                    # Skip labels that are longer than 140 characters.
-                    if len(label) > MAX_LABEL_LENGTH:
-                        bt.logging.warning(f"Skipping label {label}: exceeds 140 character limit")
-                        continue
-                        
-                    weight_decimal = Decimal(str(weight))
-                    if weight_decimal > Decimal('0') and label.startswith(source_prefix):
-                        all_label_weights[label] = all_label_weights.get(label, Decimal('0')) + weight_decimal
-    except Exception as e:
-        bt.logging.error(f"Error while parsing your JSON file: {e}.")
-        return None
-
-    total_weight = sum(all_label_weights.values())
-    if total_weight <= 0:
-        bt.logging.error(f"Cannot normalize preferences file. Please see docs for correct preferences format.")
-        return None
-
-    # Normalize weights to sum to 1
-    normalized_weights = {
-        label: float(weight / total_weight)
-        for label, weight in all_label_weights.items()
-    }
-
-    # Remove sources with no label weights
-    updated_data = []
-    for source in data:
-        updated_label_weights = {
-            label: normalized_weights[label]
-            for label in source["label_weights"]
-            if label in normalized_weights and len(label) <= MAX_LABEL_LENGTH
-        }
-        if updated_label_weights:
-            source["label_weights"] = updated_label_weights
-            updated_data.append(source)
-
-    return json.dumps(updated_data, indent=4)
 
 def upload_to_github(json_content: str, hotkey: str) -> str:
     """Uploads the preferences json to Github."""
@@ -159,11 +111,7 @@ async def run_uploader(args):
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=my_hotkey, netuid=args.netuid)
 
     try:
-
-        json_content = normalize_preferences_json(file_path=args.file_path)
-        if isinstance(json_content, dict):
-            json_content = json.dumps(json_content, indent=4)
-
+        json_content = normalize_preferences_json(file_path=args.file_path, hotkey=my_hotkey)
         if not json_content:
             bt.logging.error("Please see docs for correct format. Not pushing to Github or chain.")
             return
@@ -179,16 +127,15 @@ async def run_uploader(args):
         raise
 
 
-def run_uploader_from_gravity(config, desirability_dict):
+def run_uploader_from_gravity(config, desirability_dict) -> Tuple[bool, str]:
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
     try:
-
-        json_content = normalize_preferences_json(desirability_dict=desirability_dict)
-        if isinstance(json_content, dict):
-            json_content = json.dumps(json_content, indent=4)
-
+        json_content = normalize_preferences_json(
+            desirability_dict=desirability_dict,
+            hotkey=wallet.hotkey.ss58_address
+        )
         if not json_content:
             message = "Please see docs for correct format. Not pushing to Github or chain."
             bt.logging.error(message)
@@ -201,8 +148,10 @@ def run_uploader_from_gravity(config, desirability_dict):
         bt.logging.info(message)
         return True, message
     except Exception as e:
-        error_message = f"An error occured: {str(e)}"
+        error_message = f"An error occurred: {str(e)}"
+        bt.logging.error(error_message)
         return False, error_message
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Set desirabilities for Gravity.")

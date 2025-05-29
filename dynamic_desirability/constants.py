@@ -15,4 +15,5 @@ AGGREGATE_JSON_PATH: str = 'total.json'
 VALID_SOURCES: dict[str, str] = {
     "reddit": "r/",
     "x": "#",
+    "youtube": "",
 }

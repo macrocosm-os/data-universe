@@ -36,6 +36,20 @@ class XContent(BaseModel):
         description="A list of media URLs associated with the tweet. Can be None if no media is present.",
     )
 
+    # Enhanced fields
+    user_id: Optional[str] = None
+    user_display_name: Optional[str] = None
+    user_verified: Optional[bool] = None
+
+    # Non-dynamic tweet metadata
+    tweet_id: Optional[str] = None
+    is_reply: Optional[bool] = None
+    is_quote: Optional[bool] = None
+
+    # Additional metadata
+    conversation_id: Optional[str] = None
+    in_reply_to_user_id: Optional[str] = None
+
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:
         """Converts the XContent to a DataEntity."""

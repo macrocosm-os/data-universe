@@ -18,7 +18,7 @@ Step-by-Step Instructions
 `YOUTUBE_API_KEY=your_actual_api_key_here
 `
 
-### Working with proxies
+### Working with proxies ( webShare)
 If you are using cloud provider that belong to popular cloud providers (like AWS, Google Cloud Platform, Azure, DO etc.),
 
 You will need to add WebShare proxy
@@ -27,4 +27,11 @@ open the Webshare Proxy Settings to retrieve your "Proxy Username" and "Proxy Pa
 `WEB_SHARE_PROXY_USERNAME=WEB_SHARE_PROXY_USERNAME
 WEB_SHARE_PROXY_PASSWORD=WEB_SHARE_PROXY_PASSWORD`
 
+### Working with any other proxies 
 
+If you don't like webshare, you can define this works with any http proxy!
+
+YTT_PROXY_HOST=127.0.0.01
+YTT_PROXY_PORT=7777
+YTT_PROXY_USERNAME=myusername
+YTT_PROXY_PASSWORD=mypassword
