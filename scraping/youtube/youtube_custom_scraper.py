@@ -3,13 +3,14 @@ import hashlib
 import traceback
 import re
 import bittensor as bt
-from typing import List, Dict, Any, Optional, Tuple
 import datetime as dt
 import os
+import logging
 import httpx
-from xml.etree.ElementTree import ParseError
-from youtube_transcript_api.proxies import WebshareProxyConfig, GenericProxyConfig
 
+from xml.etree.ElementTree import ParseError
+from typing import List, Dict, Any, Optional, Tuple
+from youtube_transcript_api.proxies import WebshareProxyConfig, GenericProxyConfig
 from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, NoTranscriptFound
 from googleapiclient.discovery import build
 from googleapiclient.errors import HttpError
@@ -23,6 +24,9 @@ from dotenv import load_dotenv
 load_dotenv()
 
 bt.logging.set_trace(True)
+logging.getLogger("httpx").setLevel(logging.WARNING) # Keep this so httpx dos not log api key
+
+_KEY_RE = re.compile(r"(?:key|apiKey)=[^&\s]+", re.I)
 
 
 class YouTubeTranscriptScraper(Scraper):
