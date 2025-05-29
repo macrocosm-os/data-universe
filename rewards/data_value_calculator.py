@@ -32,7 +32,7 @@ class DataValueCalculator:
             return 0.0  # No need to do further processing
         
         # Find matching jobs directly using time bucket ID
-        # No need to convert to date range strings!
+        # Currently only finds matching jobs where keyword is None.
         matching_jobs = self.model.find_matching_jobs(source, None, label, time_bucket_id)
         
         # Rest of method remains the same...
