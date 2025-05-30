@@ -123,6 +123,29 @@ def time_bucket_id_to_date_range(bucket: int) -> DateRange:
         end=datetime_from_hours_since_epoch(bucket + 1),
     )
 
+def parse_iso_date(date_str: str) -> Optional[dt.datetime]:
+    """
+    Parse ISO date string, handling 'Z' suffix for UTC timezone.
+    
+    Args:
+        date_str: ISO format date string, potentially with 'Z' suffix
+        
+    Returns:
+        Parsed datetime object or None if parsing fails
+    """
+    if not date_str:
+        return None
+    
+    # Replace 'Z' with '+00:00' for proper timezone parsing
+    if date_str.endswith('Z'):
+        date_str = date_str[:-1] + '+00:00'
+    
+    try:
+        return dt.datetime.fromisoformat(date_str)
+    except ValueError as e:
+        bt.logging.warning(f"Failed to parse date '{date_str}': {e}")
+        return None
+
 
 def serialize_to_file(obj: Any, filename: str) -> None:
     """
