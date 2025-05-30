@@ -156,11 +156,23 @@ class DataSourceDesirability(StrictBaseModel):
 
     def model_dump_json(self, **kwargs):
         """Custom JSON serialization"""
-        return {
+        jobs_data = []
+        for job in self.job_matcher.jobs:
+            job_dict = {}
+            primitive = job.to_primitive()
+            for key, value in primitive.items():
+                # Exclude None params to keep logs concise
+                if value is not None:
+                    job_dict[key] = value
+            jobs_data.append(job_dict)
+        
+        result = {
             "weight": self.weight,
             "default_scale_factor": self.default_scale_factor,
-            "jobs": [job.to_primitive() for job in self.job_matcher.jobs]
+            "jobs": jobs_data
         }
+        
+        return result
 
     def __str__(self) -> str:
         return json.dumps(self.model_dump_json(), indent=4)
