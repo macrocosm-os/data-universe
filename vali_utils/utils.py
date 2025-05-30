@@ -1,6 +1,7 @@
 import bittensor as bt
 import hashlib
 import random
+import time
 from typing import List, Optional, Tuple, Type, Union
 import datetime as dt
 from common import constants
@@ -15,18 +16,26 @@ from common.date_range import DateRange
 from common.protocol import GetMinerIndex
 from scraping.x import utils as x_utils
 
+from random import Random
 
-def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
-    """Chooses a random DataEntityBucket to query from a MinerIndex.
-
-    The random selection is done based on choosing a random scorable byte in the total index to query, and then
-    selecting that DataEntityBucket.
+def choose_data_entity_bucket_to_query(
+    index: ScorableMinerIndex,
+) -> DataEntityBucket:
+    """Securely pick one DataEntityBucket to validate.
+    Uses a deterministic seed based on system time (SHA256(current_timestamp)),
+    so the choice is deterministic for a given time period.
     """
     total_size = sum(
-        scorable_bucket.scorable_bytes
+        scorable_bucket.scorable_bytes 
         for scorable_bucket in index.scorable_data_entity_buckets
     )
-    chosen_byte = random.uniform(0, total_size)
+    
+    # Use current system time as seed input
+    current_time = time.time()
+    seed = int(hashlib.sha256(str(current_time).encode()).hexdigest(), 16) % (2**32)
+    rng = Random(seed)
+    chosen_byte = rng.uniform(0, total_size)
+    
     iterated_bytes = 0
     for scorable_bucket in index.scorable_data_entity_buckets:
         if iterated_bytes + scorable_bucket.scorable_bytes >= chosen_byte:
@@ -35,7 +44,6 @@ def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityB
     assert (
         False
     ), "Failed to choose a DataEntityBucket to query... which should never happen"
-
 
 def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""

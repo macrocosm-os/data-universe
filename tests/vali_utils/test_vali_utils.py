@@ -68,7 +68,8 @@ class TestValiUtils(unittest.TestCase):
         ratios = [count / total for count in counts]
         self.assertAlmostEqual(ratios[0], 1 / 6, delta=0.05)
         self.assertAlmostEqual(ratios[1], 1 / 3, delta=0.05)
-        self.assertAlmostEqual(ratios[2], 0.5, delta=0.05)
+        self.assertAlmostEqual(ratios[2], 0.5,   delta=0.05)
+
 
     def test_choose_entities_to_verify(self):
         """Calls choose_entity_to_verify 10000 times and verifies the distribution of entities chosen is as expected."""
