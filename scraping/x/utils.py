@@ -5,7 +5,7 @@ import bittensor as bt
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_TWITTER_URLS_DATE, MEDIA_REQUIRED_DATE, BYTE_ALLOWANCE_DATE
+from common.constants import NO_TWITTER_URLS_DATE, MEDIA_REQUIRED_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -342,9 +342,7 @@ def validate_data_entity_fields(actual_tweet: XContent, entity: DataEntity) -> V
         content_size_bytes=entity.content_size_bytes
     )
 
-    byte_difference_allowed = 10
-    if dt.datetime.now(dt.timezone.utc) >= BYTE_ALLOWANCE_DATE:
-        byte_difference_allowed = 0
+    byte_difference_allowed = 0
 
     if (entity.content_size_bytes - tweet_entity.content_size_bytes) > byte_difference_allowed:
         return ValidationResult(
