@@ -35,7 +35,7 @@ except ImportError:
             super().__init__(*args, **kwargs)
             self.resp = type('MockResp', (), {'status': 500})()
 
-load_dotenv()
+load_dotenv(override=True)
 
 bt.logging.set_trace(True)
 logging.getLogger("httpx").setLevel(logging.WARNING)  # Keep this so httpx does not log api key
