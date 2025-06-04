@@ -222,7 +222,7 @@ class MicroworldsTwitterScraper(Scraper):
         is_valid, valid_percent = utils.hf_tweet_validation(validation_results=results)
         return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent, reason=f"Validation Percentage = {valid_percent}")
 
-    async def validate_hf(self, entities) -> bool:
+    async def validate_hf(self, entities) -> HFValidationResult:
         """Validate the correctness of a HFEntities by URL."""
 
         async def validate_hf_entity(entity) -> ValidationResult:
@@ -400,7 +400,6 @@ class MicroworldsTwitterScraper(Scraper):
 
     def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
-
         Any errors are logged and ignored."""
         if not dataset or dataset == [{"zero_result": True}]:
             return [], []
@@ -411,28 +410,76 @@ class MicroworldsTwitterScraper(Scraper):
         for data in dataset:
             try:
                 # Check that we have the required fields
-                if "full_text" not in data or "url" not in data or "created_at" not in data:
+                if not all(field in data for field in ["full_text", "user", "created_at"]):
                     bt.logging.warning("Missing required fields in data")
                     continue
 
                 text = data['full_text']
 
-                # Extract hashtags
-                hashtags = data.get('entities', {}).get('hashtags', [])
-                tags = ["#" + item['text'] for item in hashtags]
+                # Extract hashtags from text or user entities if available
+                tags = []
+                user_data = data.get('user', {})
+                user_entities = user_data.get('entities', {})
+                if 'hashtags' in user_entities:
+                    tags = ["#" + item['text'] for item in user_entities['hashtags']]
+                
+                # Extract media URLs - check multiple possible locations
+                media_urls = []
+                
+                # check entities.media (deprecated in microworlds scraper)
+                if 'entities' in data and 'media' in data['entities']:
+                    for media_item in data['entities']['media']:
+                        if 'media_url_https' in media_item:
+                            media_urls.append(media_item['media_url_https'])
 
                 is_retweet = data.get('retweeted', False)
                 is_retweets.append(is_retweet)
+                
+                # Extract user information - user_id_str if available, or id_str
+                user_id = data.get('user_id_str') or user_data.get('id_str')
+                user_display_name = user_data.get('name', '')
+                user_verified = user_data.get('verified', False)
+                username = user_data.get('screen_name', '')
+                
+                # Extract tweet metadata
+                tweet_id = data.get('id_str')
+                
+                # Extract reply information
+                is_reply = data.get('in_reply_to_status_id_str', None)
+                is_quote = data.get('is_quote_status', None)
+                
+                # Get conversation ID
+                conversation_id = data.get('conversation_id_str')
+                
+                # Get in-reply-to information
+                in_reply_to_user_id = data.get('in_reply_to_user_id_str')
+
+                # Create URL if not present (construct from tweet ID)
+                url = data.get('url')
+                if not url and tweet_id and username:
+                    url = f"https://twitter.com/{username}/status/{tweet_id}"
 
                 results.append(
                     XContent(
-                        username=data['user']['screen_name'],
+                        username=username,
                         text=utils.sanitize_scraped_tweet(text),
-                        url=data["url"],
+                        url=url,
                         timestamp=dt.datetime.strptime(
                             data["created_at"], "%a %b %d %H:%M:%S %z %Y"
                         ),
                         tweet_hashtags=tags,
+                        media=media_urls if media_urls else None,
+                        # Enhanced fields
+                        user_id=user_id,
+                        user_display_name=user_display_name,
+                        user_verified=user_verified,
+                        # Non-dynamic tweet metadata
+                        tweet_id=tweet_id,
+                        is_reply=is_reply,
+                        is_quote=is_quote,
+                        # Additional metadata
+                        conversation_id=conversation_id,
+                        in_reply_to_user_id=in_reply_to_user_id,
                     )
                 )
             except Exception:

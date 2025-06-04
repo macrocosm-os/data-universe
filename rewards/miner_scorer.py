@@ -142,6 +142,19 @@ class MinerScorer:
             self.scorable_bytes = torch.cat(
                 [self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)]
             )
+            self.hf_boosts = torch.cat(
+                [self.hf_boosts, torch.zeros(to_add, dtype=torch.float32)]
+            )
+            self.hf_credibility = torch.cat(
+                [
+                    self.hf_credibility,
+                    torch.full(
+                        (to_add, 1),
+                        MinerScorer.STARTING_HF_CREDIBILITY,
+                        dtype=torch.float32,
+                    ),
+                ]
+            )
 
     def update_hf_boost_and_cred(self, uid: int, hf_vali_percentage: float) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""

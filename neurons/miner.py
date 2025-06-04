@@ -553,7 +553,8 @@ class Miner:
                     labels.extend([DataLabel(value=k) for k in synapse.keywords])
                 if synapse.usernames:
                     # Ensure usernames have @ prefix
-                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in synapse.usernames])
+                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
+                                synapse.usernames])
 
             elif synapse.source == DataSource.REDDIT:
                 scraper_id = ScraperId.REDDIT_CUSTOM
@@ -571,14 +572,21 @@ class Miner:
                 synapse.data = []
                 return synapse
 
-            # Create date range
-            start_dt = (dt.datetime.fromisoformat(synapse.start_date)
-                    if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
-            end_dt = (dt.datetime.fromisoformat(synapse.end_date)
+            # Create date range with utility function
+            start_dt = (utils.parse_iso_date(synapse.start_date)
+                        if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
+            end_dt = (utils.parse_iso_date(synapse.end_date)
                     if synapse.end_date else dt.datetime.now(dt.timezone.utc))
+
+            # Fallback to default dates if parsing failed
+            if start_dt is None:
+                start_dt = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+            if end_dt is None:
+                end_dt = dt.datetime.now(dt.timezone.utc)
 
             # Log the labels being used
             bt.logging.info(f"Searching with labels: {[l.value for l in labels]}")
+            bt.logging.info(f"Date range: {start_dt} to {end_dt}")
 
             config = ScrapeConfig(
                 entity_limit=synapse.limit,
@@ -599,8 +607,7 @@ class Miner:
                 # Get enhanced content
                 enhanced_content = enhanced_scraper.get_enhanced_content()
 
-                # IMPORTANT: Convert EnhancedXContent to DataEntity to maintain protocol compatibility
-                # while keeping the rich data in serialized form
+                # Convert EnhancedXContent to DataEntity to maintain protocol compatibility
                 enhanced_data_entities = []
                 for content in enhanced_content:
                     # Convert to DataEntity but store full rich content in serialized form
