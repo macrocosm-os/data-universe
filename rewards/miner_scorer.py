@@ -155,6 +155,7 @@ class MinerScorer:
     def apply_ondemand_penalty(self, uid: int):
         """Applies a 5% credibility penalty to a given miner"""
         adj_cred = max(self.miner_credibility[uid] - 0.05, 0)
+        bt.logging.info(f"After 5% OnDemand penalty, Miner {uid} credibility decreased from {self.miner_credibility[uid]} to {adj_cred}.")
         self.miner_credibility[uid] = adj_cred
 
     def on_miner_evaluated(
