@@ -794,14 +794,10 @@ class Validator:
                         if non_responsive_uids:
                             bt.logging.info(f"Applying penalties to {len(non_responsive_uids)} non-responsive miners")
                             for uid in non_responsive_uids:
-                                validation_results = [
-                                    ValidationResult(is_valid=False, reason="Failed to respond to query", content_size_bytes_validated=0)
-                                ]
-                                
                                 bt.logging.info(f"Applying a 5% credibility penalty to miner {uid} for not responding.")
                                 
                                 # Update the miner's score with the validation results
-                                self.evaluator.scorer._update_credibility(uid, validation_results) # TODO: uncomment
+                                self.evaluator.scorer.apply_ondemand_penalty(uid) 
 
                         # Process the verification data to match exactly what miners would return
                         processed_data = []
