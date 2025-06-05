@@ -743,16 +743,15 @@ class Validator:
                         labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
                                        on_demand_synapse.usernames])
 
+                    start_date = utils.parse_iso_date(on_demand_synapse.start_date) if on_demand_synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+                    end_date = utils.parse_iso_date(on_demand_synapse.end_date) if on_demand_synapse.end_date else dt.datetime.now(dt.timezone.utc)
+
                     # Create scrape config matching the miner's configuration
                     verify_config = ScrapeConfig(
-                        entity_limit=synapse.limit,  # Use requested limit
+                        entity_limit=synapse.limit,  
                         date_range=DateRange(
-                            start=dt.datetime.fromisoformat(
-                                on_demand_synapse.start_date) if on_demand_synapse.start_date else dt.datetime.now(
-                                dt.timezone.utc) - dt.timedelta(days=1),
-                            end=dt.datetime.fromisoformat(
-                                on_demand_synapse.end_date) if on_demand_synapse.end_date else dt.datetime.now(
-                                dt.timezone.utc)
+                            start=start_date,
+                            end=end_date
                         ),
                         labels=labels,
                     )
