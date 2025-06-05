@@ -62,9 +62,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
             try:
                 # Debug the structure of the data
                 if 'media' in data:
-                    bt.logging.debug(f"Media structure: {type(data['media'])}")
                     if isinstance(data['media'], list) and data['media']:
-                        bt.logging.debug(f"First media item: {type(data['media'][0])}")
                         if isinstance(data['media'][0], str):
                             # Fix for string media items: convert to dict format expected by from_apify_response
                             fixed_media = []
@@ -95,7 +93,6 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                 # Extract conversation and reply data
                 conversation_id = data.get('conversationId')
                 in_reply_to_user_id = data.get('inReplyToUserId')
-                in_reply_to_username = data.get('inReplyToUsername')
 
                 # Extract hashtags and media
                 hashtags = []
@@ -194,7 +191,6 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                     # Additional metadata
                     conversation_id=conversation_id,
                     in_reply_to_user_id=in_reply_to_user_id,
-                    in_reply_to_username=in_reply_to_username
                 )
                 results.append(enhanced_content)
 
@@ -506,7 +502,6 @@ def print_enriched_content(content: EnhancedXContent):
     print(f"\nCONVERSATION INFO:")
     print(f"  Conversation ID: {content.conversation_id}")
     print(f"  In Reply To User ID: {content.in_reply_to_user_id}")
-    print(f"  In Reply To Username: {content.in_reply_to_username}")
 
     print(f"\nMEDIA CONTENT:")
     print(f"  Media URLs: {content.media_urls}")
