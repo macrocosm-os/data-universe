@@ -62,9 +62,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
             try:
                 # Debug the structure of the data
                 if 'media' in data:
-                    bt.logging.debug(f"Media structure: {type(data['media'])}")
                     if isinstance(data['media'], list) and data['media']:
-                        bt.logging.debug(f"First media item: {type(data['media'][0])}")
                         if isinstance(data['media'][0], str):
                             # Fix for string media items: convert to dict format expected by from_apify_response
                             fixed_media = []
