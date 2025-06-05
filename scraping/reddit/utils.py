@@ -3,6 +3,7 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataLabel
+from common.constants import BYTE_ALLOWANCE_DATE
 import bittensor as bt
 import traceback
 import datetime as dt
@@ -186,6 +187,8 @@ def validate_reddit_content(
         # Extra check that the content size is reasonably close to what we expect.
         # Allow a 10 byte difference to account for timestamp serialization differences.
         byte_difference_allowed = 10
+        if dt.datetime.now(dt.timezone.utc) >= BYTE_ALLOWANCE_DATE:
+            byte_difference_allowed = 0
         if (
             entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
         ) > byte_difference_allowed:

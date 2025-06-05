@@ -30,6 +30,7 @@ from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
+from vali_utils.validator_s3_access import ValidatorS3Access
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
@@ -425,10 +426,11 @@ class Validator:
                 self.evaluation_cycles_since_startup = 0
                 bt.logging.info("Initializing evaluation cycles counter for delayed weight setting")
 
-            # If we've completed fewer than 2 evaluation cycles, don't set weights
-            if self.evaluation_cycles_since_startup < 2:
+            #  if we've completed fewer than the allotted number of evaluation cycles, don't set weights
+            if self.evaluation_cycles_since_startup < constants.EVALUATION_ON_STARTUP:
+
                 bt.logging.info(
-                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/2 evaluation cycles since startup")
+                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/15 evaluation cycles since startup")
                 return False
 
             # Normal 20-minute interval check for subsequent weight settings
@@ -1108,8 +1110,9 @@ def main():
     metagraph_syncer.do_initial_sync()
     metagraph_syncer.start()
 
+    s3_reader = ValidatorS3Access(wallet=wallet, s3_auth_url=config.s3_auth_url)
     evaluator = MinerEvaluator(
-        config=config, uid=uid, metagraph_syncer=metagraph_syncer
+        config=config, uid=uid, metagraph_syncer=metagraph_syncer, s3_reader=s3_reader
     )
 
     with Validator(

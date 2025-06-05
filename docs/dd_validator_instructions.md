@@ -5,9 +5,6 @@
 ### To learn more about Dynamic Desirability (Gravity), see:
 [Dynamic Desirability Doc](https://github.com/macrocosm-os/data-universe/blob/gravity/docs/dynamic_desirability.md)
 
-### To view this in a Google Doc, see:
-[Validator Instructions Google Doc](https://docs.google.com/document/d/1fVOtbeGfxHUcRqhedW3nqUfHHybvnj9RYgKur9lwiXA/edit?usp=sharing)
-
 ### Overall Process
 
 The overall process of Dynamic Desirability is as follows:
@@ -64,34 +61,56 @@ An example of a valid JSON submission is given below:
 ```
 [
     {
-        "source_name": "reddit",
-        "label_weights": {
-            "r/Bitcoin": 0.1,
-            "r/BitcoinCash": 0.1,
-            "r/Bittensor_": 0.1,
-            "r/Btc": 0.1,
-            "r/Cryptocurrency": 0.3
+        "id": "default_0",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "reddit",
+            "label": "r/Bitcoin",
+            "post_start_datetime": null,
+            "post_end_datetime": null
         }
     },
     {
-        "source_name": "x",
-        "label_weights": {
-            "#bitcoin": 0.1,
-            "#bitcoincharts": 0.1,
-            "#bitcoiner": 0.1
+        "id": "default_1",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "reddit",
+            "label": "r/BitcoinCash",
+            "post_start_datetime": null,
+            "post_end_datetime": null
+        }
+    },
+    {
+        "id": "default_2",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "reddit",
+            "label": "r/Bittensor_",
+            "post_start_datetime": null,
+            "post_end_datetime": null
+        }
+    },
+    {
+        "id": "default_3",
+        "weight": 0.25,
+        "params": {
+            "keyword": null,
+            "platform": "x",
+            "label": "#macrocosmos",
+            "post_start_datetime": null,
+            "post_end_datetime": null
         }
     }
 ]
 ```
 
-In this example, the validator sets 10% of their weights on every specified label except for r/Cryptocurrency, on which they set 30% of their weight. 
-
 Invalid JSONs will be normalized during upload:
 
-Only positive weights will be counted.
-If more than 10 labels are added, only the 10 with the most weight are counted. 
-Individual label weights are normalized across the sum of the total weight, to add to 1.
-Weights that are not increments of 0.1 will be rounded accordingly.
+- Only positive weights will be counted.
+- Individual label weights are normalized across the sum of the total weight, to add to 1.
 
 More information on JSON restrictions can be found in the [Dynamic Desirability Doc](https://github.com/macrocosm-os/data-universe/blob/gravity/docs/dynamic_desirability.md).
 
@@ -106,34 +125,6 @@ As a validator, you can submit preferences through the SN13 Validator API using 
     Non-API Preference Submission Instructions
   </summary>
 
-  
-### Creating a `my_preferences.json`
-
-An alternative to manually creating a JSON preferences file is using the [`json_maker.ipynb`](https://colab.research.google.com/drive/1bc6OWAZ8EbKEGtc1Bnt5D_kJVKmcDo1K?usp=sharing) provided in Google Colab.
-
-<p align="center">
-  <img src="/assets/creating_1.png" width="400" height="300">
-</p>
-
-Running the notebook through either Google Colab (with a Google account) or after downloading it locally will start a small JSON making tool that allows you to create a preferences file. 
-
-<p align="center">
-  <img src="/assets/creating_2.png" width="400" height="200">
-</p>
-
-When adding from different sources, make sure to begin the label with the correct prefix (“r/” for Reddit and “#” for X). After adding a label to a source, the output will show as below:
-
-<p align="center">
-  <img src="/assets/creating_3.png" width="300" height="300">
-</p>
-
-Pressing finalize will output your current preferences to `my_preferences.json`.
-
-<p align="center">
-  <img src="/assets/creating_4.png" width="280" height="300">
-</p>
-
-If you are running the notebook from Google Colab, make sure to save `my_preferences.json` locally, for use in the upload script. 
 
 ## Uploading Desirabilities
 

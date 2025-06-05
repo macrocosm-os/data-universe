@@ -4,8 +4,6 @@ import traceback
 import asyncio
 import threading
 import os
-import sys
-import time
 from common import constants
 from common.data_v2 import ScorableMinerIndex
 from common.metagraph_syncer import MetagraphSyncer
@@ -33,7 +31,7 @@ from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
 
 from typing import List, Optional, Tuple
-
+from vali_utils.validator_s3_access import ValidatorS3Access
 from vali_utils.hf_utils import (
     get_latest_commit_files,
     get_validation_data,
@@ -58,7 +56,7 @@ class MinerEvaluator:
         DataSource.YOUTUBE: ScraperId.YOUTUBE_TRANSCRIPT
     }
 
-    def __init__(self, config: bt.config, uid: int, metagraph_syncer: MetagraphSyncer):
+    def __init__(self, config: bt.config, uid: int, metagraph_syncer: MetagraphSyncer, s3_reader: ValidatorS3Access):
         self.config = config
         self.uid = uid
         self.metagraph_syncer = metagraph_syncer
