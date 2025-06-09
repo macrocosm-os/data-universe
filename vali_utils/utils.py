@@ -22,16 +22,15 @@ def choose_data_entity_bucket_to_query(
     index: ScorableMinerIndex,
 ) -> DataEntityBucket:
     """Securely pick one DataEntityBucket to validate.
-    Uses a seed based on system time (SHA256(current_timestamp))
+    Uses a seed based on system time.
     """
     total_size = sum(
         scorable_bucket.scorable_bytes 
         for scorable_bucket in index.scorable_data_entity_buckets
     )
     
-    # Use current system time as seed input
-    current_time = time.time()
-    seed = int(hashlib.sha256(str(current_time).encode()).hexdigest(), 16) % (2**32)
+    # Use nanosecond precision timestamp as seed
+    seed = time.time_ns()
     rng = Random(seed)
     chosen_byte = rng.uniform(0, total_size)
     
