@@ -18,9 +18,7 @@ from scraping.x import utils as x_utils
 
 from random import Random
 
-def choose_data_entity_bucket_to_query(
-    index: ScorableMinerIndex,
-) -> DataEntityBucket:
+def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
     """Securely pick one DataEntityBucket to validate.
     Uses a seed based on system time.
     """
