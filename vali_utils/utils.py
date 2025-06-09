@@ -22,8 +22,7 @@ def choose_data_entity_bucket_to_query(
     index: ScorableMinerIndex,
 ) -> DataEntityBucket:
     """Securely pick one DataEntityBucket to validate.
-    Uses a deterministic seed based on system time (SHA256(current_timestamp)),
-    so the choice is deterministic for a given time period.
+    Uses a seed based on system time (SHA256(current_timestamp))
     """
     total_size = sum(
         scorable_bucket.scorable_bytes 
