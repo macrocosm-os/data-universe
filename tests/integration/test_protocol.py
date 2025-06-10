@@ -12,10 +12,9 @@ from common.data import (
     DataLabel,
     DataSource,
     TimeBucket,
-    HuggingFaceMetadata,
 )
 
-from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata
+from common.protocol import GetDataEntityBucket, GetMinerIndex
 from storage.miner.miner_storage import MinerStorage
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from storage.validator.sqlite_memory_validator_storage import (
@@ -51,11 +50,6 @@ class FakeMiner:
             self, request: old_protocol.GetDataEntityBucket
     ) -> old_protocol.GetDataEntityBucket:
         return self.entities
-
-    def get_huggingface_metadata(self, request: GetHuggingFaceMetadata) -> GetHuggingFaceMetadata:
-        if self.storage:
-            request.metadata = self.storage.get_hf_metadata()
-        return request
 
 
 class IntegrationTestProtocol(unittest.TestCase):
@@ -106,22 +100,6 @@ class IntegrationTestProtocol(unittest.TestCase):
             }
         )
 
-    def _insert_test_hf_metadata(self, storage: MinerStorage) -> List[HuggingFaceMetadata]:
-        now = dt.datetime.utcnow()
-        test_metadata = [
-            HuggingFaceMetadata(
-                repo_name="test_repo_1",
-                source=DataSource.REDDIT,
-                updated_at=now
-            ),
-            HuggingFaceMetadata(
-                repo_name="test_repo_2",
-                source=DataSource.X,
-                updated_at=now + dt.timedelta(hours=1)
-            ),
-        ]
-        storage.store_hf_dataset_info(test_metadata)
-        return test_metadata
 
     def setUp(self):
         # Enable logging
@@ -289,27 +267,6 @@ class IntegrationTestProtocol(unittest.TestCase):
             < dt.timedelta(seconds=30)
         )
 
-    def test_huggingface_metadata(self):
-        # Setup
-        test_unique_id = "test_miner_id"
-        miner = FakeMiner(storage=self.miner_storage)
-
-        # Test upserting metadata
-        metadata_to_upsert = [
-            HuggingFaceMetadata(
-                repo_name=f"test_repo_1_{test_unique_id}",  # Add unique_id to repo_name
-                source=DataSource.REDDIT,
-                updated_at=dt.datetime.utcnow()
-            ),
-            HuggingFaceMetadata(
-                repo_name=f"test_repo_2_{test_unique_id}",  # Add unique_id to repo_name
-                source=DataSource.X,
-                updated_at=dt.datetime.utcnow()
-            )
-        ]
-
-        # Store metadata in miner storage
-        self.miner_storage.store_hf_dataset_info(metadata_to_upsert)
 
 if __name__ == "__main__":
     unittest.main()

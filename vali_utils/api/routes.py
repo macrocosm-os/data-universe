@@ -11,7 +11,7 @@ from common.protocol import OnDemandRequest, GetDataEntityBucket
 from common.organic_protocol import OrganicRequest
 from common import utils  # Import your utils
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, \
-    DesirabilityRequest, HfReposResponse
+    DesirabilityRequest
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler, query_validator
 from scraping.scraper import ScrapeConfig
@@ -299,36 +299,6 @@ async def query_bucket(
     except Exception as e:
         bt.logging.error(f"Error querying bucket: {str(e)}")
         raise HTTPException(500, str(e))
-
-
-@router.get("/list_repo_names", response_model=HfReposResponse)
-@endpoint_error_handler
-async def list_hf_repo_names(
-        validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)):
-    """
-    Returns a list of repository names from the hf_validation.parquet file,
-    excluding "no_dataset_provided".
-    """
-    try:
-        parquet_path = validator.config.hf_results_path
-        
-        df = pd.read_parquet(parquet_path)
-        
-        # Extract unique repo names, excluding "no_dataset_provided"
-        repo_names = [name for name in df['repo_name'].unique() if name != "no_dataset_provided"]
-        repo_names.sort()
-        
-        return {
-            "count": len(repo_names),
-            "repo_names": repo_names
-        }
-    except FileNotFoundError:
-        bt.logging.error("hf_validation.parquet file not found")
-        raise HTTPException(404, "Dataset file not found")
-    except Exception as e:
-        bt.logging.error(f"Error retrieving repository names: {str(e)}")
-        raise HTTPException(500, f"Error retrieving repository names: {str(e)}")
 
 
 @router.get("/health", response_model=HealthResponse)

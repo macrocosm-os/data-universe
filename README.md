@@ -12,7 +12,7 @@
 
 ---
 
-[HF Leaderboard](https://huggingface.co/spaces/macrocosm-os/sn13-dashboard) • [Discord](https://discord.gg/bittensor) • [Network](https://taostats.io/subnets/netuid-13/) • [Research](https://bittensor.com/whitepaper) 
+[Discord](https://discord.gg/bittensor) • [Network](https://taostats.io/subnets/netuid-13/) • [Research](https://bittensor.com/whitepaper) 
 </div>
 
 ---
@@ -181,9 +181,8 @@ In the Data Universe, Miners scrape data from a defined set of sources, called D
 
 Validators periodically query each Miner to fetch their latest MinerIndexes and store them in a local database. This gives the Validator a complete understanding of all data that's stored on the network, as well as which Miners to query for specific types of data. Validators also periodically verify the correctness of the data stored on Miners and reward Miners based on the amount of [valuable data](#data-value) the Miner has. Validators log to [wandb](https://wandb.ai/macrocosmos/data-universe-validators) anonymously by default.
 
-Miners upload their local stores to either HuggingFace or S3-compatible storage for public dataset access. This data is anonymized for privacy purposes to comply with the Terms of Service per each data source.
+Miners upload their local stores to either HuggingFace (now deprecated) or S3-compatible storage for public dataset access. This data is anonymized for privacy purposes to comply with the Terms of Service per each data source.
 
-- For HuggingFace setup, see the [HuggingFace documentation](docs/huggingface_setup.md).
 - For S3 storage setup, see the [S3 Storage documentation](https://github.com/macrocosm-os/data-universe-api).
 
 The S3 storage option provides improved scalability, security, and performance, especially for large datasets. It uses a folder-based structure with blockchain authentication to ensure miners can only access their own data while validators can efficiently access all miners' data.

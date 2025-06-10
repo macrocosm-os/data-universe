@@ -74,11 +74,6 @@ class DataItem(StrictBaseModel):
     label: Optional[str] = None
 
 
-class HfReposResponse(BaseModel):
-    count: int
-    repo_names: List[str]
-
-
 class HealthResponse(StrictBaseModel):
     """Response model for health check"""
     status: str = Field(description="Service status")

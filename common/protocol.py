@@ -4,8 +4,7 @@ from common.data import (
     DataSource,
     DataEntityBucket,
     DataEntity,
-    DataEntityBucketId,
-    HuggingFaceMetadata
+    DataEntityBucketId
 )
 from typing import Dict, List, Optional, Tuple
 
@@ -94,18 +93,6 @@ class GetContentsByBuckets(BaseProtocol):
     )
 
 
-class GetHuggingFaceMetadata(BaseProtocol):
-    """
-    Protocol by which Validators can retrieve HuggingFace metadata from a Miner.
-    """
-
-    metadata: List[HuggingFaceMetadata] = Field(
-        title="metadata",
-        description="List of HuggingFace metadata entries.",
-        default_factory=list
-    )
-
-
 class DecodeURLRequest(BaseProtocol):
     """
     Protocol by which Validators can request URL decoding from a Miner.
@@ -188,6 +175,5 @@ REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
     GetDataEntityBucket: 1,
     GetContentsByBuckets: 5,
     DecodeURLRequest: 2,
-    GetHuggingFaceMetadata: 1,
     OnDemandRequest: 5,
 }

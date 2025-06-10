@@ -1,5 +1,5 @@
 
-### README: Configuring Access for Uploading Data to Hugging Face Datasets
+### [DEPRECATED] README: Configuring Access for Uploading Data to Hugging Face Datasets
 
 #### Creating and Configuring Your Hugging Face Access Token
 

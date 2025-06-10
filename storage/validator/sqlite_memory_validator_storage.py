@@ -4,7 +4,7 @@ import bittensor as bt
 import sqlite3
 import threading
 from typing import Any, Dict, Optional, Set, Tuple, List
-from common.data import CompressedMinerIndex, DataLabel, HuggingFaceMetadata
+from common.data import CompressedMinerIndex, DataLabel
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from storage.validator.validator_storage import ValidatorStorage
 
@@ -108,14 +108,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     MINER_INDEX_TABLE_BUCKET_SIZE_INDEX = """CREATE INDEX IF NOT EXISTS bucket_size_index
                                              ON MinerIndex (source, labelId, timeBucketId, contentSizeBytes)"""
 
-    HF_METADATA_TABLE_CREATE = """CREATE TABLE IF NOT EXISTS HFMetadata (
-                                        minerId     INTEGER         NOT NULL,
-                                        repo_name   TEXT            NOT NULL,
-                                        source      INTEGER         NOT NULL,
-                                        updated_at  TIMESTAMP       NOT NULL,
-                                        PRIMARY KEY (minerId, repo_name)
-                                        )"""
-
 
     def __init__(self):
         sqlite3.register_converter("timestamp", tz_aware_timestamp_adapter)
@@ -135,8 +127,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
             cursor.execute(
                 SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_BUCKET_SIZE_INDEX
             )
-
-            cursor.execute(SqliteMemoryValidatorStorage.HF_METADATA_TABLE_CREATE)
 
             # Lock to avoid concurrency issues on interacting with the database.
             self.lock = threading.RLock()
@@ -335,7 +325,6 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         """Removes the index and miner details for the specified miner."""
         with self.lock:
             self._delete_miner_index(hotkey)
-            self._delete_hf_metadata(hotkey)
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
                 cursor.execute("DELETE FROM Miner WHERE hotkey = ?", [hotkey])
@@ -354,91 +343,3 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 else:
                     return None
 
-    # Hugging face functionality
-    def upsert_hf_metadata(self, hotkey: str, metadata: List[HuggingFaceMetadata]):
-        """Stores or updates the HuggingFace metadata for a specific miner."""
-        bt.logging.trace(f"{hotkey}: Upserting HuggingFace metadata with {len(metadata)} entries")
-
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [hotkey])
-                result = cursor.fetchone()
-                if result is None:
-                    bt.logging.warning(f"{hotkey}: Attempted to upsert HF metadata for non-existent miner")
-                    return
-                miner_id = result[0]
-
-                for entry in metadata:
-                    cursor.execute("""
-                        INSERT OR REPLACE INTO HFMetadata 
-                        (minerId, repo_name, source, updated_at) 
-                        VALUES (?, ?, ?, ?)
-                    """, (miner_id, entry.repo_name, entry.source, entry.updated_at))
-                connection.commit()
-
-    def read_hf_metadata(self, miner_hotkey: str) -> List[HuggingFaceMetadata]:
-        """Gets the HuggingFace metadata for a specific miner."""
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [miner_hotkey])
-                result = cursor.fetchone()
-                if result is None:
-                    return []
-                miner_id = result[0]
-
-                cursor.execute("""
-                    SELECT repo_name, source, updated_at 
-                    FROM HFMetadata 
-                    WHERE minerId = ?
-                """, (miner_id,))
-                return [HuggingFaceMetadata(
-                    repo_name=row[0],
-                    source=row[1],
-                    updated_at=row[2]
-                ) for row in cursor.fetchall()]
-
-    def _delete_hf_metadata(self, miner_hotkey: str):
-        """Removes the HuggingFace metadata for the specified miner."""
-        bt.logging.trace(f"{miner_hotkey}: Deleting HuggingFace metadata")
-
-        with contextlib.closing(self._create_connection()) as connection:
-            cursor = connection.cursor()
-            cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [miner_hotkey])
-            result = cursor.fetchone()
-            if result is not None:
-                cursor.execute("DELETE FROM HFMetadata WHERE minerId = ?", [result[0]])
-                connection.commit()
-
-    def has_hf_metadata(self, miner_hotkey: str) -> bool:
-        """Checks if a specific miner has any HuggingFace metadata."""
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [miner_hotkey])
-                result = cursor.fetchone()
-                if result is None:
-                    return False
-                miner_id = result[0]
-
-                cursor.execute("SELECT EXISTS(SELECT 1 FROM HFMetadata WHERE minerId = ?)", (miner_id,))
-                return bool(cursor.fetchone()[0])
-
-    def read_hf_metadata_last_updated(self, miner_hotkey: str) -> Optional[dt.datetime]:
-        """Gets when a specific miner's HuggingFace metadata was last updated."""
-        with self.lock:
-            with contextlib.closing(self._create_connection()) as connection:
-                cursor = connection.cursor()
-                cursor.execute("SELECT minerId FROM Miner WHERE hotkey = ?", [miner_hotkey])
-                result = cursor.fetchone()
-                if result is None:
-                    return None
-                miner_id = result[0]
-
-                # TODO DO WE NEED TO TAKE MAX VALUE?
-                cursor.execute(
-                    "SELECT MAX(updated_at) FROM HFMetadata WHERE minerId = ?", (miner_id,)
-                )
-                result = cursor.fetchone()
-                return result[0] if result and result[0] is not None else None    

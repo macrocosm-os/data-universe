@@ -35,24 +35,6 @@ class ValidationResult(StrictBaseModel):
     )
 
 
-class HFValidationResult(StrictBaseModel):
-    """Data class to contain the result of a validation for a miner's Hugging Face dataset. """
-
-    class Config:
-        frozen = True
-
-    is_valid: bool
-
-    validation_percentage: float = Field(
-        description="The percentage of successfully validated HF rows. "
-    )
-
-    reason: str = Field(
-        description="An optional reason for the validation result. ",
-        default=""
-    )
-
-
 class ScrapeConfig(StrictBaseModel):
     """Data class to contain the configuration to be used for scraping."""
 
@@ -104,9 +86,4 @@ class Scraper(abc.ABC):
     @abc.abstractmethod
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of data based on the specified ScrapeConfig."""
-        pass
-
-    @abc.abstractmethod
-    async def validate_hf(self, entities) -> bool:
-        """Validate the correctness of a list of HF retrieved data"""
         pass

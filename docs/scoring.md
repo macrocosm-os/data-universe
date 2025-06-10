@@ -47,8 +47,6 @@ This document outlines the key components of the Bittensor miner evaluation syst
 - Credibility indirectly affects incentives by boosting scores
 - Miners with higher credibility can earn more rewards even with the same raw data value
 
-### HuggingFace validation
-- Credibility change is not enabled at this moment, but you can take a look how it is going to be implemented here:  [hugging_face_validation.md](/docs/hugging_face_validation.md) file.
 ## System Flow
 
 1. **Credibility Evaluation**:

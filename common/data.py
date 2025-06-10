@@ -147,20 +147,6 @@ class DataEntity(StrictBaseModel):
         )
 
 
-class HuggingFaceMetadata(StrictBaseModel):
-    repo_name: str
-    source: DataSource
-    updated_at: dt.datetime
-    encoding_key: Optional[str] = None
-
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        json_encoders={
-            dt.datetime: lambda v: v.isoformat(),
-        }
-    )
-
-
 class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
 
