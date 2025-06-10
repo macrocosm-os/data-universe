@@ -1,4 +1,4 @@
-# Hugging Face Dataset Validation on Bittensor Subnet 13
+# [DEPRECATED] Hugging Face Dataset Validation on Bittensor Subnet 13
 
 This document outlines the validation process for Hugging Face datasets in the context of Bittensor Subnet 13. Validators on Subnet 13 are responsible for ensuring that miners are providing accurate and up-to-date datasets, specifically for X (formerly Twitter) and Reddit. The validation process is crucial for maintaining the integrity and utility of the network.
 
