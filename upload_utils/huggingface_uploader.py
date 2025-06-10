@@ -9,18 +9,18 @@ import time
 import requests
 from contextlib import contextmanager
 from huggingface_hub import HfApi, hf_hub_download
-from huggingface_utils.utils import(
+from upload_utils.utils import(
     preprocess_reddit_df,
     preprocess_twitter_df,
     generate_static_integer,
     migrate_stats_to_v2,
     get_default_stats_structure
 )
-from huggingface_utils.encoding_system import EncodingKeyManager
-from huggingface_utils.s3_utils import S3Auth
+from upload_utils.encoding_system import EncodingKeyManager
+from upload_utils.s3_utils import S3Auth
 from common.data import HuggingFaceMetadata, DataSource
 from typing import List, Dict, Union, Any
-from huggingface_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
+from upload_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
 from functools import wraps
 
 

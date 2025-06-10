@@ -11,7 +11,7 @@ import pyarrow as pa
 import fsspec
 from typing import List, Dict, Any, Tuple, Optional
 from huggingface_hub import HfApi, hf_hub_url
-from huggingface_utils.encoding_system import SymKeyEncodingKeyManager, decode_url
+from upload_utils.encoding_system import SymKeyEncodingKeyManager, decode_url
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.scraper import HFValidationResult

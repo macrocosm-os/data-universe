@@ -40,8 +40,8 @@ from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
-from huggingface_utils.huggingface_uploader import DualUploader
-from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
+from upload_utils.huggingface_uploader import DualUploader
+from upload_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 from common.data import DataLabel, DataSource, DataEntity
