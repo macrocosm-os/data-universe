@@ -11,7 +11,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - /mnt/data/postgres:/var/lib/postgresql/data  # Mount your 1TB volume here
+      - /var/lib/postgresql/data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bittensor -d bittensor"]
