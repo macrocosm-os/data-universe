@@ -215,10 +215,10 @@ def add_args(neuron_type: NeuronType, parser):
         )
 
         parser.add_argument(
-            "--huggingface",
+            "--use_uploader",
             action="store_true",
             help="Set this flag to true to upload your data into HF dataset",
-            default=False
+            default=True
         )
 
         parser.add_argument(
