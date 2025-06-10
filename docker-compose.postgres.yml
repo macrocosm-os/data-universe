@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:14
+    env_file: .postgres.env  # Reference external file
+    environment:
+      POSTGRES_USER: bittensor
+      POSTGRES_PASSWORD: your_secure_password
+      POSTGRES_DB: bittensor
+    ports:
+      - "5432:5432"
+    volumes:
+      - /mnt/data/postgres:/var/lib/postgresql/data  # Mount your 1TB volume here
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U bittensor -d bittensor"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    deploy:
+      resources:
+        limits:
+          memory: 16G  # Adjust based on your VM's total RAM
+    command: >
+      -c max_connections=200
+      -c shared_buffers=2GB
+      -c effective_cache_size=6GB
+      -c maintenance_work_mem=512MB
+      -c wal_buffers=16MB
+      -c default_statistics_target=500
+      -c random_page_cost=1.1
+      -c effective_io_concurrency=200
+      -c work_mem=16MB
+      -c min_wal_size=2GB
+      -c max_wal_size=8GB
+      -c checkpoint_timeout=30min
+      -c max_wal_senders=0  # Disable replication if not needed
+      -c synchronous_commit=off  # For better performance
+      -c fsync=off  # If you can tolerate some risk of data loss on crash

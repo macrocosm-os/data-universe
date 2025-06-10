@@ -1,6 +1,6 @@
 # The MIT License (MIT)
 # Copyright © 2023 Data Universe
-
+import os
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
 # documentation files (the “Software”), to deal in the Software without restriction, including without limitation
 # the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
@@ -38,6 +38,7 @@ from common.protocol import (
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
+from storage.miner.postgres_miner_storage import PostgresMinerStorage
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import DualUploader
@@ -52,9 +53,15 @@ from scraping.scraper import ScrapeConfig, ScraperId
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 import json
 
+from dotenv import load_dotenv
+
 # Enable logging to the miner TODO move it to some different location
 bt.logging.set_info(True)
 bt.logging.set_debug(True)
+
+
+# Load environment variables
+load_dotenv()  # Load from .env file
 
 class Miner:
     """The Glorious Miner."""
@@ -164,9 +171,20 @@ class Miner:
             )
 
         # Instantiate storage.
-        self.storage = SqliteMinerStorage(
-            self.config.neuron.database_name,
-            self.config.neuron.max_database_size_gb_hint,
+        # self.storage = SqliteMinerStorage(
+        #     self.config.neuron.database_name,
+        #     self.config.neuron.max_database_size_gb_hint,
+        # )
+
+        self.storage = PostgresMinerStorage(
+            connection_string=(
+                f"postgresql://{os.getenv('POSTGRES_USER')}:"
+                f"{os.getenv('POSTGRES_PASSWORD')}@"
+                f"{os.getenv('POSTGRES_HOST', 'localhost')}:"
+                f"{os.getenv('POSTGRES_PORT', '5432')}/"
+                f"{os.getenv('POSTGRES_DB')}"
+            ),
+            max_db_size_gb_hint=self.config.neuron.max_database_size_gb_hint
         )
 
         bt.logging.success(

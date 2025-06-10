@@ -21,3 +21,5 @@ loguru==0.7.3
 google-api-python-client==2.167.0
 youtube-transcript-api==1.0.3
 isodate==0.7.2
+psycopg2
+dotenv
