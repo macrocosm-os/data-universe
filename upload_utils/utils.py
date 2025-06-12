@@ -10,7 +10,7 @@ import os
 from concurrent.futures import ThreadPoolExecutor
 from functools import partial
 import bittensor as bt
-from huggingface_utils.encoding_system import EncodingKeyManager, encode_url
+from upload_utils.encoding_system import EncodingKeyManager, encode_url
 
 # Constants
 TWEET_DATASET_COLUMNS = ['text', 'label', 'tweet_hashtags', 'datetime', 'username_encoded', 'url_encoded']

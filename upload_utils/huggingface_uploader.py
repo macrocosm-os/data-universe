@@ -9,18 +9,17 @@ import time
 import requests
 from contextlib import contextmanager
 from huggingface_hub import HfApi, hf_hub_download
-from huggingface_utils.utils import(
+from upload_utils.utils import(
     preprocess_reddit_df,
     preprocess_twitter_df,
     generate_static_integer,
     migrate_stats_to_v2,
     get_default_stats_structure
 )
-from huggingface_utils.encoding_system import EncodingKeyManager
-from huggingface_utils.s3_utils import S3Auth
+from upload_utils.encoding_system import EncodingKeyManager
 from common.data import HuggingFaceMetadata, DataSource
 from typing import List, Dict, Union, Any
-from huggingface_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
+from upload_utils.dataset_card import DatasetCardGenerator, NumpyEncoder
 from functools import wraps
 
 
@@ -44,7 +43,7 @@ def retry_upload(max_retries: int = 3, delay: int = 5):
 
 class DualUploader:
     """
-    Dual uploader of miner data into HF and the S3 bucket
+    Dual uploader of miner data into HF
     HF is going to be deprecated in forthcoming weeks.
     """
     def __init__(self, db_path: str,
@@ -52,7 +51,6 @@ class DualUploader:
                  wallet: bt.wallet,  # need to commit the info into chain
                  encoding_key_manager: EncodingKeyManager,  # USED FOR ENCODING USERNAMES
                  private_encoding_key_manager: EncodingKeyManager,   # USED FOR ENCODING URLS
-                 s3_auth_url: str,  # For the getting upload credentials.
                  state_file: str,
                  output_dir: str = 'hf_storage',
                  chunk_size: int = 1_000_000):
@@ -68,7 +66,6 @@ class DualUploader:
         self.hf_api = HfApi(token=self.hf_token)
         self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
         self.chunk_size = chunk_size
-        self.s3_auth = S3Auth(s3_auth_url) if s3_auth_url else None
         self.wal_size_limit_mb = 2000  # 2 GB WAL size limit
 
     @contextmanager
@@ -182,8 +179,8 @@ class DualUploader:
             return preprocess_twitter_df(df, self.encoding_key_manager, self.private_encoding_key_manager)
 
     @retry_upload(max_retries=5)
-    def upload_parquet_to_hf(self, repo_id, s3_policy=None):
-        """Upload parquet files to HuggingFace and S3 if configured"""
+    def upload_parquet_to_hf(self, repo_id):
+        """Upload parquet files to HuggingFace """
         success = False
 
         # Try HuggingFace upload if token available
@@ -201,27 +198,6 @@ class DualUploader:
                 success = True
             except Exception as e:
                 bt.logging.error(f"Error during HF upload: {str(e)}")
-                # Don't re-raise so we can try S3 upload
-
-        # Try S3 upload if auth client available
-        try:
-            if s3_policy:
-                # Upload all parquet files in directory to S3
-                s3_success_count = 0
-                total_files = 0
-
-                for filename in os.listdir(self.output_dir):
-                    if filename.endswith(".parquet"):
-                        total_files += 1
-                        file_path = os.path.join(self.output_dir, filename)
-                        if self.s3_auth.upload_file(file_path, s3_policy):
-                            s3_success_count += 1
-
-                if s3_success_count > 0:
-                    bt.logging.info(f"Successfully uploaded {s3_success_count}/{total_files} files to S3")
-                    success = True
-        except Exception as e:
-            bt.logging.error(f"Error during S3 upload: {str(e)}")
 
         # Only clean up if at least one upload method succeeded
         if success:
@@ -231,7 +207,7 @@ class DualUploader:
 
         # If both uploads failed, raise exception to trigger retry
         if not success:
-            raise Exception("Both HuggingFace and S3 uploads failed")
+            raise Exception("HuggingFace upload failed")
 
         return success
 
@@ -277,11 +253,6 @@ class DualUploader:
             all_stats = {}
             new_rows = 0
 
-            s3_creds = self.s3_auth.get_credentials(
-                source_name=platform,
-                subtensor=self.subtensor,
-                wallet=self.wallet,
-            )
 
             try:
                 for df in self.get_data_for_huggingface_upload(source, last_upload):
@@ -320,7 +291,7 @@ class DualUploader:
                     new_rows += len(df)
 
                     if chunk_count == 10:
-                        self.upload_parquet_to_hf(repo_id, s3_creds)
+                        self.upload_parquet_to_hf(repo_id)
                         bt.logging.info(f'Uploaded {chunk_count} chunks to {repo_id}')
                         next_chunk_id += chunk_count
                         chunk_count = 0
@@ -328,7 +299,7 @@ class DualUploader:
                             self.manage_wal(conn)
 
                 if chunk_count > 0:
-                    self.upload_parquet_to_hf(repo_id, s3_creds)
+                    self.upload_parquet_to_hf(repo_id)
                     with self.get_db_connection() as conn:
                         self.manage_wal(conn)
                     bt.logging.info(f'Uploaded final {chunk_count} chunks to {repo_id}')

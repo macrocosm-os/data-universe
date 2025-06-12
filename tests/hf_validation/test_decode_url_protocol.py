@@ -3,7 +3,7 @@ import bittensor as bt
 import pydantic
 from common import constants
 from common.protocol import DecodeURLRequest
-from huggingface_utils.encoding_system import EncodingKeyManager, encode_url
+from upload_utils.encoding_system import EncodingKeyManager, encode_url
 import json
 from typing import Type
 import base64
