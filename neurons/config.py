@@ -196,15 +196,15 @@ def add_args(neuron_type: NeuronType, parser):
             os.path.join(root_dir, "scraping/config/scraping_config.json"),
         )
         encoding_default_file = os.path.join(
-            os.path.join(root_dir, "huggingface_utils/encoding_key.json"),
+            os.path.join(root_dir, "upload_utils/encoding_key.json"),
         )
 
         private_encoding_default_file = os.path.join(
-            os.path.join(root_dir, "huggingface_utils/private_encoding_key.json"),
+            os.path.join(root_dir, "upload_utils/private_encoding_key.json"),
         )
 
         state_default_file = os.path.join(
-            os.path.join(root_dir, "huggingface_utils/state_file.json"),
+            os.path.join(root_dir, "upload_utils/state_file.json"),
         )
 
         parser.add_argument(
@@ -215,10 +215,10 @@ def add_args(neuron_type: NeuronType, parser):
         )
 
         parser.add_argument(
-            "--huggingface",
+            "--use_uploader",
             action="store_true",
             help="Set this flag to true to upload your data into HF dataset",
-            default=False
+            default=True
         )
 
         parser.add_argument(
