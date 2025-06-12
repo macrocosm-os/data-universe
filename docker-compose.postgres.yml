@@ -7,7 +7,7 @@ services:
     ports:
       - "5432:5432"
     volumes:
-      - /var/lib/postgresql/data:/var/lib/postgresql/data
+      - /mnt/postgres-data:/var/lib/postgresql/data
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U bittensor -d bittensor"]
@@ -31,6 +31,6 @@ services:
       -c min_wal_size=2GB
       -c max_wal_size=8GB
       -c checkpoint_timeout=30min
-      -c max_wal_senders=0  # Disable replication if not needed
-      -c synchronous_commit=off  # For better performance
+      -c max_wal_senders=0
+      -c synchronous_commit=off
       -c fsync=off  # If you can tolerate some risk of data loss on crash
