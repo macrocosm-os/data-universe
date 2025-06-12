@@ -483,7 +483,7 @@ class S3PartitionedUploader:
         return True
 
     def upload_dd_data(self) -> bool:
-        """Main method to upload ONLY DD data in partitioned format - FIXED CREDENTIALS"""
+        """Main method to upload ONLY DD data in partitioned format"""
         bt.logging.info("Starting S3 partitioned upload for DD data only")
 
         try:
