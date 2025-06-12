@@ -52,7 +52,6 @@ class EnhancedXContent(BaseModel):
     # Additional metadata
     conversation_id: Optional[str] = None
     in_reply_to_user_id: Optional[str] = None
-    in_reply_to_username: Optional[str] = None
 
     @classmethod
     def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
@@ -125,7 +124,6 @@ class EnhancedXContent(BaseModel):
 
         # Reply info
         in_reply_to_user_id = data.get('inReplyToUserId', None)
-        in_reply_to_username = data.get('inReplyToUsername', None)
 
         # Media content
         media_urls = []
@@ -175,8 +173,7 @@ class EnhancedXContent(BaseModel):
             media_urls=media_urls,
             media_types=media_types,
             conversation_id=conversation_id,
-            in_reply_to_user_id=in_reply_to_user_id,
-            in_reply_to_username=in_reply_to_username
+            in_reply_to_user_id=in_reply_to_user_id
         )
 
     def to_api_response(self) -> Dict[str, Any]:
@@ -217,10 +214,9 @@ class EnhancedXContent(BaseModel):
             ]
 
         # Add reply info if available
-        if self.is_reply and (self.in_reply_to_user_id or self.in_reply_to_username):
+        if self.is_reply and self.in_reply_to_user_id:
             result['tweet']['in_reply_to'] = {
-                'user_id': self.in_reply_to_user_id,
-                'username': self.in_reply_to_username
+                'user_id': self.in_reply_to_user_id
             }
 
         return result
