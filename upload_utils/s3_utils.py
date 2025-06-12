@@ -22,8 +22,6 @@ class S3Auth:
             timestamp = int(time.time())
 
             commitment = f"s3:access:{coldkey}:{source_name}:{timestamp}"
-            # bt.logging.info(f"\ud83d\ude80 Committing to blockchain: {commitment}") todo add if it's going to be necessary
-            # success = subtensor.commit(wallet=wallet, netuid=netuid, data=commitment)
 
             # Sign the commitment
             signature = wallet.hotkey.sign(commitment.encode())
@@ -48,13 +46,15 @@ class S3Auth:
                     error_detail = response.json().get("detail", "Unknown error")
                 except Exception:
                     error_detail = response.text or "Unknown error"
-                bt.logging.error(f"\u274c Failed to get S3 credentials: {error_detail}")
+                bt.logging.error(f"❌ Failed to get S3 credentials: {error_detail}")
                 return None
 
-            return response.json()
+            creds = response.json()
+            bt.logging.info(f"✅ Got S3 credentials for folder: {creds.get('folder', 'unknown')}")
+            return creds
 
         except Exception as e:
-            bt.logging.error(f"\u274c Error getting S3 credentials: {str(e)}")
+            bt.logging.error(f"❌ Error getting S3 credentials: {str(e)}")
             return None
 
     def upload_file(self, file_path: str, creds: Dict[str, Any]) -> bool:
@@ -76,4 +76,33 @@ class S3Auth:
 
         except Exception as e:
             bt.logging.error(f"❌ S3 Upload Exception for {file_path}: {e}")
+            return False
+
+    def upload_file_with_path(self, file_path: str, s3_path: str, creds: Dict[str, Any]) -> bool:
+        """Upload file with custom S3 path for partitioned uploads"""
+        try:
+            # Get the folder prefix from credentials (e.g., "data/reddit/COLDKEY/")
+            folder_prefix = creds.get('folder', '')
+
+            # Construct the full S3 path by appending our relative path to the folder prefix
+            full_s3_path = f"{folder_prefix}{s3_path}"
+
+            bt.logging.info(f"🔄 Uploading to S3 path: {full_s3_path}")
+
+            post_data = dict(creds['fields'])  # clone all fields (V4-compatible)
+            post_data['key'] = full_s3_path  # use the full path
+
+            with open(file_path, 'rb') as f:
+                files = {'file': f}
+                response = requests.post(creds['url'], data=post_data, files=files)
+
+            if response.status_code == 204:
+                bt.logging.success(f"✅ S3 upload success: {full_s3_path}")
+                return True
+            else:
+                bt.logging.error(f"❌ S3 upload failed: {response.status_code} — {response.text}")
+                return False
+
+        except Exception as e:
+            bt.logging.error(f"❌ S3 Upload Exception for {file_path} -> {s3_path}: {e}")
             return False

@@ -1,604 +1,526 @@
+"""
+S3 Partitioned Uploader for Dynamic Desirability data ONLY
+Uploads ONLY data that matches current DD list in partitioned format:
+data/source/coldkey/label_keyword/YYYY-MM-DD/parquet_files
+
+NO ENCODING - Raw data upload to S3
+Uses offset-based tracking for continuous processing of new data
+"""
+
 import os
 import json
 import datetime as dt
 import pandas as pd
 import bittensor as bt
 import sqlite3
-import time
-import requests
+import re
 from contextlib import contextmanager
-from upload_utils.utils import generate_static_integer
+from typing import List, Dict
+from upload_utils.s3_utils import S3Auth
 from common.data import DataSource
-from typing import Dict, Any, List
-from functools import wraps
 
 
-def retry_upload(max_retries: int = 3, delay: int = 5):
-    """Decorator to retry uploads on failure."""
+def load_dynamic_lookup() -> Dict[str, List[Dict]]:
+    """Load dynamic desirability lookup from dynamic_desirability/total.json"""
+    try:
+        # Look for dynamic_desirability/total.json in current directory or parent directories
+        current_dir = os.getcwd()
+        for _ in range(3):  # Check up to 3 levels up
+            total_json_path = os.path.join(current_dir, "dynamic_desirability", "total.json")
+            if os.path.exists(total_json_path):
+                with open(total_json_path, 'r') as f:
+                    data = json.load(f)
+                    bt.logging.info(f"Loaded dynamic lookup from {total_json_path}")
+                    return data
+            current_dir = os.path.dirname(current_dir)
 
-    def decorator(func):
-        @wraps(func)
-        def wrapper(*args, **kwargs):
-            for attempt in range(max_retries):
-                try:
-                    return func(*args, **kwargs)
-                except Exception as e:
-                    if attempt == max_retries - 1:
-                        bt.logging.error(f"Upload failed after {max_retries} attempts. Final error: {str(e)}")
-                        raise
-                    bt.logging.warning(f"Upload failed (attempt {attempt + 1}/{max_retries}): {str(e)}")
-                    time.sleep(delay)
-
-        return wrapper
-
-    return decorator
-
-
-class S3Auth:
-    """Enhanced S3 authentication with blockchain commitments and keypair signatures"""
-
-    def __init__(self, s3_auth_url: str):
-        self.s3_auth_url = s3_auth_url
-
-    def get_credentials(self, wallet, source_name: str, subtensor) -> Dict[str, Any]:
-        """Get S3 credentials using blockchain commitments and hotkey signature"""
-        try:
-            coldkey = wallet.get_coldkeypub().ss58_address
-            hotkey = wallet.hotkey.ss58_address
-            timestamp = int(time.time())
-
-            commitment = f"s3:access:{coldkey}:{source_name}:{timestamp}"
-
-            # Sign the commitment
-            signature = wallet.hotkey.sign(commitment.encode())
-            signature_hex = signature.hex()
-
-            payload = {
-                "coldkey": coldkey,
-                "hotkey": hotkey,
-                "source": source_name,
-                "timestamp": timestamp,
-                "signature": signature_hex
-            }
-
-            response = requests.post(
-                f"{self.s3_auth_url.rstrip('/')}/get-folder-access",
-                json=payload,
-                timeout=30
-            )
-
-            if response.status_code != 200:
-                try:
-                    error_detail = response.json().get("detail", "Unknown error")
-                except Exception:
-                    error_detail = response.text or "Unknown error"
-                bt.logging.error(f"❌ Failed to get S3 credentials: {error_detail}")
-                return None
-
-            return response.json()
-
-        except Exception as e:
-            bt.logging.error(f"❌ Error getting S3 credentials: {str(e)}")
-            return None
-
-    def upload_file_with_key(self, file_path: str, s3_key: str, creds: Dict[str, Any]) -> bool:
-        """Upload file to S3 with specific key path"""
-        try:
-            post_data = dict(creds['fields'])  # Clone all fields
-            post_data['key'] = s3_key  # Set the full S3 key path
-
-            with open(file_path, 'rb') as f:
-                files = {'file': f}
-                response = requests.post(creds['url'], data=post_data, files=files)
-
-            if response.status_code == 204:
-                bt.logging.info(f"✅ Upload success: {s3_key}")
-                return True
-            else:
-                bt.logging.error(f"❌ Upload failed: {response.status_code} — {response.text}")
-                return False
-
-        except Exception as e:
-            bt.logging.error(f"❌ S3 Upload Exception for {file_path}: {e}")
-            return False
+        bt.logging.warning("dynamic_desirability/total.json not found, returning empty lookup")
+        return {}
+    except Exception as e:
+        bt.logging.error(f"Error loading dynamic lookup: {e}")
+        return {}
 
 
-class PartitionedS3Uploader:
+class S3PartitionedUploader:
     """
-    Complete S3 uploader replacement for HuggingFace uploader
-    Maintains all reliability features with partitioned structure
+    S3 Partitioned uploader for ONLY Dynamic Desirability data.
+    Handles both label matching and keyword text search.
     """
 
-    def __init__(self,
-                 db_path: str,
-                 subtensor: bt.subtensor,
-                 wallet: bt.wallet,
-                 s3_auth_url: str,
-                 state_file: str,
-                 output_dir: str = 'partitioned_storage',
-                 chunk_size: int = 1_000_000,
-                 upload_batch_size: int = 10):
+    def __init__(
+        self,
+        db_path: str,
+        subtensor,
+        wallet,
+        s3_auth_url: str,
+        state_file: str,
+        output_dir: str = 's3_partitioned_storage',
+        chunk_size: int = 1_000_000,
+    ):
         self.db_path = db_path
         self.wallet = wallet
-        self.miner_hotkey = self.wallet.hotkey.ss58_address
-        self.miner_coldkey = self.wallet.get_coldkeypub().ss58_address
         self.subtensor = subtensor
-        self.unique_id = generate_static_integer(self.miner_hotkey)
-        self.output_dir = os.path.join(output_dir, self.miner_hotkey)
-        self.state_file = f"{state_file.split('.json')[0]}_{self.unique_id}.json"
-        self.chunk_size = chunk_size
-        self.upload_batch_size = upload_batch_size  # Upload every N partitions
+        self.miner_coldkey = self.wallet.get_coldkeypub().ss58_address
         self.s3_auth = S3Auth(s3_auth_url)
-        self.wal_size_limit_mb = 2000
+        self.state_file = f"{state_file.split('.json')[0]}_s3_partitioned.json"
+        self.output_dir = os.path.join(output_dir, self.miner_coldkey)
+        self.chunk_size = chunk_size
 
-        # Create output directory
-        if not os.path.exists(self.output_dir):
-            os.makedirs(self.output_dir)
+        # Load processed state - tracks last processed info per DD item
+        self.processed_state = self._load_processed_state()
 
     @contextmanager
     def get_db_connection(self):
-        """Get optimized database connection with same settings as HF uploader"""
         conn = sqlite3.connect(self.db_path, timeout=60.0)
         try:
-            # Enhanced optimization settings (same as original)
             conn.execute("PRAGMA journal_mode=WAL")
             conn.execute("PRAGMA synchronous=NORMAL")
             conn.execute("PRAGMA temp_store=MEMORY")
-            conn.execute("PRAGMA cache_size=-2000000")  # 2GB
-            conn.execute("PRAGMA page_size=16384")
-            conn.execute("PRAGMA mmap_size=30000000000")  # 30GB memory mapping
+            conn.execute("PRAGMA cache_size=-2000000")
             yield conn
         finally:
             conn.close()
 
-    def check_wal_size(self):
-        """Check WAL file size (same as original)"""
-        wal_file = f"{self.db_path}-wal"
-        if os.path.exists(wal_file):
-            size_mb = os.path.getsize(wal_file) / (1024 * 1024)
-            bt.logging.info(f"Current WAL file size: {size_mb:.2f} MB")
-            return size_mb
-        return 0
-
-    def manage_wal(self, conn):
-        """Manage WAL file size (same as original)"""
-        wal_size = self.check_wal_size()
-        if wal_size > self.wal_size_limit_mb:
-            bt.logging.warning(f"WAL file exceeded {self.wal_size_limit_mb} MB. Performing checkpoint.")
-            conn.execute("PRAGMA wal_checkpoint(PASSIVE)")
-            new_size = self.check_wal_size()
-            bt.logging.info(f"After checkpoint, WAL size: {new_size:.2f} MB")
-
-    def load_state(self) -> Dict[str, Any]:
-        """Load upload state with comprehensive error handling"""
+    def _load_processed_state(self) -> Dict[str, Dict]:
+        """Load processed state - tracks last processed info per DD item"""
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, 'r') as f:
-                    content = f.read()
-                    # Sanitize JSON (same as original)
-                    sanitized_content = self.sanitize_json(content)
-                    state = json.loads(sanitized_content)
-
-                # Convert datetime strings back to datetime objects
-                for source in state['last_upload']:
-                    if state['last_upload'][source]:
-                        try:
-                            state['last_upload'][source] = dt.datetime.strptime(
-                                state['last_upload'][source], '%Y-%m-%d %H:%M:%S'
-                            )
-                        except (ValueError, TypeError):
-                            bt.logging.warning(f"Invalid datetime for source {source}. Resetting.")
-                            state['last_upload'][source] = None
-                return state
+                    return json.load(f)
             except Exception as e:
-                bt.logging.error(f"Error loading state file: {e}")
+                bt.logging.warning(f"Failed to load processed state: {e}")
+        return {}
 
-        return {
-            'last_upload': {str(DataSource.REDDIT.value): None, str(DataSource.X.value): None},
-            'total_rows_uploaded': {str(DataSource.REDDIT.value): 0, str(DataSource.X.value): 0},
-            'upload_sessions': [],
-            'failed_partitions': []
-        }
-
-    def save_state(self, state: Dict[str, Any]):
-        """Save upload state with error handling"""
+    def _save_processed_state(self):
+        """Save processed state"""
         try:
-            state_to_save = {
-                'last_upload': {
-                    source: (
-                        last_upload.strftime('%Y-%m-%d %H:%M:%S') if isinstance(last_upload, dt.datetime) else None)
-                    for source, last_upload in state['last_upload'].items()
-                },
-                'total_rows_uploaded': state['total_rows_uploaded'],
-                'upload_sessions': state.get('upload_sessions', []),
-                'failed_partitions': state.get('failed_partitions', [])
-            }
             with open(self.state_file, 'w') as f:
-                json.dump(state_to_save, f, indent=2, default=str)
+                json.dump(self.processed_state, f, indent=2)
         except Exception as e:
-            bt.logging.error(f"Error saving state: {e}")
+            bt.logging.error(f"Failed to save processed state: {e}")
 
-    def sanitize_json(self, json_string: str) -> str:
-        """Remove any non-printable characters from JSON string (same as original)"""
-        import re
-        return re.sub(r'[\x00-\x1F\x7F-\x9F]', '', json_string)
+    def _get_last_processed_offset(self, processed_key: str) -> int:
+        """Get the last processed offset for a DD item"""
+        item_state = self.processed_state.get(processed_key, {})
+        return item_state.get('last_offset', 0)
 
-    def get_data_for_upload(self, source: int, last_upload: dt.datetime = None) -> pd.DataFrame:
-        """
-        Get data from database with same query logic as HF uploader
-        """
-        bt.logging.info(f"Fetching data for source {source}")
+    def _update_processed_state(self, processed_key: str, new_offset: int, records_processed: int):
+        """Update the processed state for a DD item"""
+        if processed_key not in self.processed_state:
+            self.processed_state[processed_key] = {}
 
-        if last_upload is None:
-            query = """
-                SELECT datetime, label, content
-                FROM DataEntity
-                WHERE source = ?
-                ORDER BY datetime ASC
-                LIMIT ?
-            """
-            params = [source, self.chunk_size]
-        else:
-            query = """
-                SELECT datetime, label, content
-                FROM DataEntity
-                WHERE source = ? AND datetime > ?
-                ORDER BY datetime ASC
-                LIMIT ?
-            """
-            params = [source, last_upload, self.chunk_size]
+        self.processed_state[processed_key].update({
+            'last_offset': new_offset,
+            'total_records_processed': self.processed_state[processed_key].get('total_records_processed', 0) + records_processed,
+            'last_processed_time': dt.datetime.now().isoformat(),
+            'processing_completed': False  # Never mark as "completed" - always check for new data
+        })
 
-        with self.get_db_connection() as conn:
-            # Use chunksize like original HF uploader for memory efficiency
-            df_chunks = []
-            for chunk in pd.read_sql_query(
-                    sql=query,
-                    con=conn,
-                    params=params,
-                    chunksize=self.chunk_size,
-                    parse_dates=['datetime']
-            ):
-                df_chunks.append(chunk)
-                break  # Only get first chunk for now
+    def _sanitize_label(self, label: str) -> str:
+        """Sanitize label for use in S3 path"""
+        if not label:
+            return "unlabeled"
 
-            if df_chunks:
-                df = df_chunks[0]
-            else:
-                df = pd.DataFrame(columns=['datetime', 'label', 'content'])
+        # Remove prefixes
+        sanitized = label.removeprefix("r/").removeprefix("#")
 
-        bt.logging.info(f"Retrieved {len(df)} rows for source {source}")
-        return df
+        # Replace invalid characters with underscores
+        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', sanitized)
 
-    def clean_label_for_path(self, label: str, source: int) -> str:
-        """Clean label for filesystem path with comprehensive sanitization"""
-        if not label or label == 'NULL' or pd.isna(label):
-            return 'no_label'
+        # Remove multiple consecutive underscores
+        sanitized = re.sub(r'_+', '_', sanitized)
 
-        clean_label = str(label).strip()
+        # Remove leading/trailing underscores
+        sanitized = sanitized.strip('_')
 
-        # Source-specific cleaning
-        if source == DataSource.REDDIT.value:
-            # Remove r/ prefix if present
-            if clean_label.lower().startswith('r/'):
-                clean_label = clean_label[2:]
-        elif source == DataSource.X.value:
-            # Remove # prefix if present
-            if clean_label.startswith('#'):
-                clean_label = clean_label[1:]
+        if not sanitized:
+            sanitized = "unlabeled"
 
-        # Comprehensive filesystem sanitization
-        clean_label = clean_label.replace('/', '_').replace('\\', '_')
-        clean_label = clean_label.replace(' ', '_').replace('\t', '_')
-        clean_label = clean_label.replace('|', '_').replace(':', '_')
-        clean_label = clean_label.replace('*', '_').replace('?', '_')
-        clean_label = clean_label.replace('"', '_').replace('<', '_').replace('>', '_')
+        return sanitized.lower()
 
-        # Remove any remaining problematic characters
-        clean_label = ''.join(c for c in clean_label if c.isalnum() or c in '-_.')
+    def _load_dd_list(self) -> Dict[int, List[Dict]]:
+        """Load and parse DD list with REAL structure from dynamic_desirability/total.json"""
+        try:
+            lookup = load_dynamic_lookup()
+            result = {}
 
-        # Ensure not empty and not too long
-        clean_label = clean_label[:100] if clean_label else 'unknown'
+            # Handle the REAL format: list of aggregate objects
+            if isinstance(lookup, list):
+                for item in lookup:
+                    if not isinstance(item, dict) or 'params' not in item:
+                        continue
 
-        return clean_label
+                    params = item['params']
+                    platform = params.get('platform', '').lower()
+                    weight = item.get('weight', 1.0)
 
-    def partition_by_label_and_date(self, df: pd.DataFrame, source: int) -> Dict[str, Dict[str, pd.DataFrame]]:
-        """
-        Partition DataFrame by label and date with robust error handling
-        """
-        bt.logging.info(f"Partitioning {len(df)} rows by label and date")
+                    # Map platform to source integer
+                    if platform == 'reddit':
+                        source_int = DataSource.REDDIT.value
+                    elif platform in ['x', 'twitter']:
+                        source_int = DataSource.X.value
+                    else:
+                        continue
 
-        if df.empty:
+                    if source_int not in result:
+                        result[source_int] = []
+
+                    # Check if it's a label or keyword
+                    if params.get('label') and params.get('keyword') is None:
+                        # It's a label-based search
+                        result[source_int].append({
+                            "type": "label",
+                            "value": params['label'],
+                            "job_weight": weight
+                        })
+                    elif params.get('keyword'):
+                        # It's a keyword-based search
+                        result[source_int].append({
+                            "type": "keyword",
+                            "value": params['keyword'],
+                            "job_weight": weight
+                        })
+                    # If both label and keyword are null, skip this entry
+
+            # Handle old format for backward compatibility
+            elif isinstance(lookup, dict):
+                for source_key, items in lookup.items():
+                    # Map source names to integers
+                    if isinstance(source_key, str):
+                        if source_key.lower() == 'reddit':
+                            source_int = DataSource.REDDIT.value
+                        elif source_key.lower() in ['x', 'twitter']:
+                            source_int = DataSource.X.value
+                        else:
+                            continue
+                    else:
+                        source_int = source_key
+
+                    # Parse items - each can be label or keyword
+                    parsed_items = []
+                    for item in items:
+                        if isinstance(item, dict):
+                            if "label" in item:
+                                parsed_items.append({
+                                    "type": "label",
+                                    "value": item["label"],
+                                    "job_weight": item.get("job_weight", 1.0)
+                                })
+                            elif "keyword" in item:
+                                parsed_items.append({
+                                    "type": "keyword",
+                                    "value": item["keyword"],
+                                    "job_weight": item.get("job_weight", 1.0)
+                                })
+                        else:
+                            # Backward compatibility - treat as keyword
+                            parsed_items.append({
+                                "type": "keyword",
+                                "value": str(item),
+                                "job_weight": 1.0
+                            })
+
+                    result[source_int] = parsed_items
+
+            bt.logging.info(f"Loaded DD list: {result}")
+            bt.logging.info(f"Total items - Reddit: {len(result.get(1, []))}, X: {len(result.get(2, []))}")
+            return result
+
+        except Exception as e:
+            bt.logging.error(f"Failed to load DD list: {e}")
             return {}
+
+    def _get_processed_key(self, source: int, search_type: str, value: str) -> str:
+        """Get processed key for tracking completion"""
+        source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
+        sanitized_value = self._sanitize_label(value)
+        return f"{source_name}/{search_type}/{sanitized_value}"
+
+    def _get_label_data(self, source: int, label: str, offset: int = 0) -> pd.DataFrame:
+        """Get data matching exact label"""
+        # Normalize label for SQL query
+        normalized_label = label.lower().strip()
+
+        # Build label conditions based on source
+        if source == DataSource.REDDIT.value:
+            # For Reddit: check both with and without r/ prefix
+            label_conditions = [
+                f"LOWER(label) = '{normalized_label}'",
+                f"LOWER(label) = 'r/{normalized_label.removeprefix('r/')}'",
+            ]
+        else:
+            # For X: check hashtags with and without #
+            label_conditions = [
+                f"LOWER(label) = '{normalized_label}'",
+                f"LOWER(label) = '#{normalized_label.removeprefix('#')}'",
+            ]
+
+        label_condition_sql = " OR ".join(label_conditions)
+
+        query = f"""
+            SELECT uri, datetime, label, content
+            FROM DataEntity
+            WHERE source = ? AND ({label_condition_sql})
+            ORDER BY datetime ASC
+            LIMIT ? OFFSET ?
+        """
+        params = [source, self.chunk_size, offset]
 
         try:
-            # Add date column for partitioning
-            df['date_partition'] = df['datetime'].dt.strftime('%Y-%m-%d')
+            with self.get_db_connection() as conn:
+                df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
 
-            partitions = {}
-
-            # Group by label and date with error handling
-            for (label, date), group in df.groupby(['label', 'date_partition'], dropna=False):
-                try:
-                    clean_label = self.clean_label_for_path(label, source)
-
-                    if clean_label not in partitions:
-                        partitions[clean_label] = {}
-
-                    # Store the group (excluding our temporary date_partition column)
-                    partitions[clean_label][date] = group.drop('date_partition', axis=1).copy()
-
-                except Exception as e:
-                    bt.logging.warning(f"Error processing partition for label {label}, date {date}: {e}")
-                    continue
-
-            bt.logging.info(
-                f"Created {len(partitions)} label partitions with {sum(len(dates) for dates in partitions.values())} date partitions")
-            return partitions
+            bt.logging.debug(f"Found {len(df)} records for label '{label}' in source {source} (offset: {offset})")
+            return df
 
         except Exception as e:
-            bt.logging.error(f"Error in partitioning: {e}")
-            return {}
+            bt.logging.error(f"Error querying label data for {source}/{label}: {e}")
+            return pd.DataFrame()
 
-    @retry_upload(max_retries=5)  # More retries for reliability
-    def upload_partition_to_s3(self, df: pd.DataFrame, source_name: str, label: str, date: str,
-                               s3_creds: Dict[str, Any]) -> bool:
+    def _get_keyword_data_chunk(self, source: int, keyword: str, offset: int = 0) -> pd.DataFrame:
+        """Get chunk of data where keyword appears in text content"""
+        # Normalize keyword
+        normalized_keyword = keyword.lower().strip()
+
+        # Build content search conditions - focus on main text fields
+        if source == DataSource.REDDIT.value:
+            # Search Reddit body field specifically
+            content_conditions = [
+                f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
+                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
+            ]
+        else:
+            # Search X text field specifically
+            content_conditions = [
+                f"LOWER(JSON_EXTRACT(content, '$.text')) LIKE '%{normalized_keyword}%'"
+            ]
+
+        content_condition_sql = " OR ".join(content_conditions)
+
+        query = f"""
+            SELECT uri, datetime, label, content
+            FROM DataEntity
+            WHERE source = ? AND ({content_condition_sql})
+            ORDER BY datetime ASC
+            LIMIT ? OFFSET ?
         """
-        Upload a single partition to S3 with comprehensive error handling
-        """
+        params = [source, self.chunk_size, offset]
+
+        try:
+            with self.get_db_connection() as conn:
+                df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
+
+            bt.logging.debug(f"Found {len(df)} records for keyword '{keyword}' in source {source} (offset: {offset})")
+            return df
+
+        except Exception as e:
+            bt.logging.error(f"Error querying keyword data for {source}/{keyword}: {e}")
+            return pd.DataFrame()
+
+    def _create_raw_dataframe(self, df: pd.DataFrame, source: int) -> pd.DataFrame:
+        """Create raw dataframe with decoded content - NO ENCODING"""
         if df.empty:
-            bt.logging.warning(f"Empty partition for {source_name}/{label}/{date}, skipping")
+            return df
+
+        try:
+            # Decode content field to get the raw JSON data
+            def decode_content(content_bytes):
+                try:
+                    if isinstance(content_bytes, bytes):
+                        return json.loads(content_bytes.decode('utf-8'))
+                    return json.loads(content_bytes)
+                except:
+                    return {}
+
+            df['decoded_content'] = df['content'].apply(decode_content)
+
+            # Extract fields based on source type
+            if source == DataSource.REDDIT.value:
+                # Reddit data structure
+                result_df = pd.DataFrame({
+                    'uri': df['uri'],
+                    'datetime': df['datetime'],
+                    'label': df['label'],
+                    'id': df['decoded_content'].apply(lambda x: x.get('id')),
+                    'username': df['decoded_content'].apply(lambda x: x.get('username')),
+                    'communityName': df['decoded_content'].apply(lambda x: x.get('communityName')),
+                    'body': df['decoded_content'].apply(lambda x: x.get('body')),
+                    'title': df['decoded_content'].apply(lambda x: x.get('title')),
+                    'createdAt': df['decoded_content'].apply(lambda x: x.get('createdAt')),
+                    'dataType': df['decoded_content'].apply(lambda x: x.get('dataType')),
+                    'parentId': df['decoded_content'].apply(lambda x: x.get('parentId')),
+                    'url': df['decoded_content'].apply(lambda x: x.get('url'))
+                })
+            else:
+                # X/Twitter data structure
+                result_df = pd.DataFrame({
+                    'uri': df['uri'],
+                    'datetime': df['datetime'],
+                    'label': df['label'],
+                    'username': df['decoded_content'].apply(lambda x: x.get('username')),
+                    'text': df['decoded_content'].apply(lambda x: x.get('text')),
+                    'tweet_hashtags': df['decoded_content'].apply(lambda x: x.get('tweet_hashtags', [])),
+                    'timestamp': df['decoded_content'].apply(lambda x: x.get('timestamp')),
+                    'url': df['decoded_content'].apply(lambda x: x.get('url')),
+                    'media': df['decoded_content'].apply(lambda x: x.get('media')),
+                    'user_id': df['decoded_content'].apply(lambda x: x.get('user_id')),
+                    'user_display_name': df['decoded_content'].apply(lambda x: x.get('user_display_name')),
+                    'user_verified': df['decoded_content'].apply(lambda x: x.get('user_verified')),
+                    'tweet_id': df['decoded_content'].apply(lambda x: x.get('tweet_id')),
+                    'is_reply': df['decoded_content'].apply(lambda x: x.get('is_reply')),
+                    'is_quote': df['decoded_content'].apply(lambda x: x.get('is_quote')),
+                    'conversation_id': df['decoded_content'].apply(lambda x: x.get('conversation_id')),
+                    'in_reply_to_user_id': df['decoded_content'].apply(lambda x: x.get('in_reply_to_user_id'))
+                })
+
+            return result_df
+
+        except Exception as e:
+            bt.logging.error(f"Error creating raw dataframe: {e}")
+            return pd.DataFrame()
+
+    def _upload_data_chunk(self, df: pd.DataFrame, source: int, folder_name: str, s3_creds: Dict) -> bool:
+        """Upload a chunk of data to S3 with date partitioning"""
+        if df.empty:
             return True
 
-        local_path = None
         try:
-            # Generate unique filename with more entropy
-            timestamp = dt.datetime.utcnow().strftime('%Y%m%d_%H%M%S_%f')[:-3]  # Include milliseconds
-            filename = f"data_{timestamp}.parquet"
-
-            # Create local parquet file
-            local_path = os.path.join(self.output_dir, filename)
-
-            # Save with compression for efficiency
-            df.to_parquet(local_path, index=False, compression='snappy')
-
-            # Verify file was created and has reasonable size
-            if not os.path.exists(local_path):
-                raise Exception(f"Parquet file was not created: {local_path}")
-
-            file_size = os.path.getsize(local_path)
-            if file_size == 0:
-                raise Exception(f"Parquet file is empty: {local_path}")
-
-            # Create S3 key: source/coldkey/label/date/filename
-            s3_key = f"{source_name}/{self.miner_coldkey}/{label}/{date}/{filename}"
-
-            bt.logging.info(f"Uploading {len(df)} rows ({file_size / 1024 / 1024:.2f} MB) to {s3_key}")
-
-            # Upload using S3Auth
-            success = self.s3_auth.upload_file_with_key(local_path, s3_key, s3_creds)
-
-            if success:
-                bt.logging.info(f"✅ Successfully uploaded {s3_key}")
+            # Create raw dataframe (no encoding)
+            raw_df = self._create_raw_dataframe(df, source)
+            if raw_df.empty:
+                bt.logging.warning(f"No data after raw processing for {source}/{folder_name}")
                 return True
-            else:
-                bt.logging.error(f"❌ Failed to upload {s3_key}")
+
+            # Group by date for partitioning
+            raw_df['date'] = pd.to_datetime(raw_df['datetime']).dt.strftime('%Y-%m-%d')
+            date_groups = raw_df.groupby('date')
+
+            success = True
+            for date_str, date_df in date_groups:
+                # Create local parquet file
+                if not os.path.exists(self.output_dir):
+                    os.makedirs(self.output_dir, exist_ok=True)
+
+                # Generate filename with timestamp and record count
+                timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+                filename = f"data_{timestamp}_{len(date_df)}.parquet"
+                local_path = os.path.join(self.output_dir, filename)
+
+                # Save to parquet (drop the temp 'date' column)
+                date_df.drop('date', axis=1).to_parquet(local_path, index=False)
+
+                # Create S3 path with date folder structure
+                # Final structure: data/source/coldkey/label_keyword/YYYY-MM-DD/filename.parquet
+                s3_path = f"{folder_name}/{date_str}/{filename}"
+
+                # Upload to S3
+                upload_success = self.s3_auth.upload_file_with_path(local_path, s3_path, s3_creds)
+
+                if upload_success:
+                    bt.logging.success(f"Uploaded {len(date_df)} records to {date_str} folder")
+                else:
+                    bt.logging.error(f"Failed to upload {len(date_df)} records to {date_str}")
+                    success = False
+
+                # Clean up local file
+                if os.path.exists(local_path):
+                    os.remove(local_path)
+
+            return success
+
+        except Exception as e:
+            bt.logging.error(f"Error uploading data chunk: {e}")
+            return False
+
+    def _process_dd_item(self, source: int, dd_item: Dict, s3_creds: Dict) -> bool:
+        """Process a single DD item (label or keyword) - IMPROVED VERSION"""
+        search_type = dd_item["type"]
+        value = dd_item["value"]
+
+        processed_key = self._get_processed_key(source, search_type, value)
+
+        # Get the last processed offset (starts from 0 for new items)
+        offset = self._get_last_processed_offset(processed_key)
+
+        bt.logging.info(f"Processing {processed_key}, starting from offset: {offset}")
+
+        total_processed = 0
+
+        while True:
+            # Get next chunk based on search type
+            if search_type == "label":
+                chunk_df = self._get_label_data(source, value, offset)
+            else:  # keyword
+                chunk_df = self._get_keyword_data_chunk(source, value, offset)
+
+            if chunk_df.empty:
+                bt.logging.info(f"No new data for {processed_key}, total processed this run: {total_processed}")
+                break
+
+            # Create folder name with prefix: label_bitcoin or keyword_ethereum
+            sanitized_value = self._sanitize_label(value)
+            folder_name = f"{search_type}_{sanitized_value}"
+
+            # Upload chunk (will be partitioned by date inside this method)
+            success = self._upload_data_chunk(chunk_df, source, folder_name, s3_creds)
+            if not success:
+                bt.logging.error(f"Failed to upload chunk for {processed_key}")
                 return False
 
-        except Exception as e:
-            bt.logging.error(f"❌ Error uploading partition {source_name}/{label}/{date}: {e}")
-            return False
-        finally:
-            # Always clean up local file
-            if local_path and os.path.exists(local_path):
-                try:
-                    os.remove(local_path)
-                except Exception as e:
-                    bt.logging.warning(f"Could not remove local file {local_path}: {e}")
+            total_processed += len(chunk_df)
+            offset += len(chunk_df)
 
-    def upload_partitions_batch(self, partitions: Dict[str, Dict[str, pd.DataFrame]], source_name: str,
-                                s3_creds: Dict[str, Any]) -> int:
-        """
-        Upload a batch of partitions with progress tracking
-        """
-        total_uploaded = 0
-        partition_count = 0
+            # Update state after each successful chunk
+            self._update_processed_state(processed_key, offset, len(chunk_df))
+            self._save_processed_state()
 
-        for label, date_partitions in partitions.items():
-            for date, partition_df in date_partitions.items():
-                try:
-                    success = self.upload_partition_to_s3(partition_df, source_name, label, date, s3_creds)
-                    if success:
-                        total_uploaded += len(partition_df)
+            bt.logging.info(f"Processed {total_processed} new records for {processed_key}")
 
-                    partition_count += 1
+            # If we got less than chunk_size, we've reached the end for now
+            if len(chunk_df) < self.chunk_size:
+                break
 
-                    # Progress logging
-                    if partition_count % 10 == 0:
-                        bt.logging.info(f"Processed {partition_count} partitions, uploaded {total_uploaded} records")
+        return True
 
-                except Exception as e:
-                    bt.logging.error(f"Failed to process partition {label}/{date}: {e}")
+    def upload_dd_data(self) -> bool:
+        """Main method to upload ONLY DD data in partitioned format"""
+        bt.logging.info("Starting S3 partitioned upload for DD data only")
+
+        try:
+            # Load current DD list
+            dd_list = self._load_dd_list()
+            if not dd_list:
+                bt.logging.warning("No DD list found, skipping S3 partitioned upload")
+                return False
+
+            overall_success = True
+
+            # Process each source and DD items
+            for source, dd_items in dd_list.items():
+                source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
+                bt.logging.info(f"Processing DD data for source: {source_name}")
+
+                # Get S3 credentials for this source
+                s3_creds = self.s3_auth.get_credentials(
+                    source_name=source_name,
+                    subtensor=self.subtensor,
+                    wallet=self.wallet,
+                )
+
+                if not s3_creds:
+                    bt.logging.error(f"Failed to get S3 credentials for {source_name}")
+                    overall_success = False
                     continue
 
-        return total_uploaded
+                # Process each DD item (label or keyword)
+                for dd_item in dd_items:
+                    item_success = self._process_dd_item(source, dd_item, s3_creds)
+                    if not item_success:
+                        overall_success = False
 
-    def upload_source_data(self, source: int) -> int:
-        """
-        Upload all data for a specific source with full reliability features
-        """
-        source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
-        bt.logging.info(f"Starting upload for {source_name} data")
-
-        # Get S3 credentials for this source
-        s3_creds = self.s3_auth.get_credentials(
-            wallet=self.wallet,
-            source_name=source_name,
-            subtensor=self.subtensor
-        )
-
-        if not s3_creds:
-            bt.logging.error(f"Failed to get S3 credentials for {source_name}")
-            return 0
-
-        state = self.load_state()
-        last_upload = state['last_upload'].get(str(source))
-        total_uploaded = 0
-        batch_count = 0
-
-        # Session tracking
-        session_start = dt.datetime.utcnow()
-        session_id = session_start.strftime('%Y%m%d_%H%M%S')
-
-        try:
-            while True:
-                # Get chunk of data
-                df = self.get_data_for_upload(source, last_upload)
-
-                if df.empty:
-                    bt.logging.info(f"No more data to upload for {source_name}")
-                    break
-
-                # Partition by label and date
-                partitions = self.partition_by_label_and_date(df, source)
-
-                if not partitions:
-                    bt.logging.warning(f"No valid partitions created from {len(df)} rows")
-                    break
-
-                # Upload partitions in batch
-                chunk_uploaded = self.upload_partitions_batch(partitions, source_name, s3_creds)
-                total_uploaded += chunk_uploaded
-                batch_count += 1
-
-                # Update state after each successful batch
-                if not df.empty:
-                    last_upload = df['datetime'].max()
-                    state['last_upload'][str(source)] = last_upload
-                    state['total_rows_uploaded'][str(source)] += chunk_uploaded
-
-                    # Add session info
-                    state['upload_sessions'].append({
-                        'session_id': session_id,
-                        'source': source_name,
-                        'batch': batch_count,
-                        'records': chunk_uploaded,
-                        'timestamp': dt.datetime.utcnow().isoformat()
-                    })
-
-                    self.save_state(state)
-
-                bt.logging.info(f"Batch {batch_count}: Uploaded {chunk_uploaded} records. Total: {total_uploaded}")
-
-                # WAL management (same as original)
-                if batch_count % 10 == 0:
-                    with self.get_db_connection() as conn:
-                        self.manage_wal(conn)
-
-                # If we got less than chunk_size, we're done
-                if len(df) < self.chunk_size:
-                    break
+            bt.logging.info("Completed S3 partitioned upload")
+            return overall_success
 
         except Exception as e:
-            bt.logging.error(f"Error during {source_name} upload: {e}")
-            # Save error state
-            state['failed_partitions'].append({
-                'source': source_name,
-                'error': str(e),
-                'timestamp': dt.datetime.utcnow().isoformat()
-            })
-            self.save_state(state)
-            raise
-
-        bt.logging.success(f"Completed {source_name} upload. Total records: {total_uploaded}")
-        return total_uploaded
-
-    def run_upload(self) -> List[Dict[str, Any]]:
-        """
-        Run the complete partitioned upload process
-        Returns metadata similar to HF uploader for compatibility
-        """
-        bt.logging.info("🚀 Starting partitioned S3 upload process")
-
-        results = []
-        total_records = 0
-
-        try:
-            # Upload Reddit data
-            bt.logging.info("📱 Processing Reddit data...")
-            reddit_records = self.upload_source_data(DataSource.REDDIT.value)
-            total_records += reddit_records
-
-            if reddit_records > 0:
-                results.append({
-                    'source': DataSource.REDDIT.value,
-                    'records_uploaded': reddit_records,
-                    'updated_at': dt.datetime.utcnow(),
-                    'storage_type': 's3_partitioned'
-                })
-
-            # Upload X data
-            bt.logging.info("🐦 Processing X data...")
-            x_records = self.upload_source_data(DataSource.X.value)
-            total_records += x_records
-
-            if x_records > 0:
-                results.append({
-                    'source': DataSource.X.value,
-                    'records_uploaded': x_records,
-                    'updated_at': dt.datetime.utcnow(),
-                    'storage_type': 's3_partitioned'
-                })
-
-            bt.logging.success(f"🎉 Upload completed successfully!")
-            bt.logging.success(f"📊 Reddit: {reddit_records:,} records")
-            bt.logging.success(f"📊 X: {x_records:,} records")
-            bt.logging.success(f"📊 Total: {total_records:,} records")
-
-            # Final WAL cleanup
-            with self.get_db_connection() as conn:
-                self.manage_wal(conn)
-
-        except Exception as e:
-            bt.logging.error(f"❌ Upload failed: {e}")
-            raise
-
-        return results
-
-
-# Drop-in replacement function for existing code
-def upload_sql_to_s3_partitioned(db_path: str,
-                                 subtensor: bt.subtensor,
-                                 wallet: bt.wallet,
-                                 s3_auth_url: str,
-                                 state_file: str = "upload_state.json") -> List[Dict[str, Any]]:
-    """
-    Drop-in replacement for upload_sql_to_huggingface function
-    """
-    uploader = PartitionedS3Uploader(
-        db_path=db_path,
-        subtensor=subtensor,
-        wallet=wallet,
-        s3_auth_url=s3_auth_url,
-        state_file=state_file
-    )
-
-    return uploader.run_upload()
-
-
-def main():
-    """Example usage"""
-    # This replaces your DualUploader usage
-    uploader = PartitionedS3Uploader(
-        db_path="path/to/database.db",
-        subtensor=None,  # Your subtensor instance
-        wallet=None,  # Your wallet instance
-        s3_auth_url="https://your-auth-service.com",
-        state_file="upload_state.json"
-    )
-
-    results = uploader.run_upload()
-    print(f"Upload completed: {len(results)} sources processed")
-
-
-if __name__ == "__main__":
-    main()
+            bt.logging.error(f"Error in S3 partitioned upload: {e}")
+            return False

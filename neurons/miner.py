@@ -41,6 +41,7 @@ from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from upload_utils.huggingface_uploader import DualUploader
+from upload_utils.s3_uploader import S3PartitionedUploader
 from upload_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
@@ -65,7 +66,7 @@ class Miner:
 
         bt.logging(config=self.config, logging_dir=self.config.full_path)
         bt.logging.info(self.config)
-        self.use_hf_uploader = self.config.huggingface
+        self.use_uploader = self.config.use_uploader
         self.use_gravity_retrieval = self.config.gravity
 
         if self.config.offline:
@@ -73,7 +74,6 @@ class Miner:
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
             self.uid = 0  # Offline mode so assume it's == 0
-
         else:
             # The wallet holds the cryptographic key pairs for the miner.
             self.wallet = bt.wallet(config=self.config)
@@ -151,7 +151,7 @@ class Miner:
 
         bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
 
-        if self.use_hf_uploader:
+        if self.use_uploader:
             self.hf_uploader = DualUploader(
                 db_path=self.config.neuron.database_name,
                 encoding_key_manager=self.encoding_key_manager,
@@ -159,8 +159,14 @@ class Miner:
                 wallet=self.wallet,
                 subtensor=self.subtensor,
                 state_file=self.config.miner_upload_state_file,
-                s3_auth_url=self.config.s3_auth_url,
 
+            )
+            self.s3_partitioned_uploader = S3PartitionedUploader(
+                db_path=self.config.neuron.database_name,
+                subtensor=self.subtensor,
+                wallet=self.wallet,
+                s3_auth_url=self.config.s3_auth_url,
+                state_file=self.config.miner_upload_state_file,
             )
 
         # Instantiate storage.
@@ -249,11 +255,12 @@ class Miner:
                 time.sleep(300)  # Wait 5 minutes before trying again
 
     def upload_hugging_face(self):
-        if not self.use_hf_uploader:
+        """Going to be removed"""
+        if not self.use_uploader:
             bt.logging.info("HuggingFace Uploader is not enabled.")
             return
 
-        time_sleep_val = dt.timedelta(minutes=30).total_seconds()
+        time_sleep_val = dt.timedelta(minutes=190).total_seconds()
         time.sleep(time_sleep_val)
 
         while not self.should_exit:
@@ -269,6 +276,28 @@ class Miner:
 
             time_sleep_val = dt.timedelta(minutes=90).total_seconds()
             time.sleep(time_sleep_val)
+
+    def upload_s3_partitioned(self):
+        """Upload DD data to S3 in partitioned format"""
+        # Wait 10 minutes before starting first upload
+        time_sleep_val = dt.timedelta(minutes=1).total_seconds()
+        time.sleep(time_sleep_val)
+
+        while not self.should_exit:
+            try:
+                bt.logging.info("Starting S3 partitioned upload for DD data")
+                success = self.s3_partitioned_uploader.upload_dd_data()
+                if success:
+                    bt.logging.success("S3 partitioned upload completed successfully")
+                else:
+                    bt.logging.warning("S3 partitioned upload completed with some failures")
+            except Exception:
+                bt.logging.error(traceback.format_exc())
+
+            # Upload every 2 hours (more frequent than HF since it's smaller, focused dataset)
+            time_sleep_val = dt.timedelta(hours=2).total_seconds()
+            time.sleep(time_sleep_val)
+
     def run(self):
         """
         Initiates and manages the main loop for the miner.
@@ -348,14 +377,21 @@ class Miner:
                 target=self.refresh_index, daemon=True
             )
             self.compressed_index_refresh_thread.start()
-            self.hugging_face_thread = threading.Thread(
-                target=self.upload_hugging_face, daemon=True
-            )
-            self.hugging_face_thread.start()
             self.lookup_thread = threading.Thread(
                 target=self.get_updated_lookup, daemon=True
             )
             self.lookup_thread.start()
+
+            self.hugging_face_thread = threading.Thread(
+                target=self.upload_hugging_face, daemon=True
+            )
+            self.hugging_face_thread.start()
+
+            self.s3_partitioned_thread = threading.Thread(
+                target=self.upload_s3_partitioned, daemon=True
+            )
+            self.s3_partitioned_thread.start()
+
             self.is_running = True
             bt.logging.debug("Started")
 
@@ -368,6 +404,8 @@ class Miner:
             self.should_exit = True
             self.thread.join(5)
             self.compressed_index_refresh_thread.join(5)
+            self.s3_partitioned_thread.join(5)
+            self.lookup_thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped")
 
