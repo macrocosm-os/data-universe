@@ -483,7 +483,7 @@ class S3PartitionedUploader:
         return True
 
     def upload_dd_data(self) -> bool:
-        """Main method to upload ONLY DD data in partitioned format"""
+        """Main method to upload ONLY DD data in partitioned format - FIXED CREDENTIALS"""
         bt.logging.info("Starting S3 partitioned upload for DD data only")
 
         try:
@@ -493,30 +493,45 @@ class S3PartitionedUploader:
                 bt.logging.warning("No DD list found, skipping S3 partitioned upload")
                 return False
 
+            # Get credentials ONCE per source type (reddit and x)
+            credentials_cache = {}
+
+            # Pre-fetch credentials for each source that has DD items
+            for source in dd_list.keys():
+                source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
+
+                if source_name not in credentials_cache:
+                    bt.logging.info(f"Getting S3 credentials for {source_name} (valid for 3 hours)")
+                    s3_creds = self.s3_auth.get_credentials(
+                        source_name=source_name,
+                        subtensor=self.subtensor,
+                        wallet=self.wallet,
+                    )
+
+                    if s3_creds:
+                        credentials_cache[source_name] = s3_creds
+                        bt.logging.success(f"Got S3 credentials for {source_name}")
+                    else:
+                        bt.logging.error(f"Failed to get S3 credentials for {source_name}")
+                        return False
+
             overall_success = True
 
-            # Process each source and DD items
+            # Now process each source using cached credentials
             for source, dd_items in dd_list.items():
                 source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
-                bt.logging.info(f"Processing DD data for source: {source_name}")
+                bt.logging.info(f"Processing DD data for source: {source_name} ({len(dd_items)} items)")
 
-                # Get S3 credentials for this source
-                s3_creds = self.s3_auth.get_credentials(
-                    source_name=source_name,
-                    subtensor=self.subtensor,
-                    wallet=self.wallet,
-                )
+                # Use cached credentials
+                s3_creds = credentials_cache[source_name]
 
-                if not s3_creds:
-                    bt.logging.error(f"Failed to get S3 credentials for {source_name}")
-                    overall_success = False
-                    continue
-
-                # Process each DD item (label or keyword)
+                # Process ALL DD items for this source using the same credentials
                 for dd_item in dd_items:
                     item_success = self._process_dd_item(source, dd_item, s3_creds)
                     if not item_success:
                         overall_success = False
+
+                bt.logging.info(f"Completed processing all DD items for {source_name}")
 
             bt.logging.info("Completed S3 partitioned upload")
             return overall_success
