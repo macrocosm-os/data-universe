@@ -260,7 +260,7 @@ class Miner:
             bt.logging.info("HuggingFace Uploader is not enabled.")
             return
 
-        time_sleep_val = dt.timedelta(minutes=190).total_seconds()
+        time_sleep_val = dt.timedelta(minutes=60).total_seconds()
         time.sleep(time_sleep_val)
 
         while not self.should_exit:
@@ -280,7 +280,7 @@ class Miner:
     def upload_s3_partitioned(self):
         """Upload DD data to S3 in partitioned format"""
         # Wait 10 minutes before starting first upload
-        time_sleep_val = dt.timedelta(minutes=1).total_seconds()
+        time_sleep_val = dt.timedelta(minutes=20).total_seconds()
         time.sleep(time_sleep_val)
 
         while not self.should_exit:
