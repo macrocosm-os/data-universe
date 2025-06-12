@@ -3,7 +3,7 @@ version: '3.8'
 services:
   postgres:
     image: postgres:14
-    env_file: .postgres.env  # Reference external file
+    env_file: .postgres.env 
     ports:
       - "5432:5432"
     volumes:
@@ -17,7 +17,7 @@ services:
     deploy:
       resources:
         limits:
-          memory: 16G  # Adjust based on your VM's total RAM
+          memory: 16G
     command: >
       -c max_connections=200
       -c shared_buffers=2GB
@@ -33,4 +33,4 @@ services:
       -c checkpoint_timeout=30min
       -c max_wal_senders=0
       -c synchronous_commit=off
-      -c fsync=off  # If you can tolerate some risk of data loss on crash
+      -c fsync=off
