@@ -4,10 +4,6 @@ services:
   postgres:
     image: postgres:14
     env_file: .postgres.env  # Reference external file
-    environment:
-      POSTGRES_USER: bittensor
-      POSTGRES_PASSWORD: your_secure_password
-      POSTGRES_DB: bittensor
     ports:
       - "5432:5432"
     volumes:
