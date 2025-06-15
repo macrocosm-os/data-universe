@@ -38,8 +38,8 @@ from common.protocol import (
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
+from scraping.x.free_twitter_scraper import EnhancedFreeTwitterScraper
 from storage.miner.postgres_miner_storage import PostgresMinerStorage
-from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from huggingface_utils.huggingface_uploader import DualUploader
 from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
@@ -50,7 +50,8 @@ from common.protocol import OnDemandRequest
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, ScraperId
 
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
+# from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
+
 import json
 
 from dotenv import load_dotenv
@@ -562,7 +563,7 @@ class Miner:
             # Get appropriate scraper from provider
             scraper_id = None
             if synapse.source == DataSource.X:
-                scraper_id = ScraperId.X_APIDOJO
+                scraper_id = ScraperId.X_FREE
                 # For X, combine keywords and usernames with appropriate label formatting
                 labels = []
                 if synapse.keywords:
@@ -617,7 +618,7 @@ class Miner:
             if synapse.source == DataSource.X:
                 # Initialize the enhanced scraper directly instead of using the provider
 
-                enhanced_scraper = EnhancedApiDojoTwitterScraper()
+                enhanced_scraper = EnhancedFreeTwitterScraper()
                 await enhanced_scraper.scrape(config)
 
                 # Get enhanced content

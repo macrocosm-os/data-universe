@@ -1,4 +1,3 @@
-apify-client==1.6.1
 asyncpraw==7.8.0
 bittensor==9.7.0
 jupyter==1.0.0

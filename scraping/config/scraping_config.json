@@ -1,7 +1,7 @@
 {
     "scraper_configs": [
         {
-            "scraper_id": "X.apidojo",
+            "scraper_id": "X.free",
             "cadence_seconds": 300,
             "labels_to_scrape": [
                 {

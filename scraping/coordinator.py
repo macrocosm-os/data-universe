@@ -12,7 +12,8 @@ from common.date_range import DateRange
 from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScrapeConfig, ScraperId
-from storage.miner.miner_storage import MinerStorage
+# from storage.miner.miner_storage import MinerStorage
+from storage.miner.postgres_miner_storage import PostgresMinerStorage
 
 
 class LabelScrapingConfig(StrictBaseModel):
@@ -180,7 +181,7 @@ class ScraperCoordinator:
     def __init__(
         self,
         scraper_provider: ScraperProvider,
-        miner_storage: MinerStorage,
+        miner_storage: PostgresMinerStorage,
         config: CoordinatorConfig,
     ):
         self.provider = scraper_provider
