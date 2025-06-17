@@ -17,7 +17,8 @@ class ScraperId(str, Enum):
     X_MICROWORLDS = "X.microworlds"
     X_APIDOJO = "X.apidojo"
     X_QUACKER = "X.quacker"
-    YOUTUBE_TRANSCRIPT = "YouTube.transcript"
+    YOUTUBE_CUSTOM_TRANSCRIPT = "YouTube.custom.transcript"
+    YOUTUBE_APIFY_TRANSCRIPT = "YouTube.apify.transcript"
 
 
 class ValidationResult(StrictBaseModel):
