@@ -64,13 +64,14 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
 
 def create_job_key(job_params: Dict[str, Any]) -> tuple[Optional[str], str, Optional[str], Optional[str], Optional[str]]:
     """Create a unique key that includes all job parameters including datetime fields."""
-    return (
+    key = (
         job_params.get("keyword"),
         job_params.get("platform"), 
         job_params.get("label"),
         job_params.get("post_start_datetime"),
         job_params.get("post_end_datetime")
     )
+    return key
 
 
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
@@ -237,13 +238,14 @@ def to_lookup(json_path: str):
         # Create JobMatcher for this platform
         job_matcher = JobMatcher(jobs=[
             Job(
+                id=job.get('id'),  # Preserve job ID
                 keyword=job['params'].get('keyword'),  # Use get() with default None to handle missing keys
                 label=job['params'].get('label'),      # Use label as label
                 job_weight=job['weight'],
                 # Convert datetime strings to time bucket IDs during initial parsing
                 start_timebucket=datetime_to_timebucket(job['params'].get('post_start_datetime')),
                 end_timebucket=datetime_to_timebucket(job['params'].get('post_end_datetime'))
-            ) for job in platform_jobs
+            ) for i, job in enumerate(platform_jobs)
         ])
         
         # Create DataSourceDesirability object and add to distribution
