@@ -43,11 +43,6 @@ class YouTubeContent(BaseModel):
         description="The URL of the YouTube video"
     )
 
-    language: str = Field(
-        description="The language of the transcript",
-        default="en"
-    )
-
     duration_seconds: int = Field(
         description="The duration of the video in seconds",
         default=0
