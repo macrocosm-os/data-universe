@@ -62,12 +62,23 @@ def get_json(commit_sha: str, filename: str) -> Optional[Dict[str, Any]]:
         os.chdir(original_dir)
 
 
+def create_job_key(job_params: Dict[str, Any]) -> tuple[Optional[str], str, Optional[str], Optional[str], Optional[str]]:
+    """Create a unique key that includes all job parameters including datetime fields."""
+    return (
+        job_params.get("keyword"),
+        job_params.get("platform"), 
+        job_params.get("label"),
+        job_params.get("post_start_datetime"),
+        job_params.get("post_end_datetime")
+    )
+
+
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
                             total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
     """Calculate total weights and write to total.json using the new job-based format.
     Compatible with both old label_weights format and new job-based format.
     Preserves first submitter's custom IDs (or uses default)."""
-    aggregated_jobs = {}  # Using key (keyword, platform, label) to track unique jobs
+    aggregated_jobs = {}  # Using complete job key to track unique jobs
     job_ids = {}  # Track the first ID for each job key
     subnet_weight = 1 - total_vali_weight
     normalizer = subnet_weight / AMPLICATION_FACTOR
@@ -105,7 +116,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 bt.logging.warning(f"Skipping malformed default job: {job}")
                 continue
                 
-            job_key = (job["params"]["keyword"], job["params"]["platform"], job["params"]["label"])
+            job_key = create_job_key(job["params"])
             # Store the ID from default jobs (or generate one if missing)
             job_ids[job_key] = job.get("id", f"default_{len(job_ids)}")
             aggregated_jobs[job_key] = {
@@ -138,7 +149,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                     platform = source["source_name"]
                     for label, weight in source["label_weights"].items():
                         converted_jobs.append({
-                            "id": f"{hotkey}_{len(converted_jobs)}",  # Generate ID for converted jobs
+                            "id": f"aggregate_{len(converted_jobs)}",  # Generate ID for converted jobs
                             "params": {
                                 "keyword": None,
                                 "platform": platform,
@@ -149,7 +160,6 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                             "weight": weight
                         })
                 validator_json = converted_jobs
-                bt.logging.info(f"Converted validator {hotkey} submission from old format to new job-based format")
         
         # Process each job from the validator
         for job in validator_json:
@@ -162,11 +172,11 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 continue
                 
             job_weight = job.get("weight", 1.0)
-            job_key = (job["params"]["keyword"], job["params"]["platform"], job["params"]["label"])
+            job_key = create_job_key(job["params"])
             
             # Store the first ID we encounter for this job key (to preserve custom IDs)
             if job_key not in job_ids:
-                job_ids[job_key] = job.get("id", f"validator_{hotkey}_{len(job_ids)}")
+                job_ids[job_key] = job.get("id", f"aggregate_{len(job_ids)}")
             
             weighted_job_value = vali_weight * job_weight / normalizer
             
