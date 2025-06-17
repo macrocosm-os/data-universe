@@ -11,7 +11,7 @@ Miners do not require a GPU and should be able to run on a low-tier machine, as 
 # Getting Started
 
 ## Prerequisites
-1. As of Dec 17th 2023, we support Twitter and Reddit scraping via Apify so you'll need to [setup your Apify API token](apify.md). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. To support YouTube Scraping via a [official youtube api](youtube.md) which is completely free. 
+1. As of Dec 17th 2023, we support Twitter and Reddit scraping via Apify. You can [setup your Apify API token here](apify.md), or build your own custom scraper (recommended). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. To support YouTube Scraping via a [official youtube api](youtube.md) which is completely free. 
 
 
 2. Clone the repo
