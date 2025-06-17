@@ -9,7 +9,7 @@ import requests
 import pandas as pd
 from datasets import load_dataset
 import itertools
-from huggingface_utils.encoding_system import EncodingKeyManager, decode_url
+from upload_utils.encoding_system import EncodingKeyManager, decode_url
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 
 

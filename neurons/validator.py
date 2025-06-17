@@ -676,8 +676,8 @@ class Validator:
                         uid = selected_miners[i]
                         hotkey = self.metagraph.hotkeys[uid]
                         
-                        # Check if response exists and has a valid status
-                        if response is not None and hasattr(response, 'status'):
+                        # Check if response exists
+                        if response is not None and hasattr(response, 'data'):
                             data = getattr(response, 'data', [])
                             data_count = len(data) if data else 0
                             
