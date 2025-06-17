@@ -125,9 +125,22 @@ class JobParams(BaseModel):
 
 class Job(BaseModel):
     """Model for a job in the new format"""
-    id: str = Field(description="Unique identifier for the job")
+
+    id: str = Field(
+        max_length=64,
+        description="Unique identifier for the job. Must be 100 characters or less with no slashes."
+    )
     weight: float = Field(gt=0, description="Weight for the job (positive float)")
     params: JobParams = Field(description="Job parameters")
+
+    @field_validator('id')
+    @classmethod
+    def validate_id_no_slashes(cls, v: str) -> str:
+        if '/' in v:
+            raise ValueError('Job ID cannot contain forward slashes')
+        if '\\' in v:
+            raise ValueError('Job ID cannot contain backslashes')
+        return v
 
 
 class PreferencesData(BaseModel):
