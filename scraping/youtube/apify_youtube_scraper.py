@@ -361,10 +361,14 @@ class YouTubeApifyTranscriptScraper(Scraper):
                     for segment in transcript_data:
                         if isinstance(segment, dict) and 'text' in segment and segment['text']:
                             try:
+                                start_time = float(segment.get('start', 0))
+                                duration = float(segment.get('dur', 0))
+                                end_time = start_time + duration
+
                                 processed_segment = {
-                                    'text': str(segment['text']).strip(),
-                                    'start': float(segment.get('start', 0)),
-                                    'duration': float(segment.get('dur', 0))
+                                    'start': start_time,
+                                    'end': end_time,  # Convert dur to end time for consistency
+                                    'text': str(segment['text']).strip()
                                 }
                                 transcript_segments.append(processed_segment)
                             except (ValueError, TypeError) as e:
@@ -375,10 +379,14 @@ class YouTubeApifyTranscriptScraper(Scraper):
                 # Also handle direct format (in case the actor response changes)
                 elif isinstance(item, dict) and 'text' in item and item['text']:
                     try:
+                        start_time = float(item.get('start', 0))
+                        duration = float(item.get('dur', 0))
+                        end_time = start_time + duration
+
                         segment = {
-                            'text': str(item['text']).strip(),
-                            'start': float(item.get('start', 0)),
-                            'duration': float(item.get('dur', 0))
+                            'start': start_time,
+                            'end': end_time,
+                            'text': str(item['text']).strip()
                         }
                         transcript_segments.append(segment)
                     except (ValueError, TypeError) as e:
@@ -653,16 +661,18 @@ class YouTubeApifyTranscriptScraper(Scraper):
 
         # Create a compressed transcript with fewer entries
         compressed_transcript = []
-        total_duration = content.duration_seconds or sum(item.get('duration', 0) for item in content.transcript)
+        total_duration = content.duration_seconds or sum(
+            item.get('end', 0) - item.get('start', 0) for item in content.transcript)
 
         if chunks and total_duration > 0:
             chunk_duration = total_duration / len(chunks)
 
             for i, chunk in enumerate(chunks):
+                start_time = i * chunk_duration
                 compressed_transcript.append({
-                    'text': chunk,
-                    'start': i * chunk_duration,
-                    'duration': chunk_duration
+                    'start': start_time,
+                    'end': start_time + chunk_duration,
+                    'text': chunk
                 })
 
         # Return the content with compressed transcript
