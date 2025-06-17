@@ -8,6 +8,7 @@ from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.x.quacker_url_scraper import QuackerUrlScraper
 from scraping.youtube.youtube_custom_scraper import YouTubeTranscriptScraper
+from scraping.youtube.apify_youtube_scraper import YouTubeApifyTranscriptScraper
 
 
 DEFAULT_FACTORIES = {
@@ -18,7 +19,8 @@ DEFAULT_FACTORIES = {
     ScraperId.X_MICROWORLDS: MicroworldsTwitterScraper,
     ScraperId.X_APIDOJO: ApiDojoTwitterScraper,
     ScraperId.X_QUACKER: QuackerUrlScraper,
-    ScraperId.YOUTUBE_TRANSCRIPT: YouTubeTranscriptScraper
+    ScraperId.YOUTUBE_CUSTOM_TRANSCRIPT: YouTubeTranscriptScraper,
+    ScraperId.YOUTUBE_APIFY_TRANSCRIPT : YouTubeApifyTranscriptScraper
 }
 
 

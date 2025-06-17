@@ -89,7 +89,7 @@ def _choose_scrape_configs(
         max_age_minutes = label_config.max_age_hint_minutes
 
         # For YouTube transcript scraper, use a wider date range
-        if scraper_id == ScraperId.YOUTUBE_TRANSCRIPT:
+        if scraper_id == ScraperId.YOUTUBE_APIFY_TRANSCRIPT:
             # Calculate the start time using max_age_minutes
             start_time = now - dt.timedelta(minutes=max_age_minutes)
 
