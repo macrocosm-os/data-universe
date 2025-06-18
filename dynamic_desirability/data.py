@@ -127,8 +127,8 @@ class Job(BaseModel):
     """Model for a job in the new format"""
 
     id: str = Field(
-        max_length=64,
-        description="Unique identifier for the job. Must be 100 characters or less with no slashes."
+        max_length=80,
+        description="Unique identifier for the job. Must be 80 characters or less with no slashes."
     )
     weight: float = Field(gt=0, description="Weight for the job (positive float)")
     params: JobParams = Field(description="Job parameters")
