@@ -10,6 +10,10 @@ class Job(StrictBaseModel):
     """Information associated with one incentivized submission in Dynamic Desirability"""
     model_config = ConfigDict(frozen=True)
 
+    id: str = Field(
+        description="Unique identifier for the job."
+    )
+
     keyword: Optional[str] = Field(
         description="Optionally, the keyword associated with the job."
     )
@@ -53,7 +57,7 @@ class Job(StrictBaseModel):
    
     def __str__(self) -> str:
         return (
-            f"Job(keyword={self.keyword!r}, label={self.label!r}, weight={self.job_weight}, "
+            f"Job(id={self.id!r}, keyword={self.keyword!r}, label={self.label!r}, weight={self.job_weight}, "
             f"start={self.start_timebucket}, end={self.end_timebucket})"
         )
 
@@ -63,6 +67,7 @@ class Job(StrictBaseModel):
     def to_primitive(self) -> dict:
         """Convert to primitive dictionary representation"""
         return {
+            "id": self.id,
             "keyword": self.keyword,
             "label": self.label,
             "job_weight": self.job_weight,
@@ -272,11 +277,16 @@ class PrimitiveDataSourceDesirability:
         
         # Build lookup structure
         self._job_dict = {}
+        self._job_id_dict = {}  # Map job ID to job data 
+        
         for job in jobs:
             key = (job["keyword"], job["label"])  
             if key not in self._job_dict:
                 self._job_dict[key] = []
             self._job_dict[key].append(job)
+            
+            if "id" in job:
+                self._job_id_dict[job["id"]] = job
     
     def find_matching_jobs(self, data_keyword: str, data_label: str, data_timebucket: int) -> List[dict]:
         """Find matching jobs using the optimized lookup structure with time buckets.
@@ -287,7 +297,7 @@ class PrimitiveDataSourceDesirability:
             data_timebucket: The time bucket ID of the data
             
         Returns:
-            List of matching job dictionaries
+            List of matching job dictionaries (including job IDs)
         """
         key = (data_keyword, data_label)
         
@@ -312,7 +322,10 @@ class PrimitiveDataSourceDesirability:
             matching_jobs.append(job)
         
         return matching_jobs
-
+    
+    def get_job_by_id(self, job_id: str) -> Optional[dict]:
+        """Get job data by job ID"""
+        return self._job_id_dict.get(job_id)
 
 class PrimitiveDataDesirabilityLookup:
     """A performance-optimized version of DataDesirabilityLookup."""

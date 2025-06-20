@@ -125,9 +125,22 @@ class JobParams(BaseModel):
 
 class Job(BaseModel):
     """Model for a job in the new format"""
-    id: str = Field(description="Unique identifier for the job")
+
+    id: str = Field(
+        max_length=80,
+        description="Unique identifier for the job. Must be 80 characters or less with no slashes."
+    )
     weight: float = Field(gt=0, description="Weight for the job (positive float)")
     params: JobParams = Field(description="Job parameters")
+
+    @field_validator('id')
+    @classmethod
+    def validate_id_no_slashes(cls, v: str) -> str:
+        if '/' in v:
+            raise ValueError('Job ID cannot contain forward slashes')
+        if '\\' in v:
+            raise ValueError('Job ID cannot contain backslashes')
+        return v
 
 
 class PreferencesData(BaseModel):
@@ -162,6 +175,13 @@ class PreferencesData(BaseModel):
             try:
                 # This will raise validation errors for invalid jobs
                 jobs = [Job.model_validate(job) for job in data]
+                
+                # Check for unique job IDs
+                job_ids = [job.id for job in jobs]
+                if len(job_ids) != len(set(job_ids)):
+                    duplicates = [job_id for job_id in set(job_ids) if job_ids.count(job_id) > 1]
+                    raise ValueError(f"Duplicate job IDs found: {duplicates}")
+                
                 return cls._normalize_job_weights(jobs)
             except Exception as e:
                 bt.logging.error(f"Error validating jobs: {str(e)}")
@@ -183,7 +203,7 @@ class PreferencesData(BaseModel):
                             valid_sources.append(valid_source)
                     except Exception as e:
                         bt.logging.warning(f"Skipping invalid source: {str(e)}")
-                
+
                 # Convert to new format
                 return cls._convert_to_new_format(valid_sources, hotkey)
             except Exception as e:
