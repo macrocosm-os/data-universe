@@ -53,7 +53,7 @@
             ]
         },
         {
-            "scraper_id": "YouTube.transcript",
+            "scraper_id": "YouTube.apify.transcript",
             "cadence_seconds": 100,
             "labels_to_scrape": [
                 {
