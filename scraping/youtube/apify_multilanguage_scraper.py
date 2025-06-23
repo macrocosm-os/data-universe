@@ -22,7 +22,7 @@ class YouTubeApifyMultilingualScraper(Scraper):
     """
     YouTube scraper using the new Apify actor (I4braoOCJE7dh3lUS).
     This actor provides complete video metadata and transcript extraction with translation capabilities.
-    No external YouTube API needed - everything comes from Apify.
+    Updated to get only manual transcripts in the miner-specified language.
     """
 
     # New Apify actor ID for multilingual YouTube transcript scraper
@@ -37,10 +37,18 @@ class YouTubeApifyMultilingualScraper(Scraper):
     # Timeout for Apify actor runs
     APIFY_TIMEOUT_SECS = 180
 
-    def __init__(self, runner: ActorRunner = None):
-        """Initialize the Multilingual YouTube Transcript Scraper."""
+    def __init__(self, runner: ActorRunner = None, preferred_language: str = "en"):
+        """Initialize the Multilingual YouTube Transcript Scraper.
+
+        Args:
+            runner: ActorRunner instance
+            preferred_language: Language code for manual transcripts (e.g., 'en', 'es', 'fr', 'ru')
+        """
         # Initialize Apify runner
         self.runner = runner or ActorRunner()
+
+        # Store the preferred language for manual transcripts
+        self.preferred_language = preferred_language
 
         # Track rate limits to avoid API throttling
         self.last_request_time = dt.datetime.now(dt.timezone.utc) - dt.timedelta(seconds=2)
@@ -153,7 +161,7 @@ class YouTubeApifyMultilingualScraper(Scraper):
                     continue
 
                 # Get the actual language code from video_data
-                language = video_data.get('language', 'en')
+                language = video_data.get('language', self.preferred_language)
 
                 # Create the content object with language field
                 content = YouTubeContent(
@@ -202,40 +210,36 @@ class YouTubeApifyMultilingualScraper(Scraper):
             "Channel scraping not implemented with current Apify actor - it only handles individual video URLs")
         return []
 
-    async def _get_video_data_apify(self, video_id: str, preferred_languages: Optional[List[str]] = None) -> Optional[
-        Dict[str, Any]]:
+    async def _get_video_data_apify(self, video_id: str) -> Optional[Dict[str, Any]]:
         """
-        Get complete video data (metadata + transcript) for a YouTube video using the multilingual Apify actor.
+        Get complete video data (metadata + manual transcript only) for a YouTube video
+        using the multilingual Apify actor.
 
         Args:
             video_id: YouTube video ID
-            preferred_languages: List of preferred languages for transcript
 
         Returns:
-            Dictionary containing video data and transcript or None if unavailable
+            Dictionary containing video data and manual transcript or None if unavailable
         """
         try:
             # Construct the full YouTube URL - this is what the Apify actor expects
             video_url = self._construct_youtube_url(video_id)
 
-            # Prepare the run input
+            # Prepare the run input - ONLY request original language transcripts (manual)
             run_input = {
-                "url": video_url
+                "url": video_url,
+                "preferredOrigLang": [self.preferred_language],  # Only get manual transcripts in this language
+                "preferredLangs": []  # Don't get any translated transcripts
             }
-
-            # Add language preferences if specified
-            if preferred_languages:
-                run_input["preferredOrigLang"] = [lang.lower() for lang in preferred_languages]
-                run_input["preferredLangs"] = [lang.lower() for lang in preferred_languages]
 
             run_config = RunConfig(
                 actor_id=self.YOUTUBE_ENHANCED_ACTOR_ID,
-                debug_info=f"Multilingual video data for {video_id} ({video_url})",
+                debug_info=f"Manual transcript for {video_id} in {self.preferred_language} ({video_url})",
                 max_data_entities=1,  # We only expect one video result
                 timeout_secs=self.APIFY_TIMEOUT_SECS
             )
 
-            bt.logging.info(f"Getting video data for {video_id} using Apify actor with URL: {video_url}")
+            bt.logging.info(f"Getting manual transcript for {video_id} in language {self.preferred_language}")
 
             # Run the actor
             dataset = await self.runner.run(run_config, run_input)
@@ -249,33 +253,35 @@ class YouTubeApifyMultilingualScraper(Scraper):
             # Process the video data - should be a single item
             for item in dataset:
                 if isinstance(item, dict):
-                    # Extract transcript data and language
+                    # Extract manual transcript data ONLY from original_transcripts
                     transcript_segments = []
-                    language = 'en'  # default
+                    language = self.preferred_language  # Use the language we requested
 
-                    # Get the original language from original_transcripts
+                    # ONLY get the manual transcript from original_transcripts
                     # original_transcripts is a dict like {'ru': [transcript_segments], 'en': [transcript_segments]}
                     if 'original_transcripts' in item and item['original_transcripts']:
                         original_transcripts = item['original_transcripts']
                         if isinstance(original_transcripts, dict):
-                            # Get the first (and likely only) language key
-                            language_keys = list(original_transcripts.keys())
-                            if language_keys:
-                                language = language_keys[0]  # Use the actual language code like 'ru', 'en', etc.
-                                transcript_data = original_transcripts[language]
+                            # Try to get the preferred language first
+                            if self.preferred_language in original_transcripts:
+                                language = self.preferred_language
+                                transcript_data = original_transcripts[self.preferred_language]
+                                bt.logging.info(
+                                    f"Found manual transcript in preferred language: {self.preferred_language}")
                             else:
-                                transcript_data = []
+                                # If preferred language not available, log available languages and skip
+                                available_langs = list(original_transcripts.keys())
+                                bt.logging.warning(
+                                    f"Preferred language {self.preferred_language} not available for video {video_id}. "
+                                    f"Available languages: {available_langs}. Skipping video."
+                                )
+                                return None
                         else:
-                            transcript_data = []
-                    # Fall back to translated if no original available
-                    elif 'translated_transcript' in item and item['translated_transcript']:
-                        transcript_data = item['translated_transcript']
-                        # Use translated_language if available, otherwise keep default
-                        if 'translated_language' in item:
-                            language = item['translated_language']
+                            bt.logging.warning(f"original_transcripts is not a dict for video {video_id}")
+                            return None
                     else:
-                        bt.logging.warning(f"No transcript data found in item for video {video_id}")
-                        transcript_data = []
+                        bt.logging.warning(f"No manual transcripts found for video {video_id}")
+                        return None
 
                     # Process transcript segments if available
                     for segment in transcript_data:
@@ -297,6 +303,10 @@ class YouTubeApifyMultilingualScraper(Scraper):
                                     f"Error parsing transcript segment for video {video_id}: {e}, segment: {segment}")
                                 continue
 
+                    if not transcript_segments:
+                        bt.logging.warning(f"No valid transcript segments found for video {video_id}")
+                        return None
+
                     # Return structured data with all metadata from Apify
                     result = {
                         'video_id': item.get('video_id', video_id),
@@ -311,7 +321,7 @@ class YouTubeApifyMultilingualScraper(Scraper):
                     }
 
                     bt.logging.info(
-                        f"Retrieved video data for {video_id}: {len(transcript_segments)} transcript segments, language: {language}")
+                        f"Retrieved manual transcript for {video_id}: {len(transcript_segments)} segments, language: {language}")
                     return result
 
             bt.logging.warning(f"No valid video data found in any items for video {video_id}")
@@ -613,18 +623,21 @@ class YouTubeApifyMultilingualScraper(Scraper):
 
         # Check channel ID (must match exactly)
         if apify_data.get('channel_id', '') != content_to_validate.channel_id:
-            bt.logging.info(f"Channel ID mismatch: '{apify_data.get('channel_id', '')}' vs '{content_to_validate.channel_id}'")
+            bt.logging.info(
+                f"Channel ID mismatch: '{apify_data.get('channel_id', '')}' vs '{content_to_validate.channel_id}'")
             return False
 
         # Check channel name (allow for minor differences)
         if not self._texts_are_similar(apify_data.get('channel_name', ''), content_to_validate.channel_name,
                                        threshold=0.8):
-            bt.logging.info(f"Channel name mismatch: '{apify_data.get('channel_name', '')}' vs '{content_to_validate.channel_name}'")
+            bt.logging.info(
+                f"Channel name mismatch: '{apify_data.get('channel_name', '')}' vs '{content_to_validate.channel_name}'")
             return False
 
         # Check language (must match exactly for language codes)
-        if apify_data.get('language', 'en') != content_to_validate.language:
-            bt.logging.info(f"Language mismatch: '{apify_data.get('language', 'en')}' vs '{content_to_validate.language}'")
+        if apify_data.get('language', self.preferred_language) != content_to_validate.language:
+            bt.logging.info(
+                f"Language mismatch: '{apify_data.get('language', self.preferred_language)}' vs '{content_to_validate.language}'")
             return False
 
         return True
@@ -785,8 +798,8 @@ class YouTubeApifyMultilingualScraper(Scraper):
 
 async def test_scrape_video():
     """Test function for scraping a specific video."""
-    # Create an instance of the scraper
-    scraper = YouTubeApifyMultilingualScraper()
+    # Create an instance of the scraper with preferred language
+    scraper = YouTubeApifyMultilingualScraper(preferred_language="en")
 
     # Test video ID (Rick Astley - Never Gonna Give You Up)
     video_id = "dQw4w9WgXcQ"
@@ -817,7 +830,7 @@ async def test_scrape_video():
 async def test_validate_entity(entity: DataEntity):
     """Test function for validating a specific entity."""
     # Create an instance of the scraper
-    scraper = YouTubeApifyMultilingualScraper()
+    scraper = YouTubeApifyMultilingualScraper(preferred_language="en")
 
     # Validate the entity
     results = await scraper.validate([entity])
@@ -845,21 +858,62 @@ async def test_full_pipeline():
     bt.logging.info("\nAll tests completed!")
 
 
+async def test_multilingual_scraping():
+    """Test scraping videos in different languages."""
+    test_videos = {
+        "dQw4w9WgXcQ": "en",  # English video
+        "kJQP7kiw5Fk": "es",  # Spanish video (example)
+        "rYEDA3JcQqw": "fr",  # French video (example)
+    }
+
+    date_range = DateRange(
+        start=dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+        end=dt.datetime.now(dt.timezone.utc)
+    )
+
+    for video_id, language in test_videos.items():
+        bt.logging.info(f"\nTesting video {video_id} with language {language}")
+
+        # Create scraper with specific language preference
+        scraper = YouTubeApifyMultilingualScraper(preferred_language=language)
+
+        try:
+            entities = await scraper._scrape_video_ids([video_id], date_range)
+
+            if entities:
+                content = YouTubeContent.from_data_entity(entities[0])
+                bt.logging.info(f"✅ Successfully scraped {video_id}")
+                bt.logging.info(f"   Title: {content.title}")
+                bt.logging.info(f"   Language: {content.language}")
+                bt.logging.info(f"   Transcript segments: {len(content.transcript)}")
+                if content.transcript:
+                    bt.logging.info(f"   Sample text: {content.transcript[0]['text'][:100]}...")
+            else:
+                bt.logging.warning(f"❌ No transcript found for {video_id} in language {language}")
+
+        except Exception as e:
+            bt.logging.error(f"❌ Error scraping {video_id}: {str(e)}")
+
+
 # Menu-based test runner
 async def main():
-    print("\nMultilingual YouTube Apify Multilingual Transcript Scraper - Test Menu")
+    print("\nMultilingual YouTube Apify Transcript Scraper - Test Menu")
     print("=" * 70)
     print("1. Run full pipeline test (default video)")
     print("2. Scrape a specific video (provide video ID)")
-    print("3. Exit")
+    print("3. Test multilingual scraping")
+    print("4. Test with custom language")
+    print("5. Exit")
 
-    choice = input("\nEnter your choice (1-3): ")
+    choice = input("\nEnter your choice (1-5): ")
 
     if choice == "1":
         await test_full_pipeline()
     elif choice == "2":
         video_id = input("Enter YouTube video ID: ")
-        scraper = YouTubeApifyMultilingualScraper()
+        language = input("Enter language code (e.g., 'en', 'es', 'fr', 'ru') [default: en]: ").strip() or "en"
+
+        scraper = YouTubeApifyMultilingualScraper(preferred_language=language)
         date_range = DateRange(
             start=dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
             end=dt.datetime.now(dt.timezone.utc)
@@ -875,7 +929,47 @@ async def main():
             print(f"Transcript segments: {len(content.transcript)}")
             if content.transcript:
                 print(f"Sample text: {content.transcript[0]['text'][:200]}...")
+        else:
+            print(f"No manual transcript found for video {video_id} in language {language}")
     elif choice == "3":
+        await test_multilingual_scraping()
+    elif choice == "4":
+        language = input("Enter language code (e.g., 'en', 'es', 'fr', 'ru'): ").strip()
+        if not language:
+            print("Invalid language code")
+            return
+
+        video_id = input("Enter YouTube video ID: ").strip()
+        if not video_id:
+            print("Invalid video ID")
+            return
+
+        scraper = YouTubeApifyMultilingualScraper(preferred_language=language)
+        date_range = DateRange(
+            start=dt.datetime(2000, 1, 1, tzinfo=dt.timezone.utc),
+            end=dt.datetime.now(dt.timezone.utc)
+        )
+
+        try:
+            entities = await scraper._scrape_video_ids([video_id], date_range)
+            if entities:
+                content = YouTubeContent.from_data_entity(entities[0])
+                print(f"\n✅ Success! Found manual transcript in {language}")
+                print(f"Video Title: {content.title}")
+                print(f"Channel: {content.channel_name}")
+                print(f"Language: {content.language}")
+                print(f"Transcript segments: {len(content.transcript)}")
+                if content.transcript:
+                    print(f"Sample text: {content.transcript[0]['text'][:200]}...")
+            else:
+                print(f"\n❌ No manual transcript found for video {video_id} in language {language}")
+                print("This could mean:")
+                print("- The video doesn't have manual captions in this language")
+                print("- The video only has auto-generated captions")
+                print("- The video doesn't exist or is private")
+        except Exception as e:
+            print(f"\n❌ Error: {str(e)}")
+    elif choice == "5":
         print("Exiting test program.")
         return
     else:
