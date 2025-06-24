@@ -12,7 +12,6 @@ import bittensor as bt
 import sqlite3
 import subprocess
 import time
-import signal
 import atexit
 from pathlib import Path
 from contextlib import contextmanager
@@ -88,15 +87,12 @@ class LocalMinIOUploader:
         self.minio_process = None
         self.minio_client = None
         
-        # Register cleanup
+        # Register cleanup (but don't override miner's signal handlers)
         atexit.register(self.cleanup)
-        signal.signal(signal.SIGTERM, self._signal_handler)
-        signal.signal(signal.SIGINT, self._signal_handler)
 
     def _signal_handler(self, signum, frame):
-        """Handle shutdown signals"""
-        logger.info(f"Received signal {signum}, shutting down...")
-        self.cleanup()
+        """Handle shutdown signals - removed to avoid conflicts with miner"""
+        pass
 
     @contextmanager
     def get_db_connection(self):
@@ -218,6 +214,7 @@ class LocalMinIOUploader:
             logger.info(f"   🎛️  Console: http://0.0.0.0:{self.minio_console_port}")
             logger.info(f"   🔑 Access Key: {self.access_key}")
             logger.info(f"   🔐 Secret Key: {self.secret_key}")
+            logger.info(f"   🔧 Debug - Port values: server={self.minio_port}, console={self.minio_console_port}")
 
             self.minio_process = subprocess.Popen(
                 cmd,

@@ -17,6 +17,7 @@
 
 from collections import defaultdict
 import copy
+import os
 import sys
 import threading
 import time
@@ -203,14 +204,33 @@ class Miner:
             # Use appropriate hotkey based on offline mode
             miner_hotkey = self.wallet.hotkey.ss58_address if not self.config.offline else "test_hotkey_offline"
             
+            # todo make it better 
+            # Get configuration values with proper defaults (handle None values from config)
+            minio_port = int(os.environ.get('MINIO_PORT', 9000))
+            minio_console_port = int(os.environ.get('MINIO_CONSOLE_PORT', 9001))
+            chunk_size = int(os.environ.get('MINIO_CHUNK_SIZE', 100000))
+            retention_days = int(os.environ.get('MINIO_RETENTION_DAYS', 30))
+            
+            # Override with config values if they exist and are not None
+            if hasattr(self.config, 'minio_port') and self.config.minio_port is not None:
+                minio_port = int(self.config.minio_port)
+            if hasattr(self.config, 'minio_console_port') and self.config.minio_console_port is not None:
+                minio_console_port = int(self.config.minio_console_port)
+            if hasattr(self.config, 'minio_chunk_size') and self.config.minio_chunk_size is not None:
+                chunk_size = int(self.config.minio_chunk_size)
+            if hasattr(self.config, 'minio_retention_days') and self.config.minio_retention_days is not None:
+                retention_days = int(self.config.minio_retention_days)
+            
+            bt.logging.info(f"Configuring MinIO with ports: server={minio_port}, console={minio_console_port}")
+            
             self.local_minio_uploader = LocalMinIOUploader(
                 db_path=self.config.neuron.database_name,
                 miner_hotkey=miner_hotkey,
                 state_file="local_minio_state.json",
-                chunk_size=getattr(self.config, 'minio_chunk_size', 100000),
-                minio_port=getattr(self.config, 'minio_port', 9000),
-                minio_console_port=getattr(self.config, 'minio_console_port', 9001),
-                data_retention_days=getattr(self.config, 'minio_retention_days', 30)
+                chunk_size=chunk_size,
+                minio_port=minio_port,
+                minio_console_port=minio_console_port,
+                data_retention_days=retention_days
             )
             bt.logging.success(f"Initialized Local MinIO storage for {'offline' if self.config.offline else 'online'} mode")
 
