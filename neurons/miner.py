@@ -41,8 +41,8 @@ from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from upload_utils.huggingface_uploader import DualUploader
-from upload_utils.s3_uploader import S3PartitionedUploader
 from upload_utils.encoding_system import EncodingKeyManager, decode_url
+from storage.miner.local_minio_uploader import LocalMinIOUploader
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 from common.data import DataLabel, DataSource, DataEntity
@@ -74,6 +74,8 @@ class Miner:
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
             self.uid = 0  # Offline mode so assume it's == 0
+            self.wallet = bt.wallet(name="test_wallet", hotkey="test_hotkey")
+            self.subtensor = bt.subtensor(config=self.config) # todo
         else:
             # The wallet holds the cryptographic key pairs for the miner.
             self.wallet = bt.wallet(config=self.config)
@@ -152,6 +154,7 @@ class Miner:
         bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
 
         if self.use_uploader:
+            # Legacy HuggingFace uploader (being deprecated)
             self.hf_uploader = DualUploader(
                 db_path=self.config.neuron.database_name,
                 encoding_key_manager=self.encoding_key_manager,
@@ -159,15 +162,10 @@ class Miner:
                 wallet=self.wallet,
                 subtensor=self.subtensor,
                 state_file=self.config.miner_upload_state_file,
-
             )
-            self.s3_partitioned_uploader = S3PartitionedUploader(
-                db_path=self.config.neuron.database_name,
-                subtensor=self.subtensor,
-                wallet=self.wallet,
-                s3_auth_url=self.config.s3_auth_url,
-                state_file=self.config.miner_upload_state_file,
-            )
+            
+        # Local MinIO storage system will be initialized after wallet setup
+        self.local_minio_uploader = None
 
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
@@ -198,6 +196,23 @@ class Miner:
         self.request_lock = threading.RLock()
         self.last_cleared_request_limits = dt.datetime.now()
         self.requests_by_type_by_hotkey = defaultdict(lambda: defaultdict(lambda: 0))
+        
+        # Initialize Local MinIO storage system (replaces S3 partitioned uploader)
+        # Only initialize if gravity retrieval is enabled (miners processing DD jobs)
+        if self.use_gravity_retrieval:
+            # Use appropriate hotkey based on offline mode
+            miner_hotkey = self.wallet.hotkey.ss58_address if not self.config.offline else "test_hotkey_offline"
+            
+            self.local_minio_uploader = LocalMinIOUploader(
+                db_path=self.config.neuron.database_name,
+                miner_hotkey=miner_hotkey,
+                state_file="local_minio_state.json",
+                chunk_size=getattr(self.config, 'minio_chunk_size', 100000),
+                minio_port=getattr(self.config, 'minio_port', 9000),
+                minio_console_port=getattr(self.config, 'minio_console_port', 9001),
+                data_retention_days=getattr(self.config, 'minio_retention_days', 30)
+            )
+            bt.logging.success(f"Initialized Local MinIO storage for {'offline' if self.config.offline else 'online'} mode")
 
     def refresh_index(self):
         """
@@ -255,9 +270,9 @@ class Miner:
                 time.sleep(300)  # Wait 5 minutes before trying again
 
     def upload_hugging_face(self):
-        """Going to be removed"""
-        if not self.use_uploader:
-            bt.logging.info("HuggingFace Uploader is not enabled.")
+        """Legacy HuggingFace uploader - being deprecated in favor of local MinIO storage"""
+        if not self.use_uploader or not hasattr(self, 'hf_uploader'):
+            bt.logging.info("HuggingFace Uploader is not enabled or not available.")
             return
 
         time_sleep_val = dt.timedelta(minutes=60).total_seconds()
@@ -267,7 +282,7 @@ class Miner:
             try:
                 unique_id = self.hf_uploader.unique_id  # Assuming this exists in the DualUploader
                 if self.storage.should_upload_hf_data(unique_id):
-                    bt.logging.info("Trying to upload the data into HuggingFace and S3.")
+                    bt.logging.info("Trying to upload the data into HuggingFace (legacy method).")
                     hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
                     if hf_metadata_list:
                         self.storage.store_hf_dataset_info(hf_metadata_list)
@@ -277,25 +292,49 @@ class Miner:
             time_sleep_val = dt.timedelta(minutes=90).total_seconds()
             time.sleep(time_sleep_val)
 
-    def upload_s3_partitioned(self):
-        """Upload DD data to S3 in partitioned format"""
-        # Wait 10 minutes before starting first upload
-        time_sleep_val = dt.timedelta(minutes=20).total_seconds()
+    def process_local_minio_storage(self):
+        """Process and store DD job data locally using MinIO"""
+        if not self.use_gravity_retrieval or not self.local_minio_uploader:
+            bt.logging.info("Gravity retrieval not enabled or MinIO uploader not available, skipping local MinIO storage")
+            return
+            
+        # In offline mode, wait less time for testing
+        wait_time = 10 if self.config.offline else 30
+        time_sleep_val = dt.timedelta(seconds=wait_time).total_seconds()
         time.sleep(time_sleep_val)
+
+        # Start MinIO server
+        if not self.local_minio_uploader.start_minio_server():
+            bt.logging.error("Failed to start MinIO server, stopping local storage processing")
+            return
+
+        bt.logging.success(f"MinIO server started successfully for local storage ({'offline' if self.config.offline else 'online'} mode)")
+        
+        # Print connection info for validators/testing
+        connection_info = self.local_minio_uploader.get_validator_connection_info()
+        bt.logging.info("Local MinIO storage connection info:")
+        bt.logging.info(f"MinIO Endpoint: {connection_info['minio_endpoint']}")
+        bt.logging.info(f"Access Key: {connection_info['access_key']}")
+        bt.logging.info(f"Bucket: {connection_info['bucket_name']}")
+        
+        if self.config.offline:
+            bt.logging.info("Running in offline mode - you can test queries with:")
+            bt.logging.info(connection_info.get('duckdb_query_example', 'DuckDB example not available'))
 
         while not self.should_exit:
             try:
-                bt.logging.info("Starting S3 partitioned upload for DD data")
-                success = self.s3_partitioned_uploader.upload_dd_data()
+                bt.logging.info(f"Starting local MinIO processing for DD job data ({'offline test' if self.config.offline else 'production'} mode)")
+                success = self.local_minio_uploader.process_all_jobs()
                 if success:
-                    bt.logging.success("S3 partitioned upload completed successfully")
+                    bt.logging.success("Local MinIO processing completed successfully")
                 else:
-                    bt.logging.warning("S3 partitioned upload completed with some failures")
+                    bt.logging.warning("Local MinIO processing completed with some failures")
             except Exception:
                 bt.logging.error(traceback.format_exc())
 
-            # Upload every 2 hours (more frequent than HF since it's smaller, focused dataset)
-            time_sleep_val = dt.timedelta(hours=2).total_seconds()
+            # Process more frequently in offline mode for testing
+            interval_hours = 0.5 if self.config.offline else 1.0  # 30 minutes vs 1 hour
+            time_sleep_val = dt.timedelta(hours=interval_hours).total_seconds()
             time.sleep(time_sleep_val)
 
     def run(self):
@@ -382,15 +421,18 @@ class Miner:
             )
             self.lookup_thread.start()
 
-            self.hugging_face_thread = threading.Thread(
-                target=self.upload_hugging_face, daemon=True
-            )
-            self.hugging_face_thread.start()
+            if self.use_uploader:
+                self.hugging_face_thread = threading.Thread(
+                    target=self.upload_hugging_face, daemon=True
+                )
+                self.hugging_face_thread.start()
 
-            self.s3_partitioned_thread = threading.Thread(
-                target=self.upload_s3_partitioned, daemon=True
-            )
-            self.s3_partitioned_thread.start()
+            # Start local MinIO storage processing if gravity retrieval is enabled
+            if self.use_gravity_retrieval:
+                self.local_minio_thread = threading.Thread(
+                    target=self.process_local_minio_storage, daemon=True
+                )
+                self.local_minio_thread.start()
 
             self.is_running = True
             bt.logging.debug("Started")
@@ -404,8 +446,17 @@ class Miner:
             self.should_exit = True
             self.thread.join(5)
             self.compressed_index_refresh_thread.join(5)
-            self.s3_partitioned_thread.join(5)
             self.lookup_thread.join(5)
+            
+            if self.use_uploader and hasattr(self, 'hugging_face_thread'):
+                self.hugging_face_thread.join(5)
+                
+            if self.use_gravity_retrieval and hasattr(self, 'local_minio_thread'):
+                self.local_minio_thread.join(5)
+                # Cleanup MinIO resources
+                if hasattr(self, 'local_minio_uploader'):
+                    self.local_minio_uploader.cleanup()
+                    
             self.is_running = False
             bt.logging.debug("Stopped")
 
@@ -520,8 +571,12 @@ class Miner:
     async def get_huggingface_metadata(self, synapse: GetHuggingFaceMetadata) -> GetHuggingFaceMetadata:
         bt.logging.info(f"Got a GetHuggingFaceMetadata request from {synapse.dendrite.hotkey}.")
 
-        # Query the HuggingFace metadata from the database
-        synapse.metadata = self.storage.get_hf_metadata(unique_id=self.hf_uploader.unique_id)
+        # Query the HuggingFace metadata from the database if HF uploader exists
+        if hasattr(self, 'hf_uploader') and self.hf_uploader:
+            synapse.metadata = self.storage.get_hf_metadata(unique_id=self.hf_uploader.unique_id)
+        else:
+            bt.logging.info(f"HuggingFace uploader not available. Returning empty metadata to {synapse.dendrite.hotkey}.")
+            synapse.metadata = []
 
         if not synapse.metadata:
             bt.logging.info(f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
