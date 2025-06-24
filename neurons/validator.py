@@ -262,6 +262,10 @@ class Validator:
             version_tag = self.get_version_tag()
             scraper_providers = self.get_scraper_providers()
             
+            # Start capturing stdout/stderr FIRST (before init_run to catch early logs)
+            self.minio_log_capture = ValidatorMinioLogCapture(self.minio_logger)
+            self.minio_log_capture.__enter__()
+            
             # Initialize the run
             self.minio_logger.init_run(
                 config={
@@ -272,10 +276,6 @@ class Validator:
                 version_tag=version_tag,
                 scraper_providers=scraper_providers
             )
-            
-            # Start capturing stdout/stderr
-            self.minio_log_capture = ValidatorMinioLogCapture(self.minio_logger)
-            self.minio_log_capture.__enter__()
             
             bt.logging.info(f"Started Minio logging for validator-{self.uid}")
             

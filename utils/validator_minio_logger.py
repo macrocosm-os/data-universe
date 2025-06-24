@@ -490,10 +490,11 @@ class ValidatorMinioLogCapture:
                             # Call original method
                             result = orig_method(message, *args, **kwargs)
                             
-                            # Also send to Minio
+                            # Also send to Minio (skip our own upload messages)
                             try:
                                 formatted_message = str(message) % args if args else str(message)
-                                minio_logger.log_stdout(formatted_message, level_name.upper())
+                                if not ("Uploaded" in formatted_message and "log entries to Minio" in formatted_message):
+                                    minio_logger.log_stdout(formatted_message, level_name.upper())
                             except Exception:
                                 pass
                             
