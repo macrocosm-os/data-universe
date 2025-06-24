@@ -50,6 +50,7 @@ class ValidatorMinioLogger:
         self.run_id = None
         self.current_log_buffer = []
         self.metrics_buffer = []
+        self.last_upload_time = dt.datetime.now()
         
         # Configuration
         self.config_data = {}
@@ -245,6 +246,10 @@ class ValidatorMinioLogger:
             
     def log_stdout(self, message: str, level: str = "INFO"):
         """Log stdout/stderr messages"""
+        # Skip our own upload messages to avoid recursion
+        if "Uploaded" in message and "log entries to Minio" in message:
+            return
+            
         log_entry = {
             "timestamp": dt.datetime.now().isoformat(),
             "level": level,
@@ -253,9 +258,13 @@ class ValidatorMinioLogger:
         }
         self.current_log_buffer.append(log_entry)
         
-        # Upload logs every 50 entries or for ERROR level
-        if len(self.current_log_buffer) >= 50 or level == "ERROR":
+        # Upload logs more frequently - every 5 entries or every 10 seconds
+        now = dt.datetime.now()
+        time_since_upload = (now - self.last_upload_time).total_seconds()
+        
+        if len(self.current_log_buffer) >= 5 or time_since_upload >= 10:
             self._upload_logs()
+            self.last_upload_time = now
             
     def finish(self):
         """Finish the current run - equivalent to wandb.finish()"""
@@ -439,7 +448,7 @@ class ValidatorMinioLogger:
 
 
 class ValidatorMinioLogCapture:
-    """Context manager to capture stdout/stderr and send to ValidatorMinioLogger"""
+    """Context manager to capture stdout/stderr and bittensor logs"""
     
     def __init__(self, minio_logger: ValidatorMinioLogger, capture_stdout: bool = True, capture_stderr: bool = True):
         self.minio_logger = minio_logger
@@ -447,8 +456,10 @@ class ValidatorMinioLogCapture:
         self.capture_stderr = capture_stderr
         self.original_stdout = None
         self.original_stderr = None
+        self.original_bt_logging_function = None
         
     def __enter__(self):
+        # Capture stdout/stderr
         if self.capture_stdout:
             import sys
             self.original_stdout = sys.stdout
@@ -458,6 +469,16 @@ class ValidatorMinioLogCapture:
             import sys
             self.original_stderr = sys.stderr
             sys.stderr = self._create_wrapper(self.original_stderr, "ERROR")
+        
+        # Also hook into bittensor logging directly
+        try:
+            import bittensor as bt
+            # Store original logging function
+            if hasattr(bt.logging, '_log'):
+                self.original_bt_logging_function = bt.logging._log
+                bt.logging._log = self._bt_log_wrapper
+        except Exception as e:
+            bt.logging.debug(f"Could not hook bittensor logging: {e}")
             
         return self
         
@@ -468,6 +489,40 @@ class ValidatorMinioLogCapture:
         if self.original_stderr:
             import sys
             sys.stderr = self.original_stderr
+            
+        # Restore bittensor logging
+        if self.original_bt_logging_function:
+            try:
+                import bittensor as bt
+                bt.logging._log = self.original_bt_logging_function
+            except:
+                pass
+    
+    def _bt_log_wrapper(self, level, message, *args, **kwargs):
+        """Wrapper for bittensor logging function"""
+        # Call original logging function
+        if self.original_bt_logging_function:
+            result = self.original_bt_logging_function(level, message, *args, **kwargs)
+        
+        # Also send to Minio - capture ALL levels including DEBUG and TRACE
+        try:
+            formatted_message = str(message) % args if args else str(message)
+            
+            # Convert level to string if it's a logging level object
+            level_str = str(level).upper() if hasattr(level, 'upper') else str(level).upper()
+            
+            # Handle different level formats
+            if hasattr(level, 'name'):
+                level_str = level.name.upper()
+            elif hasattr(level, 'levelname'):
+                level_str = level.levelname.upper()
+            
+            self.minio_logger.log_stdout(formatted_message, level_str)
+        except Exception as e:
+            # Don't let logging errors break the validator
+            pass
+            
+        return result if self.original_bt_logging_function else None
             
     def _create_wrapper(self, original_stream, level):
         """Create a wrapper that logs to both original stream and Minio"""
