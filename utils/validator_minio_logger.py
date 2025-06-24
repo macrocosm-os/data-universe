@@ -534,16 +534,44 @@ class ValidatorMinioLogCapture:
                 self.original = original
                 self.minio_logger = minio_logger
                 self.level = level
+                self.buffer = ""
                 
             def write(self, text):
                 # Write to original stream
                 self.original.write(text)
                 
-                # Log to Minio if it's substantial content
-                if text.strip():
-                    self.minio_logger.log_stdout(text.strip(), self.level)
+                # Buffer text to handle multi-line output properly
+                self.buffer += text
+                
+                # Process complete lines and multi-line blocks
+                lines = self.buffer.split('\n')
+                
+                # Keep the last incomplete line in buffer
+                self.buffer = lines[-1] if not text.endswith('\n') else ""
+                
+                # Process complete lines
+                for line in lines[:-1] if not text.endswith('\n') else lines:
+                    if line.strip():
+                        # Skip wandb lines and our own upload messages
+                        line_content = line.strip()
+                        if not any(skip in line_content for skip in [
+                            'wandb:', 'Uploaded', 'log entries to Minio',
+                            'wandb.ai/', 'View run at', 'View project at',
+                            'Run data is saved', 'Syncing run', 'Using wandb-core'
+                        ]):
+                            self.minio_logger.log_stdout(line_content, self.level)
                     
             def flush(self):
+                # Flush any remaining buffer content
+                if self.buffer.strip():
+                    line_content = self.buffer.strip()
+                    if not any(skip in line_content for skip in [
+                        'wandb:', 'Uploaded', 'log entries to Minio',
+                        'wandb.ai/', 'View run at', 'View project at',
+                        'Run data is saved', 'Syncing run', 'Using wandb-core'
+                    ]):
+                        self.minio_logger.log_stdout(line_content, self.level)
+                    self.buffer = ""
                 self.original.flush()
                 
         return StreamWrapper(original_stream, self.minio_logger, level)
