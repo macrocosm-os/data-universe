@@ -338,7 +338,7 @@ class S3PartitionedUploader:
             raw_df.to_parquet(local_path, index=False)
 
             # Create S3 path: hotkey={hotkey_id}/job_id={job_id}/{filename}.parquet
-            s3_path = f"hotkey={self.miner_hotkey}/job_id={job_id}/{filename}"
+            s3_path = f"job_id={job_id}/{filename}"
 
             # Upload to S3
             upload_success = self.s3_auth.upload_file_with_path(local_path, s3_path, s3_creds)

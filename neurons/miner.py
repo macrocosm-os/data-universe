@@ -74,9 +74,6 @@ class Miner:
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
 
-            self.wallet = bt.wallet(name="test_tao", hotkey="test_hot") # todo
-            self.subtensor = bt.subtensor(config=self.config) # todo
-
             self.uid = 0  # Offline mode so assume it's == 0
         else:
             # The wallet holds the cryptographic key pairs for the miner.
@@ -156,15 +153,15 @@ class Miner:
         bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
 
         if self.use_uploader:
-            # self.hf_uploader = DualUploader(
-            #     db_path=self.config.neuron.database_name, todo
-            #     encoding_key_manager=self.encoding_key_manager,
-            #     private_encoding_key_manager=self.private_encoding_key_manager,
-            #     wallet=self.wallet,
-            #     subtensor=self.subtensor,
-            #     state_file=self.config.miner_upload_state_file,
-            #
-            # )
+            self.hf_uploader = DualUploader(
+                db_path=self.config.neuron.database_name,
+                encoding_key_manager=self.encoding_key_manager,
+                private_encoding_key_manager=self.private_encoding_key_manager,
+                wallet=self.wallet,
+                subtensor=self.subtensor,
+                state_file=self.config.miner_upload_state_file,
+
+            )
             self.s3_partitioned_uploader = S3PartitionedUploader(
                 db_path=self.config.neuron.database_name,
                 subtensor=self.subtensor,
@@ -284,7 +281,7 @@ class Miner:
     def upload_s3_partitioned(self):
         """Upload DD data to S3 in partitioned format"""
         # Wait 10 minutes before starting first upload
-        time_sleep_val = dt.timedelta(seconds=20).total_seconds() # todo
+        time_sleep_val = dt.timedelta(minutes=30).total_seconds()
         time.sleep(time_sleep_val)
 
         while not self.should_exit:
