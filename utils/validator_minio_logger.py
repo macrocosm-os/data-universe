@@ -266,6 +266,8 @@ class ValidatorMinioLogger:
         if len(self.current_log_buffer) >= 20 or time_since_upload >= 15:
             self._upload_logs()
             self.last_upload_time = now
+            # Sleep a bit to ensure upload completes before any potential crash
+            time.sleep(0.5) # TODO REMOVE !
             
     def finish(self):
         """Finish the current run - equivalent to wandb.finish()"""
