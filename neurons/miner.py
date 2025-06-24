@@ -73,6 +73,7 @@ class Miner:
             bt.logging.success(
                 "Running in offline mode. Skipping bittensor object setup and axon creation."
             )
+
             self.uid = 0  # Offline mode so assume it's == 0
         else:
             # The wallet holds the cryptographic key pairs for the miner.
@@ -280,7 +281,7 @@ class Miner:
     def upload_s3_partitioned(self):
         """Upload DD data to S3 in partitioned format"""
         # Wait 10 minutes before starting first upload
-        time_sleep_val = dt.timedelta(minutes=20).total_seconds()
+        time_sleep_val = dt.timedelta(minutes=30).total_seconds()
         time.sleep(time_sleep_val)
 
         while not self.should_exit:
