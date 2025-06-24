@@ -473,12 +473,38 @@ class ValidatorMinioLogCapture:
         # Also hook into bittensor logging directly
         try:
             import bittensor as bt
-            # Store original logging function
-            if hasattr(bt.logging, '_log'):
-                self.original_bt_logging_function = bt.logging._log
-                bt.logging._log = self._bt_log_wrapper
+            import logging
+            
+            # Hook into multiple bittensor logging methods
+            methods_to_hook = ['info', 'debug', 'trace', 'error', 'warning', 'success']
+            self.original_bt_methods = {}
+            
+            for method_name in methods_to_hook:
+                if hasattr(bt.logging, method_name):
+                    original_method = getattr(bt.logging, method_name)
+                    self.original_bt_methods[method_name] = original_method
+                    
+                    # Create wrapper for each method (fix closure issue)
+                    def create_wrapper(orig_method, level_name, minio_logger):
+                        def wrapper(message, *args, **kwargs):
+                            # Call original method
+                            result = orig_method(message, *args, **kwargs)
+                            
+                            # Also send to Minio
+                            try:
+                                formatted_message = str(message) % args if args else str(message)
+                                minio_logger.log_stdout(formatted_message, level_name.upper())
+                            except Exception:
+                                pass
+                            
+                            return result
+                        return wrapper
+                    
+                    # Replace the method
+                    setattr(bt.logging, method_name, create_wrapper(original_method, method_name, self.minio_logger))
+                    
         except Exception as e:
-            bt.logging.debug(f"Could not hook bittensor logging: {e}")
+            print(f"Could not hook bittensor logging: {e}")
             
         return self
         
@@ -490,39 +516,15 @@ class ValidatorMinioLogCapture:
             import sys
             sys.stderr = self.original_stderr
             
-        # Restore bittensor logging
-        if self.original_bt_logging_function:
+        # Restore bittensor logging methods
+        if hasattr(self, 'original_bt_methods'):
             try:
                 import bittensor as bt
-                bt.logging._log = self.original_bt_logging_function
+                for method_name, original_method in self.original_bt_methods.items():
+                    setattr(bt.logging, method_name, original_method)
             except:
                 pass
     
-    def _bt_log_wrapper(self, level, message, *args, **kwargs):
-        """Wrapper for bittensor logging function"""
-        # Call original logging function
-        if self.original_bt_logging_function:
-            result = self.original_bt_logging_function(level, message, *args, **kwargs)
-        
-        # Also send to Minio - capture ALL levels including DEBUG and TRACE
-        try:
-            formatted_message = str(message) % args if args else str(message)
-            
-            # Convert level to string if it's a logging level object
-            level_str = str(level).upper() if hasattr(level, 'upper') else str(level).upper()
-            
-            # Handle different level formats
-            if hasattr(level, 'name'):
-                level_str = level.name.upper()
-            elif hasattr(level, 'levelname'):
-                level_str = level.levelname.upper()
-            
-            self.minio_logger.log_stdout(formatted_message, level_str)
-        except Exception as e:
-            # Don't let logging errors break the validator
-            pass
-            
-        return result if self.original_bt_logging_function else None
             
     def _create_wrapper(self, original_stream, level):
         """Create a wrapper that logs to both original stream and Minio"""
