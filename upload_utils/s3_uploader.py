@@ -1,7 +1,7 @@
 """
 S3 Partitioned Uploader for Dynamic Desirability data using Job IDs from Gravity
 Uploads data using exact job IDs from Gravity as folder names:
-data/hotkey/job_id/parquet_files
+hotkey={hotkey_id}/job_id={job_id}/parquet_files
 
 NO ENCODING - Raw data upload to S3
 Uses offset-based tracking for continuous processing of new data
@@ -337,8 +337,8 @@ class S3PartitionedUploader:
             # Save to parquet
             raw_df.to_parquet(local_path, index=False)
 
-            # Create S3 path: data/hotkey/job_id/filename.parquet (no source folder)
-            s3_path = f"{job_id}/{filename}"
+            # Create S3 path: hotkey={hotkey_id}/job_id={job_id}/{filename}.parquet
+            s3_path = f"hotkey={self.miner_hotkey}/job_id={job_id}/{filename}"
 
             # Upload to S3
             upload_success = self.s3_auth.upload_file_with_path(local_path, s3_path, s3_creds)

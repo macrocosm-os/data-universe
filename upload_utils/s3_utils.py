@@ -88,15 +88,15 @@ class S3Auth:
 
         Args:
             file_path: Local file path
-            s3_path: Relative path within the folder (e.g., "job_id/filename.parquet")
+            s3_path: Relative path within the folder (e.g., "hotkey={hotkey_id}/job_id={job_id}/filename.parquet")
             creds: S3 credentials from API
         """
         try:
-            # Get the folder prefix from credentials (e.g., "data/HOTKEY/")
+            # Get the folder prefix from credentials (base_url)
             folder_prefix = creds.get('folder', '')
 
             # Construct the full S3 path by appending our relative path to the folder prefix
-            # This creates: data/HOTKEY/job_id/filename.parquet
+            # This creates: base_url/hotkey={hotkey_id}/job_id={job_id}/filename.parquet
             full_s3_path = f"{folder_prefix}{s3_path}"
 
             bt.logging.info(f"🔄 Uploading to S3 path: {full_s3_path}")
