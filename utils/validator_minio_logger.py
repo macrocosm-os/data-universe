@@ -258,11 +258,12 @@ class ValidatorMinioLogger:
         }
         self.current_log_buffer.append(log_entry)
         
-        # Upload logs more frequently - every 5 entries or every 10 seconds
+        # Upload logs less frequently to capture complete multi-line content
         now = dt.datetime.now()
         time_since_upload = (now - self.last_upload_time).total_seconds()
         
-        if len(self.current_log_buffer) >= 5 or time_since_upload >= 10:
+        # Upload every 20 entries or every 15 seconds (larger batches)
+        if len(self.current_log_buffer) >= 20 or time_since_upload >= 15:
             self._upload_logs()
             self.last_upload_time = now
             
@@ -543,14 +544,30 @@ class ValidatorMinioLogCapture:
                 # Buffer text to handle multi-line output properly
                 self.buffer += text
                 
-                # Process complete lines and multi-line blocks
+                # If buffer gets too large, process it immediately
+                if len(self.buffer) > 10000:  # 10KB buffer limit
+                    self._process_buffer()
+                
+                # Process complete lines for smaller content
+                if '\n' in text:
+                    self._process_buffer()
+                    
+            def _process_buffer(self):
+                """Process buffered content"""
+                if not self.buffer:
+                    return
+                    
                 lines = self.buffer.split('\n')
                 
-                # Keep the last incomplete line in buffer
-                self.buffer = lines[-1] if not text.endswith('\n') else ""
+                # Keep the last incomplete line in buffer if text doesn't end with newline
+                if not self.buffer.endswith('\n'):
+                    self.buffer = lines[-1]
+                    lines = lines[:-1]
+                else:
+                    self.buffer = ""
                 
                 # Process complete lines
-                for line in lines[:-1] if not text.endswith('\n') else lines:
+                for line in lines:
                     if line.strip():
                         # Skip wandb lines and our own upload messages
                         line_content = line.strip()
@@ -562,16 +579,8 @@ class ValidatorMinioLogCapture:
                             self.minio_logger.log_stdout(line_content, self.level)
                     
             def flush(self):
-                # Flush any remaining buffer content
-                if self.buffer.strip():
-                    line_content = self.buffer.strip()
-                    if not any(skip in line_content for skip in [
-                        'wandb:', 'Uploaded', 'log entries to Minio',
-                        'wandb.ai/', 'View run at', 'View project at',
-                        'Run data is saved', 'Syncing run', 'Using wandb-core'
-                    ]):
-                        self.minio_logger.log_stdout(line_content, self.level)
-                    self.buffer = ""
+                # Process any remaining buffer content
+                self._process_buffer()
                 self.original.flush()
                 
         return StreamWrapper(original_stream, self.minio_logger, level)
