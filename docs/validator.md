@@ -99,7 +99,7 @@ REDDIT_PASSWORD="your_reddit_password"
 YOUTUBE_API_KEY="your_youtube_api_key"
 ```
 
-Please see docs on [Apify](docs/apify.md), [Reddit](docs/reddit.md), and [Youtube](docs/youtube.md) for more information on the environment variables above.
+Please see docs on [Apify](../docs/apify.md), [Reddit](../docs/reddit.md), and [Youtube](../docs/youtube.md) for more information on the environment variables above.
 
 # Coming Soon
 
