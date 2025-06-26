@@ -909,7 +909,7 @@ class Validator:
 
                         # Apply penalty to miners with poor validation
                         if validation_rate < 0.5:  # Less than 50% valid
-                            bt.logging.info(f"Applying data quality penalty to miner {uid}")
+                            bt.logging.info(f"Applying data quality penalty to miner {uid}. Less than 50% validation score.")
                             self.evaluator.scorer.apply_ondemand_penalty(uid, validation_rate) # penalty based off of validation rate
 
                             # Remove this miner from consistent miners if it was there
