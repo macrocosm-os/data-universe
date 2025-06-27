@@ -9,6 +9,7 @@ from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.x.quacker_url_scraper import QuackerUrlScraper
 from scraping.youtube.youtube_custom_scraper import YouTubeTranscriptScraper
 from scraping.youtube.apify_youtube_scraper import YouTubeApifyTranscriptScraper
+from scraping.youtube.apify_multilanguage_scraper import YouTubeApifyMultilingualScraper
 
 
 DEFAULT_FACTORIES = {
@@ -20,7 +21,8 @@ DEFAULT_FACTORIES = {
     ScraperId.X_APIDOJO: ApiDojoTwitterScraper,
     ScraperId.X_QUACKER: QuackerUrlScraper,
     ScraperId.YOUTUBE_CUSTOM_TRANSCRIPT: YouTubeTranscriptScraper,
-    ScraperId.YOUTUBE_APIFY_TRANSCRIPT : YouTubeApifyTranscriptScraper
+    ScraperId.YOUTUBE_APIFY_TRANSCRIPT: YouTubeApifyTranscriptScraper,
+    ScraperId.YOUTUBE_APIFY_MULTILINGUAL_TRANSCRIPT: YouTubeApifyMultilingualScraper
 }
 
 
