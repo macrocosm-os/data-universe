@@ -152,10 +152,11 @@ class MinerScorer:
             f"After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
         )
 
-    def apply_ondemand_penalty(self, uid: int):
+    def apply_ondemand_penalty(self, uid: int, mult_factor: float):
         """Applies a 5% credibility penalty to a given miner"""
-        adj_cred = max(self.miner_credibility[uid] - 0.05, 0)
-        bt.logging.info(f"After 5% OnDemand penalty, Miner {uid} credibility decreased from {self.miner_credibility[uid]} to {adj_cred}.")
+        cred_penalty = 0.05 * mult_factor
+        adj_cred = max(self.miner_credibility[uid] - cred_penalty, 0)
+        bt.logging.info(f"After {100*cred_penalty:.2f}% OnDemand penalty, Miner {uid} credibility decreased from {float(self.miner_credibility[uid])} to {adj_cred}.")
         self.miner_credibility[uid] = adj_cred
 
     def on_miner_evaluated(
