@@ -2,7 +2,7 @@
 
 [Apify](http://apify.com) is a popular platform and market place for web scraping tools.
 
-Data Universe uses Apify to scrape certain DataSources. At this time, all Validators and Miners are required to use Apify. In future, Apify will become optional for Miners, depending on the DataSources they scrape from.
+Data Universe uses Apify to scrape certain DataSources. At this time, all Validators use Apify to validate miner-submitted data. Apify is optional for miners. We recommend miners build a custom scraper for economic purposes and to stay competitive on the subnet. 
 
 ## Setting your API Token
 

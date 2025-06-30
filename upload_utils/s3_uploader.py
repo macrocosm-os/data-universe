@@ -1,7 +1,7 @@
 """
-S3 Partitioned Uploader for Dynamic Desirability data ONLY
-Uploads ONLY data that matches current DD list in partitioned format:
-data/source/coldkey/label_keyword/YYYY-MM-DD/parquet_files
+S3 Partitioned Uploader for Dynamic Desirability data using Job IDs from Gravity
+Uploads data using exact job IDs from Gravity as folder names:
+hotkey={hotkey_id}/job_id={job_id}/parquet_files
 
 NO ENCODING - Raw data upload to S3
 Uses offset-based tracking for continuous processing of new data
@@ -43,7 +43,7 @@ def load_dynamic_lookup() -> Dict[str, List[Dict]]:
 
 class S3PartitionedUploader:
     """
-    S3 Partitioned uploader for ONLY Dynamic Desirability data.
+    S3 Partitioned uploader using job IDs from Gravity.
     Handles both label matching and keyword text search.
     """
 
@@ -60,13 +60,13 @@ class S3PartitionedUploader:
         self.db_path = db_path
         self.wallet = wallet
         self.subtensor = subtensor
-        self.miner_coldkey = self.wallet.get_coldkeypub().ss58_address
+        self.miner_hotkey = self.wallet.hotkey.ss58_address
         self.s3_auth = S3Auth(s3_auth_url)
         self.state_file = f"{state_file.split('.json')[0]}_s3_partitioned.json"
-        self.output_dir = os.path.join(output_dir, self.miner_coldkey)
+        self.output_dir = os.path.join(output_dir, self.miner_hotkey)
         self.chunk_size = chunk_size
 
-        # Load processed state - tracks last processed info per DD item
+        # Load processed state - tracks last processed info per job
         self.processed_state = self._load_processed_state()
 
     @contextmanager
@@ -82,7 +82,7 @@ class S3PartitionedUploader:
             conn.close()
 
     def _load_processed_state(self) -> Dict[str, Dict]:
-        """Load processed state - tracks last processed info per DD item"""
+        """Load processed state - tracks last processed info per job"""
         if os.path.exists(self.state_file):
             try:
                 with open(self.state_file, 'r') as f:
@@ -99,55 +99,36 @@ class S3PartitionedUploader:
         except Exception as e:
             bt.logging.error(f"Failed to save processed state: {e}")
 
-    def _get_last_processed_offset(self, processed_key: str) -> int:
-        """Get the last processed offset for a DD item"""
-        item_state = self.processed_state.get(processed_key, {})
-        return item_state.get('last_offset', 0)
+    def _get_last_processed_offset(self, job_id: str) -> int:
+        """Get the last processed offset for a job"""
+        job_state = self.processed_state.get(job_id, {})
+        return job_state.get('last_offset', 0)
 
-    def _update_processed_state(self, processed_key: str, new_offset: int, records_processed: int):
-        """Update the processed state for a DD item"""
-        if processed_key not in self.processed_state:
-            self.processed_state[processed_key] = {}
+    def _update_processed_state(self, job_id: str, new_offset: int, records_processed: int):
+        """Update the processed state for a job"""
+        if job_id not in self.processed_state:
+            self.processed_state[job_id] = {}
 
-        self.processed_state[processed_key].update({
+        self.processed_state[job_id].update({
             'last_offset': new_offset,
-            'total_records_processed': self.processed_state[processed_key].get('total_records_processed', 0) + records_processed,
+            'total_records_processed': self.processed_state[job_id].get('total_records_processed', 0) + records_processed,
             'last_processed_time': dt.datetime.now().isoformat(),
             'processing_completed': False  # Never mark as "completed" - always check for new data
         })
 
-    def _sanitize_label(self, label: str) -> str:
-        """Sanitize label for use in S3 path"""
-        if not label:
-            return "unlabeled"
-
-        # Remove prefixes
-        sanitized = label.removeprefix("r/").removeprefix("#")
-
-        # Replace invalid characters with underscores
-        sanitized = re.sub(r'[^a-zA-Z0-9_-]', '_', sanitized)
-
-        # Remove multiple consecutive underscores
-        sanitized = re.sub(r'_+', '_', sanitized)
-
-        # Remove leading/trailing underscores
-        sanitized = sanitized.strip('_')
-
-        if not sanitized:
-            sanitized = "unlabeled"
-
-        return sanitized.lower()
-
-    def _load_dd_list(self) -> Dict[int, List[Dict]]:
-        """Load and parse DD list with REAL structure from dynamic_desirability/total.json"""
+    def _load_dd_list(self) -> Dict[str, Dict]:
+        """Load job configurations from Gravity and return by job_id"""
         try:
             lookup = load_dynamic_lookup()
             result = {}
 
-            # Handle the REAL format: list of aggregate objects
             if isinstance(lookup, list):
                 for item in lookup:
                     if not isinstance(item, dict) or 'params' not in item:
+                        continue
+
+                    job_id = item.get('id')  # Use the job_id from Gravity
+                    if not job_id:
                         continue
 
                     params = item['params']
@@ -162,79 +143,33 @@ class S3PartitionedUploader:
                     else:
                         continue
 
-                    if source_int not in result:
-                        result[source_int] = []
-
-                    # Check if it's a label or keyword
+                    # Store job configuration by job_id
                     if params.get('label') and params.get('keyword') is None:
-                        # It's a label-based search
-                        result[source_int].append({
+                        result[job_id] = {
+                            "source": source_int,
                             "type": "label",
                             "value": params['label'],
-                            "job_weight": weight
-                        })
+                            "weight": weight
+                        }
                     elif params.get('keyword'):
-                        # It's a keyword-based search
-                        result[source_int].append({
+                        result[job_id] = {
+                            "source": source_int,
                             "type": "keyword",
                             "value": params['keyword'],
-                            "job_weight": weight
-                        })
-                    # If both label and keyword are null, skip this entry
+                            "weight": weight
+                        }
 
             # Handle old format for backward compatibility
             elif isinstance(lookup, dict):
-                for source_key, items in lookup.items():
-                    # Map source names to integers
-                    if isinstance(source_key, str):
-                        if source_key.lower() == 'reddit':
-                            source_int = DataSource.REDDIT.value
-                        elif source_key.lower() in ['x', 'twitter']:
-                            source_int = DataSource.X.value
-                        else:
-                            continue
-                    else:
-                        source_int = source_key
+                bt.logging.warning("Old DD format detected, consider updating to new job-based format")
+                # Legacy handling code can go here if needed
 
-                    # Parse items - each can be label or keyword
-                    parsed_items = []
-                    for item in items:
-                        if isinstance(item, dict):
-                            if "label" in item:
-                                parsed_items.append({
-                                    "type": "label",
-                                    "value": item["label"],
-                                    "job_weight": item.get("job_weight", 1.0)
-                                })
-                            elif "keyword" in item:
-                                parsed_items.append({
-                                    "type": "keyword",
-                                    "value": item["keyword"],
-                                    "job_weight": item.get("job_weight", 1.0)
-                                })
-                        else:
-                            # Backward compatibility - treat as keyword
-                            parsed_items.append({
-                                "type": "keyword",
-                                "value": str(item),
-                                "job_weight": 1.0
-                            })
-
-                    result[source_int] = parsed_items
-
-            bt.logging.info(f"Loaded DD list: {result}")
-            bt.logging.info(f"Total items - Reddit: {len(result.get(1, []))}, X: {len(result.get(2, []))}")
+            bt.logging.info(f"Loaded {len(result)} jobs from Gravity")
             return result
 
         except Exception as e:
-            bt.logging.error(f"Failed to load DD list: {e}")
+            bt.logging.error(f"Failed to load jobs from Gravity: {e}")
             return {}
-
-    def _get_processed_key(self, source: int, search_type: str, value: str) -> str:
-        """Get processed key for tracking completion"""
-        source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
-        sanitized_value = self._sanitize_label(value)
-        return f"{source_name}/{search_type}/{sanitized_value}"
 
     def _get_label_data(self, source: int, label: str, offset: int = 0) -> pd.DataFrame:
         """Get data matching exact label"""
@@ -379,70 +314,59 @@ class S3PartitionedUploader:
             bt.logging.error(f"Error creating raw dataframe: {e}")
             return pd.DataFrame()
 
-    def _upload_data_chunk(self, df: pd.DataFrame, source: int, folder_name: str, s3_creds: Dict) -> bool:
-        """Upload a chunk of data to S3 with date partitioning"""
+    def _upload_data_chunk(self, df: pd.DataFrame, source: int, job_id: str, s3_creds: Dict) -> bool:
+        """Upload chunk directly to job_id folder (no source or date partitioning)"""
         if df.empty:
             return True
 
         try:
-            # Create raw dataframe (no encoding)
             raw_df = self._create_raw_dataframe(df, source)
             if raw_df.empty:
-                bt.logging.warning(f"No data after raw processing for {source}/{folder_name}")
+                bt.logging.warning(f"No data after raw processing for job {job_id}")
                 return True
 
-            # Group by date for partitioning
-            raw_df['date'] = pd.to_datetime(raw_df['datetime']).dt.strftime('%Y-%m-%d')
-            date_groups = raw_df.groupby('date')
+            # Create local parquet file
+            if not os.path.exists(self.output_dir):
+                os.makedirs(self.output_dir, exist_ok=True)
 
-            success = True
-            for date_str, date_df in date_groups:
-                # Create local parquet file
-                if not os.path.exists(self.output_dir):
-                    os.makedirs(self.output_dir, exist_ok=True)
+            # Generate filename with timestamp and record count
+            timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
+            filename = f"data_{timestamp}_{len(raw_df)}.parquet"
+            local_path = os.path.join(self.output_dir, filename)
 
-                # Generate filename with timestamp and record count
-                timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-                filename = f"data_{timestamp}_{len(date_df)}.parquet"
-                local_path = os.path.join(self.output_dir, filename)
+            # Save to parquet
+            raw_df.to_parquet(local_path, index=False)
 
-                # Save to parquet (drop the temp 'date' column)
-                date_df.drop('date', axis=1).to_parquet(local_path, index=False)
+            # Create S3 path: hotkey={hotkey_id}/job_id={job_id}/{filename}.parquet
+            s3_path = f"job_id={job_id}/{filename}"
 
-                # Create S3 path with date folder structure
-                # Final structure: data/source/coldkey/label_keyword/YYYY-MM-DD/filename.parquet
-                s3_path = f"{folder_name}/{date_str}/{filename}"
+            # Upload to S3
+            upload_success = self.s3_auth.upload_file_with_path(local_path, s3_path, s3_creds)
 
-                # Upload to S3
-                upload_success = self.s3_auth.upload_file_with_path(local_path, s3_path, s3_creds)
+            if upload_success:
+                bt.logging.success(f"Uploaded {len(raw_df)} records to job {job_id}")
+            else:
+                bt.logging.error(f"Failed to upload {len(raw_df)} records to job {job_id}")
 
-                if upload_success:
-                    bt.logging.success(f"Uploaded {len(date_df)} records to {date_str} folder")
-                else:
-                    bt.logging.error(f"Failed to upload {len(date_df)} records to {date_str}")
-                    success = False
+            # Clean up local file
+            if os.path.exists(local_path):
+                os.remove(local_path)
 
-                # Clean up local file
-                if os.path.exists(local_path):
-                    os.remove(local_path)
-
-            return success
+            return upload_success
 
         except Exception as e:
-            bt.logging.error(f"Error uploading data chunk: {e}")
+            bt.logging.error(f"Error uploading data chunk for job {job_id}: {e}")
             return False
 
-    def _process_dd_item(self, source: int, dd_item: Dict, s3_creds: Dict) -> bool:
-        """Process a single DD item (label or keyword) - IMPROVED VERSION"""
-        search_type = dd_item["type"]
-        value = dd_item["value"]
+    def _process_job(self, job_id: str, job_config: Dict, s3_creds: Dict) -> bool:
+        """Process a single job using exact job_id as folder name"""
+        source = job_config["source"]
+        search_type = job_config["type"]
+        value = job_config["value"]
 
-        processed_key = self._get_processed_key(source, search_type, value)
+        offset = self._get_last_processed_offset(job_id)
 
-        # Get the last processed offset (starts from 0 for new items)
-        offset = self._get_last_processed_offset(processed_key)
-
-        bt.logging.info(f"Processing {processed_key}, starting from offset: {offset}")
+        bt.logging.info(f"Processing job {job_id} ({search_type}: {value}), starting from offset: {offset}")
 
         total_processed = 0
 
@@ -454,88 +378,68 @@ class S3PartitionedUploader:
                 chunk_df = self._get_keyword_data_chunk(source, value, offset)
 
             if chunk_df.empty:
-                bt.logging.info(f"No new data for {processed_key}, total processed this run: {total_processed}")
+                bt.logging.info(f"No new data for job {job_id}, total processed this run: {total_processed}")
                 break
 
-            # Create folder name with prefix: label_bitcoin or keyword_ethereum
-            sanitized_value = self._sanitize_label(value)
-            folder_name = f"{search_type}_{sanitized_value}"
-
-            # Upload chunk (will be partitioned by date inside this method)
-            success = self._upload_data_chunk(chunk_df, source, folder_name, s3_creds)
+            # Upload chunk using job_id as folder name
+            success = self._upload_data_chunk(chunk_df, source, job_id, s3_creds)
             if not success:
-                bt.logging.error(f"Failed to upload chunk for {processed_key}")
+                bt.logging.error(f"Failed to upload chunk for job {job_id}")
                 return False
 
             total_processed += len(chunk_df)
             offset += len(chunk_df)
 
             # Update state after each successful chunk
-            self._update_processed_state(processed_key, offset, len(chunk_df))
+            self._update_processed_state(job_id, offset, len(chunk_df))
             self._save_processed_state()
 
-            bt.logging.info(f"Processed {total_processed} new records for {processed_key}")
+            bt.logging.info(f"Processed {total_processed} new records for job {job_id}")
 
             # If we got less than chunk_size, we've reached the end for now
             if len(chunk_df) < self.chunk_size:
                 break
 
+        bt.logging.info(f"Completed job {job_id}: {total_processed} records processed")
         return True
 
     def upload_dd_data(self) -> bool:
-        """Main method to upload ONLY DD data in partitioned format"""
-        bt.logging.info("Starting S3 partitioned upload for DD data only")
+        """Main method to upload data using job_ids from Gravity"""
+        bt.logging.info("Starting S3 upload using Gravity job IDs")
 
         try:
-            # Load current DD list
-            dd_list = self._load_dd_list()
-            if not dd_list:
-                bt.logging.warning("No DD list found, skipping S3 partitioned upload")
+            # Load jobs by job_id (from Gravity via total.json)
+            jobs = self._load_dd_list()
+            if not jobs:
+                bt.logging.warning("No jobs found from Gravity")
                 return False
 
-            # Get credentials ONCE per source type (reddit and x)
-            credentials_cache = {}
+            # Get credentials once for all jobs (no source-specific credentials needed)
+            bt.logging.info("Getting S3 credentials for all job uploads")
+            s3_creds = self.s3_auth.get_credentials(
+                subtensor=self.subtensor,
+                wallet=self.wallet,
+            )
 
-            # Pre-fetch credentials for each source that has DD items
-            for source in dd_list.keys():
-                source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
+            if not s3_creds:
+                bt.logging.error("Failed to get S3 credentials")
+                return False
 
-                if source_name not in credentials_cache:
-                    bt.logging.info(f"Getting S3 credentials for {source_name} (valid for 3 hours)")
-                    s3_creds = self.s3_auth.get_credentials(
-                        source_name=source_name,
-                        subtensor=self.subtensor,
-                        wallet=self.wallet,
-                    )
-
-                    if s3_creds:
-                        credentials_cache[source_name] = s3_creds
-                        bt.logging.success(f"Got S3 credentials for {source_name}")
-                    else:
-                        bt.logging.error(f"Failed to get S3 credentials for {source_name}")
-                        return False
+            bt.logging.success("Got S3 credentials for all jobs")
 
             overall_success = True
 
-            # Now process each source using cached credentials
-            for source, dd_items in dd_list.items():
-                source_name = 'reddit' if source == DataSource.REDDIT.value else 'x'
-                bt.logging.info(f"Processing DD data for source: {source_name} ({len(dd_items)} items)")
+            # Process each job using the same credentials
+            for job_id, job_config in jobs.items():
+                bt.logging.info(f"Processing job: {job_id}")
 
-                # Use cached credentials
-                s3_creds = credentials_cache[source_name]
+                job_success = self._process_job(job_id, job_config, s3_creds)
+                if not job_success:
+                    overall_success = False
 
-                # Process ALL DD items for this source using the same credentials
-                for dd_item in dd_items:
-                    item_success = self._process_dd_item(source, dd_item, s3_creds)
-                    if not item_success:
-                        overall_success = False
-
-                bt.logging.info(f"Completed processing all DD items for {source_name}")
-
-            bt.logging.info("Completed S3 partitioned upload")
+            bt.logging.info("Completed S3 upload using job IDs")
             return overall_success
 
         except Exception as e:
-            bt.logging.error(f"Error in S3 partitioned upload: {e}")
+            bt.logging.error(f"Error in job-based S3 upload: {e}")
             return False
