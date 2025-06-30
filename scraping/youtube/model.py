@@ -35,7 +35,7 @@ class YouTubeContent(BaseModel):
     )
 
     transcript: List[Dict] = Field(
-        description="The transcript of the video, as a list of dictionaries with 'text', 'start', and 'duration' keys",
+        description="The transcript of the video, as a list of dictionaries with 'text', 'start', 'end', and 'duration' keys",
         default_factory=list
     )
 
@@ -46,6 +46,11 @@ class YouTubeContent(BaseModel):
     duration_seconds: int = Field(
         description="The duration of the video in seconds",
         default=0
+    )
+
+    language: str = Field(
+        description="The language of the transcript (e.g., 'en', 'translated', 'original')",
+        default="en"
     )
 
     @classmethod
