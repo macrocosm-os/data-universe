@@ -145,7 +145,7 @@ class ValidatorS3Access:
             bt.logging.error(f"Error listing miners: {str(e)}")
             return []
 
-    def list_files(self, source: str, miner_id: str) -> List[Dict[str, Any]]:
+    def list_files_old_format(self, source: str, miner_id: str) -> List[Dict[str, Any]]:
         """List files for a specific miner using presigned URL"""
         if not self.ensure_access():
             return []
