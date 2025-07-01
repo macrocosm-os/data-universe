@@ -242,3 +242,150 @@ class ValidatorS3Access:
             return True
         except Exception:
             return False
+
+    def list_miners_new_format(self) -> List[str]:
+        """List all miners (hotkeys) using new format: data/hotkey={hotkey_id}/"""
+        if not self.ensure_access():
+            return []
+
+        try:
+            urls = self.access_data.get('urls', {})
+            miners_urls = urls.get('miners', {})
+
+            if not miners_urls or 'list_all_miners' not in miners_urls:
+                return []
+
+            # Use the presigned URL to list miners
+            list_url = miners_urls['list_all_miners']
+            response = requests.get(list_url)
+
+            if response.status_code != 200:
+                return []
+
+            root = ET.fromstring(response.text)
+
+            # Extract the CommonPrefixes which represent miners (hotkey folders)
+            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+            miners = []
+
+            for prefix in root.findall('.//s3:CommonPrefixes', namespaces):
+                prefix_text = prefix.find('s3:Prefix', namespaces).text
+                if prefix_text:
+                    # Extract the hotkey from the prefix: data/hotkey={hotkey_id}/
+                    if prefix_text.startswith('data/hotkey=') and prefix_text.endswith('/'):
+                        hotkey_id = prefix_text[12:-1]  # Remove 'data/hotkey=' prefix and '/' suffix
+                        miners.append(hotkey_id)
+
+            return miners
+        except Exception:
+            return []
+
+    def list_jobs(self, miner_hotkey: str) -> List[str]:
+        """List jobs for a specific miner using new format: data/hotkey={hotkey_id}/job_id={job_id}/"""
+        if not self.ensure_access():
+            return []
+
+        try:
+            bucket = self.access_data.get('bucket')
+            prefix = f"data/hotkey={miner_hotkey}/"
+
+            # Generate a presigned URL to list job folders
+            urls = self.access_data.get('urls', {})
+            global_urls = urls.get('global', {})
+
+            if not global_urls or 'list_all_data' not in global_urls:
+                return []
+
+            # Modify the existing list_all_data URL to include our prefix
+            list_url = global_urls['list_all_data']
+
+            # Add or modify the prefix parameter in the URL
+            import urllib.parse
+            url_parts = list(urllib.parse.urlparse(list_url))
+            query = dict(urllib.parse.parse_qsl(url_parts[4]))
+            query['prefix'] = prefix
+            query['delimiter'] = '/'  # Only get immediate subdirectories (job folders)
+            url_parts[4] = urllib.parse.urlencode(query)
+            modified_url = urllib.parse.urlunparse(url_parts)
+
+            # Use the modified URL to list job folders
+            response = requests.get(modified_url)
+
+            if response.status_code != 200:
+                return []
+
+            root = ET.fromstring(response.text)
+
+            # Extract the CommonPrefixes which represent job folders
+            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+            jobs = []
+
+            for job_prefix in root.findall('.//s3:CommonPrefixes', namespaces):
+                prefix_text = job_prefix.find('s3:Prefix', namespaces).text
+                if prefix_text:
+                    # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
+                    if '/job_id=' in prefix_text and prefix_text.endswith('/'):
+                        job_part = prefix_text.split('/job_id=')[-1][:-1]  # Remove trailing '/'
+                        jobs.append(job_part)
+
+            return jobs
+        except Exception:
+            return []
+
+    def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
+        """List files for a specific miner and job using new format: data/hotkey={hotkey_id}/job_id={job_id}/"""
+        if not self.ensure_access():
+            return []
+
+        try:
+            bucket = self.access_data.get('bucket')
+            prefix = f"data/hotkey={miner_hotkey}/job_id={job_id}/"
+
+            # Generate a presigned URL to list objects
+            urls = self.access_data.get('urls', {})
+            global_urls = urls.get('global', {})
+
+            if not global_urls or 'list_all_data' not in global_urls:
+                return []
+
+            # Modify the existing list_all_data URL to include our prefix
+            list_url = global_urls['list_all_data']
+
+            # Add or modify the prefix parameter in the URL
+            import urllib.parse
+            url_parts = list(urllib.parse.urlparse(list_url))
+            query = dict(urllib.parse.parse_qsl(url_parts[4]))
+            query['prefix'] = prefix
+            url_parts[4] = urllib.parse.urlencode(query)
+            modified_url = urllib.parse.urlunparse(url_parts)
+
+            # Use the modified URL to list files
+            response = requests.get(modified_url)
+
+            if response.status_code != 200:
+                return []
+
+            # Parse the XML response
+            root = ET.fromstring(response.text)
+
+            # Extract the Contents which represent files
+            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+            files = []
+
+            for content in root.findall('.//s3:Contents', namespaces):
+                key = content.find('s3:Key', namespaces).text
+                size = content.find('s3:Size', namespaces).text
+                last_modified = content.find('s3:LastModified', namespaces).text
+
+                if key:
+                    # Extract just the filename from the full path
+                    filename = os.path.basename(key)
+                    files.append({
+                        'Key': key,  # Using 'Key' to match S3 response format expected by validation
+                        'Size': int(size) if size else 0,
+                        'LastModified': last_modified
+                    })
+
+            return files
+        except Exception:
+            return []
