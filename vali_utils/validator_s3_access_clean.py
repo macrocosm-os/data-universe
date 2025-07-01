@@ -183,7 +183,7 @@ class ValidatorS3Access:
             target_prefix = f"data/hotkey={miner_hotkey}/"
             self._debug_print(f"Looking for jobs with prefix: {target_prefix}")
 
-            # Use the presigned URL AS-IS - don't modify it
+            # Need to modify the URL to get deeper listing for jobs
             urls = self.access_data.get('urls', {})
             global_urls = urls.get('global', {})
 
@@ -192,10 +192,24 @@ class ValidatorS3Access:
                 return []
 
             list_url = global_urls['list_all_data']
-            self._debug_print(f"Using unmodified URL: {list_url[:150]}...")
+            self._debug_print(f"Original URL: {list_url[:150]}...")
 
-            # Use the URL exactly as provided by auth server
-            response = requests.get(list_url)
+            # Modify URL to search for jobs within this specific miner
+            import urllib.parse
+            url_parts = list(urllib.parse.urlparse(list_url))
+            query = dict(urllib.parse.parse_qsl(url_parts[4]))
+            
+            # Change prefix to be more specific and keep delimiter to get job folders
+            query['prefix'] = target_prefix
+            query['delimiter'] = '/'  # Keep delimiter to get job folders
+            
+            url_parts[4] = urllib.parse.urlencode(query)
+            modified_url = urllib.parse.urlunparse(url_parts)
+            
+            self._debug_print(f"Modified URL: {modified_url[:150]}...")
+
+            # Use the modified URL
+            response = requests.get(modified_url)
             self._debug_print(f"Jobs response status: {response.status_code}")
 
             if response.status_code != 200:
@@ -204,7 +218,7 @@ class ValidatorS3Access:
 
             root = ET.fromstring(response.text)
 
-            # Extract ALL prefixes and filter client-side
+            # Extract job prefixes
             namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
             jobs = []
 
@@ -213,15 +227,13 @@ class ValidatorS3Access:
                 if prefix_text:
                     # URL decode the prefix first
                     decoded_prefix = urllib.parse.unquote(prefix_text)
-                    self._debug_print(f"Found prefix: {decoded_prefix}")
+                    self._debug_print(f"Found job prefix: {decoded_prefix}")
                     
-                    # Filter: only prefixes that start with our target miner
-                    if decoded_prefix.startswith(target_prefix) and '/job_id=' in decoded_prefix:
-                        # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
-                        if decoded_prefix.endswith('/'):
-                            job_part = decoded_prefix.split('/job_id=')[-1][:-1]  # Remove trailing '/'
-                            jobs.append(job_part)
-                            self._debug_print(f"Extracted job: {job_part}")
+                    # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
+                    if '/job_id=' in decoded_prefix and decoded_prefix.endswith('/'):
+                        job_part = decoded_prefix.split('/job_id=')[-1][:-1]  # Remove trailing '/'
+                        jobs.append(job_part)
+                        self._debug_print(f"Extracted job: {job_part}")
 
             self._debug_print(f"Found {len(jobs)} jobs for {miner_hotkey}: {jobs}")
             return jobs
