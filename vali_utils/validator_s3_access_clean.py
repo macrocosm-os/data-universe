@@ -180,10 +180,10 @@ class ValidatorS3Access:
             return []
 
         try:
-            prefix = f"data/hotkey={miner_hotkey}/"
-            self._debug_print(f"Listing jobs for miner {miner_hotkey} with prefix: {prefix}")
+            target_prefix = f"data/hotkey={miner_hotkey}/"
+            self._debug_print(f"Looking for jobs with prefix: {target_prefix}")
 
-            # Get the base list URL and modify it
+            # Use the presigned URL AS-IS - don't modify it
             urls = self.access_data.get('urls', {})
             global_urls = urls.get('global', {})
 
@@ -192,18 +192,10 @@ class ValidatorS3Access:
                 return []
 
             list_url = global_urls['list_all_data']
-            
-            # Modify URL to include our prefix and delimiter
-            url_parts = list(urllib.parse.urlparse(list_url))
-            query = dict(urllib.parse.parse_qsl(url_parts[4]))
-            query['prefix'] = prefix
-            query['delimiter'] = '/'  # Only get immediate subdirectories (job folders)
-            url_parts[4] = urllib.parse.urlencode(query)
-            modified_url = urllib.parse.urlunparse(url_parts)
+            self._debug_print(f"Using unmodified URL: {list_url[:150]}...")
 
-            self._debug_print(f"Modified jobs URL: {modified_url[:150]}...")
-
-            response = requests.get(modified_url)
+            # Use the URL exactly as provided by auth server
+            response = requests.get(list_url)
             self._debug_print(f"Jobs response status: {response.status_code}")
 
             if response.status_code != 200:
@@ -212,7 +204,7 @@ class ValidatorS3Access:
 
             root = ET.fromstring(response.text)
 
-            # Extract job folders
+            # Extract ALL prefixes and filter client-side
             namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
             jobs = []
 
@@ -221,16 +213,23 @@ class ValidatorS3Access:
                 if prefix_text:
                     # URL decode the prefix first
                     decoded_prefix = urllib.parse.unquote(prefix_text)
-                    # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
-                    if '/job_id=' in decoded_prefix and decoded_prefix.endswith('/'):
-                        job_part = decoded_prefix.split('/job_id=')[-1][:-1]  # Remove trailing '/'
-                        jobs.append(job_part)
+                    self._debug_print(f"Found prefix: {decoded_prefix}")
+                    
+                    # Filter: only prefixes that start with our target miner
+                    if decoded_prefix.startswith(target_prefix) and '/job_id=' in decoded_prefix:
+                        # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
+                        if decoded_prefix.endswith('/'):
+                            job_part = decoded_prefix.split('/job_id=')[-1][:-1]  # Remove trailing '/'
+                            jobs.append(job_part)
+                            self._debug_print(f"Extracted job: {job_part}")
 
-            self._debug_print(f"Found jobs for {miner_hotkey}: {jobs}")
+            self._debug_print(f"Found {len(jobs)} jobs for {miner_hotkey}: {jobs}")
             return jobs
             
         except Exception as e:
             self._debug_print(f"Exception in list_jobs: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
 
     def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
@@ -239,10 +238,10 @@ class ValidatorS3Access:
             return []
 
         try:
-            prefix = f"data/hotkey={miner_hotkey}/job_id={job_id}/"
-            self._debug_print(f"Listing files with prefix: {prefix}")
+            target_prefix = f"data/hotkey={miner_hotkey}/job_id={job_id}/"
+            self._debug_print(f"Looking for files with prefix: {target_prefix}")
 
-            # Get and modify the list URL
+            # Use the presigned URL AS-IS - don't modify it
             urls = self.access_data.get('urls', {})
             global_urls = urls.get('global', {})
 
@@ -251,13 +250,8 @@ class ValidatorS3Access:
 
             list_url = global_urls['list_all_data']
             
-            url_parts = list(urllib.parse.urlparse(list_url))
-            query = dict(urllib.parse.parse_qsl(url_parts[4]))
-            query['prefix'] = prefix
-            url_parts[4] = urllib.parse.urlencode(query)
-            modified_url = urllib.parse.urlunparse(url_parts)
-
-            response = requests.get(modified_url)
+            # Use the URL exactly as provided by auth server
+            response = requests.get(list_url)
 
             if response.status_code != 200:
                 self._debug_print(f"Failed files response: {response.text[:500]}")
@@ -265,21 +259,28 @@ class ValidatorS3Access:
 
             root = ET.fromstring(response.text)
 
-            # Extract files
+            # Extract ALL files and filter client-side
             namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
             files = []
 
+            # Look for actual files (Contents) not folders (CommonPrefixes)
             for content in root.findall('.//s3:Contents', namespaces):
                 key = content.find('s3:Key', namespaces).text
                 size = content.find('s3:Size', namespaces).text
                 last_modified = content.find('s3:LastModified', namespaces).text
 
                 if key:
-                    files.append({
-                        'Key': key,
-                        'Size': int(size) if size else 0,
-                        'LastModified': last_modified
-                    })
+                    # URL decode the key
+                    decoded_key = urllib.parse.unquote(key)
+                    
+                    # Filter: only files that start with our target prefix
+                    if decoded_key.startswith(target_prefix):
+                        files.append({
+                            'Key': decoded_key,  # Use decoded key
+                            'Size': int(size) if size else 0,
+                            'LastModified': last_modified
+                        })
+                        self._debug_print(f"Found file: {os.path.basename(decoded_key)}")
 
             self._debug_print(f"Found {len(files)} files in {miner_hotkey}/{job_id}")
             return files
