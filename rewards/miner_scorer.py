@@ -68,7 +68,7 @@ class MinerScorer:
 
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
-        state = torch.load(filepath)
+        state = torch.load(filepath, weights_only=True)
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
