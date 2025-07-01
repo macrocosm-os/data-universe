@@ -5,23 +5,25 @@ import threading
 import bittensor as bt
 from typing import Dict, Optional, Any, List
 import os
-# Parse the XML response
 import xml.etree.ElementTree as ET
-from io import StringIO
-
+import urllib.parse
 
 
 class ValidatorS3Access:
-    """Manages validator access to S3 data using presigned URLs"""
+    """Clean S3 access for job-based validation - data/hotkey={hotkey}/job_id={job_id}/"""
 
-    def __init__(self,
-                 wallet: bt.wallet,
-                 s3_auth_url: str):
+    def __init__(self, wallet: bt.wallet, s3_auth_url: str, debug: bool = False):
         self.wallet = wallet
         self.s3_auth_url = s3_auth_url
         self.access_data = None
         self.expiry_time = 0
         self.lock = threading.RLock()
+        self.debug = debug
+
+    def _debug_print(self, message: str):
+        """Print debug message if debug mode is enabled"""
+        if self.debug:
+            print(f"DEBUG S3: {message}")
 
     def ensure_access(self) -> bool:
         """Ensure valid S3 access is available, refreshing if needed"""
@@ -29,15 +31,19 @@ class ValidatorS3Access:
             current_time = time.time()
             # Check if credentials are still valid (with 1 hour buffer)
             if self.access_data and current_time < self.expiry_time - 3600:
+                self._debug_print("Using cached S3 access")
                 return True
 
-            # Get new access (silently)
+            # Get new access
+            self._debug_print("Getting new S3 access from auth server")
             access_data = self.get_validator_access()
 
             if not access_data:
+                self._debug_print("Failed to get S3 access from auth server")
                 return False
 
             self.access_data = access_data
+            self._debug_print(f"Got S3 access data with keys: {list(access_data.keys())}")
 
             # Set expiry time based on the returned expiry
             if 'expiry_seconds' in access_data:
@@ -63,6 +69,8 @@ class ValidatorS3Access:
             hotkey = self.wallet.hotkey.ss58_address
             timestamp = int(time.time())
 
+            self._debug_print(f"Requesting S3 access for validator {hotkey}")
+
             # Create commitment string
             commitment = f"s3:validator:access:{timestamp}"
 
@@ -77,6 +85,8 @@ class ValidatorS3Access:
                 "signature": signature_hex
             }
 
+            self._debug_print(f"Sending request to: {self.s3_auth_url}/get-validator-access")
+
             # Send request to S3 auth service
             response = requests.post(
                 f"{self.s3_auth_url.rstrip('/')}/get-validator-access",
@@ -84,161 +94,236 @@ class ValidatorS3Access:
                 timeout=30
             )
 
+            self._debug_print(f"Auth server response status: {response.status_code}")
+
             if response.status_code != 200:
+                self._debug_print(f"Auth server error: {response.text}")
                 return None
 
-            return response.json()
+            result = response.json()
+            self._debug_print(f"Auth server response structure: {list(result.keys())}")
+            
+            if 'urls' in result:
+                urls = result['urls']
+                self._debug_print(f"URLs structure: {list(urls.keys())}")
+                if 'miners' in urls:
+                    miners_urls = urls['miners']
+                    self._debug_print(f"Miners URLs: {list(miners_urls.keys())}")
 
-        except Exception:
+            return result
+
+        except Exception as e:
+            self._debug_print(f"Exception getting validator access: {str(e)}")
             return None
 
-    def list_sources(self) -> List[str]:
-        """List available data sources"""
+    def list_miners_new_format(self) -> List[str]:
+        """List all miners (hotkeys) using format: data/hotkey={hotkey_id}/"""
         if not self.ensure_access():
+            self._debug_print("Failed to ensure S3 access")
             return []
 
         try:
             urls = self.access_data.get('urls', {})
-            sources = urls.get('sources', {})
-            return list(sources.keys())
-        except Exception:
-            return []
+            miners_urls = urls.get('miners', {})
 
-    def list_miners(self, source: str) -> List[str]:
-        """List miners for a specific source using presigned URL"""
-        if not self.ensure_access():
-            return []
-
-        try:
-            urls = self.access_data.get('urls', {})
-            sources = urls.get('sources', {})
-            source_info = sources.get(source, {})
-
-            if not source_info or 'list_miners' not in source_info:
+            if not miners_urls or 'list_all_miners' not in miners_urls:
+                self._debug_print(f"No 'list_all_miners' URL found. Available: {list(miners_urls.keys())}")
                 return []
 
             # Use the presigned URL to list miners
-            list_url = source_info['list_miners']
+            list_url = miners_urls['list_all_miners']
+            self._debug_print(f"Using miners list URL: {list_url[:100]}...")
+            
             response = requests.get(list_url)
+            self._debug_print(f"Miners list response status: {response.status_code}")
 
             if response.status_code != 200:
+                self._debug_print(f"Failed miners list response: {response.text[:500]}")
                 return []
 
+            self._debug_print(f"Response content preview: {response.text[:300]}...")
 
             root = ET.fromstring(response.text)
 
-            # Extract the CommonPrefixes which represent miners (folders)
+            # Extract the CommonPrefixes which represent miners (hotkey folders)
             namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
-            prefixes = []
+            miners = []
 
+            # Show all prefixes found for debugging
+            all_prefixes = []
             for prefix in root.findall('.//s3:CommonPrefixes', namespaces):
                 prefix_text = prefix.find('s3:Prefix', namespaces).text
                 if prefix_text:
-                    # Extract the miner ID from the prefix
-                    parts = prefix_text.split('/')
-                    if len(parts) >= 3:
-                        miner_id = parts[2]
-                        prefixes.append(miner_id)
+                    all_prefixes.append(prefix_text)
+                    # URL decode the prefix first
+                    decoded_prefix = urllib.parse.unquote(prefix_text)
+                    # Extract the hotkey from the prefix: data/hotkey={hotkey_id}/
+                    if decoded_prefix.startswith('data/hotkey=') and decoded_prefix.endswith('/'):
+                        hotkey_id = decoded_prefix[12:-1]  # Remove 'data/hotkey=' prefix and '/' suffix
+                        miners.append(hotkey_id)
 
-            return prefixes
+            self._debug_print(f"All prefixes found: {all_prefixes}")
+            self._debug_print(f"Extracted miners: {miners}")
+            
+            return miners
+            
         except Exception as e:
-            bt.logging.error(f"Error listing miners: {str(e)}")
+            self._debug_print(f"Exception in list_miners_new_format: {str(e)}")
+            import traceback
+            traceback.print_exc()
             return []
 
-    def list_files(self, source: str, miner_id: str) -> List[Dict[str, Any]]:
-        """List files for a specific miner using presigned URL"""
+    def list_jobs(self, miner_hotkey: str) -> List[str]:
+        """List jobs for a specific miner using format: data/hotkey={hotkey_id}/job_id={job_id}/"""
+        if not self.ensure_access():
+            self._debug_print("Failed to ensure S3 access for jobs listing")
+            return []
+
+        try:
+            target_prefix = f"data/hotkey={miner_hotkey}/"
+            self._debug_print(f"Looking for jobs with prefix: {target_prefix}")
+
+            # Use the presigned URL AS-IS - DON'T modify it
+            urls = self.access_data.get('urls', {})
+            global_urls = urls.get('global', {})
+
+            if not global_urls or 'list_all_data' not in global_urls:
+                self._debug_print("No 'list_all_data' URL found")
+                return []
+
+            list_url = global_urls['list_all_data']
+            self._debug_print(f"Using unmodified URL: {list_url[:150]}...")
+
+            # Use the URL exactly as provided by auth server
+            response = requests.get(list_url)
+            self._debug_print(f"Jobs response status: {response.status_code}")
+
+            if response.status_code != 200:
+                self._debug_print(f"Failed jobs response: {response.text[:500]}")
+                return []
+
+            root = ET.fromstring(response.text)
+
+            # Extract ALL content (both files and prefixes) and filter client-side
+            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+            jobs = set()  # Use set to avoid duplicates
+
+            # Check Contents (actual files) for job paths
+            for content in root.findall('.//s3:Contents', namespaces):
+                key = content.find('s3:Key', namespaces).text
+                if key:
+                    # URL decode the key first
+                    decoded_key = urllib.parse.unquote(key)
+                    self._debug_print(f"Found file: {decoded_key}")
+                    
+                    # Extract job from file path: data/hotkey={hotkey_id}/job_id={job_id}/filename
+                    if decoded_key.startswith(target_prefix) and '/job_id=' in decoded_key:
+                        # Extract the job_id part
+                        job_part_full = decoded_key[len(target_prefix):]  # Remove miner prefix
+                        if job_part_full.startswith('job_id='):
+                            job_part = job_part_full.split('/')[0][7:]  # Remove 'job_id=' and get first part
+                            jobs.add(job_part)
+                            self._debug_print(f"Extracted job from file: {job_part}")
+
+            # Also check CommonPrefixes (folders) 
+            for job_prefix in root.findall('.//s3:CommonPrefixes', namespaces):
+                prefix_text = job_prefix.find('s3:Prefix', namespaces).text
+                if prefix_text:
+                    # URL decode the prefix first
+                    decoded_prefix = urllib.parse.unquote(prefix_text)
+                    self._debug_print(f"Found prefix: {decoded_prefix}")
+                    
+                    # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
+                    if decoded_prefix.startswith(target_prefix) and '/job_id=' in decoded_prefix:
+                        job_part_full = decoded_prefix[len(target_prefix):]  # Remove miner prefix
+                        if job_part_full.startswith('job_id='):
+                            job_part = job_part_full.split('/')[0][7:]  # Remove 'job_id=' and get first part
+                            jobs.add(job_part)
+                            self._debug_print(f"Extracted job from prefix: {job_part}")
+
+            jobs_list = list(jobs)
+            self._debug_print(f"Found {len(jobs_list)} jobs for {miner_hotkey}: {jobs_list}")
+            return jobs_list
+            
+        except Exception as e:
+            self._debug_print(f"Exception in list_jobs: {str(e)}")
+            import traceback
+            traceback.print_exc()
+            return []
+
+    def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
+        """List files for a specific miner and job using format: data/hotkey={hotkey_id}/job_id={job_id}/"""
         if not self.ensure_access():
             return []
 
         try:
-            bucket = self.access_data.get('bucket')
-            prefix = f"data/{source}/{miner_id}/"
+            target_prefix = f"data/hotkey={miner_hotkey}/job_id={job_id}/"
+            self._debug_print(f"Looking for files with prefix: {target_prefix}")
 
-            # Generate a presigned URL to list objects
-            # This is a bit tricky because we don't have direct access to generate new presigned URLs
-            # We need to use the list_all_data URL with the appropriate prefix
-
+            # Use the presigned URL AS-IS - don't modify it
             urls = self.access_data.get('urls', {})
             global_urls = urls.get('global', {})
 
             if not global_urls or 'list_all_data' not in global_urls:
                 return []
 
-            # We'll need to modify the existing list_all_data URL to include our prefix
             list_url = global_urls['list_all_data']
-
-            # Add or modify the prefix parameter in the URL
-            import urllib.parse
-            url_parts = list(urllib.parse.urlparse(list_url))
-            query = dict(urllib.parse.parse_qsl(url_parts[4]))
-            query['prefix'] = prefix
-            url_parts[4] = urllib.parse.urlencode(query)
-            modified_url = urllib.parse.urlunparse(url_parts)
-
-            # Use the modified URL to list files
-            response = requests.get(modified_url)
+            
+            # Use the URL exactly as provided by auth server
+            response = requests.get(list_url)
 
             if response.status_code != 200:
+                self._debug_print(f"Failed files response: {response.text[:500]}")
                 return []
-
-            # Parse the XML response
-            import xml.etree.ElementTree as ET
 
             root = ET.fromstring(response.text)
 
-            # Extract the Contents which represent files
+            # Extract ALL files and filter client-side
             namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
             files = []
 
+            # Look for actual files (Contents) not folders (CommonPrefixes)
             for content in root.findall('.//s3:Contents', namespaces):
                 key = content.find('s3:Key', namespaces).text
                 size = content.find('s3:Size', namespaces).text
                 last_modified = content.find('s3:LastModified', namespaces).text
 
                 if key:
-                    # Extract just the filename from the full path
-                    filename = os.path.basename(key)
-                    files.append({
-                        'key': key,
-                        'filename': filename,
-                        'size': int(size) if size else 0,
-                        'last_modified': last_modified
-                    })
+                    # URL decode the key
+                    decoded_key = urllib.parse.unquote(key)
+                    
+                    # Filter: only files that start with our target prefix
+                    if decoded_key.startswith(target_prefix):
+                        files.append({
+                            'Key': decoded_key,  # Use decoded key
+                            'Size': int(size) if size else 0,
+                            'LastModified': last_modified
+                        })
+                        self._debug_print(f"Found file: {os.path.basename(decoded_key)}")
 
+            self._debug_print(f"Found {len(files)} files in {miner_hotkey}/{job_id}")
             return files
+            
         except Exception as e:
-            bt.logging.error(f"Error listing files: {str(e)}")
+            self._debug_print(f"Exception in list_files: {str(e)}")
             return []
 
-    def download_file(self, key: str, output_path: str) -> bool:
-        """Download a file using presigned URL"""
-        if not self.ensure_access():
-            return False
-
+    def test_direct_url(self, url: str) -> Dict[str, Any]:
+        """Test a presigned URL directly and return response info"""
         try:
-            bucket = self.access_data.get('bucket')
-            region = self.access_data.get('region', 'nyc3')
-
-            # We need to generate a presigned URL for this specific file
-            # Since we don't have direct access to generate new presigned URLs,
-            # we'll construct a basic URL and hope it works with the existing signatures
-
-            # This may not work - the proper solution would be to add a specific
-            # endpoint in the API to get a presigned URL for downloading a file
-
-            file_url = f"https://{bucket}.{region}.digitaloceanspaces.com/{key}"
-
-            # Download the file
-            response = requests.get(file_url, stream=True)
-
-            if response.status_code != 200:
-                return False
-
-            # Save the file
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    f.write(chunk)
-
-            return True
-        except Exception:
-            return False
+            self._debug_print(f"Testing direct URL: {url[:100]}...")
+            response = requests.get(url)
+            
+            result = {
+                'status_code': response.status_code,
+                'headers': dict(response.headers),
+                'content_preview': response.text[:1000] if response.status_code == 200 else response.text,
+                'success': response.status_code == 200
+            }
+            
+            self._debug_print(f"Direct URL test result: status={result['status_code']}, success={result['success']}")
+            return result
+            
+        except Exception as e:
+            self._debug_print(f"Exception testing direct URL: {str(e)}")
+            return {'success': False, 'error': str(e)}
