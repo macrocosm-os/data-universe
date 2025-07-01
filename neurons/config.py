@@ -144,6 +144,12 @@ def add_args(neuron_type: NeuronType, parser):
             help="Set this flag to select the location where you are want to store your hf_results data",
             default=os.path.join(Path(os.path.dirname(__file__)).parent, "hf_validation.parquet"),
         )
+        parser.add_argument(
+            "--s3_results_path",
+            action="store_true",
+            help="Set this flag to select the location where you want to store your S3 validation data",
+            default=os.path.join(Path(os.path.dirname(__file__)).parent, "s3_validation.parquet"),
+        )
 
         parser.add_argument(
             "--neuron.api_on",
