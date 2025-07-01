@@ -141,11 +141,13 @@ class MinerEvaluator:
         if validation_info is None or (current_block - validation_info['block']) > 5100:  # ~17 hrs
             hf_validation_result = await self._perform_hf_validation(hotkey, uid, axon_info, current_block)
         
-        # Perform S3 validation
+        # Perform S3 validation (only if enabled by date)
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
         s3_validation_result = None
-        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
-            s3_validation_result = await self._perform_s3_validation(hotkey, uid, current_block)
+        current_time = dt.datetime.now(tz=dt.timezone.utc)
+        if current_time >= constants.S3_VALIDATION_ENABLED_DATE:
+            if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
+                s3_validation_result = await self._perform_s3_validation(hotkey, uid, current_block)
         ##########
 
         # From that index, find a data entity bucket to sample and get it from the miner.
@@ -270,7 +272,7 @@ class MinerEvaluator:
             if s3_validation_result.is_valid == True:
                 bt.logging.info(f"{hotkey}: Miner {uid} passed S3 validation. S3 Validation Percentage: {s3_validation_result.validation_percentage:.1f}%, Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}")
             else:
-                bt.logging.info(f"{hotkey}: Miner {uid} did not pass S3 validation. Reason: {s3_validation_result.reason}")
+                bt.logging.info(f"{hotkey}: Miner {uid} did not pass S3 validation. Reason: Data validation failed")
 
             self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage)
 
@@ -386,6 +388,9 @@ class MinerEvaluator:
         Performs S3 validation for a miner using S3 data access.
         Validates data freshness, file structure, and content format.
         
+        SECURITY NOTE: All logging in this method must be public-safe as validator logs
+        are publicly visible. Never log URLs, credentials, or sensitive data.
+        
         Returns:
             An S3ValidationResult with validation details or None if no S3 data is found.
         """
@@ -420,7 +425,7 @@ class MinerEvaluator:
                             if await self._validate_s3_file(hotkey, file_info):
                                 valid_files += 1
                 except Exception as e:
-                    bt.logging.warning(f"{hotkey}: Error validating job {job_id}: {str(e)}")
+                    bt.logging.warning(f"{hotkey}: Error validating job {job_id}: Connection error")
                     continue
             
             # Calculate validation percentage
@@ -435,7 +440,7 @@ class MinerEvaluator:
                 reason=f"Validated {valid_files}/{total_files} files across {len(jobs)} jobs"
             )
             
-            bt.logging.info(f"{hotkey}: S3 validation completed - {validation_percentage:.1f}% valid")
+            bt.logging.info(f"{hotkey}: S3 validation completed - {validation_percentage:.1f}% valid ({valid_files}/{total_files} files, {len(jobs)} jobs)")
             
         except Exception as e:
             bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
@@ -458,7 +463,7 @@ class MinerEvaluator:
         try:
             return await self.s3_reader.list_jobs(hotkey)
         except Exception as e:
-            bt.logging.warning(f"Failed to get S3 jobs for {hotkey}: {str(e)}")
+            bt.logging.warning(f"Failed to get S3 jobs for {hotkey}: Connection error")
             return []
 
     async def _get_job_files(self, hotkey: str, job_id: str) -> List[dict]:
@@ -466,7 +471,7 @@ class MinerEvaluator:
         try:
             return await self.s3_reader.list_files(hotkey, job_id)
         except Exception as e:
-            bt.logging.warning(f"Failed to get S3 files for {hotkey}/{job_id}: {str(e)}")
+            bt.logging.warning(f"Failed to get S3 files for {hotkey}: Connection error")
             return []
 
     async def _validate_s3_file(self, hotkey: str, file_info: dict) -> bool:
@@ -499,7 +504,7 @@ class MinerEvaluator:
             return True
             
         except Exception as e:
-            bt.logging.warning(f"Error validating S3 file {file_info.get('Key', 'unknown')}: {str(e)}")
+            bt.logging.warning(f"Error validating S3 file for {hotkey}: Validation error")
             return False
 
     async def run_next_eval_batch(self) -> int:
