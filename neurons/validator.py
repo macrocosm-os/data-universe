@@ -25,6 +25,7 @@ import threading
 import time
 import os
 import wandb
+from utils.validator_minio_logger import ValidatorMinioLogger, ValidatorMinioLogCapture
 import subprocess
 from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
@@ -129,6 +130,10 @@ class Validator:
         self.step = 0
         self.wandb_run_start = None
         self.wandb_run = None
+        
+        # Initialize Minio logger
+        self.minio_logger = None
+        self.minio_log_capture = None
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -150,6 +155,12 @@ class Validator:
             self.new_wandb_run()
         else:
             bt.logging.warning("Not logging to wandb.")
+            
+        # Initialize Minio logging (always enabled unless explicitly disabled)
+        if not getattr(self.config.minio, 'logging_off', False):
+            self.new_minio_run()
+        else:
+            bt.logging.warning("Minio logging disabled.")
 
         bt.logging.info("Setting up validator.")
 
@@ -225,6 +236,53 @@ class Validator:
 
         bt.logging.debug(f"Started a new wandb run: {name}")
 
+    def new_minio_run(self):
+        """Creates a new Minio logging run to save information to."""
+        try:
+            # Get Minio settings from config or use defaults
+            minio_endpoint = getattr(self.config.minio, 'endpoint', '146.190.168.187:9000')
+            minio_access_key = getattr(self.config.minio, 'access_key', 'miner_test_hot')
+            minio_secret_key = getattr(self.config.minio, 'secret_key', 'key_key_offline_secret')
+            bucket_name = getattr(self.config.minio, 'bucket', 'validator-logs')
+            auto_start_local = getattr(self.config.minio, 'auto_start_local', True)
+            
+            # Initialize Minio logger
+            self.minio_logger = ValidatorMinioLogger(
+                validator_uid=self.uid,
+                wallet=self.wallet,
+                minio_endpoint=minio_endpoint,
+                minio_access_key=minio_access_key,
+                minio_secret_key=minio_secret_key,
+                bucket_name=bucket_name,
+                project_name="data-universe-validators",
+                auto_start_local=auto_start_local
+            )
+            
+            # Get version and scraper info
+            version_tag = self.get_version_tag()
+            scraper_providers = self.get_scraper_providers()
+            
+            # Start capturing stdout/stderr FIRST (before init_run to catch early logs)
+            self.minio_log_capture = ValidatorMinioLogCapture(self.minio_logger)
+            self.minio_log_capture.__enter__()
+            
+            # Initialize the run
+            self.minio_logger.init_run(
+                config={
+                    "netuid": self.config.netuid,
+                    "chain_endpoint": self.config.subtensor.chain_endpoint,
+                    "block": self.block
+                },
+                version_tag=version_tag,
+                scraper_providers=scraper_providers
+            )
+            
+            bt.logging.info(f"Started Minio logging for validator-{self.uid}")
+            
+        except Exception as e:
+            bt.logging.error(f"Failed to initialize Minio logging: {e}")
+            self.minio_logger = None
+
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
@@ -299,6 +357,12 @@ class Validator:
                         )
                         self.wandb_run.finish()
                         self.new_wandb_run()
+                        
+                # Check if we should rotate Minio logging run
+                if self.minio_logger and self.minio_logger.should_rotate_run():
+                    bt.logging.info("Minio logging run is more than 1 day old. Starting a new run.")
+                    self.minio_logger.finish()
+                    self.new_minio_run()
 
             # If someone intentionally stops the validator, it'll safely terminate operations.
             except KeyboardInterrupt:
@@ -362,6 +426,11 @@ class Validator:
             self.is_running = False
             if self.wandb_run:
                 self.wandb_run.finish()
+            if self.minio_logger:
+                if self.minio_log_capture:
+                    self.minio_log_capture.__exit__(None, None, None)
+                self.minio_logger.finish()
+                self.minio_logger.cleanup()
             bt.logging.debug("Stopped.")
 
     def serve_axon(self):
