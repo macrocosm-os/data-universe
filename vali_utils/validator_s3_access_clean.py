@@ -155,9 +155,11 @@ class ValidatorS3Access:
                 prefix_text = prefix.find('s3:Prefix', namespaces).text
                 if prefix_text:
                     all_prefixes.append(prefix_text)
+                    # URL decode the prefix first
+                    decoded_prefix = urllib.parse.unquote(prefix_text)
                     # Extract the hotkey from the prefix: data/hotkey={hotkey_id}/
-                    if prefix_text.startswith('data/hotkey=') and prefix_text.endswith('/'):
-                        hotkey_id = prefix_text[12:-1]  # Remove 'data/hotkey=' prefix and '/' suffix
+                    if decoded_prefix.startswith('data/hotkey=') and decoded_prefix.endswith('/'):
+                        hotkey_id = decoded_prefix[12:-1]  # Remove 'data/hotkey=' prefix and '/' suffix
                         miners.append(hotkey_id)
 
             self._debug_print(f"All prefixes found: {all_prefixes}")
@@ -217,9 +219,11 @@ class ValidatorS3Access:
             for job_prefix in root.findall('.//s3:CommonPrefixes', namespaces):
                 prefix_text = job_prefix.find('s3:Prefix', namespaces).text
                 if prefix_text:
+                    # URL decode the prefix first
+                    decoded_prefix = urllib.parse.unquote(prefix_text)
                     # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
-                    if '/job_id=' in prefix_text and prefix_text.endswith('/'):
-                        job_part = prefix_text.split('/job_id=')[-1][:-1]  # Remove trailing '/'
+                    if '/job_id=' in decoded_prefix and decoded_prefix.endswith('/'):
+                        job_part = decoded_prefix.split('/job_id=')[-1][:-1]  # Remove trailing '/'
                         jobs.append(job_part)
 
             self._debug_print(f"Found jobs for {miner_hotkey}: {jobs}")
