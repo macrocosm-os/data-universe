@@ -6,7 +6,7 @@ import datetime as dt
 from common.data import TimeBucket
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
-from scraping.scraper import ValidationResult, HFValidationResult
+from scraping.scraper import ValidationResult, HFValidationResult, S3ValidationResult
 
 
 class MinerScorer:
@@ -21,6 +21,9 @@ class MinerScorer:
     # Start new miners' HF credibility at 0.375
     STARTING_HF_CREDIBILITY = 0.375
 
+    # Start new miners' S3 credibility at 0.375
+    STARTING_S3_CREDIBILITY = 0.375
+
     # The exponent used to scale the miner's score by its credibility.
     _CREDIBILITY_EXP = 2.5
 
@@ -29,7 +32,8 @@ class MinerScorer:
         num_neurons: int,
         value_calculator: DataValueCalculator,
         cred_alpha: float = 0.15,
-        hf_cred_alpha: float = 0.20
+        hf_cred_alpha: float = 0.20,
+        s3_cred_alpha: float = 0.20
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
@@ -48,6 +52,13 @@ class MinerScorer:
         )
         self.hf_cred_alpha = hf_cred_alpha
 
+        # Keeps track of the miner's current S3 boost based on the last S3 evaluation.
+        self.s3_boosts = torch.zeros(num_neurons, dtype=torch.float32)
+        self.s3_credibility = torch.full(
+            (num_neurons, 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
+        )
+        self.s3_cred_alpha = s3_cred_alpha
+
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
         self.lock = threading.Lock()
@@ -61,6 +72,8 @@ class MinerScorer:
                     "credibility": self.miner_credibility,
                     "hf_boosts": self.hf_boosts,
                     "hf_credibility": self.hf_credibility,
+                    "s3_boosts": self.s3_boosts,
+                    "s3_credibility": self.s3_credibility,
                     "scorable_bytes": self.scorable_bytes,
                 },
                 filepath,
@@ -68,12 +81,17 @@ class MinerScorer:
 
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
-        state = torch.load(filepath)
+        state = torch.load(filepath, weights_only=True)
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
             self.hf_boosts = state["hf_boosts"]
             self.hf_credibility = state["hf_credibility"]
+            # Handle backward compatibility for S3 fields
+            self.s3_boosts = state.get("s3_boosts", torch.zeros_like(self.scores))
+            self.s3_credibility = state.get("s3_credibility", torch.full(
+                (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
+            ))
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -92,6 +110,10 @@ class MinerScorer:
         with self.lock:
             self.scores[uid] = 0.0
             self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
+            self.hf_boosts[uid] = 0.0
+            self.hf_credibility[uid] = MinerScorer.STARTING_HF_CREDIBILITY
+            self.s3_boosts[uid] = 0.0
+            self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
 
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
@@ -142,6 +164,19 @@ class MinerScorer:
                     ),
                 ]
             )
+            self.s3_boosts = torch.cat(
+                [self.s3_boosts, torch.zeros(to_add, dtype=torch.float32)]
+            )
+            self.s3_credibility = torch.cat(
+                [
+                    self.s3_credibility,
+                    torch.full(
+                        (to_add, 1),
+                        MinerScorer.STARTING_S3_CREDIBILITY,
+                        dtype=torch.float32,
+                    ),
+                ]
+            )
 
     def update_hf_boost_and_cred(self, uid: int, hf_vali_percentage: float) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed HF validation."""
@@ -152,10 +187,20 @@ class MinerScorer:
             f"After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
         )
 
-    def apply_ondemand_penalty(self, uid: int):
+    def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float) -> None:
+        """Applies a fixed boost to the scaled score if the miner has passed S3 validation."""
+        max_boost = 5 * 10**6  # Half of HF boost since S3 is simpler validation
+        self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
+        self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
+        bt.logging.info(
+            f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
+        )
+
+    def apply_ondemand_penalty(self, uid: int, mult_factor: float):
         """Applies a 5% credibility penalty to a given miner"""
-        adj_cred = max(self.miner_credibility[uid] - 0.05, 0)
-        bt.logging.info(f"After 5% OnDemand penalty, Miner {uid} credibility decreased from {self.miner_credibility[uid]} to {adj_cred}.")
+        cred_penalty = 0.05 * mult_factor
+        adj_cred = max(self.miner_credibility[uid] - cred_penalty, 0)
+        bt.logging.info(f"After {100*cred_penalty:.2f}% OnDemand penalty, Miner {uid} credibility decreased from {float(self.miner_credibility[uid])} to {adj_cred}.")
         self.miner_credibility[uid] = adj_cred
 
     def on_miner_evaluated(
@@ -207,8 +252,14 @@ class MinerScorer:
                 self.scorable_bytes[uid] = score
                 
                 # Awarding the miner their HF boost based on their last HF evaluation. 
-                score += (self.hf_boosts[uid] * self.hf_credibility[uid])
-                bt.logging.info(f"Awarded Miner {uid} a HF boost of {float(self.hf_boosts[uid] * self.hf_credibility[uid])} based off of the last performed HF evaluation, adjusting the score to {float(score)}.")
+                hf_boost = self.hf_boosts[uid] * self.hf_credibility[uid]
+                score += hf_boost
+                bt.logging.info(f"Awarded Miner {uid} a HF boost of {float(hf_boost)} based off of the last performed HF evaluation.")
+                
+                # Awarding the miner their S3 boost based on their last S3 evaluation.
+                s3_boost = self.s3_boosts[uid] * self.s3_credibility[uid]
+                score += s3_boost
+                bt.logging.info(f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}.")
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)

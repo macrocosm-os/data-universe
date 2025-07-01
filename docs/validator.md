@@ -86,6 +86,21 @@ You can view the full set of flags by running
 python ./neurons/validator.py -h
 ```
 
+## `.env`
+
+Your validator `.env` should look like the following after setup for all data sources:
+
+```
+APIFY_API_TOKEN="your_apify_token"
+REDDIT_CLIENT_ID="your_reddit_client_id"
+REDDIT_CLIENT_SECRET="your_reddit_client_secret"
+REDDIT_USERNAME="your_reddit_username"
+REDDIT_PASSWORD="your_reddit_password"
+YOUTUBE_API_KEY="your_youtube_api_key"
+```
+
+Please see docs on [Apify](../docs/apify.md), [Reddit](../docs/reddit.md), and [Youtube](../docs/youtube.md) for more information on the environment variables above.
+
 # Coming Soon
 
 We are working hard to add more features to the Subnet. For the Validators, we have plans to:
