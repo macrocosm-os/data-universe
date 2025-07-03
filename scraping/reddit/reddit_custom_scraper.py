@@ -35,15 +35,19 @@ class RedditCustomScraper(Scraper):
     USER_AGENT = f"User-Agent: python: {os.getenv('REDDIT_USERNAME')}"
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
-        """Validate the correctness of a DataEntity by URI."""
+        """
+        Validate a list of DataEntity objects.
+
+        * Fails automatically if a submission is NSFW (over_18=True).
+        * For comments, it checks the parent submission (and subreddit) NSFW flag.
+        """
         if not entities:
             return []
 
-        results = []
+        results: List[ValidationResult] = []
 
-        # For verification, it's easiest to perform each query separately.
         for entity in entities:
-            # First check the URI is a valid Reddit URL.
+            # 1) Basic URI sanity check
             if not is_valid_reddit_url(entity.uri):
                 results.append(
                     ValidationResult(
@@ -54,14 +58,10 @@ class RedditCustomScraper(Scraper):
                 )
                 continue
 
-            # Parse out the RedditContent object that we're validating
-            reddit_content_to_verify = None
+            # 2) Decode RedditContent blob
             try:
-                reddit_content_to_verify = RedditContent.from_data_entity(entity)
+                ent_content = RedditContent.from_data_entity(entity)
             except Exception:
-                bt.logging.error(
-                    f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}."
-                )
                 results.append(
                     ValidationResult(
                         is_valid=False,
@@ -71,58 +71,85 @@ class RedditCustomScraper(Scraper):
                 )
                 continue
 
-            # Retrieve the Reddit Post/Comment from PRAW.
-            content = None
-
+            # 3) Fetch live data from Reddit
             try:
                 async with asyncpraw.Reddit(
                     client_id=os.getenv("REDDIT_CLIENT_ID"),
                     client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
                     username=os.getenv("REDDIT_USERNAME"),
                     password=os.getenv("REDDIT_PASSWORD"),
-                    user_agent=RedditCustomScraper.USER_AGENT,
+                    user_agent=self.USER_AGENT,
                 ) as reddit:
-                    if reddit_content_to_verify.data_type == RedditDataType.POST:
-                        submission = await reddit.submission(
-                            url=reddit_content_to_verify.url
-                        )
-                        # Parse the response.
-                        content = self._best_effort_parse_submission(submission)
+
+                    # ---- A) POST branch ----
+                    if ent_content.data_type == RedditDataType.POST:
+                        submission = await reddit.submission(url=ent_content.url)
+                        await submission.load()                       # ensure attrs
+
+                        # Check NSFW only after the filter date
+                        if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and 
+                            submission.over_18):                        # NSFW post
+                            results.append(
+                                ValidationResult(
+                                    is_valid=False,
+                                    reason="Submission is NSFW (over_18).",
+                                    content_size_bytes_validated=entity.content_size_bytes,
+                                )
+                            )
+                            continue
+
+                        live_content = self._best_effort_parse_submission(submission)
+
+                    # ---- B) COMMENT branch ----
                     else:
-                        comment = await reddit.comment(url=reddit_content_to_verify.url)
-                        # Parse the response.
-                        content = self._best_effort_parse_comment(comment)
+                        comment = await reddit.comment(url=ent_content.url)
+                        await comment.load()
+
+                        parent = comment.submission
+                        await parent.load()                           # full parent
+                        subreddit = comment.subreddit
+                        await subreddit.load()                        # full subreddit
+
+                        # Check NSFW only after the filter date
+                        if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and 
+                            (parent.over_18 or subreddit.over18)):
+                            results.append(
+                                ValidationResult(
+                                    is_valid=False,
+                                    reason="Parent submission or subreddit is NSFW (over_18).",
+                                    content_size_bytes_validated=entity.content_size_bytes,
+                                )
+                            )
+                            continue
+
+                        live_content = self._best_effort_parse_comment(comment)
+
             except Exception as e:
-                bt.logging.error(
-                    f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}."
-                )
-                # This is an unfortunate situation. We have no way to distinguish a genuine failure from
-                # one caused by malicious input. In my own testing I was able to make the request timeout by
-                # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
-                # pass malicious input for chunks they don't have.
+                bt.logging.error(f"Failed to retrieve content for {entity.uri}: {e}")
                 results.append(
                     ValidationResult(
                         is_valid=False,
-                        reason="Failed to retrieve submission. This can happen if the URI is invalid, or Reddit is having an issue.",
+                        reason="Failed to retrieve submission/comment from Reddit.",
                         content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
 
-            if not content:
+            # 4) Live content object exists?
+            if not live_content:
                 results.append(
                     ValidationResult(
                         is_valid=False,
-                        reason="Reddit post/comment not found or is invalid.",
+                        reason="Reddit content not found or invalid.",
                         content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
 
-            # We found the Reddit content. Validate it.
+            # 5) Field-by-field validation
             results.append(
                 validate_reddit_content(
-                    actual_content=content,
+                    actual_content=live_content,
                     entity_to_validate=entity,
                 )
             )
@@ -296,6 +323,11 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
+            # Skip NSFW content
+            if getattr(submission, 'over_18', False):
+                bt.logging.trace(f"Skipping NSFW submission: {submission.permalink}")
+                return None
+                
             user = submission.author.name if submission.author else model.DELETED_USER
             content = RedditContent(
                 id=submission.name,
@@ -329,6 +361,12 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
+            # Skip comments from NSFW submissions or subreddits
+            if (getattr(comment.submission, 'over_18', False) or 
+                getattr(comment.subreddit, 'over18', False)):
+                bt.logging.trace(f"Skipping comment from NSFW submission/subreddit: {comment.permalink}")
+                return None
+                
             user = comment.author.name if comment.author else model.DELETED_USER
             content = RedditContent(
                 id=comment.name,
