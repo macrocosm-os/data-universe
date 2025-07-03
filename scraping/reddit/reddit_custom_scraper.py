@@ -86,7 +86,9 @@ class RedditCustomScraper(Scraper):
                         submission = await reddit.submission(url=ent_content.url)
                         await submission.load()                       # ensure attrs
 
-                        if submission.over_18:                        # NSFW post
+                        # Check NSFW only after the filter date
+                        if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and 
+                            submission.over_18):                        # NSFW post
                             results.append(
                                 ValidationResult(
                                     is_valid=False,
@@ -108,7 +110,9 @@ class RedditCustomScraper(Scraper):
                         subreddit = comment.subreddit
                         await subreddit.load()                        # full subreddit
 
-                        if parent.over_18 or subreddit.over18:
+                        # Check NSFW only after the filter date
+                        if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and 
+                            (parent.over_18 or subreddit.over18)):
                             results.append(
                                 ValidationResult(
                                     is_valid=False,
