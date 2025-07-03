@@ -1,3 +1,5 @@
+# organic_query_processor.py
+
 import random
 import json
 import asyncio
@@ -49,20 +51,24 @@ class OrganicQueryProcessor:
             # Step 3: Apply basic penalties (timeouts, empty responses)
             non_responsive_uids, empty_uids = self._apply_basic_penalties(selected_miners, miner_responses)
             
-            # Step 4: Apply insufficient post count penalties
+            # Step 4: Perform backup validation scrape to determine actual data availability
+            backup_scrape_count = await self._perform_backup_scrape(synapse)
+            bt.logging.info(f"Backup scrape found {backup_scrape_count} posts available")
+            
+            # Step 5: Apply insufficient post count penalties (only if backup scrape shows more data exists)
             insufficient_miners, severe_underperformers = self._apply_post_count_penalties(
-                synapse.limit, miner_data_counts
+                synapse.limit, miner_data_counts, backup_scrape_count
             )
             
-            # Step 5: Perform cross-validation
+            # Step 6: Perform cross-validation
             validation_results = await self._perform_cross_validation(synapse, miner_responses)
             
-            # Step 6: Calculate final scores with all penalties applied
+            # Step 7: Calculate final scores with all penalties applied
             miner_scores = self._calculate_final_scores(
-                miner_responses, miner_data_counts, validation_results, synapse.limit
+                miner_responses, miner_data_counts, validation_results, synapse.limit, backup_scrape_count
             )
             
-            # Step 7: Select best data and format response
+            # Step 8: Select best data and format response
             return self._create_success_response(
                 synapse, miner_responses, miner_scores, {
                     'selected_miners': selected_miners,
@@ -70,7 +76,8 @@ class OrganicQueryProcessor:
                     'empty_uids': empty_uids,
                     'insufficient_miners': insufficient_miners,
                     'severe_underperformers': severe_underperformers,
-                    'validation_results': validation_results
+                    'validation_results': validation_results,
+                    'backup_scrape_count': backup_scrape_count
                 }
             )
             
@@ -169,37 +176,100 @@ class OrganicQueryProcessor:
         
         return non_responsive_uids, empty_uids
     
-    def _apply_post_count_penalties(self, requested_limit: int, miner_data_counts: Dict[int, int]) -> Tuple[List[int], List[int]]:
-        """Apply penalties for insufficient post counts"""
+    async def _perform_backup_scrape(self, synapse: OrganicRequest) -> int:
+        """
+        Perform a backup scrape to determine how much data actually exists.
+        This is used to validate whether miners should be penalized for insufficient data.
+        """
+        bt.logging.info("Performing backup scrape to validate data availability...")
+        
+        try:
+            scraper = self._get_scraper(synapse.source)
+            if not scraper:
+                bt.logging.warning("No scraper available for backup validation")
+                return 0
+            
+            # Create scrape config matching the original request
+            labels = []
+            if synapse.keywords:
+                labels.extend([DataLabel(value=k) for k in synapse.keywords])
+            if synapse.usernames:
+                # Ensure usernames have @ prefix for X
+                labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) 
+                              for u in synapse.usernames])
+            
+            start_date = utils.parse_iso_date(synapse.start_date) if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+            end_date = utils.parse_iso_date(synapse.end_date) if synapse.end_date else dt.datetime.now(dt.timezone.utc)
+            
+            backup_config = ScrapeConfig(
+                entity_limit=synapse.limit,  # Use the same limit as requested
+                date_range=DateRange(
+                    start=start_date,
+                    end=end_date
+                ),
+                labels=labels,
+            )
+            
+            # Perform backup scrape
+            if synapse.source.upper() == 'X':
+                await scraper.scrape(backup_config)
+                enhanced_content = scraper.get_enhanced_content()
+                backup_data_count = len(enhanced_content)
+            else:
+                backup_data = await scraper.scrape(backup_config)
+                backup_data_count = len(backup_data) if backup_data else 0
+            
+            bt.logging.info(f"Backup scrape completed: found {backup_data_count} posts")
+            return backup_data_count
+            
+        except Exception as e:
+            bt.logging.error(f"Error during backup scrape: {str(e)}")
+            return 0
+    
+    def _apply_post_count_penalties(self, requested_limit: int, miner_data_counts: Dict[int, int], 
+                                  backup_scrape_count: int) -> Tuple[List[int], List[int]]:
+        """
+        Apply penalties for insufficient post counts, but ONLY if backup scrape shows more data exists.
+        This prevents punishing miners when the requested data simply doesn't exist.
+        """
         bt.logging.info("Evaluating miners for insufficient post counts...")
         
         min_acceptable_posts = int(requested_limit * self.MIN_POST_THRESHOLD)
         severe_threshold_posts = int(requested_limit * self.SEVERE_UNDERPERFORMANCE_THRESHOLD)
         
+        # Only penalize if backup scrape found more data than the threshold
+        backup_exceeds_threshold = backup_scrape_count >= min_acceptable_posts
+        
+        bt.logging.info(f"Backup scrape found {backup_scrape_count} posts. Threshold is {min_acceptable_posts}. Will penalize: {backup_exceeds_threshold}")
+        
         insufficient_miners = []
         severe_underperformers = []
+        
+        if not backup_exceeds_threshold:
+            bt.logging.info("Backup scrape shows insufficient data exists - skipping post count penalties")
+            return insufficient_miners, severe_underperformers
         
         for uid, post_count in miner_data_counts.items():
             if post_count < min_acceptable_posts:
                 insufficient_miners.append(uid)
-                bt.logging.info(f"Miner {uid} provided {post_count}/{requested_limit} posts (below {self.MIN_POST_THRESHOLD*100}% threshold)")
+                bt.logging.info(f"Miner {uid} provided {post_count}/{requested_limit} posts (below {self.MIN_POST_THRESHOLD*100}% threshold) - backup scrape confirms more data exists")
                 
                 if post_count < severe_threshold_posts:
                     severe_underperformers.append(uid)
                     bt.logging.info(f"Miner {uid} severely underperformed with {post_count}/{requested_limit} posts")
         
-        # Apply graduated penalties
+        # Apply graduated penalties only when we know more data exists
         for uid in insufficient_miners:
             post_count = miner_data_counts[uid]
             shortage_ratio = 1 - (post_count / min_acceptable_posts)
             
             if uid in severe_underperformers:
                 penalty_multiplier = 1.0
-                bt.logging.info(f"Applying severe penalty to miner {uid}")
+                bt.logging.info(f"Applying severe penalty to miner {uid} - backup scrape confirms they missed available data")
                 self.evaluator.scorer.apply_ondemand_penalty(uid, penalty_multiplier)
             else:
                 penalty_multiplier = 0.5 * shortage_ratio
-                bt.logging.info(f"Applying moderate penalty to miner {uid} (penalty: {penalty_multiplier:.2f})")
+                bt.logging.info(f"Applying moderate penalty to miner {uid} (penalty: {penalty_multiplier:.2f}) - backup scrape confirms they missed available data")
                 self.evaluator.scorer.apply_ondemand_penalty(uid, penalty_multiplier)
         
         return insufficient_miners, severe_underperformers
@@ -326,10 +396,12 @@ class OrganicQueryProcessor:
         return None
     
     def _calculate_final_scores(self, miner_responses: Dict[int, List], miner_data_counts: Dict[int, int], 
-                              validation_results: Dict[str, bool], requested_limit: int) -> Dict[int, int]:
+                              validation_results: Dict[str, bool], requested_limit: int, 
+                              backup_scrape_count: int) -> Dict[int, int]:
         """Calculate final scores incorporating all penalties"""
         miner_scores = {}
         min_acceptable_posts = int(requested_limit * self.MIN_POST_THRESHOLD)
+        backup_exceeds_threshold = backup_scrape_count >= min_acceptable_posts
         
         for uid in miner_responses.keys():
             if not miner_responses[uid]:
@@ -339,12 +411,14 @@ class OrganicQueryProcessor:
             # Start with base score
             base_score = len(miner_responses[uid])
             
-            # Apply post count penalty
+            # Apply post count penalty ONLY if backup scrape shows more data exists
             post_count = miner_data_counts[uid]
-            if post_count < min_acceptable_posts:
+            if post_count < min_acceptable_posts and backup_exceeds_threshold:
                 post_count_multiplier = max(0.1, post_count / min_acceptable_posts)
                 base_score = int(base_score * post_count_multiplier)
-                bt.logging.info(f"Miner {uid} score reduced due to insufficient posts")
+                bt.logging.info(f"Miner {uid} score reduced due to insufficient posts (backup confirmed more data exists)")
+            elif post_count < min_acceptable_posts:
+                bt.logging.info(f"Miner {uid} provided {post_count} posts but backup scrape only found {backup_scrape_count} - no penalty applied")
             
             # Apply validation penalty
             miner_failed_validation = False
@@ -400,12 +474,15 @@ class OrganicQueryProcessor:
             "empty_response_miners": len(metadata['empty_uids']),
             "insufficient_post_miners": len(metadata['insufficient_miners']),
             "severe_underperformers": len(metadata['severe_underperformers']),
+            "backup_scrape_count": metadata['backup_scrape_count'],
+            "backup_scrape_exceeded_threshold": metadata['backup_scrape_count'] >= int(synapse.limit * self.MIN_POST_THRESHOLD),
             "cross_validation_performed": len(metadata['validation_results']) > 0,
             "validation_success_rate": f"{sum(metadata['validation_results'].values())}/{len(metadata['validation_results'])}" if metadata['validation_results'] else "0/0",
             "best_miner_uid": best_uid,
             "best_miner_hotkey": self.metagraph.hotkeys[best_uid],
             "cross_validation_scores": miner_scores,
-            "items_returned": len(unique_data)
+            "items_returned": len(unique_data),
+            "post_count_penalties_applied": "only when backup scrape confirmed more data exists"
         }
         
         return synapse
@@ -417,6 +494,7 @@ class OrganicQueryProcessor:
         synapse.meta = {
             "miners_queried": len(metadata['selected_miners']),
             "miners_responded": len(metadata.get('miner_responses', {})),
+            "backup_scrape_count": metadata.get('backup_scrape_count', 0),
             "consensus": "no_valid_data",
             "cross_validation_performed": len(metadata['validation_results']) > 0
         }
