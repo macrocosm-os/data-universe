@@ -237,7 +237,7 @@ class OrganicQueryProcessor:
         min_acceptable_posts = int(requested_limit * self.MIN_POST_THRESHOLD)
         severe_threshold_posts = int(requested_limit * self.SEVERE_UNDERPERFORMANCE_THRESHOLD)
         
-        # Only penalize if backup scrape found more data than the threshold
+        # Key change: Only penalize if backup scrape found more data than the threshold
         backup_exceeds_threshold = backup_scrape_count >= min_acceptable_posts
         
         bt.logging.info(f"Backup scrape found {backup_scrape_count} posts. Threshold is {min_acceptable_posts}. Will penalize: {backup_exceeds_threshold}")
@@ -312,33 +312,16 @@ class OrganicQueryProcessor:
         return all_posts, post_to_miners
     
     def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]]) -> List:
-        """Select posts for validation, prioritizing duplicates"""
+        """Select posts for validation randomly from the unique pool"""
         validation_sample_size = min(self.CROSS_VALIDATION_SAMPLE_SIZE, len(all_posts))
         
         if validation_sample_size == 0:
             return []
         
-        # Prioritize posts with duplicates
-        posts_with_duplicates = [(post, len(post_to_miners[self._get_post_id(post)]))
-                               for post in all_posts
-                               if len(post_to_miners[self._get_post_id(post)]) > 1]
+        # Simple random sampling from all unique posts
+        posts_to_validate = random.sample(all_posts, validation_sample_size)
         
-        posts_with_duplicates.sort(key=lambda x: x[1], reverse=True)
-        
-        duplicate_posts = [post for post, count in posts_with_duplicates]
-        remaining_posts = [post for post in all_posts if post not in duplicate_posts]
-        
-        # Sample strategically
-        posts_to_validate = []
-        num_duplicate_samples = min(len(duplicate_posts), validation_sample_size)
-        posts_to_validate.extend(duplicate_posts[:num_duplicate_samples])
-        
-        if len(posts_to_validate) < validation_sample_size:
-            num_remaining_needed = validation_sample_size - len(posts_to_validate)
-            additional_posts = random.sample(remaining_posts, min(num_remaining_needed, len(remaining_posts)))
-            posts_to_validate.extend(additional_posts)
-        
-        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation")
+        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation (random sampling)")
         return posts_to_validate
     
     async def _validate_posts(self, synapse: OrganicRequest, posts_to_validate: List) -> Dict[str, bool]:
