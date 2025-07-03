@@ -43,4 +43,7 @@ BYTE_ALLOWANCE_DATE = dt.datetime(2025, 6, 7, tzinfo=dt.timezone.utc)  # June 7,
 # Date after which S3 validation becomes active for miners
 S3_VALIDATION_ENABLED_DATE = dt.datetime(2025, 7, 7, tzinfo=dt.timezone.utc)  # July 7, 2025 UTC
 
+# Date after which NSFW Reddit content validation becomes active
+NSFW_REDDIT_FILTER_DATE = dt.datetime(2025, 7, 10, tzinfo=dt.timezone.utc)  # July 10, 2025 UTC
+
 EVALUATION_ON_STARTUP = 15
