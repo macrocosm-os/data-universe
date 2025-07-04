@@ -324,7 +324,9 @@ class RedditCustomScraper(Scraper):
 
         try:
             # Skip NSFW content
-            if getattr(submission, 'over_18', False):
+
+            if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and
+                    submission.over_18):
                 bt.logging.trace(f"Skipping NSFW submission: {submission.permalink}")
                 return None
                 
@@ -362,11 +364,12 @@ class RedditCustomScraper(Scraper):
 
         try:
             # Skip comments from NSFW submissions or subreddits
-            if (getattr(comment.submission, 'over_18', False) or 
-                getattr(comment.subreddit, 'over18', False)):
-                bt.logging.trace(f"Skipping comment from NSFW submission/subreddit: {comment.permalink}")
-                return None
-                
+
+            # if (getattr(comment.submission, 'over_18', False) or
+            #     getattr(comment.subreddit, 'over18', False)):
+            #     bt.logging.trace(f"Skipping comment from NSFW submission/subreddit: {comment.permalink}")
+            #     return None
+
             user = comment.author.name if comment.author else model.DELETED_USER
             content = RedditContent(
                 id=comment.name,
