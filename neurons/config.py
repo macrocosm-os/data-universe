@@ -132,6 +132,49 @@ def add_args(neuron_type: NeuronType, parser):
             help="Set this flag to disable logging to wandb.",
             default=False,
         )
+        
+        # Minio logging configuration
+        parser.add_argument(
+            "--minio.logging_off",
+            action="store_true",
+            help="Set this flag to disable logging to Minio.",
+            default=False,
+        )
+        
+        parser.add_argument(
+            "--minio.endpoint",
+            type=str,
+            help="Minio server endpoint (host:port).",
+            default="146.190.168.187:9000",
+        )
+        
+        parser.add_argument(
+            "--minio.access_key",
+            type=str,
+            help="Minio access key.",
+            default="miner_test_hot",
+        )
+        
+        parser.add_argument(
+            "--minio.secret_key",
+            type=str,
+            help="Minio secret key.",
+            default="key_key_offline_secret",
+        )
+        
+        parser.add_argument(
+            "--minio.bucket",
+            type=str,
+            help="Minio bucket name for validator logs.",
+            default="validator-logs",
+        )
+        
+        parser.add_argument(
+            "--minio.auto_start_local",
+            action="store_true",
+            help="Automatically start local Minio if remote server unavailable.",
+            default=True,
+        )
 
         parser.add_argument(
             "--neuron.disable_set_weights",
