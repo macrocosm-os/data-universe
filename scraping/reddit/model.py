@@ -1,6 +1,6 @@
 import datetime as dt
 from enum import Enum
-from typing import Optional
+from typing import Optional, List
 
 # Use v1 for these models to keep serialization consistent.
 # Pydantic v2 doesn't include spaces in its serialization.
@@ -53,6 +53,16 @@ class RedditContent(BaseModel):
         description="The ID of the parent comment. Only applicable to comments.",
         alias="parentId",
         default=None,
+    )
+
+    # Media fields.
+    media: Optional[List[str]] = Field(
+        default=None,
+        description="A list of media URLs associated with the post/comment. Can be None if no media is present.",
+    )
+    is_nsfw: Optional[bool] = Field(
+        default=None,
+        description="Whether the post/comment is marked as NSFW (over_18). Required for validation after NSFW_REDDIT_FILTER_DATE.",
     )
 
     @classmethod

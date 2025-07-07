@@ -3,7 +3,7 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataLabel
-from common.constants import BYTE_ALLOWANCE_DATE
+from common.constants import BYTE_ALLOWANCE_DATE, REDDIT_MEDIA_REQUIRED_DATE, NSFW_REDDIT_FILTER_DATE
 import bittensor as bt
 import traceback
 import datetime as dt
@@ -280,3 +280,125 @@ def normalize_permalink(permalink: str) -> str:
         return permalink
     else:
         return "/" + permalink
+
+
+def validate_media_content(submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity) -> ValidationResult:
+    """
+    Validate media content to prevent exploitation - follows X/Twitter validation pattern.
+    
+    Args:
+        submitted_content: Content submitted by miner
+        actual_content: Actual content from Reddit API  
+        entity: DataEntity being validated
+        
+    Returns:
+        ValidationResult indicating if media is valid
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    
+    # After REDDIT_MEDIA_REQUIRED_DATE: Check if media is required but missing
+    if now >= REDDIT_MEDIA_REQUIRED_DATE:
+        if actual_content.media and not submitted_content.media:
+            bt.logging.info("Reddit post is missing required media content.")
+            return ValidationResult(
+                is_valid=False,
+                reason="Reddit post is missing required media content",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+    # ALWAYS validate: If miner claims to have media, validate it's legitimate
+    if submitted_content.media:
+        # If miner claims media but actual post has none, reject it
+        if not actual_content.media:
+            bt.logging.info("Miner included media but the Reddit post has none")
+            return ValidationResult(
+                is_valid=False,
+                reason="Miner included fake media for a Reddit post with no media",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+        # Sort the URLs for consistent comparison (same as X validation)
+        actual_urls = sorted(actual_content.media)
+        miner_urls = sorted(submitted_content.media)
+
+        # Strict check: URLs must match exactly (prevent any fake media URLs)
+        if actual_urls != miner_urls:
+            bt.logging.info("Reddit post media URLs don't match")
+            return ValidationResult(
+                is_valid=False,
+                reason="Reddit post media URLs don't match actual content",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+    return ValidationResult(
+        is_valid=True,
+        reason="Media content is valid",
+        content_size_bytes_validated=entity.content_size_bytes,
+    )
+
+
+def validate_nsfw_content(submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity) -> ValidationResult:
+    """
+    Validate NSFW content after the NSFW filter date to prevent invalid submissions.
+    
+    Args:
+        submitted_content: Content submitted by miner
+        actual_content: Actual content from Reddit API  
+        entity: DataEntity being validated
+        
+    Returns:
+        ValidationResult indicating if NSFW content is valid
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    
+    # After NSFW_REDDIT_FILTER_DATE: Strict NSFW validation is required
+    if now >= NSFW_REDDIT_FILTER_DATE:
+        # If miner claims content is not NSFW but it actually is, reject it
+        if actual_content.is_nsfw and not submitted_content.is_nsfw:
+            bt.logging.info("Miner submitted NSFW content but marked it as safe")
+            return ValidationResult(
+                is_valid=False,
+                reason="NSFW content incorrectly marked as safe",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        
+        # If miner claims content is NSFW but it's actually safe, also reject (prevents gaming)
+        if not actual_content.is_nsfw and submitted_content.is_nsfw:
+            bt.logging.info("Miner incorrectly marked safe content as NSFW")
+            return ValidationResult(
+                is_valid=False,
+                reason="Safe content incorrectly marked as NSFW",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        
+        # If both agree it's NSFW, reject it (NSFW content is not valid for subnet)
+        if actual_content.is_nsfw and submitted_content.is_nsfw:
+            bt.logging.info("NSFW content is not valid for the subnet")
+            return ValidationResult(
+                is_valid=False,
+                reason="NSFW content is not valid for the subnet",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # ALWAYS validate: NSFW content with media is never valid for the subnet
+    if submitted_content.is_nsfw and submitted_content.media:
+        bt.logging.info("NSFW content with media is not valid for the subnet")
+        return ValidationResult(
+            is_valid=False,
+            reason="NSFW content with media is not valid for the subnet",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    if actual_content.is_nsfw and actual_content.media:
+        bt.logging.info("NSFW content with media detected and rejected")
+        return ValidationResult(
+            is_valid=False,
+            reason="NSFW content with media is not valid for the subnet",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    return ValidationResult(
+        is_valid=True,
+        reason="NSFW validation passed",
+        content_size_bytes_validated=entity.content_size_bytes,
+    )
