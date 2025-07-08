@@ -46,4 +46,7 @@ S3_VALIDATION_ENABLED_DATE = dt.datetime(2025, 7, 7, tzinfo=dt.timezone.utc)  # 
 # Date after which NSFW Reddit content validation becomes active
 NSFW_REDDIT_FILTER_DATE = dt.datetime(2025, 7, 10, tzinfo=dt.timezone.utc)  # July 10, 2025 UTC
 
+# Date after which media content is required for Reddit posts that contain media
+REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # August 7, 2025 UTC (one month from now)
+
 EVALUATION_ON_STARTUP = 15

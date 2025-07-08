@@ -1,21 +1,22 @@
-import time
 from common import constants, utils
 from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
 import bittensor as bt
 from common.data import DataEntity, DataLabel, DataSource
-from typing import List
 import asyncpraw
 from scraping.reddit.utils import (
     is_valid_reddit_url,
     validate_reddit_content,
+    validate_media_content,
+    validate_nsfw_content,
     get_time_input,
     get_custom_sort_input,
     normalize_label,
     normalize_permalink,
 )
 from scraping.reddit.model import RedditContent, RedditDataType
+from typing import List
 import traceback
 import datetime as dt
 import asyncio
@@ -25,6 +26,82 @@ import os
 from dotenv import load_dotenv
 
 load_dotenv()
+
+
+def extract_media_urls(submission) -> List[str]:
+    """
+    Extract media URLs from a Reddit submission following X/Twitter pattern.
+    
+    Args:
+        submission: Reddit submission object from asyncpraw
+        
+    Returns:
+        List[str]: List of media URLs found in the submission
+    """
+    media_urls = []
+    
+    try:
+        # 1. Direct URL (for image/video posts) - prioritize original URLs
+        if hasattr(submission, 'url') and submission.url:
+            url = submission.url
+            # Check if it's a direct media URL or Reddit media domain
+            if (any(url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.mp4', '.webm']) or
+                any(domain in url for domain in ['i.redd.it', 'v.redd.it'])):
+                # Clean URL parameters to get original
+                clean_url = url.split('?')[0]
+                media_urls.append(clean_url)
+        
+        # 2. Preview images (only if no direct URL found, and clean parameters)
+        if hasattr(submission, 'preview') and submission.preview:
+            preview_data = submission.preview
+            if isinstance(preview_data, dict) and 'images' in preview_data:
+                for image in preview_data['images']:
+                    if 'source' in image and 'url' in image['source']:
+                        # Clean URL parameters to prevent gaming with extra bytes
+                        clean_url = image['source']['url'].split('?')[0]
+                        # Convert preview URLs to original i.redd.it URLs when possible
+                        if 'preview.redd.it' in clean_url:
+                            original_url = clean_url.replace('preview.redd.it', 'i.redd.it')
+                            media_urls.append(original_url)
+                        else:
+                            media_urls.append(clean_url)
+        
+        
+        # 3. Gallery media - clean URLs and get originals
+        if hasattr(submission, 'media_metadata') and submission.media_metadata:
+            if isinstance(submission.media_metadata, dict):
+                for media_id, media_data in submission.media_metadata.items():
+                    if isinstance(media_data, dict) and 's' in media_data:
+                        source = media_data['s']
+                        if 'u' in source:
+                            # Decode HTML entities and clean parameters
+                            url = source['u'].replace('&amp;', '&').split('?')[0]
+                            # Convert preview URLs to original i.redd.it URLs
+                            if 'preview.redd.it' in url:
+                                original_url = url.replace('preview.redd.it', 'i.redd.it')
+                                media_urls.append(original_url)
+                            else:
+                                media_urls.append(url)
+        
+    except Exception as e:
+        bt.logging.warning(f"Error extracting media URLs from submission: {e}")
+    
+    # Clean all URLs by removing parameters and duplicates
+    clean_media_urls = []
+    seen_urls = set()
+    
+    for url in media_urls:
+        # Remove all parameters after ? to eliminate auto=webp&s=... stuff
+        clean_url = url.split('?')[0]
+        
+        # Skip if we've already seen this clean URL
+        if clean_url in seen_urls:
+            continue
+            
+        seen_urls.add(clean_url)
+        clean_media_urls.append(clean_url)
+    
+    return clean_media_urls
 
 
 class RedditCustomScraper(Scraper):
@@ -98,7 +175,7 @@ class RedditCustomScraper(Scraper):
                             )
                             continue
 
-                        live_content = self._best_effort_parse_submission(submission)
+                        live_content = self._best_effort_parse_submission(submission, for_validation=True)
 
                     # ---- B) COMMENT branch ----
                     else:
@@ -122,7 +199,7 @@ class RedditCustomScraper(Scraper):
                             )
                             continue
 
-                        live_content = self._best_effort_parse_comment(comment)
+                        live_content = self._best_effort_parse_comment(comment, for_validation=True)
 
             except Exception as e:
                 bt.logging.error(f"Failed to retrieve content for {entity.uri}: {e}")
@@ -147,12 +224,24 @@ class RedditCustomScraper(Scraper):
                 continue
 
             # 5) Field-by-field validation
-            results.append(
-                validate_reddit_content(
-                    actual_content=live_content,
-                    entity_to_validate=entity,
-                )
+            validation_result = validate_reddit_content(
+                actual_content=live_content,
+                entity_to_validate=entity,
             )
+            
+            # 6) Media validation (strict check to prevent fake media URLs)
+            if validation_result.is_valid:
+                media_validation_result = validate_media_content(ent_content, live_content, entity)
+                if not media_validation_result.is_valid:
+                    validation_result = media_validation_result
+            
+            # 7) NSFW validation (check NSFW content after filter date and NSFW+media rule)
+            if validation_result.is_valid:
+                nsfw_validation_result = validate_nsfw_content(ent_content, live_content, entity)
+                if not nsfw_validation_result.is_valid:
+                    validation_result = nsfw_validation_result
+            
+            results.append(validation_result)
 
         return results
 
@@ -315,7 +404,7 @@ class RedditCustomScraper(Scraper):
         return data_entities
 
     def _best_effort_parse_submission(
-        self, submission: asyncpraw.models.Submission
+        self, submission: asyncpraw.models.Submission, for_validation: bool = False
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit submission into a RedditContent
 
@@ -323,11 +412,21 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
-            # Skip NSFW content
-
-            if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and
-                    submission.over_18):
+            # Skip NSFW content (but not during validation to support old data)
+            # TODO: Remove this validation bypass after when all old data is aged out
+            if (not for_validation and 
+                dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and
+                submission.over_18):
                 bt.logging.trace(f"Skipping NSFW submission: {submission.permalink}")
+                return None
+            
+            # Extract media URLs once
+            media_urls = extract_media_urls(submission)
+            
+            # Always skip NSFW content with media (regardless of date, but not during validation)
+            # TODO: Remove this validation bypass after when all old data is aged out
+            if (not for_validation and submission.over_18 and media_urls):
+                bt.logging.trace(f"Skipping NSFW submission with media: {submission.permalink}")
                 return None
                 
             user = submission.author.name if submission.author else model.DELETED_USER
@@ -346,6 +445,9 @@ class RedditCustomScraper(Scraper):
                 title=submission.title,
                 # Comment only fields
                 parentId=None,
+                # Media fields
+                media=media_urls if media_urls else None,
+                is_nsfw=submission.over_18,
             )
         except Exception:
             bt.logging.trace(
@@ -355,7 +457,7 @@ class RedditCustomScraper(Scraper):
         return content
 
     def _best_effort_parse_comment(
-        self, comment: asyncpraw.models.Comment
+        self, comment: asyncpraw.models.Comment, for_validation: bool = False
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit comment into a RedditContent
 
@@ -371,6 +473,9 @@ class RedditCustomScraper(Scraper):
             #     return None
 
             user = comment.author.name if comment.author else model.DELETED_USER
+            # Comments typically don't have media, but check parent submission for NSFW
+            parent_nsfw = getattr(comment.submission, 'over_18', False) if hasattr(comment, 'submission') else False
+            subreddit_nsfw = getattr(comment.subreddit, 'over18', False) if hasattr(comment, 'subreddit') else False
             content = RedditContent(
                 id=comment.name,
                 url="https://www.reddit.com" + normalize_permalink(comment.permalink),
@@ -385,6 +490,9 @@ class RedditCustomScraper(Scraper):
                 title=None,
                 # Comment only fields
                 parentId=comment.parent_id,
+                # Media fields
+                media=None,  # Comments don't have media
+                is_nsfw=parent_nsfw or subreddit_nsfw,
             )
         except Exception:
             bt.logging.trace(
