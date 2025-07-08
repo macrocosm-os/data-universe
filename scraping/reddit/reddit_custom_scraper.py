@@ -175,7 +175,7 @@ class RedditCustomScraper(Scraper):
                             )
                             continue
 
-                        live_content = self._best_effort_parse_submission(submission)
+                        live_content = self._best_effort_parse_submission(submission, for_validation=True)
 
                     # ---- B) COMMENT branch ----
                     else:
@@ -199,7 +199,7 @@ class RedditCustomScraper(Scraper):
                             )
                             continue
 
-                        live_content = self._best_effort_parse_comment(comment)
+                        live_content = self._best_effort_parse_comment(comment, for_validation=True)
 
             except Exception as e:
                 bt.logging.error(f"Failed to retrieve content for {entity.uri}: {e}")
@@ -404,7 +404,7 @@ class RedditCustomScraper(Scraper):
         return data_entities
 
     def _best_effort_parse_submission(
-        self, submission: asyncpraw.models.Submission
+        self, submission: asyncpraw.models.Submission, for_validation: bool = False
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit submission into a RedditContent
 
@@ -412,17 +412,20 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
-            # Skip NSFW content
-            if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and
-                    submission.over_18):
+            # Skip NSFW content (but not during validation to support old data)
+            # TODO: Remove this validation bypass after when all old data is aged out
+            if (not for_validation and 
+                dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and
+                submission.over_18):
                 bt.logging.trace(f"Skipping NSFW submission: {submission.permalink}")
                 return None
             
             # Extract media URLs once
             media_urls = extract_media_urls(submission)
             
-            # Always skip NSFW content with media (regardless of date)
-            if submission.over_18 and media_urls:
+            # Always skip NSFW content with media (regardless of date, but not during validation)
+            # TODO: Remove this validation bypass after when all old data is aged out
+            if (not for_validation and submission.over_18 and media_urls):
                 bt.logging.trace(f"Skipping NSFW submission with media: {submission.permalink}")
                 return None
                 
@@ -454,7 +457,7 @@ class RedditCustomScraper(Scraper):
         return content
 
     def _best_effort_parse_comment(
-        self, comment: asyncpraw.models.Comment
+        self, comment: asyncpraw.models.Comment, for_validation: bool = False
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit comment into a RedditContent
 
