@@ -285,6 +285,7 @@ def normalize_permalink(permalink: str) -> str:
 def validate_media_content(submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity) -> ValidationResult:
     """
     Validate media content to prevent exploitation - follows X/Twitter validation pattern.
+    Backward compatible: only validates if miner provided media field.
     
     Args:
         submitted_content: Content submitted by miner
@@ -294,6 +295,14 @@ def validate_media_content(submitted_content: RedditContent, actual_content: Red
     Returns:
         ValidationResult indicating if media is valid
     """
+    # Skip validation if miner didn't provide media field (backward compatibility)
+    if submitted_content.media is None:
+        return ValidationResult(
+            is_valid=True,
+            reason="Media validation skipped - field not provided (backward compatibility)",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
     now = dt.datetime.now(dt.timezone.utc)
     
     # After REDDIT_MEDIA_REQUIRED_DATE: Check if media is required but missing
@@ -306,7 +315,7 @@ def validate_media_content(submitted_content: RedditContent, actual_content: Red
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
-    # ALWAYS validate: If miner claims to have media, validate it's legitimate
+    # If miner provided media field, validate it strictly
     if submitted_content.media:
         # If miner claims media but actual post has none, reject it
         if not actual_content.media:
@@ -339,7 +348,8 @@ def validate_media_content(submitted_content: RedditContent, actual_content: Red
 
 def validate_nsfw_content(submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity) -> ValidationResult:
     """
-    Validate NSFW content after the NSFW filter date to prevent invalid submissions.
+    Validate NSFW content rules. 
+    Backward compatible: only validates if miner provided is_nsfw field.
     
     Args:
         submitted_content: Content submitted by miner
@@ -349,36 +359,32 @@ def validate_nsfw_content(submitted_content: RedditContent, actual_content: Redd
     Returns:
         ValidationResult indicating if NSFW content is valid
     """
-    now = dt.datetime.now(dt.timezone.utc)
+    # Skip validation if miner didn't provide is_nsfw field (backward compatibility)
+    if submitted_content.is_nsfw is None:
+        return ValidationResult(
+            is_valid=True,
+            reason="NSFW validation skipped - field not provided (backward compatibility)",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
     
-    # After NSFW_REDDIT_FILTER_DATE: Strict NSFW validation is required
-    if now >= NSFW_REDDIT_FILTER_DATE:
-        # If miner claims content is not NSFW but it actually is, reject it
-        if actual_content.is_nsfw and not submitted_content.is_nsfw:
-            bt.logging.info("Miner submitted NSFW content but marked it as safe")
-            return ValidationResult(
-                is_valid=False,
-                reason="NSFW content incorrectly marked as safe",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-        
-        # If miner claims content is NSFW but it's actually safe, also reject (prevents gaming)
-        if not actual_content.is_nsfw and submitted_content.is_nsfw:
-            bt.logging.info("Miner incorrectly marked safe content as NSFW")
-            return ValidationResult(
-                is_valid=False,
-                reason="Safe content incorrectly marked as NSFW",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-        
-        # If both agree it's NSFW, reject it (NSFW content is not valid for subnet)
-        if actual_content.is_nsfw and submitted_content.is_nsfw:
-            bt.logging.info("NSFW content is not valid for the subnet")
-            return ValidationResult(
-                is_valid=False,
-                reason="NSFW content is not valid for the subnet",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
+    # If miner provided is_nsfw field, validate it strictly
+    
+    # Validate NSFW flag accuracy
+    if actual_content.is_nsfw and not submitted_content.is_nsfw:
+        bt.logging.info("Miner submitted NSFW content but marked it as safe")
+        return ValidationResult(
+            is_valid=False,
+            reason="NSFW content incorrectly marked as safe",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    if not actual_content.is_nsfw and submitted_content.is_nsfw:
+        bt.logging.info("Miner incorrectly marked safe content as NSFW")
+        return ValidationResult(
+            is_valid=False,
+            reason="Safe content incorrectly marked as NSFW",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
     
     # ALWAYS validate: NSFW content with media is never valid for the subnet
     if submitted_content.is_nsfw and submitted_content.media:
