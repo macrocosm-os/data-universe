@@ -1,10 +1,12 @@
-from common import constants, utils
-from common.date_range import DateRange
-from scraping.reddit import model
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
-import bittensor as bt
-from common.data import DataEntity, DataLabel, DataSource
+import os
+import random
+import asyncio
 import asyncpraw
+import traceback
+import datetime as dt
+import bittensor as bt
+
+from common.data import DataEntity, DataLabel, DataSource
 from scraping.reddit.utils import (
     is_valid_reddit_url,
     validate_reddit_content,
@@ -14,93 +16,18 @@ from scraping.reddit.utils import (
     get_custom_sort_input,
     normalize_label,
     normalize_permalink,
+    extract_media_urls
 )
+
+from common.date_range import DateRange
+from scraping.reddit import model
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
 from scraping.reddit.model import RedditContent, RedditDataType
 from typing import List
-import traceback
-import datetime as dt
-import asyncio
-import random
-import os
-
 from dotenv import load_dotenv
 
+
 load_dotenv()
-
-
-def extract_media_urls(submission) -> List[str]:
-    """
-    Extract media URLs from a Reddit submission following X/Twitter pattern.
-
-    Args:
-        submission: Reddit submission object from asyncpraw
-
-    Returns:
-        List[str]: List of media URLs found in the submission
-    """
-    media_urls = []
-
-    try:
-        # 1. Direct URL (for image/video posts) - prioritize original URLs
-        if hasattr(submission, 'url') and submission.url:
-            url = submission.url
-            # Check if it's a direct media URL or Reddit media domain
-            if (any(url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.mp4', '.webm']) or
-                    any(domain in url for domain in ['i.redd.it', 'v.redd.it'])):
-                # Clean URL parameters to get original
-                clean_url = url.split('?')[0]
-                media_urls.append(clean_url)
-
-        # 2. Preview images (only if no direct URL found, and clean parameters)
-        if hasattr(submission, 'preview') and submission.preview:
-            preview_data = submission.preview
-            if isinstance(preview_data, dict) and 'images' in preview_data:
-                for image in preview_data['images']:
-                    if 'source' in image and 'url' in image['source']:
-                        # Clean URL parameters to prevent gaming with extra bytes
-                        clean_url = image['source']['url'].split('?')[0]
-                        # Convert preview URLs to original i.redd.it URLs when possible
-                        if 'preview.redd.it' in clean_url:
-                            original_url = clean_url.replace('preview.redd.it', 'i.redd.it')
-                            media_urls.append(original_url)
-                        else:
-                            media_urls.append(clean_url)
-
-        # 3. Gallery media - clean URLs and get originals
-        if hasattr(submission, 'media_metadata') and submission.media_metadata:
-            if isinstance(submission.media_metadata, dict):
-                for media_id, media_data in submission.media_metadata.items():
-                    if isinstance(media_data, dict) and 's' in media_data:
-                        source = media_data['s']
-                        if 'u' in source:
-                            # Decode HTML entities and clean parameters
-                            url = source['u'].replace('&amp;', '&').split('?')[0]
-                            # Convert preview URLs to original i.redd.it URLs
-                            if 'preview.redd.it' in url:
-                                original_url = url.replace('preview.redd.it', 'i.redd.it')
-                                media_urls.append(original_url)
-                            else:
-                                media_urls.append(url)
-
-    except Exception as e:
-        bt.logging.warning(f"Error extracting media URLs from submission: {e}")
-
-    # Clean all URLs by removing parameters and duplicates
-    clean_media_urls = []
-    seen_urls = set()
-
-    for url in media_urls:
-        # Remove all parameters after ? to eliminate auto=webp&s=... stuff
-        clean_url = url.split('?')[0]
-
-        # Skip if we've already seen this clean URL
-        if clean_url in seen_urls:
-            continue
-
-        seen_urls.add(clean_url)
-        clean_media_urls.append(clean_url)
-
-    return clean_media_urls
 
 
 class RedditCustomScraper(Scraper):
