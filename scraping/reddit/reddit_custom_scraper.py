@@ -114,7 +114,6 @@ class RedditCustomScraper(Scraper):
         """
         Validate a list of DataEntity objects.
 
-        * Fails automatically if a submission is NSFW (over_18=True).
         * For comments, it checks the parent submission (and subreddit) NSFW flag.
         """
         if not entities:
@@ -162,17 +161,6 @@ class RedditCustomScraper(Scraper):
                         submission = await reddit.submission(url=ent_content.url)
                         await submission.load()  # ensure attrs
 
-                        # Check NSFW - no date filtering
-                        if submission.over_18:  # NSFW post
-                            results.append(
-                                ValidationResult(
-                                    is_valid=False,
-                                    reason="Submission is NSFW (over_18).",
-                                    content_size_bytes_validated=entity.content_size_bytes,
-                                )
-                            )
-                            continue
-
                         live_content = self._best_effort_parse_submission(submission, for_validation=True)
 
                     # ---- B) COMMENT branch ----
@@ -184,17 +172,6 @@ class RedditCustomScraper(Scraper):
                         await parent.load()  # full parent
                         subreddit = comment.subreddit
                         await subreddit.load()  # full subreddit
-
-                        # Check NSFW - no date filtering
-                        if (parent.over_18 or subreddit.over18):
-                            results.append(
-                                ValidationResult(
-                                    is_valid=False,
-                                    reason="Parent submission or subreddit is NSFW (over_18).",
-                                    content_size_bytes_validated=entity.content_size_bytes,
-                                )
-                            )
-                            continue
 
                         live_content = self._best_effort_parse_comment(comment, for_validation=True)
 
