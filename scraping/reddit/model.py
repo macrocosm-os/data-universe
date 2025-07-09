@@ -62,7 +62,7 @@ class RedditContent(BaseModel):
     )
     is_nsfw: Optional[bool] = Field(
         default=None,
-        description="Whether the post/comment is marked as NSFW (over_18). Required for validation after NSFW_REDDIT_FILTER_DATE.",
+        description="Whether the post/comment is marked as NSFW (over_18).",
     )
 
     @classmethod
