@@ -161,7 +161,7 @@ class RedditCustomScraper(Scraper):
                         submission = await reddit.submission(url=ent_content.url)
                         await submission.load()  # ensure attrs
 
-                        live_content = self._best_effort_parse_submission(submission, for_validation=True)
+                        live_content = self._best_effort_parse_submission(submission)
 
                     # ---- B) COMMENT branch ----
                     else:
@@ -173,7 +173,7 @@ class RedditCustomScraper(Scraper):
                         subreddit = comment.subreddit
                         await subreddit.load()  # full subreddit
 
-                        live_content = self._best_effort_parse_comment(comment, for_validation=True)
+                        live_content = self._best_effort_parse_comment(comment)
 
             except Exception as e:
                 bt.logging.error(f"Failed to retrieve content for {entity.uri}: {e}")
@@ -379,7 +379,7 @@ class RedditCustomScraper(Scraper):
         return data_entities
 
     def _best_effort_parse_submission(
-            self, submission: asyncpraw.models.Submission, for_validation: bool = False
+            self, submission: asyncpraw.models.Submission
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit submission into a RedditContent
 
@@ -418,7 +418,7 @@ class RedditCustomScraper(Scraper):
         return content
 
     def _best_effort_parse_comment(
-            self, comment: asyncpraw.models.Comment, for_validation: bool = False
+            self, comment: asyncpraw.models.Comment
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit comment into a RedditContent
 
