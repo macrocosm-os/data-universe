@@ -327,3 +327,85 @@ class ValidatorS3Access:
         except Exception as e:
             self._debug_print(f"Exception testing direct URL: {str(e)}")
             return {'success': False, 'error': str(e)}
+
+    async def get_file_content(self, miner_hotkey: str, file_key: str, max_size_mb: int = 100) -> Optional[bytes]:
+        """
+        Get file content from S3 with size limits for security.
+        
+        Args:
+            miner_hotkey: The miner's hotkey
+            file_key: The S3 file key (e.g., "job_id=xxx/filename.parquet")
+            max_size_mb: Maximum file size in MB (default 100MB)
+            
+        Returns:
+            File content as bytes, or None if failed/too large
+        """
+        try:
+            # Input validation for security
+            if not miner_hotkey or not file_key:
+                self._debug_print("Invalid miner_hotkey or file_key provided")
+                return None
+                
+            # Sanitize file_key to prevent path traversal
+            if '..' in file_key or file_key.startswith('/') or '\\' in file_key:
+                self._debug_print(f"Potentially malicious file_key detected: {file_key}")
+                return None
+                
+            # Ensure we have valid S3 access
+            if not self.ensure_access():
+                self._debug_print("Failed to ensure S3 access")
+                return None
+                
+            # Get presigned URL for the specific file
+            file_url = self.access_data.get('files_presigned_url')
+            if not file_url:
+                self._debug_print("No files_presigned_url in access data")
+                return None
+                
+            # Construct full file path: data/hotkey={miner_hotkey}/{file_key}
+            full_key = f"data/hotkey={miner_hotkey}/{file_key}"
+            encoded_key = urllib.parse.quote(full_key, safe='/')
+            
+            # Add the encoded key to the presigned URL
+            if '?' in file_url:
+                final_url = f"{file_url}&key={encoded_key}"
+            else:
+                final_url = f"{file_url}?key={encoded_key}"
+                
+            self._debug_print(f"Getting file content from: {final_url[:100]}...")
+            
+            # Make request with streaming to check size first
+            response = requests.get(final_url, stream=True)
+            
+            if response.status_code != 200:
+                self._debug_print(f"Failed to get file: HTTP {response.status_code}")
+                return None
+                
+            # Check Content-Length header for size limit
+            content_length = response.headers.get('Content-Length')
+            if content_length:
+                file_size_mb = int(content_length) / (1024 * 1024)
+                if file_size_mb > max_size_mb:
+                    self._debug_print(f"File too large: {file_size_mb:.1f}MB > {max_size_mb}MB limit")
+                    response.close()
+                    return None
+                    
+            # Read content with size checking
+            content = b""
+            max_size_bytes = max_size_mb * 1024 * 1024
+            
+            for chunk in response.iter_content(chunk_size=8192):
+                content += chunk
+                if len(content) > max_size_bytes:
+                    self._debug_print(f"File exceeded size limit during download: {len(content)} bytes")
+                    response.close()
+                    return None
+                    
+            response.close()
+            
+            self._debug_print(f"Successfully retrieved file content: {len(content)} bytes")
+            return content
+            
+        except Exception as e:
+            self._debug_print(f"Exception in get_file_content: {str(e)}")
+            return None

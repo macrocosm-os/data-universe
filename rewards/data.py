@@ -371,3 +371,62 @@ class PrimitiveDataDesirabilityLookup:
             return 0.0  # No weight for unknown data sources
         
         return self.distribution[data_source].weight
+    
+    def get_all_job_ids(self) -> List[str]:
+        """
+        Get all job IDs from the dynamic desirability model.
+        
+        Returns:
+            List of all job IDs across all data sources.
+        """
+        job_ids = []
+        
+        # Iterate through all data sources in the distribution
+        for data_source, desirability in self.distribution.items():
+            # Get all jobs from this data source
+            for job in desirability.jobs:
+                if isinstance(job, dict) and 'id' in job:
+                    job_ids.append(job['id'])
+        
+        return job_ids
+    
+    def get_job_weight_by_id(self, job_id: str) -> float:
+        """
+        Get job weight from dynamic desirability model by job ID.
+        
+        Args:
+            job_id: The job ID to search for
+            
+        Returns:
+            Job weight if found, 0.0 if not found
+        """
+        # Search through all data sources for the job ID
+        for data_source, desirability in self.distribution.items():
+            for job in desirability.jobs:
+                if isinstance(job, dict) and job.get('id') == job_id:
+                    return job.get('job_weight', 0.0)
+        
+        # Job ID not found
+        return 0.0
+
+    def get_job_data_by_id(self, job_id: str) -> Optional[Dict]:
+        """
+        Get complete job data from dynamic desirability model by job ID.
+        
+        Args:
+            job_id: The job ID to search for
+            
+        Returns:
+            Complete job data dict if found, None if not found
+        """
+        # Search through all data sources for the job ID
+        for data_source, desirability in self.distribution.items():
+            for job in desirability.jobs:
+                if isinstance(job, dict) and job.get('id') == job_id:
+                    # Add data source info to job data
+                    job_data = job.copy()
+                    job_data['data_source'] = data_source
+                    return job_data
+        
+        # Job ID not found
+        return None

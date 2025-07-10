@@ -4,6 +4,8 @@ import traceback
 import asyncio
 import threading
 import os
+import random
+import time
 from common import constants
 from common.data_v2 import ScorableMinerIndex
 from common.metagraph_syncer import MetagraphSyncer
@@ -31,8 +33,10 @@ from storage.validator.s3_validator_storage import S3ValidationStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
 
-from typing import List, Optional, Tuple
+from typing import List, Optional, Tuple, Dict
 from vali_utils.validator_s3_access import ValidatorS3Access
+import pandas as pd
+import io
 from vali_utils.hf_utils import (
     get_latest_commit_files,
     get_validation_data,
@@ -43,6 +47,7 @@ from vali_utils.hf_utils import (
 
 
 from rewards.miner_scorer import MinerScorer
+from scraping.provider import ScraperProvider
 
 
 class MinerEvaluator:
@@ -143,11 +148,10 @@ class MinerEvaluator:
         
         # Perform S3 validation (only if enabled by date)
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
-        s3_validation_result = None
         current_time = dt.datetime.now(tz=dt.timezone.utc)
         if current_time >= constants.S3_VALIDATION_ENABLED_DATE:
             if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
-                s3_validation_result = await self._perform_s3_validation(hotkey, uid, current_block)
+                await self._perform_s3_validation(hotkey, uid, current_block)
         ##########
 
         # From that index, find a data entity bucket to sample and get it from the miner.
@@ -268,13 +272,6 @@ class MinerEvaluator:
 
             self.scorer.update_hf_boost_and_cred(uid, hf_validation_result.validation_percentage)
 
-        if s3_validation_result:
-            if s3_validation_result.is_valid == True:
-                bt.logging.info(f"{hotkey}: Miner {uid} passed S3 validation. S3 Validation Percentage: {s3_validation_result.validation_percentage:.1f}%, Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}")
-            else:
-                bt.logging.info(f"{hotkey}: Miner {uid} did not pass S3 validation. Reason: Data validation failed")
-
-            self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage)
 
     async def _perform_hf_validation(
             self, hotkey: str, uid: int, axon_info: bt.AxonInfo, current_block: int
@@ -383,10 +380,10 @@ class MinerEvaluator:
 
     async def _perform_s3_validation(
             self, hotkey: str, uid: int, current_block: int
-    ) -> Optional[S3ValidationResult]:
+    ) -> None:
         """
-        Performs S3 validation for a miner using S3 data access.
-        Validates data freshness, file structure, and content format.
+        Performs enhanced S3 validation for a miner using S3 data access.
+        Validates data freshness, file structure, and content format with in-depth parquet analysis.
         
         SECURITY NOTE: All logging in this method must be public-safe as validator logs
         are publicly visible. Never log URLs, credentials, or sensitive data.
@@ -394,9 +391,76 @@ class MinerEvaluator:
         Returns:
             An S3ValidationResult with validation details or None if no S3 data is found.
         """
-        s3_validation_result = None
         try:
-            bt.logging.info(f"{hotkey}: Starting S3 validation")
+            bt.logging.info(f"{hotkey}: Starting enhanced S3 validation")
+            
+            # Get all job IDs from dynamic desirability model
+            all_job_ids = self.scorer.data_value_calculator.model.get_all_job_ids()
+            bt.logging.info(f"{hotkey}: Found {len(all_job_ids)} job IDs from dynamic desirability model")
+            
+            # Analyze miner's job completion and calculate parquet file sizes
+            miner_job_data = await self._analyze_miner_job_completion(hotkey, all_job_ids)
+            
+            if not miner_job_data['completed_jobs']:
+                bt.logging.info(f"{hotkey}: No completed jobs found for S3 validation")
+                self.scorer.on_s3_evaluated(uid, 
+                            [], 
+                            S3ValidationResult(is_valid=False,
+                                                content_size_bytes_validated=0,
+                                                reason=f"{hotkey}: No completed jobs found for S3 validation"))
+                self.s3_storage.update_validation_info(hotkey, 0, current_block)
+                return
+            
+            # Select random job for deep validation
+            selected_job_data = self._select_random_job_for_validation(miner_job_data)
+            
+            if not selected_job_data:
+                bt.logging.info(f"{hotkey}: No job selected for deep validation")
+                self.scorer.on_s3_evaluated(uid, 
+                                            miner_job_data['completed_jobs'], 
+                                            S3ValidationResult(is_valid=False,
+                                                               content_size_bytes_validated=0,
+                                                               reason=f"{hotkey}: No job selected for deep validation"))
+                self.s3_storage.update_validation_info(hotkey, len(miner_job_data['completed_jobs']), current_block)
+                return
+            
+            # Step 1: Perform basic S3 validation (prerequisite)
+            basic_validation_result = await self._perform_basic_s3_file_validation(hotkey, selected_job_data)
+            
+            if not basic_validation_result.is_valid:
+                bt.logging.info(f"{hotkey}: Basic S3 validation failed for job {selected_job_data['job_id']}")
+                self.scorer.on_s3_evaluated(uid, miner_job_data['completed_jobs'], basic_validation_result)
+                self.s3_storage.update_validation_info(hotkey, len(miner_job_data['completed_jobs']), current_block)
+                return
+            
+            # Step 2: Perform content validation on selected job
+            validation_results = await self._deep_validate_job_parquets(hotkey, selected_job_data)
+            
+            # Update S3 scoring and credibility (equivalent of on_miner_evaluated for S3)
+            self.scorer.on_s3_evaluated(uid, miner_job_data['completed_jobs'], validation_results)
+            
+            bt.logging.info(f"{hotkey}: Enhanced S3 validation completed - {len(validation_results)} entities validated")
+            
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
+            self.scorer.on_s3_evaluated(uid, 
+                                        miner_job_data['completed_jobs'] if miner_job_data['completed_jobs'] else [], 
+                                        S3ValidationResult(is_valid=False,
+                                                            content_size_bytes_validated=0,
+                                                            reason=f"{hotkey}: Error in S3 validation: {str(e)}"))
+        
+        # Update S3 validation storage for enhanced validation
+        self.s3_storage.update_validation_info(hotkey, len(miner_job_data['completed_jobs']), current_block)
+        
+
+    async def _perform_basic_s3_validation(
+            self, hotkey: str, uid: int, current_block: int
+    ) -> S3ValidationResult:
+        """
+        Performs basic S3 validation (original logic) as fallback.
+        """
+        try:
+            bt.logging.info(f"{hotkey}: Starting basic S3 validation")
             
             # Check if miner has any jobs in S3
             jobs = await self._get_miner_s3_jobs(hotkey)
@@ -404,9 +468,7 @@ class MinerEvaluator:
                 bt.logging.info(f"{hotkey}: No S3 jobs found")
                 s3_validation_result = S3ValidationResult(
                     is_valid=False,
-                    validation_percentage=0.0,
-                    job_count=0,
-                    total_files=0,
+                    content_size_bytes_validated=0,
                     reason="No S3 data found"
                 )
                 self.s3_storage.update_validation_info(hotkey, 0, current_block)
@@ -414,47 +476,45 @@ class MinerEvaluator:
             
             total_files = 0
             valid_files = 0
+            total_bytes_validated = 0
+            valid_bytes = 0
             
-            # Validate files in each job
+            # Validate files in each job and track actual file sizes
             for job_id in jobs[:5]:  # Limit to 5 jobs to avoid timeout
                 try:
                     files = await self._get_job_files(hotkey, job_id)
                     if files:
                         for file_info in files[:10]:  # Limit to 10 files per job
+                            file_size = file_info.get('Size', 0)
                             total_files += 1
+                            total_bytes_validated += file_size
+                            
                             if await self._validate_s3_file(hotkey, file_info):
                                 valid_files += 1
+                                valid_bytes += file_size
                 except Exception as e:
                     bt.logging.warning(f"{hotkey}: Error validating job {job_id}: Connection error")
                     continue
             
-            # Calculate validation percentage
+            # Calculate validation percentage - require 100% of files to be valid
             validation_percentage = (valid_files / total_files * 100) if total_files > 0 else 0.0
-            is_valid = validation_percentage >= 50.0  # At least 50% of files must be valid
+            is_valid = validation_percentage == 100.0  # 100% of files must be valid
             
             s3_validation_result = S3ValidationResult(
                 is_valid=is_valid,
-                validation_percentage=validation_percentage,
-                job_count=len(jobs),
-                total_files=total_files,
-                reason=f"Validated {valid_files}/{total_files} files across {len(jobs)} jobs"
+                content_size_bytes_validated=total_bytes_validated,
+                reason=f"Basic validation: {valid_files}/{total_files} files across {len(jobs)} jobs ({validation_percentage:.1f}% valid, {total_bytes_validated} bytes)"
             )
             
-            bt.logging.info(f"{hotkey}: S3 validation completed - {validation_percentage:.1f}% valid ({valid_files}/{total_files} files, {len(jobs)} jobs)")
+            bt.logging.info(f"{hotkey}: Basic S3 validation completed - {validation_percentage:.1f}% valid ({valid_files}/{total_files} files, {len(jobs)} jobs)")
             
         except Exception as e:
-            bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
+            bt.logging.error(f"{hotkey}: Error in basic S3 validation: {str(e)}")
             s3_validation_result = S3ValidationResult(
                 is_valid=False,
-                validation_percentage=0.0,
-                job_count=0,
-                total_files=0,
-                reason=f"S3 validation error: {str(e)}"
+                content_size_bytes_validated=0,
+                reason=f"Basic S3 validation error: {str(e)}"
             )
-        
-        # Update S3 validation storage
-        if s3_validation_result:
-            self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
         
         return s3_validation_result
 
@@ -505,6 +565,433 @@ class MinerEvaluator:
             
         except Exception as e:
             bt.logging.warning(f"Error validating S3 file for {hotkey}: Validation error")
+            return False
+
+    # Phase 1: Enhanced S3 Validation Methods
+
+    async def _analyze_miner_job_completion(self, hotkey: str, all_job_ids: List[str]) -> Dict:
+        """
+        Analyze miner's job completion and calculate parquet file sizes.
+        
+        Args:
+            hotkey: The miner's hotkey
+            all_job_ids: List of all job IDs from dynamic desirability model
+            
+        Returns:
+            Dictionary with job completion analysis
+        """
+        try:
+            completed_jobs = []
+            total_files = 0
+            total_size_bytes = 0
+            
+            # Check each job ID to see if miner has submitted data for it
+            for job_id in all_job_ids:
+                try:
+                    # Get files for this job from S3
+                    files = await self._get_job_files(hotkey, job_id)
+                    
+                    if files:
+                        # Filter for parquet files only
+                        parquet_files = [f for f in files if f.get('Key', '').endswith('.parquet')]
+                        
+                        if parquet_files:
+                            job_parquet_size = sum(file_info.get('Size', 0) for file_info in parquet_files)
+                            
+                            completed_jobs.append({
+                                'job_id': job_id,
+                                'total_size_bytes': job_parquet_size,
+                                'file_count': len(parquet_files),
+                                'all_files': parquet_files
+                            })
+                            
+                            total_files += len(parquet_files)
+                            total_size_bytes += job_parquet_size
+                            
+                except Exception as e:
+                    # Job folder doesn't exist or other error - skip this job
+                    continue
+            
+            return {
+                'completed_jobs': completed_jobs,
+                'total_files': total_files,
+                'total_size_mb': total_size_bytes / (1024 * 1024),  # Convert to MB
+                'total_jobs_available': len(all_job_ids)
+            }
+            
+        except Exception as e:
+            bt.logging.error(f"Error analyzing miner job completion for {hotkey}: {str(e)}")
+            return {
+                'completed_jobs': [],
+                'total_files': 0,
+                'total_size_mb': 0.0,
+                'total_jobs_available': len(all_job_ids)
+            }
+
+    def _select_random_job_for_validation(self, miner_job_data: Dict) -> Optional[Dict]:
+        """
+        Randomly select a job for deep validation using nanosecond-based seeding.
+        """
+        try:
+            completed_jobs = miner_job_data.get('completed_jobs', [])
+            
+            if not completed_jobs:
+                return None
+            
+            # Use nanosecond precision timestamp as seed
+            seed = time.time_ns()
+            rng = random.Random(seed)
+            
+            # Randomly select one job
+            selected_job = rng.choice(completed_jobs)
+            
+            bt.logging.info(f"Selected job {selected_job['job_id']} for deep validation "
+                          f"({selected_job['file_count']} files, {selected_job['total_size_bytes']/1024/1024:.1f}MB)")
+            
+            return selected_job
+            
+        except Exception as e:
+            bt.logging.error(f"Error selecting random job for validation: {str(e)}")
+            return None
+
+    async def _perform_basic_s3_file_validation(self, hotkey: str, selected_job_data: Dict) -> bool:
+        """
+        Perform basic S3 file validation on the selected job.
+        All files must pass basic validation (100% requirement).
+        
+        Returns:
+            bool: True if all files pass basic validation, False otherwise
+        """
+        try:
+            job_id = selected_job_data['job_id']
+            all_files = selected_job_data.get('all_files', [])
+            
+            if not all_files:
+                bt.logging.warning(f"{hotkey}: No files found for basic validation in job {job_id}")
+                return False
+            
+            bt.logging.info(f"{hotkey}: Performing basic validation on {len(all_files)} files from job {job_id}")
+            
+            # Validate each file - 100% must pass
+            for file_info in all_files:
+                if not await self._validate_s3_file(hotkey, file_info):
+                    bt.logging.warning(f"{hotkey}: Basic validation failed for file {file_info.get('Key', 'unknown')} in job {job_id}")
+                    return False
+            
+            bt.logging.info(f"{hotkey}: Basic validation passed for all {len(all_files)} files in job {job_id}")
+            return True
+            
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: Error in basic S3 file validation: {str(e)}")
+            return False
+
+    async def _deep_validate_job_parquets(self, hotkey: str, selected_job_data: Dict) -> List[S3ValidationResult]:
+        """
+        Perform deep validation on parquet files from selected job.
+        Phase 2: Content validation with schema validation and keyword matching.
+        
+        Returns:
+            List[S3ValidationResult]: One result per validated entity (like eval_miner approach)
+        """
+        try:
+            job_id = selected_job_data['job_id']
+            all_files = selected_job_data.get('all_files', [])
+            
+            if not all_files:
+                bt.logging.warning(f"{hotkey}: No parquet files found for deep validation in job {job_id}")
+                return []
+            
+            # Get job data to determine data source and keyword
+            job_data = self.scorer.data_value_calculator.model.get_job_data_by_id(job_id)
+            if not job_data:
+                bt.logging.warning(f"{hotkey}: Job data not found for job_id: {job_id}")
+                return []
+            
+            data_source = job_data.get('data_source')
+            job_keyword = job_data.get('keyword')
+            
+            bt.logging.info(f"{hotkey}: Deep validating job {job_id} (source: {data_source.name}, keyword: {job_keyword})")
+            
+            # Use nanosecond precision timestamp as seed for file sampling
+            seed = time.time_ns()
+            rng = random.Random(seed)
+            
+            # Randomly sample up to 10 parquet files
+            max_files_to_sample = min(10, len(all_files))
+            sampled_files = rng.sample(all_files, max_files_to_sample)
+            
+            all_validation_results = []
+            
+            for file_info in sampled_files:
+                try:
+                    # Get validation results for this parquet file
+                    file_validation_results = await self._validate_parquet_content(
+                        hotkey, file_info, data_source, job_keyword
+                    )
+                    all_validation_results.extend(file_validation_results)
+                        
+                except Exception as e:
+                    bt.logging.error(f"{hotkey}: Error validating parquet file {file_info.get('Key', 'unknown')}: {str(e)}")
+                    # Add failed validation result for this file
+                    all_validation_results.append(S3ValidationResult(
+                        is_valid=False,
+                        content_size_bytes_validated=0,
+                        reason=f"Parquet validation error: {str(e)}"
+                    ))
+            
+            bt.logging.info(f"{hotkey}: Deep validation completed for job {job_id} - {len(all_validation_results)} entities validated")
+            return all_validation_results
+            
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: Error in deep validation for job {job_id}: {str(e)}")
+            return [S3ValidationResult(
+                is_valid=False,
+                content_size_bytes_validated=0,
+                reason=f"Deep validation error: {str(e)}"
+            )]
+
+    async def _validate_parquet_content(
+        self, hotkey: str, file_info: Dict, data_source: DataSource, job_keyword: Optional[str]
+    ) -> List[S3ValidationResult]:
+        """
+        Validate content of a single parquet file by converting rows to DataEntities.
+        
+        Args:
+            hotkey: Miner's hotkey
+            file_info: S3 file information
+            data_source: DataSource enum (REDDIT, X, YOUTUBE)
+            job_keyword: Optional keyword to validate in content
+            
+        Returns:
+            List[S3ValidationResult]: One result per validated row
+        """
+        try:
+            file_key = file_info.get('Key')
+            bt.logging.info(f"{hotkey}: Validating parquet content in {file_key}")
+            
+            # Read parquet file from S3
+            parquet_data = await self._read_parquet_from_s3(hotkey, file_key)
+            if parquet_data is None or parquet_data.empty:
+                return [S3ValidationResult(
+                    is_valid=False,
+                    content_size_bytes_validated=0,
+                    reason=f"Could not read parquet file {file_key}"
+                )]
+            
+            # Validate DataFrame has data before sampling
+            if len(parquet_data) == 0:
+                return [S3ValidationResult(
+                    is_valid=False,
+                    content_size_bytes_validated=0,
+                    reason=f"Parquet file {file_key} contains no data rows"
+                )]
+            
+            # Sample up to 10 rows from the parquet file
+            seed = time.time_ns()
+            rng = random.Random(seed)
+            max_rows_to_sample = min(10, len(parquet_data))
+            
+            # Additional safety check before sampling
+            if max_rows_to_sample <= 0:
+                return [S3ValidationResult(
+                    is_valid=False,
+                    content_size_bytes_validated=0,
+                    reason=f"No valid rows to sample from {file_key}"
+                )]
+            
+            if max_rows_to_sample < len(parquet_data):
+                sampled_rows = parquet_data.sample(n=max_rows_to_sample, random_state=seed)
+            else:
+                sampled_rows = parquet_data
+            
+            bt.logging.info(f"{hotkey}: Sampled {len(sampled_rows)} rows from {file_key} for validation")
+            
+            # Convert rows to DataEntities and validate
+            validation_results = []
+            
+            for idx, row in sampled_rows.iterrows():
+                try:
+                    # Convert row to appropriate content model and then to DataEntity
+                    data_entity = self._convert_row_to_data_entity(row, data_source)
+                    
+                    if data_entity is None:
+                        validation_results.append(S3ValidationResult(
+                            is_valid=False,
+                            content_size_bytes_validated=0,
+                            reason=f"Failed to convert row {idx} to DataEntity"
+                        ))
+                        continue
+                    
+                    # Validate using appropriate scraper
+                    entity_validation_results = await self._validate_data_entity(data_entity, data_source)
+                    
+                    # Convert ValidationResult to S3ValidationResult and add keyword validation
+                    for val_result in entity_validation_results:
+                        # Perform keyword validation if required
+                        keyword_valid = self._validate_keyword_in_content(data_entity, job_keyword, data_source)
+                        
+                        # Entity is valid only if both content validation AND keyword validation pass
+                        final_is_valid = val_result.is_valid and keyword_valid
+                        
+                        reason = val_result.reason
+                        if not keyword_valid:
+                            reason += f" (Keyword '{job_keyword}' not found)" if reason else f"Keyword '{job_keyword}' not found"
+                        
+                        validation_results.append(S3ValidationResult(
+                            is_valid=final_is_valid,
+                            content_size_bytes_validated=val_result.content_size_bytes_validated,
+                            reason=reason
+                        ))
+                
+                except Exception as e:
+                    bt.logging.error(f"{hotkey}: Error validating row {idx}: {str(e)}")
+                    validation_results.append(S3ValidationResult(
+                        is_valid=False,
+                        content_size_bytes_validated=0,
+                        reason=f"Row validation error: {str(e)}"
+                    ))
+            
+            return validation_results
+            
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: Error in parquet content validation: {str(e)}")
+            return [S3ValidationResult(
+                is_valid=False,
+                content_size_bytes_validated=0,
+                reason=f"Parquet content validation error: {str(e)}"
+            )]
+
+    async def _read_parquet_from_s3(self, hotkey: str, file_key: str) -> Optional[pd.DataFrame]:
+        """Read parquet file from S3 and return as DataFrame."""
+        try:
+            # Use the S3 reader to get file content
+            file_content = await self.s3_reader.get_file_content(hotkey, file_key)
+            if file_content:
+                # Read parquet from bytes
+                parquet_bytes = io.BytesIO(file_content)
+                df = pd.read_parquet(parquet_bytes)
+                return df
+            return None
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: Error reading parquet file {file_key}: {str(e)}")
+            return None
+
+    def _convert_row_to_data_entity(self, row: pd.Series, data_source: DataSource) -> Optional[DataEntity]:
+        """Convert a pandas row to DataEntity based on data source using clean property approach."""
+        try:
+            # Get the appropriate content model class for this data source
+            content_model_class = data_source.content_model_class
+            if not content_model_class:
+                bt.logging.error(f"No content model class found for data source: {data_source}")
+                return None
+            
+            # Convert row to dict for field validation
+            row_dict = row.to_dict()
+            
+            # Validate required fields before content model creation
+            if not self._validate_required_fields(row_dict, data_source):
+                bt.logging.error(f"Missing required fields for data source {data_source}: {list(row_dict.keys())}")
+                return None
+            
+            # Create content model instance (this will now be safe from missing required fields)
+            content_instance = content_model_class(**row_dict)
+            
+            # Convert to DataEntity using the content model's to_data_entity method
+            return content_model_class.to_data_entity(content_instance)
+                
+        except Exception as e:
+            bt.logging.error(f"Error converting row to DataEntity: {str(e)}")
+            return None
+
+    def _validate_required_fields(self, row_dict: dict, data_source: DataSource) -> bool:
+        """Validate that all required fields are present and not null/empty for the given data source."""
+        try:
+            # Define required fields for each data source
+            required_fields = {
+                DataSource.REDDIT: ['id', 'url', 'username', 'community', 'body', 'created_at', 'data_type'],
+                DataSource.X: ['username', 'text', 'url', 'timestamp', 'tweet_hashtags'],
+                DataSource.YOUTUBE: ['video_id', 'title', 'channel_id', 'transcript']
+            }
+            
+            # Get required fields for this data source
+            source_required_fields = required_fields.get(data_source, [])
+            if not source_required_fields:
+                bt.logging.warning(f"No required fields defined for data source: {data_source}")
+                return True  # Allow unknown data sources for now
+            
+            # Check each required field
+            for field in source_required_fields:
+                if field not in row_dict:
+                    bt.logging.error(f"Missing required field '{field}' for {data_source}")
+                    return False
+                
+                value = row_dict[field]
+                
+                # Check for None or empty values
+                if value is None:
+                    bt.logging.error(f"Required field '{field}' is None for {data_source}")
+                    return False
+                
+                # Check for empty strings
+                if isinstance(value, str) and value.strip() == '':
+                    bt.logging.error(f"Required field '{field}' is empty string for {data_source}")
+                    return False
+                
+                # Check for empty lists (specifically for tweet_hashtags and transcript)
+                if isinstance(value, list) and len(value) == 0 and field in ['tweet_hashtags', 'transcript']:
+                    bt.logging.error(f"Required field '{field}' is empty list for {data_source}")
+                    return False
+            
+            return True
+            
+        except Exception as e:
+            bt.logging.error(f"Error validating required fields: {str(e)}")
+            return False
+
+    async def _validate_data_entity(self, data_entity: DataEntity, data_source: DataSource) -> List[ValidationResult]:
+        """Validate DataEntity using appropriate scraper."""
+        try:
+            # Get appropriate scraper for data source
+            scraper = self.scraper_provider.get(self.PREFERRED_SCRAPERS[data_source])
+            
+            # Validate the entity (returns List[ValidationResult])
+            validation_results = await scraper.validate([data_entity])
+            
+            return validation_results
+            
+        except Exception as e:
+            bt.logging.error(f"Error validating DataEntity: {str(e)}")
+            return [ValidationResult(
+                is_valid=False,
+                content_size_bytes_validated=data_entity.content_size_bytes if data_entity else 0,
+                reason=f"Entity validation error: {str(e)}"
+            )]
+
+    def _validate_keyword_in_content(self, data_entity: DataEntity, job_keyword: Optional[str], data_source: DataSource) -> bool:
+        """Validate that keyword appears in the content text field using clean property approach."""
+        if not job_keyword:
+            return True  # No keyword requirement
+        
+        try:
+            # Get the appropriate content model class and text field name
+            content_model_class = data_source.content_model_class
+            text_field_name = data_source.text_field_name
+            
+            if not content_model_class or not text_field_name:
+                bt.logging.error(f"Missing content model or text field for data source: {data_source}")
+                return False
+            
+            # Convert DataEntity back to content model to access fields
+            content_instance = content_model_class.from_data_entity(data_entity)
+            
+            # Extract text content using standard field access
+            text_content = getattr(content_instance, text_field_name, '')
+            
+            # Check if keyword appears in text (case-insensitive)
+            return job_keyword.lower() in text_content.lower()
+            
+        except Exception as e:
+            bt.logging.error(f"Error validating keyword in content: {str(e)}")
             return False
 
     async def run_next_eval_batch(self) -> int:

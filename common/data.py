@@ -13,6 +13,9 @@ from pydantic import (
     PositiveInt,
     field_validator,  # Changed from validator
 )
+from scraping.reddit.model import RedditContent
+from scraping.x.model import XContent
+from scraping.youtube.model import YouTubeContent
 
 
 class StrictBaseModel(BaseModel):
@@ -81,6 +84,26 @@ class DataSource(IntEnum):
             DataSource.UNKNOWN_7: 0
         }
         return weights[self]
+
+    @property
+    def content_model_class(self):
+        """Returns the appropriate content model class for this data source."""
+        models = {
+            DataSource.REDDIT: RedditContent,
+            DataSource.X: XContent,
+            DataSource.YOUTUBE: YouTubeContent,
+        }
+        return models.get(self)
+
+    @property
+    def text_field_name(self):
+        """Returns the field name that contains searchable text for keyword matching."""
+        text_fields = {
+            DataSource.REDDIT: 'body',
+            DataSource.X: 'text',
+            DataSource.YOUTUBE: 'title',
+        }
+        return text_fields.get(self)
 
 
 class DataLabel(StrictBaseModel):

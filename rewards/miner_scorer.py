@@ -1,5 +1,5 @@
 import threading
-from typing import List, Optional
+from typing import List, Optional, Dict
 import torch
 import bittensor as bt
 import datetime as dt
@@ -187,14 +187,6 @@ class MinerScorer:
             f"After HF evaluation for miner {uid}: Raw HF Boost = {float(self.hf_boosts[uid])}. HF Credibility = {float(self.hf_credibility[uid])}."
         )
 
-    def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float) -> None:
-        """Applies a fixed boost to the scaled score if the miner has passed S3 validation."""
-        max_boost = 5 * 10**6  # Half of HF boost since S3 is simpler validation
-        self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
-        self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
-        bt.logging.info(
-            f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
-        )
 
     def apply_ondemand_penalty(self, uid: int, mult_factor: float):
         """Applies a 5% credibility penalty to a given miner"""
@@ -202,6 +194,96 @@ class MinerScorer:
         adj_cred = max(self.miner_credibility[uid] - cred_penalty, 0)
         bt.logging.info(f"After {100*cred_penalty:.2f}% OnDemand penalty, Miner {uid} credibility decreased from {float(self.miner_credibility[uid])} to {adj_cred}.")
         self.miner_credibility[uid] = adj_cred
+
+    def on_s3_evaluated(
+        self,
+        uid: int,
+        completed_jobs: List[Dict],
+        validation_results: List
+    ) -> None:
+        """Notifies the scorer that a miner's S3 data has been evaluated and should have its score updated.
+        Mirrors the on_miner_evaluated approach but for S3 validation.
+
+        Args:
+            uid (int): The miner's UID.
+            completed_jobs (List[Dict]): List of completed job data with job_id, data_size, etc.
+            validation_results (List[S3ValidationResult]): The results of content validation performed on sampled S3 data.
+        """
+        
+        with self.lock:
+            s3_score = 0.0
+
+            # Calculate raw S3 score based on job completion (mimicking MinerIndex scoring)
+            for job_data in completed_jobs:
+                job_id = job_data['job_id']
+                data_size_bytes = job_data['total_size_bytes']
+                
+                # Get job data from dynamic desirability model
+                job_info = self.value_calculator.model.get_job_data_by_id(job_id)
+                if job_info:
+                    data_source = job_info.get('data_source')
+                    job_weight = job_info.get('job_weight', 0.0)
+
+                    data_source_weight = self.value_calculator.model.get_data_source_weight(data_source)
+
+                    job_score = data_source_weight * job_weight * data_size_bytes
+                    s3_score += job_score
+
+            # Apply S3 boost calculation (mirrors on_miner_evaluated approach for weighted score)
+            if validation_results:
+                # Update S3 credibility based on validation results  
+                self._update_s3_credibility(uid, validation_results)
+                
+                # Calculate S3 boost based on score and credibility
+                s3_boost = s3_score * self.s3_credibility[uid]
+                self.s3_boosts[uid] = s3_boost
+                
+                bt.logging.info(f"Miner {uid} S3 evaluation completed. S3 Score: {s3_score:.0f}, "
+                              f"S3 Credibility: {float(self.s3_credibility[uid]):.3f}, "
+                              f"S3 Boost: {float(s3_boost):.0f}")
+            else:
+                bt.logging.info(f"Miner {uid} S3 evaluation completed. S3 Score: {s3_score:.0f}, "
+                              f"No validation results provided")
+
+    def _update_s3_credibility(self, uid: int, validation_results: List):
+        """Updates the miner's S3 credibility based on the most recent set of validation_results.
+
+        Requires: self.lock is held.
+        """
+        assert (
+            len(validation_results) > 0
+        ), "Must be provided at least 1 S3 validation result."
+
+        total_bytes_validated = sum(
+            result.content_size_bytes_validated for result in validation_results
+        )
+
+        credibility = 0
+
+        # only calculate credibility if we have > 0 validated bytes
+        if total_bytes_validated > 0:
+            valid_bytes = sum(
+                result.is_valid * result.content_size_bytes_validated
+                for result in validation_results
+            )
+            credibility = valid_bytes / float(total_bytes_validated)
+        else:
+            # If no bytes were validated, treat as failed validation
+            credibility = 0
+            bt.logging.warning(f"S3 validation for miner {uid} had zero bytes validated")
+
+        previous_credibility = self.s3_credibility[uid].clone().item()
+
+        # Use EMA to update the miner's S3 credibility.
+        self.s3_credibility[uid] = (
+            self.s3_cred_alpha * credibility
+            + (1 - self.s3_cred_alpha) * self.s3_credibility[uid]
+        )
+
+        bt.logging.info(
+            f"Miner {uid}'s S3 credibility updated from {previous_credibility} to {self.s3_credibility[uid].item()} "
+            f"based on {len(validation_results)} validation results with {total_bytes_validated} bytes validated."
+        )
 
     def on_miner_evaluated(
         self,
