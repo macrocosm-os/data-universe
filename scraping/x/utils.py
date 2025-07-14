@@ -5,7 +5,7 @@ import bittensor as bt
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_TWITTER_URLS_DATE, MEDIA_REQUIRED_DATE
+from common.constants import NO_TWITTER_URLS_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -144,27 +144,26 @@ def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> Va
         return ValidationResult(is_valid=False, reason="Tweet texts do not match", content_size_bytes_validated=0)
 
     # If we're after the media required date, validate media content
-    now = dt.datetime.now(dt.timezone.utc)
-    if now >= MEDIA_REQUIRED_DATE:
-        actual_media = actual_tweet.get('media', [])
-        verify_media = tweet_to_verify.get('media', [])
 
-        # Check if both have media or both don't have media
-        if bool(actual_media) != bool(verify_media):
+    actual_media = actual_tweet.get('media', [])
+    verify_media = tweet_to_verify.get('media', [])
+
+    # Check if both have media or both don't have media
+    if bool(actual_media) != bool(verify_media):
+        return ValidationResult(
+            is_valid=False,
+            reason="Media presence mismatch - one has media while the other doesn't",
+            content_size_bytes_validated=0
+        )
+
+    # If both have media, check that they match
+    if actual_media and verify_media:
+        if len(actual_media) != len(verify_media):
             return ValidationResult(
                 is_valid=False,
-                reason="Media presence mismatch - one has media while the other doesn't",
+                reason=f"Media count mismatch - expected {len(actual_media)}, got {len(verify_media)}",
                 content_size_bytes_validated=0
             )
-
-        # If both have media, check that they match
-        if actual_media and verify_media:
-            if len(actual_media) != len(verify_media):
-                return ValidationResult(
-                    is_valid=False,
-                    reason=f"Media count mismatch - expected {len(actual_media)}, got {len(verify_media)}",
-                    content_size_bytes_validated=0
-                )
 
     return ValidationResult(is_valid=True, reason="Tweet is valid", content_size_bytes_validated=0)
 
@@ -280,17 +279,15 @@ def validate_twitter_url_deadline(tweet_to_verify: XContent, actual_tweet: XCont
 
 def validate_media_content(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
     """Validate media content requirements and matching."""
-    now = dt.datetime.now(dt.timezone.utc)
-    
+
     # After deadline: Check if media is required but missing
-    if now >= MEDIA_REQUIRED_DATE:
-        if actual_tweet.media and not tweet_to_verify.media:
-            bt.logging.info("Tweet is missing required media content.")
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet is missing required media content",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
+    if actual_tweet.media and not tweet_to_verify.media:
+        bt.logging.info("Tweet is missing required media content.")
+        return ValidationResult(
+            is_valid=False,
+            reason="Tweet is missing required media content",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
 
     # ALWAYS validate: If miner claims to have media, validate it's legitimate
     if tweet_to_verify.media:
