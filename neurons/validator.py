@@ -15,7 +15,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-# mainnet validator
 import copy
 import sys
 import torch
@@ -158,9 +157,12 @@ class Validator:
             bt.logging.warning("Not logging to Macrocosmos logger.")
 
         if not self.config.wandb.off:
-            self.new_wandb_run()
-        else:
-            bt.logging.warning("Not logging to wandb.")
+            try:
+                self.new_wandb_run()
+            except Exception as e:
+                bt.logging.error(f"Failed to initialize wandb: {str(e)}")
+                bt.logging.warning("Continuing without wandb logging.")
+                self.config.wandb.off = True
 
         # Load any state from previous runs.
         self.load_state()
@@ -261,14 +263,6 @@ class Validator:
                 "block": self.block,
                 "uid": self.uid,
                 "evaluation_cycles": self.evaluation_cycles_since_startup,
-                "mean_score": float(torch.mean(scores).item()),
-                "max_score": float(torch.max(scores).item()),
-                "min_score": float(torch.min(scores).item()),
-                "mean_credibility": float(torch.mean(credibilities).item()),
-                "max_credibility": float(torch.max(credibilities).item()),
-                "min_credibility": float(torch.min(credibilities).item()),
-                "active_miners": len([s for s in scores if s > 0]),
-                "total_miners": len(scores),
                 "timestamp": dt.datetime.utcnow().isoformat(),
             }
             
