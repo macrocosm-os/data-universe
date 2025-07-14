@@ -223,7 +223,7 @@ class Validator:
             scraper_providers = self.get_scraper_providers()
             
             # Initialize the client
-            self.mcl_client = mc.AsyncLoggerClient(app_name="testnet_validator")
+            self.mcl_client = mc.AsyncLoggerClient(app_name="sn13_mainnet_validator")
             self.mc_logger = self.mcl_client.logger
             
             # Start a new run
