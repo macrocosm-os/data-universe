@@ -15,7 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-
+# mainnet validator
 import copy
 import sys
 import torch
@@ -208,11 +208,7 @@ class Validator:
 
     async def new_mc_logger_run(self):
         """Creates a new Macrocosmos logger run to save information to."""
-        try:
-            # Set environment variable for log capture if specified
-            if not self.config.mclogger.capture_logs:
-                os.environ['MACROCOSMOS_CAPTURE_LOGS'] = 'false'
-            
+        try:            
             # Create a unique run id for this run
             now = dt.datetime.now()
             self.mc_logger_start = now
@@ -247,7 +243,7 @@ class Validator:
             
         except Exception as e:
             bt.logging.error(f"Failed to initialize Macrocosmos logger: {str(e)}")
-            self.config.mclogger.off = True  # Disable to prevent further errors
+            self.config.mclogger.off = True  
 
     async def log_mc_metrics(self):
         """Log metrics to Macrocosmos logger"""
