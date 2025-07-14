@@ -24,7 +24,7 @@ import argparse
 from pathlib import Path
 import bittensor as bt
 from loguru import logger
-
+import macrocosmos as mc
 from common import utils
 
 from dotenv import load_dotenv
@@ -130,6 +130,13 @@ def add_args(neuron_type: NeuronType, parser):
             "--wandb.off",
             action="store_true",
             help="Set this flag to disable logging to wandb.",
+            default=False,
+        )
+
+        parser.add_argument(
+            "--mclogger.off",
+            action="store_true",
+            help="Set this flag to disable logging to the Macrocosmos logger.",
             default=False,
         )
 

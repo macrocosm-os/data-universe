@@ -3,7 +3,7 @@ asyncpraw==7.8.0
 bittensor==9.8.2
 jupyter==1.0.0
 numpy==2.0.1
-pydantic==2.10.1
+pydantic~=2.10.1
 python-dotenv==1.0.0
 pytz==2023.3.post1
 rich==13.7.0
@@ -21,3 +21,4 @@ loguru==0.7.3
 google-api-python-client==2.167.0
 youtube-transcript-api==1.0.3
 isodate==0.7.2
+macrocosmos==1.1.1
