@@ -189,7 +189,7 @@ class MinerScorer:
 
     def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed S3 validation."""
-        max_boost = 5 * 10**6  # Half of HF boost since S3 is simpler validation
+        max_boost = 10 * 10**6  # Half of HF boost since S3 is simpler validation
         self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
         self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
         bt.logging.info(
