@@ -15,7 +15,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-
 import copy
 import sys
 import torch
@@ -37,7 +36,7 @@ from rich.console import Console
 import warnings
 import requests
 from dotenv import load_dotenv
-
+import macrocosmos as mc
 import bittensor as bt
 from typing import Tuple
 import json
@@ -139,6 +138,12 @@ class Validator:
         self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
 
+        # macrocosmos logging
+        self.mcl_client = None
+        self.mc_logger = None
+        self.mc_run = None
+        self.mc_logger_start = None
+
         # Add counter for evaluation cycles since startup
         self.evaluation_cycles_since_startup = 0
 
@@ -146,12 +151,18 @@ class Validator:
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
 
-        if not self.config.wandb.off:
-            self.new_wandb_run()
+        if not self.config.mclogger.off:
+            self.loop.run_until_complete(self.new_mc_logger_run())
         else:
-            bt.logging.warning("Not logging to wandb.")
+            bt.logging.warning("Not logging to Macrocosmos logger.")
 
-        bt.logging.info("Setting up validator.")
+        if not self.config.wandb.off:
+            try:
+                self.new_wandb_run()
+            except Exception as e:
+                bt.logging.error(f"Failed to initialize wandb: {str(e)}")
+                bt.logging.warning("Continuing without wandb logging.")
+                self.config.wandb.off = True
 
         # Load any state from previous runs.
         self.load_state()
@@ -196,6 +207,89 @@ class Validator:
         """Fetches a validator's scraper providers to display in WandB logs."""
         scrapers = self.evaluator.PREFERRED_SCRAPERS
         return scrapers
+
+    async def new_mc_logger_run(self):
+        """Creates a new Macrocosmos logger run to save information to."""
+        try:            
+            # Create a unique run id for this run
+            now = dt.datetime.now()
+            self.mc_logger_start = now
+            run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
+            run_name = f"validator-{self.uid}-{run_id}"
+            
+            version_tag = self.get_version_tag()
+            scraper_providers = self.get_scraper_providers()
+            
+            # Initialize the client
+            self.mcl_client = mc.AsyncLoggerClient(app_name="sn13_mainnet_validator")
+            self.mc_logger = self.mcl_client.logger
+            
+            # Start a new run
+            self.mc_run = await self.mc_logger.init(
+                project="data-universe-validators",
+                tags=[f"validator", f"uid-{self.uid}", f"version-{version_tag}"],
+                notes=f"Validator {self.uid} on netuid {self.config.netuid}",
+                config={
+                    "uid": self.uid,
+                    "hotkey": self.wallet.hotkey.ss58_address,
+                    "netuid": self.config.netuid,
+                    "version": version_tag,
+                    "scrapers": scraper_providers,
+                    "chain_endpoint": self.config.subtensor.chain_endpoint,
+                },
+                name=run_name,
+                description=f"Data Universe Validator {self.uid} - {run_id}",
+            )
+            
+            bt.logging.success(f"Macrocosmos logger initialized successfully with run ID: {self.mc_run.id}")
+            
+        except Exception as e:
+            bt.logging.error(f"Failed to initialize Macrocosmos logger: {str(e)}")
+            self.config.mclogger.off = True  
+
+    async def log_mc_metrics(self):
+        """Log metrics to Macrocosmos logger"""
+        try:
+            if not self.mc_logger:
+                return
+                
+            scorer = self.evaluator.get_scorer()
+            scores = scorer.get_scores()
+            credibilities = scorer.get_credibilities()
+            
+            # Prepare metrics
+            metrics = {
+                "step": self.step,
+                "block": self.block,
+                "uid": self.uid,
+                "evaluation_cycles": self.evaluation_cycles_since_startup,
+                "timestamp": dt.datetime.utcnow().isoformat(),
+            }
+            
+            # Add individual miner scores
+            top_miners = torch.topk(scores, len(scores))
+            for i, (score, uid_idx) in enumerate(zip(top_miners.values, top_miners.indices)):
+                metrics[f"top_miner_{i+1}_uid"] = int(uid_idx.item())
+                metrics[f"top_miner_{i+1}_score"] = float(score.item())
+                metrics[f"top_miner_{i+1}_credibility"] = float(credibilities[uid_idx].item())
+            
+            await self.mc_logger.log(metrics)
+            
+        except Exception as e:
+            bt.logging.error(f"Error logging metrics to Macrocosmos logger: {str(e)}")
+
+    async def finish_mc_logger_run(self):
+        """Finish the current Macrocosmos logger run"""
+        try:
+            if self.mc_logger and self.mc_run:
+                await self.mc_logger.finish()
+                bt.logging.info("Macrocosmos logger run finished")
+        except Exception as e:
+            bt.logging.error(f"Error finishing Macrocosmos logger run: {str(e)}")
+        finally:
+            self.mc_logger = None
+            self.mc_run = None
+            self.mcl_client = None
 
     def new_wandb_run(self):
         """Creates a new wandb run to save information to."""
@@ -275,6 +369,10 @@ class Validator:
                 # Update to the latest desirability list after each evaluation.
                 self.get_updated_lookup()
 
+                # Log to Macrocosmos logger
+                if not self.config.mclogger.off and self.mc_logger:
+                    self.loop.run_until_complete(self.log_mc_metrics())
+
                 self.step += 1
 
                 # Now that we've finished a full evaluation loop, compute how long we should
@@ -300,11 +398,27 @@ class Validator:
                         self.wandb_run.finish()
                         self.new_wandb_run()
 
+                # Check if we should start a new mc logger run.
+                if not self.config.mclogger.off and self.mc_logger_start:
+                    if (dt.datetime.now() - self.mc_logger_start) >= dt.timedelta(
+                        days=1
+                    ):
+                        bt.logging.info(
+                            "Current mc logger run is more than 1 day old. Starting a new run."
+                        )
+                        self.loop.run_until_complete(self.finish_mc_logger_run())
+                        self.loop.run_until_complete(self.new_mc_logger_run())
+
+
             # If someone intentionally stops the validator, it'll safely terminate operations.
             except KeyboardInterrupt:
                 self.axon.stop()
-                bt.logging.success("Validator killed by keyboard interrupt.")
-                sys.exit()
+                
+                # Cleanup loggers
+                if self.wandb_run:
+                    self.wandb_run.finish()
+                if self.mc_logger:
+                    self.loop.run_until_complete(self.finish_mc_logger_run())
 
             # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
@@ -360,8 +474,21 @@ class Validator:
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
+
+            # Cleanup loggers
             if self.wandb_run:
                 self.wandb_run.finish()
+            if self.mc_logger:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If loop is running, schedule the coroutine
+                        asyncio.create_task(self.finish_mc_logger_run())
+                    else:
+                        # If loop is not running, run it
+                        loop.run_until_complete(self.finish_mc_logger_run())
+                except Exception as e:
+                    bt.logging.error(f"Error cleaning up Macrocosmos logger: {str(e)}")
             bt.logging.debug("Stopped.")
 
     def serve_axon(self):
