@@ -334,9 +334,16 @@ class ApiDojoTwitterScraper(Scraper):
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
                 
+                # Extract media types for enhanced media support
+                media_types = self._extract_media_types(data)
+                
+                # Extract author info
+                author = data.get('author', {})
+                
                 results.append(
                     XContent(
-                        username=data['author']['userName'],
+                        # Required fields
+                        username=f"@{data['author']['userName']}" if data.get('author', {}).get('userName') else "",
                         text=utils.sanitize_scraped_tweet(data['text']),
                         url=data["url"],
                         timestamp=dt.datetime.strptime(
@@ -344,17 +351,45 @@ class ApiDojoTwitterScraper(Scraper):
                         ),
                         tweet_hashtags=tags,
                         media=media_urls if media_urls else None,
-                        # Enhanced fields
+                        
+                        # Enhanced fields (existing)
                         user_id=user_info['id'],
                         user_display_name=user_info['display_name'],
                         user_verified=user_info['verified'],
-                        # Non-dynamic tweet metadata
                         tweet_id=data.get('id'),
                         is_reply=data.get('isReply', None),
                         is_quote=data.get('isQuote', None),
-                        # Additional metadata
                         conversation_id=data.get('conversationId'),
                         in_reply_to_user_id=reply_info[0],
+                        
+                        # Enhanced fields for rich data
+                        language=data.get('lang'),
+                        full_text=data.get('fullText', data.get('text')),
+                        is_retweet=data.get('isRetweet', False),
+                        possibly_sensitive=data.get('possiblySensitive', False),
+                        in_reply_to_username=reply_info[1],
+                        quoted_tweet_id=data.get('quotedTweetId'),
+                        
+                        # Enhanced media
+                        media_urls=media_urls,
+                        media_types=media_types,
+                        
+                        # Dynamic engagement metrics
+                        like_count=data.get('likeCount'),
+                        retweet_count=data.get('retweetCount'),
+                        reply_count=data.get('replyCount'),
+                        quote_count=data.get('quoteCount'),
+                        view_count=data.get('viewCount'),
+                        bookmark_count=data.get('bookmarkCount'),
+                        
+                        # User profile data
+                        user_blue_verified=author.get('isBlueVerified', False),
+                        user_description=author.get('description'),
+                        user_location=author.get('location'),
+                        profile_image_url=author.get('profilePicture'),
+                        cover_picture_url=author.get('coverPicture'),
+                        user_followers_count=author.get('followers'),
+                        user_following_count=author.get('following'),
                     )
                 )
             except Exception:
@@ -419,6 +454,22 @@ class ApiDojoTwitterScraper(Scraper):
                 media_urls.append(media_item)
         
         return media_urls
+
+    def _extract_media_types(self, data: dict) -> List[str]:
+        """Extract media types from tweet"""
+        media_data = data.get('media', [])
+        
+        if not isinstance(media_data, list):
+            return []
+        
+        media_types = []
+        for media_item in media_data:
+            if isinstance(media_item, dict):
+                media_types.append(media_item.get('type', 'photo'))
+            else:
+                media_types.append('photo')  # Default for string URLs
+        
+        return media_types
 
     def _best_effort_parse_hf_dataset(self, dataset: List[dict]) -> List[dict]:
         """Performs a best effort parsing of Apify dataset into List[XContent]

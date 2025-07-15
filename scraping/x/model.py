@@ -50,6 +50,36 @@ class XContent(BaseModel):
     conversation_id: Optional[str] = None
     in_reply_to_user_id: Optional[str] = None
 
+    # ===== ENHANCED FIELDS FOR RICH DATA =====
+    # Static tweet metadata
+    language: Optional[str] = None  # "en"
+    full_text: Optional[str] = None # Full untruncated text
+    is_retweet: Optional[bool] = None
+    possibly_sensitive: Optional[bool] = None
+    in_reply_to_username: Optional[str] = None
+    quoted_tweet_id: Optional[str] = None
+
+    # Enhanced media
+    media_urls: List[str] = Field(default_factory=list)
+    media_types: List[str] = Field(default_factory=list)
+
+    # Dynamic engagement metrics (collected but validated with ranges)
+    like_count: Optional[int] = None
+    retweet_count: Optional[int] = None
+    reply_count: Optional[int] = None
+    quote_count: Optional[int] = None
+    view_count: Optional[int] = None
+    bookmark_count: Optional[int] = None
+
+    # User profile data (flexible validation)
+    user_blue_verified: Optional[bool] = None
+    user_description: Optional[str] = None
+    user_location: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    cover_picture_url: Optional[str] = None
+    user_followers_count: Optional[int] = None
+    user_following_count: Optional[int] = None
+
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:
         """Converts the XContent to a DataEntity."""

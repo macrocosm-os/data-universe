@@ -50,7 +50,7 @@ from common.protocol import OnDemandRequest
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, ScraperId
 
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 import json
 
 # Enable logging to the miner TODO move it to some different location
@@ -637,31 +637,11 @@ class Miner:
             # For X source, use the enhanced scraper directly
             if synapse.source == DataSource.X:
                 # Initialize the enhanced scraper directly instead of using the provider
-
-                enhanced_scraper = EnhancedApiDojoTwitterScraper()
-                await enhanced_scraper.scrape(config)
-
-                # Get enhanced content
-                enhanced_content = enhanced_scraper.get_enhanced_content()
-
-                # Convert EnhancedXContent to DataEntity to maintain protocol compatibility
-                enhanced_data_entities = []
-                for content in enhanced_content:
-                    # Convert to DataEntity but store full rich content in serialized form
-                    api_response = content.to_api_response()
-                    data_entity = DataEntity(
-                        uri=content.url,
-                        datetime=content.timestamp,
-                        source=DataSource.X,
-                        label=DataLabel(value=content.tweet_hashtags[0].lower()) if content.tweet_hashtags else None,
-                        # Store the full enhanced content as serialized JSON in the content field
-                        content=json.dumps(api_response).encode('utf-8'),
-                        content_size_bytes=len(json.dumps(api_response))
-                    )
-                    enhanced_data_entities.append(data_entity)
-
+                enhanced_scraper = ApiDojoTwitterScraper()
+                data_entities = await enhanced_scraper.scrape(config)
+                
                 # Update response with enhanced data entities
-                synapse.data = enhanced_data_entities[:synapse.limit] if synapse.limit else enhanced_data_entities
+                synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
             else:
                 # For Reddit, use the provider that's part of the coordinator
                 from scraping.provider import ScraperProvider

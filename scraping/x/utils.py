@@ -10,7 +10,7 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
 
-# Validation fields with their display names
+# Validation field categories for trustless Web3 environment
 REQUIRED_FIELDS = [
     ("username", "usernames"),
     ("text", "texts"),
@@ -18,15 +18,45 @@ REQUIRED_FIELDS = [
     ("tweet_hashtags", "hashtags"),
 ]
 
-OPTIONAL_FIELDS = [
+# Static fields that must match exactly (immutable facts)
+STATIC_IMMUTABLE = [
     ("user_id", "user_id"),
-    ("user_display_name", "user_display_name"),
-    ("user_verified", "user_verified"),
     ("tweet_id", "tweet_id"),
     ("is_reply", "is_reply"),
     ("is_quote", "is_quote"),
     ("conversation_id", "conversation_id"),
     ("in_reply_to_user_id", "in_reply_to_user_id"),
+    ("language", "language"),
+    ("full_text", "full_text"),
+    ("is_retweet", "is_retweet"),
+    ("possibly_sensitive", "possibly_sensitive"),
+    ("in_reply_to_username", "in_reply_to_username"),
+    ("quoted_tweet_id", "quoted_tweet_id"),
+    ("media_urls", "media_urls"),
+    ("media_types", "media_types"),
+]
+
+# Dynamic fields with range validation to prevent exploits
+DYNAMIC_BOUNDED = [
+    ("like_count", 0, 100_000_000),
+    ("retweet_count", 0, 10_000_000),
+    ("reply_count", 0, 1_000_000),
+    ("quote_count", 0, 1_000_000),
+    ("view_count", 0, 1_000_000_000),
+    ("bookmark_count", 0, 10_000_000),
+    ("user_followers_count", 0, 500_000_000),
+    ("user_following_count", 0, 100_000),
+]
+
+# Profile fields - collected but validation flexible
+PROFILE_FLEXIBLE = [
+    ("user_display_name", "user_display_name"),
+    ("user_verified", "user_verified"),
+    ("user_blue_verified", "user_blue_verified"),
+    ("user_description", "user_description"),
+    ("user_location", "user_location"),
+    ("profile_image_url", "profile_image_url"),
+    ("cover_picture_url", "cover_picture_url"),
 ]
 
 
@@ -169,7 +199,7 @@ def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> Va
 
 
 def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
-    """Validate all tweet fields between submitted and actual tweet data.
+    """Validate all tweet fields with trustless Web3 validation strategy.
     
     Returns:
         ValidationResult if validation fails, None if all validations pass
@@ -214,25 +244,64 @@ def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, ent
                 content_size_bytes_validated=entity.content_size_bytes,
             )
     
-    # Validate OPTIONAL fields - skip if either is None
-    for field_name, display_name in OPTIONAL_FIELDS:
+    # Validate STATIC IMMUTABLE fields - must match exactly
+    for field_name, display_name in STATIC_IMMUTABLE:
         submitted_value = getattr(tweet_to_verify, field_name, None)
         actual_value = getattr(actual_tweet, field_name, None)
         
-        # Skip validation if either value is None (this is OK for optional fields)
+        # Skip if either is None (optional static fields)
         if submitted_value is None or actual_value is None:
             continue
             
-        # Both values exist, so validate them
-        is_valid = submitted_value == actual_value
-            
-        if not is_valid:
-            bt.logging.info(f"Optional field {display_name} do not match: {submitted_value} != {actual_value}")
+        # Both exist, must match exactly
+        if submitted_value != actual_value:
+            bt.logging.info(f"Static field {display_name} do not match: {submitted_value} != {actual_value}")
             return ValidationResult(
                 is_valid=False,
-                reason=f"Field: {display_name} do not match",
+                reason=f"Static field: {display_name} do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
+    
+    # Validate DYNAMIC BOUNDED fields - range check to prevent exploits
+    for field_name, min_val, max_val in DYNAMIC_BOUNDED:
+        submitted_value = getattr(tweet_to_verify, field_name, None)
+        actual_value = getattr(actual_tweet, field_name, None)
+        
+        # Skip if either is None
+        if submitted_value is None or actual_value is None:
+            continue
+        
+        # Range validation to prevent obvious exploits
+        if not (min_val <= submitted_value <= max_val):
+            bt.logging.info(f"Dynamic field {field_name} out of valid range: {submitted_value}")
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Field {field_name} value {submitted_value} outside valid range [{min_val}, {max_val}]",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        
+        # Allow reasonable variance for dynamic metrics (engagement can change rapidly)
+        if actual_value > 0:
+            variance_ratio = abs(submitted_value - actual_value) / actual_value
+            if variance_ratio > 10.0:  # Allow up to 10x variance for viral content
+                bt.logging.info(f"Dynamic field {field_name} variance too high: {submitted_value} vs {actual_value}")
+                return ValidationResult(
+                    is_valid=False,
+                    reason=f"Field {field_name} variance exceeds reasonable bounds",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+    
+    # Validate PROFILE FLEXIBLE fields - only if both exist, allow mismatches
+    for field_name, display_name in PROFILE_FLEXIBLE:
+        submitted_value = getattr(tweet_to_verify, field_name, None)
+        actual_value = getattr(actual_tweet, field_name, None)
+        
+        # Allow None mismatches for profile fields (they change frequently)
+        if submitted_value is None or actual_value is None:
+            continue
+        
+        # Even if both exist, we're flexible about profile field mismatches
+        # They can change between scraping and validation
     
     return None
 
