@@ -10,20 +10,22 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
 
-# Validation field categories for trustless Web3 environment
+
 REQUIRED_FIELDS = [
     ("username", "usernames"),
     ("text", "texts"),
     ("url", "urls"),
     ("tweet_hashtags", "hashtags"),
+    ("user_id", "user_id"),
+    ("user_display_name", "user_display_name"),
+    ("user_verified", "user_verified"),
+    ("tweet_id", "tweet_id"),
+    ("is_reply", "is_reply"),
+    ("is_quote", "is_quote"),
 ]
 
 # Static fields that must match exactly (immutable facts)
 STATIC_IMMUTABLE = [
-    ("user_id", "user_id"),
-    ("tweet_id", "tweet_id"),
-    ("is_reply", "is_reply"),
-    ("is_quote", "is_quote"),
     ("conversation_id", "conversation_id"),
     ("in_reply_to_user_id", "in_reply_to_user_id"),
     ("language", "language"),
@@ -50,8 +52,6 @@ DYNAMIC_BOUNDED = [
 
 # Profile fields - collected but validation flexible
 PROFILE_FLEXIBLE = [
-    ("user_display_name", "user_display_name"),
-    ("user_verified", "user_verified"),
     ("user_blue_verified", "user_blue_verified"),
     ("user_description", "user_description"),
     ("user_location", "user_location"),
@@ -199,7 +199,7 @@ def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> Va
 
 
 def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
-    """Validate all tweet fields with trustless Web3 validation strategy.
+    """Validate all tweet fields between submitted and actual tweet data
     
     Returns:
         ValidationResult if validation fails, None if all validations pass

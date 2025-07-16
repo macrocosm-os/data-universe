@@ -37,14 +37,14 @@ class XContent(BaseModel):
     )
 
     # Enhanced fields
-    user_id: Optional[str] = None
-    user_display_name: Optional[str] = None
-    user_verified: Optional[bool] = None
+    user_id: str
+    user_display_name: str
+    user_verified: bool
 
     # Non-dynamic tweet metadata
-    tweet_id: Optional[str] = None
-    is_reply: Optional[bool] = None
-    is_quote: Optional[bool] = None
+    tweet_id: str
+    is_reply: bool
+    is_quote: bool
 
     # Additional metadata
     conversation_id: Optional[str] = None
