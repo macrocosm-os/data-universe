@@ -24,7 +24,7 @@ import argparse
 from pathlib import Path
 import bittensor as bt
 from loguru import logger
-
+import macrocosmos as mc
 from common import utils
 
 from dotenv import load_dotenv
@@ -130,6 +130,13 @@ def add_args(neuron_type: NeuronType, parser):
             "--wandb.off",
             action="store_true",
             help="Set this flag to disable logging to wandb.",
+            default=False, # After July 15th 2025 we are moving away from wandb
+        )
+
+        parser.add_argument(
+            "--mclogger.off",
+            action="store_true",
+            help="Set this flag to disable logging to the Macrocosmos logger.",
             default=False,
         )
 
@@ -143,6 +150,12 @@ def add_args(neuron_type: NeuronType, parser):
             action="store_true",
             help="Set this flag to select the location where you are want to store your hf_results data",
             default=os.path.join(Path(os.path.dirname(__file__)).parent, "hf_validation.parquet"),
+        )
+        parser.add_argument(
+            "--s3_results_path",
+            action="store_true",
+            help="Set this flag to select the location where you want to store your S3 validation data",
+            default=os.path.join(Path(os.path.dirname(__file__)).parent, "s3_validation.parquet"),
         )
 
         parser.add_argument(
@@ -163,8 +176,8 @@ def add_args(neuron_type: NeuronType, parser):
             "--organic_whitelist",
             nargs="+",
             help="Whitelist of hotkeys allowed for organic requests",
-            default=['5Cg5QgjMfRqBC6bh8X4PDbQi7UzVRn9eyWXsB8gkyfppFPPy', '5DZyu65U7AAWCD6UAKeovaVExAXksMjSX2J8YSqQmorkw3C1',
-                     '5F4tQyWrhfGVcNhoqeiNsR6KjD4wMZ2kfhLj4oHYuyHbZAc3'], #uids 89, 226, and 232
+            default=['5CzCCUzF3h5Eq3fNAr696YGRZvETYTnUHDcL16C3c9cpmbtE',
+                     '5HEU7ksVSKoCHY3SVcRkJYyGRKTUtKEfCDk5m5QgJUBA4F3F'], #uids 89 and 232
         )
 
         parser.add_argument(

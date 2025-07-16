@@ -1,28 +1,31 @@
-import time
-from common import constants, utils
-from common.date_range import DateRange
-from scraping.reddit import model
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
-import bittensor as bt
-from common.data import DataEntity, DataLabel, DataSource
-from typing import List
+import os
+import random
+import asyncio
 import asyncpraw
+import traceback
+import datetime as dt
+import bittensor as bt
+
+from common.data import DataEntity, DataLabel, DataSource
 from scraping.reddit.utils import (
     is_valid_reddit_url,
     validate_reddit_content,
+    validate_media_content,
+    validate_nsfw_content,
     get_time_input,
     get_custom_sort_input,
     normalize_label,
     normalize_permalink,
+    extract_media_urls
 )
-from scraping.reddit.model import RedditContent, RedditDataType
-import traceback
-import datetime as dt
-import asyncio
-import random
-import os
 
+from common.date_range import DateRange
+from scraping.reddit import model
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
+from scraping.reddit.model import RedditContent, RedditDataType
+from typing import List
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -35,15 +38,18 @@ class RedditCustomScraper(Scraper):
     USER_AGENT = f"User-Agent: python: {os.getenv('REDDIT_USERNAME')}"
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
-        """Validate the correctness of a DataEntity by URI."""
+        """
+        Validate a list of DataEntity objects.
+
+        * For comments, it checks the parent submission (and subreddit) NSFW flag.
+        """
         if not entities:
             return []
 
-        results = []
+        results: List[ValidationResult] = []
 
-        # For verification, it's easiest to perform each query separately.
         for entity in entities:
-            # First check the URI is a valid Reddit URL.
+            # 1) Basic URI sanity check
             if not is_valid_reddit_url(entity.uri):
                 results.append(
                     ValidationResult(
@@ -54,14 +60,10 @@ class RedditCustomScraper(Scraper):
                 )
                 continue
 
-            # Parse out the RedditContent object that we're validating
-            reddit_content_to_verify = None
+            # 2) Decode RedditContent blob
             try:
-                reddit_content_to_verify = RedditContent.from_data_entity(entity)
+                ent_content = RedditContent.from_data_entity(entity)
             except Exception:
-                bt.logging.error(
-                    f"Failed to decode RedditContent from data entity bytes: {traceback.format_exc()}."
-                )
                 results.append(
                     ValidationResult(
                         is_valid=False,
@@ -71,61 +73,76 @@ class RedditCustomScraper(Scraper):
                 )
                 continue
 
-            # Retrieve the Reddit Post/Comment from PRAW.
-            content = None
-
+            # 3) Fetch live data from Reddit
             try:
                 async with asyncpraw.Reddit(
-                    client_id=os.getenv("REDDIT_CLIENT_ID"),
-                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                    username=os.getenv("REDDIT_USERNAME"),
-                    password=os.getenv("REDDIT_PASSWORD"),
-                    user_agent=RedditCustomScraper.USER_AGENT,
+                        client_id=os.getenv("REDDIT_CLIENT_ID"),
+                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                        username=os.getenv("REDDIT_USERNAME"),
+                        password=os.getenv("REDDIT_PASSWORD"),
+                        user_agent=self.USER_AGENT,
                 ) as reddit:
-                    if reddit_content_to_verify.data_type == RedditDataType.POST:
-                        submission = await reddit.submission(
-                            url=reddit_content_to_verify.url
-                        )
-                        # Parse the response.
-                        content = self._best_effort_parse_submission(submission)
+
+                    # ---- A) POST branch ----
+                    if ent_content.data_type == RedditDataType.POST:
+                        submission = await reddit.submission(url=ent_content.url)
+                        await submission.load()  # ensure attrs
+
+                        live_content = self._best_effort_parse_submission(submission)
+
+                    # ---- B) COMMENT branch ----
                     else:
-                        comment = await reddit.comment(url=reddit_content_to_verify.url)
-                        # Parse the response.
-                        content = self._best_effort_parse_comment(comment)
+                        comment = await reddit.comment(url=ent_content.url)
+                        await comment.load()
+
+                        parent = comment.submission
+                        await parent.load()  # full parent
+                        subreddit = comment.subreddit
+                        await subreddit.load()  # full subreddit
+
+                        live_content = self._best_effort_parse_comment(comment)
+
             except Exception as e:
-                bt.logging.error(
-                    f"Failed to validate entity ({entity.uri})[{entity.content}]: {traceback.format_exc()}."
-                )
-                # This is an unfortunate situation. We have no way to distinguish a genuine failure from
-                # one caused by malicious input. In my own testing I was able to make the request timeout by
-                # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
-                # pass malicious input for chunks they don't have.
+                bt.logging.error(f"Failed to retrieve content for {entity.uri}: {e}")
                 results.append(
                     ValidationResult(
                         is_valid=False,
-                        reason="Failed to retrieve submission. This can happen if the URI is invalid, or Reddit is having an issue.",
+                        reason="Failed to retrieve submission/comment from Reddit.",
                         content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
 
-            if not content:
+            # 4) Live content object exists?
+            if not live_content:
                 results.append(
                     ValidationResult(
                         is_valid=False,
-                        reason="Reddit post/comment not found or is invalid.",
+                        reason="Reddit content not found or invalid.",
                         content_size_bytes_validated=entity.content_size_bytes,
                     )
                 )
                 continue
 
-            # We found the Reddit content. Validate it.
-            results.append(
-                validate_reddit_content(
-                    actual_content=content,
-                    entity_to_validate=entity,
-                )
+            # 5) Field-by-field validation
+            validation_result = validate_reddit_content(
+                actual_content=live_content,
+                entity_to_validate=entity,
             )
+
+            # 6) Media validation (strict check to prevent fake media URLs)
+            if validation_result.is_valid:
+                media_validation_result = validate_media_content(ent_content, live_content, entity)
+                if not media_validation_result.is_valid:
+                    validation_result = media_validation_result
+
+            # 7) NSFW validation (check NSFW content - no date restrictions)
+            if validation_result.is_valid:
+                nsfw_validation_result = validate_nsfw_content(ent_content, live_content, entity)
+                if not nsfw_validation_result.is_valid:
+                    validation_result = nsfw_validation_result
+
+            results.append(validation_result)
 
         return results
 
@@ -174,7 +191,8 @@ class RedditCustomScraper(Scraper):
 
         # Check if at least 60% of the data is valid
         is_valid = valid_percentage >= 60
-        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percentage, reason=f"Validation Percentage = {valid_percentage}")
+        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percentage,
+                                  reason=f"Validation Percentage = {valid_percentage}")
 
     def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
         """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""
@@ -212,7 +230,7 @@ class RedditCustomScraper(Scraper):
         )
 
         assert (
-            not scrape_config.labels or len(scrape_config.labels) <= 1
+                not scrape_config.labels or len(scrape_config.labels) <= 1
         ), "Can only scrape 1 subreddit at a time."
 
         # Strip the r/ from the config or use 'all' if no label is provided.
@@ -221,7 +239,7 @@ class RedditCustomScraper(Scraper):
         )
 
         bt.logging.trace(
-             f"Running custom Reddit scraper with search: {subreddit_name}."
+            f"Running custom Reddit scraper with search: {subreddit_name}."
         )
 
         # Randomize between fetching submissions and comments to reduce api calls.
@@ -236,11 +254,11 @@ class RedditCustomScraper(Scraper):
         contents = None
         try:
             async with asyncpraw.Reddit(
-                client_id=os.getenv("REDDIT_CLIENT_ID"),
-                client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                username=os.getenv("REDDIT_USERNAME"),
-                password=os.getenv("REDDIT_PASSWORD"),
-                user_agent=RedditCustomScraper.USER_AGENT,
+                    client_id=os.getenv("REDDIT_CLIENT_ID"),
+                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                    username=os.getenv("REDDIT_USERNAME"),
+                    password=os.getenv("REDDIT_PASSWORD"),
+                    user_agent=RedditCustomScraper.USER_AGENT,
             ) as reddit:
                 subreddit = await reddit.subreddit(subreddit_name)
 
@@ -288,7 +306,7 @@ class RedditCustomScraper(Scraper):
         return data_entities
 
     def _best_effort_parse_submission(
-        self, submission: asyncpraw.models.Submission
+            self, submission: asyncpraw.models.Submission
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit submission into a RedditContent
 
@@ -296,11 +314,14 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
+            # Extract media URLs once
+            media_urls = extract_media_urls(submission)
+
             user = submission.author.name if submission.author else model.DELETED_USER
             content = RedditContent(
                 id=submission.name,
                 url="https://www.reddit.com"
-                + normalize_permalink(submission.permalink),
+                    + normalize_permalink(submission.permalink),
                 username=user,
                 communityName=submission.subreddit_name_prefixed,
                 body=submission.selftext,
@@ -312,6 +333,9 @@ class RedditCustomScraper(Scraper):
                 title=submission.title,
                 # Comment only fields
                 parentId=None,
+                # Media fields
+                media=media_urls if media_urls else None,
+                is_nsfw=submission.over_18,
             )
         except Exception:
             bt.logging.trace(
@@ -321,7 +345,7 @@ class RedditCustomScraper(Scraper):
         return content
 
     def _best_effort_parse_comment(
-        self, comment: asyncpraw.models.Comment
+            self, comment: asyncpraw.models.Comment
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit comment into a RedditContent
 
@@ -330,6 +354,9 @@ class RedditCustomScraper(Scraper):
 
         try:
             user = comment.author.name if comment.author else model.DELETED_USER
+            # Comments typically don't have media, but check parent submission for NSFW
+            parent_nsfw = getattr(comment.submission, 'over_18', False) if hasattr(comment, 'submission') else False
+            subreddit_nsfw = getattr(comment.subreddit, 'over18', False) if hasattr(comment, 'subreddit') else False
             content = RedditContent(
                 id=comment.name,
                 url="https://www.reddit.com" + normalize_permalink(comment.permalink),
@@ -344,6 +371,9 @@ class RedditCustomScraper(Scraper):
                 title=None,
                 # Comment only fields
                 parentId=comment.parent_id,
+                # Media fields
+                media=None,  # Comments don't have media
+                is_nsfw=parent_nsfw or subreddit_nsfw,
             )
         except Exception:
             bt.logging.trace(

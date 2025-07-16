@@ -15,7 +15,6 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-
 import copy
 import sys
 import torch
@@ -37,7 +36,7 @@ from rich.console import Console
 import warnings
 import requests
 from dotenv import load_dotenv
-
+import macrocosmos as mc
 import bittensor as bt
 from typing import Tuple
 import json
@@ -139,6 +138,12 @@ class Validator:
         self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
 
+        # macrocosmos logging
+        self.mcl_client = None
+        self.mc_logger = None
+        self.mc_run = None
+        self.mc_logger_start = None
+
         # Add counter for evaluation cycles since startup
         self.evaluation_cycles_since_startup = 0
 
@@ -146,12 +151,18 @@ class Validator:
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
 
-        if not self.config.wandb.off:
-            self.new_wandb_run()
+        if not self.config.mclogger.off:
+            self.loop.run_until_complete(self.new_mc_logger_run())
         else:
-            bt.logging.warning("Not logging to wandb.")
+            bt.logging.warning("Not logging to Macrocosmos logger.")
 
-        bt.logging.info("Setting up validator.")
+        if not self.config.wandb.off:
+            try:
+                self.new_wandb_run()
+            except Exception as e:
+                bt.logging.error(f"Failed to initialize wandb: {str(e)}")
+                bt.logging.warning("Continuing without wandb logging.")
+                self.config.wandb.off = True
 
         # Load any state from previous runs.
         self.load_state()
@@ -196,6 +207,89 @@ class Validator:
         """Fetches a validator's scraper providers to display in WandB logs."""
         scrapers = self.evaluator.PREFERRED_SCRAPERS
         return scrapers
+
+    async def new_mc_logger_run(self):
+        """Creates a new Macrocosmos logger run to save information to."""
+        try:            
+            # Create a unique run id for this run
+            now = dt.datetime.now()
+            self.mc_logger_start = now
+            run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
+            run_name = f"validator-{self.uid}-{run_id}"
+            
+            version_tag = self.get_version_tag()
+            scraper_providers = self.get_scraper_providers()
+            
+            # Initialize the client
+            self.mcl_client = mc.AsyncLoggerClient(app_name="sn13_mainnet_validator")
+            self.mc_logger = self.mcl_client.logger
+            
+            # Start a new run
+            self.mc_run = await self.mc_logger.init(
+                project="data-universe-validators",
+                tags=[f"validator", f"uid-{self.uid}", f"version-{version_tag}"],
+                notes=f"Validator {self.uid} on netuid {self.config.netuid}",
+                config={
+                    "uid": self.uid,
+                    "hotkey": self.wallet.hotkey.ss58_address,
+                    "netuid": self.config.netuid,
+                    "version": version_tag,
+                    "scrapers": scraper_providers,
+                    "chain_endpoint": self.config.subtensor.chain_endpoint,
+                },
+                name=run_name,
+                description=f"Data Universe Validator {self.uid} - {run_id}",
+            )
+            
+            bt.logging.success(f"Macrocosmos logger initialized successfully with run ID: {self.mc_run.id}")
+            
+        except Exception as e:
+            bt.logging.error(f"Failed to initialize Macrocosmos logger: {str(e)}")
+            self.config.mclogger.off = True  
+
+    async def log_mc_metrics(self):
+        """Log metrics to Macrocosmos logger"""
+        try:
+            if not self.mc_logger:
+                return
+                
+            scorer = self.evaluator.get_scorer()
+            scores = scorer.get_scores()
+            credibilities = scorer.get_credibilities()
+            
+            # Prepare metrics
+            metrics = {
+                "step": self.step,
+                "block": self.block,
+                "uid": self.uid,
+                "evaluation_cycles": self.evaluation_cycles_since_startup,
+                "timestamp": dt.datetime.utcnow().isoformat(),
+            }
+            
+            # Add individual miner scores
+            top_miners = torch.topk(scores, len(scores))
+            for i, (score, uid_idx) in enumerate(zip(top_miners.values, top_miners.indices)):
+                metrics[f"top_miner_{i+1}_uid"] = int(uid_idx.item())
+                metrics[f"top_miner_{i+1}_score"] = float(score.item())
+                metrics[f"top_miner_{i+1}_credibility"] = float(credibilities[uid_idx].item())
+            
+            await self.mc_logger.log(metrics)
+            
+        except Exception as e:
+            bt.logging.error(f"Error logging metrics to Macrocosmos logger: {str(e)}")
+
+    async def finish_mc_logger_run(self):
+        """Finish the current Macrocosmos logger run"""
+        try:
+            if self.mc_logger and self.mc_run:
+                await self.mc_logger.finish()
+                bt.logging.info("Macrocosmos logger run finished")
+        except Exception as e:
+            bt.logging.error(f"Error finishing Macrocosmos logger run: {str(e)}")
+        finally:
+            self.mc_logger = None
+            self.mc_run = None
+            self.mcl_client = None
 
     def new_wandb_run(self):
         """Creates a new wandb run to save information to."""
@@ -275,6 +369,10 @@ class Validator:
                 # Update to the latest desirability list after each evaluation.
                 self.get_updated_lookup()
 
+                # Log to Macrocosmos logger
+                if not self.config.mclogger.off and self.mc_logger:
+                    self.loop.run_until_complete(self.log_mc_metrics())
+
                 self.step += 1
 
                 # Now that we've finished a full evaluation loop, compute how long we should
@@ -300,11 +398,27 @@ class Validator:
                         self.wandb_run.finish()
                         self.new_wandb_run()
 
+                # Check if we should start a new mc logger run.
+                if not self.config.mclogger.off and self.mc_logger_start:
+                    if (dt.datetime.now() - self.mc_logger_start) >= dt.timedelta(
+                        days=1
+                    ):
+                        bt.logging.info(
+                            "Current mc logger run is more than 1 day old. Starting a new run."
+                        )
+                        self.loop.run_until_complete(self.finish_mc_logger_run())
+                        self.loop.run_until_complete(self.new_mc_logger_run())
+
+
             # If someone intentionally stops the validator, it'll safely terminate operations.
             except KeyboardInterrupt:
                 self.axon.stop()
-                bt.logging.success("Validator killed by keyboard interrupt.")
-                sys.exit()
+                
+                # Cleanup loggers
+                if self.wandb_run:
+                    self.wandb_run.finish()
+                if self.mc_logger:
+                    self.loop.run_until_complete(self.finish_mc_logger_run())
 
             # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
@@ -360,8 +474,21 @@ class Validator:
             self.should_exit = True
             self.thread.join(5)
             self.is_running = False
+
+            # Cleanup loggers
             if self.wandb_run:
                 self.wandb_run.finish()
+            if self.mc_logger:
+                try:
+                    loop = asyncio.get_event_loop()
+                    if loop.is_running():
+                        # If loop is running, schedule the coroutine
+                        asyncio.create_task(self.finish_mc_logger_run())
+                    else:
+                        # If loop is not running, run it
+                        loop.run_until_complete(self.finish_mc_logger_run())
+                except Exception as e:
+                    bt.logging.error(f"Error cleaning up Macrocosmos logger: {str(e)}")
             bt.logging.debug("Stopped.")
 
     def serve_axon(self):
@@ -676,24 +803,37 @@ class Validator:
                         uid = selected_miners[i]
                         hotkey = self.metagraph.hotkeys[uid]
                         
-                        # Check if response exists
+                        # Check if response exists and has valid data
                         if response is not None and hasattr(response, 'data'):
                             data = getattr(response, 'data', [])
                             data_count = len(data) if data else 0
                             
-                            miner_responses[uid] = response
+                            miner_responses[uid] = data  
                             miner_data_counts[uid] = data_count
                             
                             bt.logging.info(f"Miner {uid} ({hotkey}) returned {data_count} items")
                         else:
                             bt.logging.warning(f"Miner {uid} ({hotkey}) failed to respond properly")
 
-            # Step 1: Check if we have a consensus on "no data"
-            no_data_consensus = all(count == 0 for count in miner_data_counts.values())
-            if no_data_consensus:
-                bt.logging.info("All miners returned no data - performing verification check")
+            # Miners that timed out -> always a credibility hit, since the validator got nothing back.
+            non_responsive_uids = [
+                uid for uid in selected_miners 
+                if uid not in miner_responses  # miner failed to respond at all
+            ]
 
-                # Perform a quick check to verify if data should exist
+            # Miners that replied with 0 rows -> penalized if we have evidence that rows really exist.
+            empty_uids = [
+                uid for uid, rows in miner_responses.items() 
+                if len(rows) == 0  # miner answered "[]"
+            ]
+
+            # Perform verification check
+            verification_data = []
+            should_verify = True  # Always try to verify when we have empty responses or for random validation
+
+            if should_verify and (non_responsive_uids or empty_uids or random.random() < VALIDATION_PROBABILITY):
+                bt.logging.info("Performing validation check to gather evidence...")
+
                 try:
                     # For X data, use exactly the same approach as miners
                     if on_demand_synapse.source == DataSource.X:
@@ -702,169 +842,149 @@ class Validator:
                     elif on_demand_synapse.source == DataSource.REDDIT:
                         # For other sources, use the standard provider
                         scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
-                        if not scraper_id:
-                            bt.logging.warning(f"No preferred scraper for source {on_demand_synapse.source}")
-                            # Return empty result with consensus
-                            synapse.status = "success"
-                            synapse.data = []
-                            synapse.meta = {
-                                "miners_queried": len(selected_miners),
-                                "consensus": "no_data"
-                            }
-                            return synapse
-                        scraper = ScraperProvider().get(scraper_id)
+                        if scraper_id:
+                            scraper = ScraperProvider().get(scraper_id)
+                        else:
+                            scraper = None
                     else:
-                        bt.logging.warning(f"No preferred scraper for source {on_demand_synapse.source}")
-                        synapse.status = "success"
-                        synapse.data = []
-                        synapse.meta = {
-                            "miners_queried": len(selected_miners),
-                            "consensus": "no_data"
-                        }
-                        return synapse
+                        scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
+                        if scraper_id:
+                            scraper = ScraperProvider().get(scraper_id)
+                        else:
+                            scraper = None
 
-                    if not scraper:
-                        bt.logging.warning(f"Could not initialize scraper for {on_demand_synapse.source}")
-                        synapse.status = "success"
-                        synapse.data = []
-                        synapse.meta = {
-                            "miners_queried": len(selected_miners),
-                            "consensus": "no_data"
-                        }
-                        return synapse
+                    if scraper:
+                        # Create scrape config with limited scope (only check for a few items)
+                        labels = []
+                        if on_demand_synapse.keywords:
+                            labels.extend([DataLabel(value=k) for k in on_demand_synapse.keywords])
+                        if on_demand_synapse.usernames:
+                            # Ensure usernames have @ prefix
+                            labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
+                                        on_demand_synapse.usernames])
 
-                    # Create scrape config with limited scope (only check for a few items)
-                    # For X data, combine keywords and usernames with appropriate label formatting
-                    labels = []
-                    if on_demand_synapse.keywords:
-                        labels.extend([DataLabel(value=k) for k in on_demand_synapse.keywords])
-                    if on_demand_synapse.usernames:
-                        # Ensure usernames have @ prefix
-                        labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
-                                       on_demand_synapse.usernames])
+                        start_date = utils.parse_iso_date(on_demand_synapse.start_date) if on_demand_synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+                        end_date = utils.parse_iso_date(on_demand_synapse.end_date) if on_demand_synapse.end_date else dt.datetime.now(dt.timezone.utc)
 
-                    start_date = utils.parse_iso_date(on_demand_synapse.start_date) if on_demand_synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
-                    end_date = utils.parse_iso_date(on_demand_synapse.end_date) if on_demand_synapse.end_date else dt.datetime.now(dt.timezone.utc)
+                        # Create scrape config matching the miner's configuration
+                        verify_config = ScrapeConfig(
+                            entity_limit=min(synapse.limit, 10),  # Limit verification to reduce API costs
+                            date_range=DateRange(
+                                start=start_date,
+                                end=end_date
+                            ),
+                            labels=labels,
+                        )
 
-                    # Create scrape config matching the miner's configuration
-                    verify_config = ScrapeConfig(
-                        entity_limit=synapse.limit,  
-                        date_range=DateRange(
-                            start=start_date,
-                            end=end_date
-                        ),
-                        labels=labels,
-                    )
+                        # For X source, replicate exactly what miners do in handle_on_demand
+                        if on_demand_synapse.source == DataSource.X:
+                            await scraper.scrape(verify_config)
 
-                    # For X source, replicate exactly what miners do in handle_on_demand
-                    if on_demand_synapse.source == DataSource.X:
-                        await scraper.scrape(verify_config)
+                            # Get enhanced content
+                            enhanced_content = scraper.get_enhanced_content()
 
-                        # Get enhanced content
-                        enhanced_content = scraper.get_enhanced_content()
+                            # Convert EnhancedXContent to DataEntity to maintain protocol compatibility
+                            for content in enhanced_content:
+                                # Convert to DataEntity but store full rich content in serialized form
+                                api_response = content.to_api_response()
+                                data_entity = DataEntity(
+                                    uri=content.url,
+                                    datetime=content.timestamp,
+                                    source=DataSource.X,
+                                    label=DataLabel(
+                                        value=content.tweet_hashtags[0].lower()) if content.tweet_hashtags else None,
+                                    # Store the full enhanced content as serialized JSON in the content field
+                                    content=json.dumps(api_response).encode('utf-8'),
+                                    content_size_bytes=len(json.dumps(api_response))
+                                )
+                                verification_data.append(data_entity)
+                        else:
+                            # For other sources, use standard scrape
+                            verification_data = await scraper.scrape(verify_config)
 
-                        # IMPORTANT: Convert EnhancedXContent to DataEntity to maintain protocol compatibility
-                        # while keeping the rich data in serialized form
-                        verification_data = []
-                        for content in enhanced_content:
-                            # Convert to DataEntity but store full rich content in serialized form
-                            api_response = content.to_api_response()
-                            data_entity = DataEntity(
-                                uri=content.url,
-                                datetime=content.timestamp,
-                                source=DataSource.X,
-                                label=DataLabel(
-                                    value=content.tweet_hashtags[0].lower()) if content.tweet_hashtags else None,
-                                # Store the full enhanced content as serialized JSON in the content field
-                                content=json.dumps(api_response).encode('utf-8'),
-                                content_size_bytes=len(json.dumps(api_response))
-                            )
-                            verification_data.append(data_entity)
-                    else:
-                        # For other sources, use standard scrape
-                        verification_data = await scraper.scrape(verify_config)
+                        bt.logging.info(f"Validation check found {len(verification_data)} items")
 
-                    # If we found data but miners returned none, they should be penalized
-                    if verification_data:
-                        bt.logging.warning(
-                            f"Miners returned no data, but validator found {len(verification_data)} items")
-
-                        # Apply penalties to non-responsive miners
-                        non_responsive_uids = [uid for uid in selected_miners if uid not in miner_responses]
-                        if non_responsive_uids:
-                            bt.logging.info(f"Applying penalties to {len(non_responsive_uids)} non-responsive miners")
-                            for uid in non_responsive_uids:
-                                bt.logging.info(f"Applying a 5% credibility penalty to miner {uid} for not responding.")
-                                
-                                # Update the miner's score with the validation results
-                                self.evaluator.scorer.apply_ondemand_penalty(uid) 
-
-                        # Process the verification data to match exactly what miners would return
-                        processed_data = []
-                        for item in verification_data:
-                            if on_demand_synapse.source == DataSource.X:
-                                # For X data, miners store the API response as JSON in the content field
-                                # We need to decode it and parse it as JSON to match what miners return
-                                try:
-                                    json_content = item.content.decode('utf-8') if isinstance(item.content,
-                                                                                              bytes) else item.content
-                                    parsed_content = json.loads(json_content)
-                                    processed_data.append(parsed_content)
-                                except Exception as e:
-                                    bt.logging.error(f"Error parsing X content: {str(e)}")
-                                    # Fallback if parsing fails
-                                    processed_data.append({
-                                        'uri': item.uri,
-                                        'datetime': item.datetime.isoformat(),
-                                        'source': DataSource(item.source).name,
-                                        'label': item.label.value if item.label else None,
-                                        'content': str(item.content)[:1000]  # Truncate for safety
-                                    })
-                            else:
-                                # For other sources, use standard format
-                                item_dict = {
-                                    'uri': item.uri,
-                                    'datetime': item.datetime.isoformat(),
-                                    'source': DataSource(item.source).name,
-                                    'label': item.label.value if item.label else None,
-                                    'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else str(
-                                        item.content)
-                                }
-                                processed_data.append(item_dict)
-
-                        synapse.status = "warning"
-                        synapse.data = processed_data[:synapse.limit]
-                        synapse.meta = {
-                            "miners_queried": len(selected_miners),
-                            "miners_responded": len(miner_responses),
-                            "verification_message": "Miners returned no data, but data was found. Results are from validator's direct check.",
-                            "items_returned": len(processed_data)
-                        }
-                        return synapse
                 except Exception as e:
                     bt.logging.error(f"Error during verification check: {str(e)}")
+                    verification_data = []
 
-                # If verification failed or no data was found, return original empty result
+            data_found_elsewhere = (
+                any(len(rows) > 0 for rows in miner_responses.values()) or  # peers' evidence
+                bool(verification_data)  # validator evidence
+            )
+
+            # Punishing miner timeouts
+            for uid in non_responsive_uids:
+                bt.logging.info(f"Applying penalty to non-responsive miner {uid}")
+                self.evaluator.scorer.apply_ondemand_penalty(uid, 1)  # −5% credibility
+
+            # Punish empty responses if the data actually exists
+            if data_found_elsewhere:
+                for uid in empty_uids:
+                    bt.logging.info(f"Applying penalty to miner {uid} for returning empty results when data exists")
+                    self.evaluator.scorer.apply_ondemand_penalty(uid, 1)  # −5% credibility
+
+            miners_with_data = [uid for uid, rows in miner_responses.items() if len(rows) > 0]
+
+            if not miners_with_data and not verification_data:
                 synapse.status = "success"
                 synapse.data = []
                 synapse.meta = {
                     "miners_queried": len(selected_miners),
+                    "miners_responded": len(miner_responses),
+                    "non_responsive_miners": len(non_responsive_uids),
+                    "empty_response_miners": len(empty_uids),
                     "consensus": "no_data"
                 }
                 return synapse
 
-            # Step 2: Check consistency of responses from miners that returned data
-            miners_with_data = [uid for uid, count in miner_data_counts.items() if count > 0]
+            # If we have verification data but no miner data, return verification results
+            if not miners_with_data and verification_data:
+                # Process the verification data to match exactly what miners would return
+                processed_data = []
+                for item in verification_data:
+                    if on_demand_synapse.source == DataSource.X:
+                        # For X data, miners store the API response as JSON in the content field
+                        try:
+                            json_content = item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
+                            parsed_content = json.loads(json_content)
+                            processed_data.append(parsed_content)
+                        except Exception as e:
+                            bt.logging.error(f"Error parsing X content: {str(e)}")
+                            # Fallback if parsing fails
+                            processed_data.append({
+                                'uri': item.uri,
+                                'datetime': item.datetime.isoformat(),
+                                'source': DataSource(item.source).name,
+                                'label': item.label.value if item.label else None,
+                                'content': str(item.content)[:1000]  # Truncate for safety
+                            })
+                    else:
+                        # For other sources, use standard format
+                        item_dict = {
+                            'uri': item.uri,
+                            'datetime': item.datetime.isoformat(),
+                            'source': DataSource(item.source).name,
+                            'label': item.label.value if item.label else None,
+                            'content': item.content.decode('utf-8') if isinstance(item.content, bytes) else str(item.content)
+                        }
+                        processed_data.append(item_dict)
 
-            if not miners_with_data:
-                synapse.status = "error"
-                synapse.meta = {"error": "No miners returned valid data"}
-                synapse.data = []
+                synapse.status = "warning"
+                synapse.data = processed_data[:synapse.limit]
+                synapse.meta = {
+                    "miners_queried": len(selected_miners),
+                    "miners_responded": len(miner_responses),
+                    "non_responsive_miners": len(non_responsive_uids),
+                    "empty_response_miners": len(empty_uids),
+                    "verification_message": "Miners returned no/insufficient data, but data was found. Results are from validator's direct check.",
+                    "items_returned": len(processed_data)
+                }
                 return synapse
 
-            # Get the median data count as a reference point
-            data_counts = [count for count in miner_data_counts.values() if count > 0]
-            median_count = sorted(data_counts)[len(data_counts) // 2]
+            # Get the median data count as a reference point for consistency checking
+            data_counts = [len(rows) for rows in miner_responses.values() if len(rows) > 0]
+            median_count = sorted(data_counts)[len(data_counts) // 2] if data_counts else 0
 
             # Define consistency threshold (within 30% of median is considered consistent)
             consistency_threshold = 0.3
@@ -873,30 +993,23 @@ class Validator:
             inconsistent_miners = {}
 
             for uid in miners_with_data:
-                count = miner_data_counts[uid]
+                count = len(miner_responses[uid])
                 # Check if count is within threshold of median
                 if median_count > 0 and abs(count - median_count) / median_count <= consistency_threshold:
                     consistent_miners[uid] = miner_responses[uid]
                 else:
                     inconsistent_miners[uid] = miner_responses[uid]
 
-            bt.logging.info(
-                f"Found {len(consistent_miners)} consistent miners and {len(inconsistent_miners)} inconsistent miners")
+            bt.logging.info(f"Found {len(consistent_miners)} consistent miners and {len(inconsistent_miners)} inconsistent miners")
 
-            # Step 3: Should we validate? (random chance or if consistency is poor)
-            should_validate = random.random() < VALIDATION_PROBABILITY or len(consistent_miners) < len(
-                miners_with_data) // 2
-
-            # Step 4: Validation and penalties
-            validated_miners = {}
-
-            if should_validate:
-                bt.logging.info("Performing validation on returned data")
+            # Additional validation on returned data (random chance)
+            if random.random() < VALIDATION_PROBABILITY:
+                bt.logging.info("Performing additional validation on returned data")
                 # We'll only validate a subset of data to minimize API usage
-                for uid, response in list(consistent_miners.items()) + list(inconsistent_miners.items()):
+                for uid, data in list(consistent_miners.items()) + list(inconsistent_miners.items()):
                     try:
                         # Only validate up to 2 items per miner to reduce API cost
-                        data_to_validate = response.data[:2] if hasattr(response, 'data') and response.data else []
+                        data_to_validate = data[:2] if data else []
 
                         if not data_to_validate:
                             continue
@@ -919,77 +1032,42 @@ class Validator:
                         valid_count = sum(1 for r in validation_results if r.is_valid)
                         validation_rate = valid_count / len(validation_results) if validation_results else 0
 
-                        validated_miners[uid] = validation_rate
-
                         bt.logging.info(f"Miner {uid} validation rate: {validation_rate:.2f}")
 
                         # Apply penalty to miners with poor validation
                         if validation_rate < 0.5:  # Less than 50% valid
-                            # This is a soft penalty - calculated based on how bad the data is
-                            # Scale from MIN_PENALTY to MAX_PENALTY based on validation_rate
-                            penalty = MIN_PENALTY + (0.5 - validation_rate) * 2 * (MAX_PENALTY - MIN_PENALTY)
-
-                            # Ensure penalty doesn't make credibility negative
-                            current_cred = self.evaluator.scorer.get_miner_credibility(uid)
-                            safe_penalty = min(current_cred * 0.2, penalty)  # Never reduce by more than 20%
-
-                            bt.logging.info(f"Applying penalty of {safe_penalty:.4f} to miner {uid}")
-
-                            # Create a validation result for the scorer
-                            validation_result = ValidationResult(
-                                is_valid=False,
-                                reason="Failed on-demand data validation",
-                                content_size_bytes_validated=sum(e.content_size_bytes for e in data_to_validate)
-                            )
-
-                            # Update the miner's score with this result
-                            index = self.evaluator.storage.read_miner_index(self.metagraph.hotkeys[uid])
-                            self.evaluator.scorer.on_miner_evaluated(uid, index, [validation_result])
+                            bt.logging.info(f"Applying data quality penalty to miner {uid}. Less than 50% validation score.")
+                            self.evaluator.scorer.apply_ondemand_penalty(uid, validation_rate) # penalty based off of validation rate
 
                             # Remove this miner from consistent miners if it was there
                             if uid in consistent_miners:
                                 del consistent_miners[uid]
-                                inconsistent_miners[uid] = response
+                                inconsistent_miners[uid] = data
 
                     except Exception as e:
                         bt.logging.error(f"Error validating data from miner {uid}: {str(e)}")
 
-            # Step 5: Select best data to return to user
+            # Select best data to return to user
             best_data = []
             best_meta = {}
 
-            # First preference: data from validated miners with high validation rates
-            if validated_miners:
-                # Find the miner with the highest validation rate
-                best_uid = max(validated_miners.items(), key=lambda x: x[1])[0]
-                best_miner_response = miner_responses[best_uid]
-                best_data = best_miner_response.data if hasattr(best_miner_response, 'data') else []
-                best_meta = {
-                    "source": "validated",
-                    "miner_uid": best_uid,
-                    "miner_hotkey": self.metagraph.hotkeys[best_uid],
-                    "validation_rate": validated_miners[best_uid]
-                }
-
-            # Second preference: data from consistent miners (if no validation was done or no miners passed validation)
-            elif consistent_miners:
+            # First preference: data from consistent miners
+            if consistent_miners:
                 # Pick the miner with the most data (but within reason)
-                best_uid = max(consistent_miners.keys(), key=lambda uid: miner_data_counts[uid])
-                best_miner_response = consistent_miners[best_uid]
-                best_data = best_miner_response.data if hasattr(best_miner_response, 'data') else []
+                best_uid = max(consistent_miners.keys(), key=lambda uid: len(miner_responses[uid]))
+                best_data = consistent_miners[best_uid]
                 best_meta = {
                     "source": "consistent",
                     "miner_uid": best_uid,
                     "miner_hotkey": self.metagraph.hotkeys[best_uid]
                 }
 
-            # Last resort: take data from any miner that returned something
-            elif miners_with_data:
+            # Second preference: data from inconsistent miners (if no consistent miners)
+            elif inconsistent_miners:
                 # Take the miner with median data count
-                median_uid = sorted(miners_with_data, key=lambda uid: miner_data_counts[uid])[
-                    len(miners_with_data) // 2]
-                best_miner_response = miner_responses[median_uid]
-                best_data = best_miner_response.data if hasattr(best_miner_response, 'data') else []
+                median_uid = sorted(inconsistent_miners.keys(), key=lambda uid: len(miner_responses[uid]))[
+                    len(inconsistent_miners) // 2]
+                best_data = inconsistent_miners[median_uid]
                 best_meta = {
                     "source": "inconsistent",
                     "miner_uid": median_uid,
@@ -999,35 +1077,35 @@ class Validator:
             # Process the data for return
             processed_data = []
             for item in best_data:
-                # For X content from miners, item.content already contains the serialized API response
-                # which needs to be parsed as JSON
-                if on_demand_synapse.source == DataSource.X:
-                    try:
-                        # Extract the content as string and parse it as JSON
-                        if hasattr(item, 'content') and item.content:
-                            content_str = item.content.decode('utf-8') if isinstance(item.content,
-                                                                                     bytes) else item.content
-                            try:
-                                item_dict = json.loads(content_str)
-                                processed_data.append(item_dict)
-                                continue
-                            except json.JSONDecodeError:
-                                # If JSON parsing fails, fall through to the standard processing
-                                pass
-                    except Exception as e:
-                        bt.logging.error(f"Error processing X content: {str(e)}")
+                # For X content from miners, the data should already be in the correct format
+                if isinstance(item, dict):
+                    processed_data.append(item)
+                else:
+                    # Handle DataEntity objects
+                    if on_demand_synapse.source == DataSource.X:
+                        try:
+                            # Extract the content as string and parse it as JSON
+                            if hasattr(item, 'content') and item.content:
+                                content_str = item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
+                                try:
+                                    item_dict = json.loads(content_str)
+                                    processed_data.append(item_dict)
+                                    continue
+                                except json.JSONDecodeError:
+                                    pass
+                        except Exception as e:
+                            bt.logging.error(f"Error processing X content: {str(e)}")
 
-                # Standard processing for non-X content or if JSON parsing failed
-                item_dict = {
-                    'uri': item.uri if hasattr(item, 'uri') else None,
-                    'datetime': item.datetime.isoformat() if hasattr(item, 'datetime') else None,
-                    'source': DataSource(item.source).name if hasattr(item, 'source') else None,
-                    'label': item.label.value if hasattr(item, 'label') and item.label else None,
-                    'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content,
-                                                                                                       bytes) else
-                    item.content if hasattr(item, 'content') else None
-                }
-                processed_data.append(item_dict)
+                    # Standard processing for non-X content or if JSON parsing failed
+                    item_dict = {
+                        'uri': item.uri if hasattr(item, 'uri') else None,
+                        'datetime': item.datetime.isoformat() if hasattr(item, 'datetime') else None,
+                        'source': DataSource(item.source).name if hasattr(item, 'source') else None,
+                        'label': item.label.value if hasattr(item, 'label') and item.label else None,
+                        'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content, bytes) else
+                        item.content if hasattr(item, 'content') else None
+                    }
+                    processed_data.append(item_dict)
 
             # Remove duplicates by converting to string representation
             seen = set()
@@ -1042,9 +1120,11 @@ class Validator:
             best_meta.update({
                 "miners_queried": len(selected_miners),
                 "miners_responded": len(miner_responses),
+                "non_responsive_miners": len(non_responsive_uids),
+                "empty_response_miners": len(empty_uids),
+                "data_found_elsewhere": data_found_elsewhere,
                 "consistent_miners": len(consistent_miners),
                 "inconsistent_miners": len(inconsistent_miners),
-                "validated_miners": len(validated_miners) if should_validate else 0,
                 "items_returned": len(unique_data)
             })
 
