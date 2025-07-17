@@ -23,7 +23,6 @@ import asyncio
 import threading
 import time
 import os
-import wandb
 import subprocess
 from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
@@ -126,8 +125,6 @@ class Validator:
         self.axon = None
         self.api = None
         self.step = 0
-        self.wandb_run_start = None
-        self.wandb_run = None
 
         # Instantiate runners
         self.should_exit: bool = False
@@ -155,14 +152,6 @@ class Validator:
             self.loop.run_until_complete(self.new_mc_logger_run())
         else:
             bt.logging.warning("Not logging to Macrocosmos logger.")
-
-        if not self.config.wandb.off:
-            try:
-                self.new_wandb_run()
-            except Exception as e:
-                bt.logging.error(f"Failed to initialize wandb: {str(e)}")
-                bt.logging.warning("Continuing without wandb logging.")
-                self.config.wandb.off = True
 
         # Load any state from previous runs.
         self.load_state()
@@ -204,7 +193,7 @@ class Validator:
             return "error"
         
     def get_scraper_providers(self):
-        """Fetches a validator's scraper providers to display in WandB logs."""
+        """Fetches a validator's scraper providers."""
         scrapers = self.evaluator.PREFERRED_SCRAPERS
         return scrapers
 
@@ -291,34 +280,6 @@ class Validator:
             self.mc_run = None
             self.mcl_client = None
 
-    def new_wandb_run(self):
-        """Creates a new wandb run to save information to."""
-        # Create a unique run id for this run.
-        now = dt.datetime.now()
-        self.wandb_run_start = now
-        run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
-        name = "validator-" + str(self.uid) + "-" + run_id
-        version_tag = self.get_version_tag()
-        scraper_providers = self.get_scraper_providers()
-
-        self.wandb_run = wandb.init(
-            name=name,
-            project="data-universe-validators",
-            entity="macrocosmos",
-            config={
-                "uid": self.uid,
-                "hotkey": self.wallet.hotkey.ss58_address,
-                "run_name": run_id,
-                "type": "validator",
-                "version": version_tag,
-                "scrapers": scraper_providers
-            },
-            allow_val_change=True,
-            anonymous="allow",
-        )
-
-        bt.logging.debug(f"Started a new wandb run: {name}")
-
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
@@ -387,16 +348,6 @@ class Validator:
                     )
                     time.sleep(wait_time)
 
-                # Check if we should start a new wandb run.
-                if not self.config.wandb.off:
-                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
-                        days=1
-                    ):
-                        bt.logging.info(
-                            "Current wandb run is more than 1 day old. Starting a new run."
-                        )
-                        self.wandb_run.finish()
-                        self.new_wandb_run()
 
                 # Check if we should start a new mc logger run.
                 if not self.config.mclogger.off and self.mc_logger_start:
@@ -414,9 +365,7 @@ class Validator:
             except KeyboardInterrupt:
                 self.axon.stop()
                 
-                # Cleanup loggers
-                if self.wandb_run:
-                    self.wandb_run.finish()
+                # Cleanup logger
                 if self.mc_logger:
                     self.loop.run_until_complete(self.finish_mc_logger_run())
 
@@ -475,9 +424,7 @@ class Validator:
             self.thread.join(5)
             self.is_running = False
 
-            # Cleanup loggers
-            if self.wandb_run:
-                self.wandb_run.finish()
+            # Cleanup logger
             if self.mc_logger:
                 try:
                     loop = asyncio.get_event_loop()
