@@ -48,6 +48,10 @@ class YouTubeContent(BaseModel):
         default=0
     )
 
+    lan: str = Field(
+        description="The transcript language in ISO 639-1 format (e.g., 'en' for English, 'fr' for French)."
+    )
+
     @classmethod
     def to_data_entity(cls, content: "YouTubeContent", original_label: Optional[str] = None) -> DataEntity:
         """Converts the YouTubeContent to a DataEntity.
