@@ -117,6 +117,93 @@ class ValidatorS3Access:
             bt.logging.error(f"S3 validator access error: {str(e)}")
             return None
 
+    async def get_miner_specific_access(self, miner_hotkey: str) -> str:
+        """Get presigned URL for specific miner's data"""
+        try:
+            hotkey = self.wallet.hotkey.ss58_address
+            timestamp = int(time.time())
+
+            # Create commitment for miner-specific access
+            commitment = f"s3:validator:miner:{miner_hotkey}:{timestamp}"
+            signature = self.wallet.hotkey.sign(commitment.encode())
+            signature_hex = signature.hex()
+
+            payload = {
+                "hotkey": hotkey,
+                "timestamp": timestamp,
+                "signature": signature_hex,
+                "miner_hotkey": miner_hotkey
+            }
+
+            self._debug_print(f"Getting miner-specific access for {miner_hotkey}")
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.post(
+                    f"{self.s3_auth_url.rstrip('/')}/get-miner-specific-access",
+                    json=payload,
+                    timeout=30
+                )
+            )
+
+            if response.status_code == 200:
+                result = response.json()
+                return result.get('miner_url', '')
+            else:
+                self._debug_print(f"Miner-specific access failed: {response.status_code}")
+                return ""
+
+        except Exception as e:
+            self._debug_print(f"Exception getting miner-specific access: {str(e)}")
+            return ""
+
+    async def list_jobs_direct(self, miner_hotkey: str) -> List[str]:
+        """List jobs using direct miner-specific URL (bypasses pagination)"""
+        try:
+            target_prefix = f"data/hotkey={miner_hotkey}/"
+            self._debug_print(f"Direct search for jobs with prefix: {target_prefix}")
+
+            # Get miner-specific presigned URL
+            miner_url = await self.get_miner_specific_access(miner_hotkey)
+
+            if not miner_url:
+                self._debug_print("Failed to get miner-specific URL")
+                return []
+
+            # Make request to miner-specific URL
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: requests.get(miner_url))
+
+            if response.status_code != 200:
+                self._debug_print(f"Miner-specific request failed: {response.status_code}")
+                return []
+
+            root = ET.fromstring(response.text)
+            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+            jobs = set()
+
+            # Process all files for this specific miner
+            for content in root.findall('.//s3:Contents', namespaces):
+                key = content.find('s3:Key', namespaces).text
+                if key:
+                    decoded_key = urllib.parse.unquote(key)
+
+                    # Extract job from file path
+                    if decoded_key.startswith(target_prefix) and '/job_id=' in decoded_key:
+                        job_part_full = decoded_key[len(target_prefix):]
+                        if job_part_full.startswith('job_id='):
+                            job_part = job_part_full.split('/')[0][7:]
+                            jobs.add(job_part)
+
+            jobs_list = list(jobs)
+            self._debug_print(f"DIRECT: Found {len(jobs_list)} jobs for {miner_hotkey}")
+            return jobs_list
+
+        except Exception as e:
+            self._debug_print(f"Exception in list_jobs_direct: {str(e)}")
+            return []
+
     async def _get_all_s3_data(self) -> List[str]:
         """Get ALL S3 data once and cache it (handles pagination properly)"""
         current_time = time.time()
@@ -210,8 +297,8 @@ class ValidatorS3Access:
             self._debug_print(f"Exception getting all S3 data: {str(e)}")
             return []
 
-    async def list_jobs(self, miner_hotkey: str) -> List[str]:
-        """List jobs for a specific miner using cached S3 data"""
+    async def _list_jobs_cached(self, miner_hotkey: str) -> List[str]:
+        """Original cached method - renamed"""
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/"
             self._debug_print(f"Looking for jobs with prefix: {target_prefix}")
@@ -242,9 +329,24 @@ class ValidatorS3Access:
             return jobs_list
 
         except Exception as e:
-            self._debug_print(f"Exception in list_jobs: {str(e)}")
+            self._debug_print(f"Exception in _list_jobs_cached: {str(e)}")
             bt.logging.error(f"S3 list jobs error for {miner_hotkey}: {str(e)}")
             return []
+
+    async def list_jobs(self, miner_hotkey: str) -> List[str]:
+        """List jobs - try direct method first, fallback to cached"""
+        # Try direct method first
+        try:
+            jobs = await self.list_jobs_direct(miner_hotkey)
+            if jobs:
+                self._debug_print(f"Direct method found {len(jobs)} jobs for {miner_hotkey}")
+                return jobs
+        except Exception as e:
+            self._debug_print(f"Direct method failed for {miner_hotkey}: {str(e)}")
+
+        # Fallback to cached method (for miners in first 1000)
+        self._debug_print(f"Using cached method for {miner_hotkey}")
+        return await self._list_jobs_cached(miner_hotkey)
 
     async def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
         """List files for a specific miner and job using cached S3 data"""
