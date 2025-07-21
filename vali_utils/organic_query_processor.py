@@ -1,6 +1,7 @@
 import random
 import json
 import asyncio
+import statistics
 from typing import Dict, List, Tuple, Any, Optional
 import bittensor as bt
 from common.data import DataSource, DataLabel, DataEntity
@@ -25,11 +26,10 @@ class OrganicQueryProcessor:
         self.metagraph = validator.metagraph
         self.evaluator = validator.evaluator
         
-        # Configuration constants
+        # constants
         self.NUM_MINERS_TO_QUERY = 5
         self.CROSS_VALIDATION_SAMPLE_SIZE = 10
-        self.MIN_POST_THRESHOLD = 0.8  # 80% of requested posts
-        self.SEVERE_UNDERPERFORMANCE_THRESHOLD = 0.5  # 50% of requested posts
+        self.MIN_CONSENSUS = 0.3    # if consensus is <30% of request size, consensus penalties skipped
     
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
         """
@@ -49,30 +49,23 @@ class OrganicQueryProcessor:
             # Step 3: Apply basic penalties (timeouts, empty responses)
             non_responsive_uids, empty_uids = self._apply_basic_penalties(selected_miners, miner_responses)
             
-            # Step 4: Perform backup validation scrape to determine actual data availability
-            backup_scrape_count = await self._perform_backup_scrape(synapse)
-            bt.logging.info(f"Backup scrape found {backup_scrape_count} posts available")
+            # Step 4: Apply consensus-based volume penalties 
+            insufficient_miners = self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit)
             
-            # Step 5: Apply insufficient post count penalties (only if backup scrape shows more data exists)
-            insufficient_miners = self._apply_post_count_penalties(
-                synapse.limit, miner_data_counts, backup_scrape_count
-            )
-            
-            # Step 6: Perform cross-validation
+            # Step 5: Perform cross-validation
             validation_results = await self._perform_cross_validation(synapse, miner_responses)
             
-            # Step 7: Calculate final scores with all penalties applied
+            # Step 6: Calculate final scores with all penalties applied
             miner_scores = self._apply_validation_penalties(miner_responses, validation_results)
             
-            # Step 8: Select best data and format response
+            # Step 7: Select best data and format response
             return self._create_success_response(
                 synapse, miner_responses, miner_scores, {
                     'selected_miners': selected_miners,
                     'non_responsive_uids': non_responsive_uids,
                     'empty_uids': empty_uids,
                     'insufficient_miners': insufficient_miners,
-                    'validation_results': validation_results,
-                    'backup_scrape_count': backup_scrape_count
+                    'validation_results': validation_results
                 }
             )
             
@@ -164,94 +157,57 @@ class OrganicQueryProcessor:
         non_responsive_uids = [uid for uid in selected_miners if uid not in miner_responses]
         for uid in non_responsive_uids:
             bt.logging.info(f"Applying penalty to non-responsive miner {uid}")
-            self.evaluator.scorer.apply_ondemand_penalty(uid, 1)
+            self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         
         # Empty response miners
         empty_uids = [uid for uid, rows in miner_responses.items() if len(rows) == 0]
         
         return non_responsive_uids, empty_uids
     
-    async def _perform_backup_scrape(self, synapse: OrganicRequest) -> int:
+    def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int) -> List[int]:
         """
-        Perform a backup scrape to determine how much data actually exists.
-        This is used to validate whether miners should be penalized for insufficient data.
+        Apply volume-based penalties using consensus validation with dynamic penalty scaling.
+        Uses mult_factor to scale penalties based on degree of underperformance.
         """
-        bt.logging.info("Performing backup scrape to validate data availability...")
+        if not miner_data_counts or len(miner_data_counts) < 2:
+            return []
         
-        try:
-            scraper = self._get_scraper(synapse.source)
-            if not scraper:
-                bt.logging.warning("No scraper available for backup validation")
-                return 0
-            
-            # Create scrape config matching the original request
-            labels = []
-            if synapse.keywords:
-                labels.extend([DataLabel(value=k) for k in synapse.keywords])
-            if synapse.usernames:
-                # Ensure usernames have @ prefix for X
-                labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) 
-                              for u in synapse.usernames])
-            
-            start_date = utils.parse_iso_date(synapse.start_date) if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
-            end_date = utils.parse_iso_date(synapse.end_date) if synapse.end_date else dt.datetime.now(dt.timezone.utc)
-            
-            backup_config = ScrapeConfig(
-                entity_limit=synapse.limit,  # Use the same limit as requested
-                date_range=DateRange(
-                    start=start_date,
-                    end=end_date
-                ),
-                labels=labels,
-            )
-            
-            # Perform backup scrape
-            if synapse.source.upper() == 'X':
-                enhanced_content = await scraper.scrape_enhanced(backup_config)
-                backup_data_count = len(enhanced_content)
-            else:
-                backup_data = await scraper.scrape(backup_config)
-                backup_data_count = len(backup_data) if backup_data else 0
-            
-            bt.logging.info(f"Backup scrape completed: found {backup_data_count} posts")
-            return backup_data_count
-            
-        except Exception as e:
-            bt.logging.error(f"Error during backup scrape: {str(e)}")
-            return 0
-    
-    def _apply_post_count_penalties(self, requested_limit: int, miner_data_counts: Dict[int, int], 
-                                  backup_scrape_count: int) -> List[int]:
-        """
-        Apply penalties for insufficient post counts, but ONLY if backup scrape shows more data exists.
-        This prevents punishing miners when the requested data simply doesn't exist.
-        """
-        bt.logging.info("Evaluating miners for insufficient post counts...")
+        counts = list(miner_data_counts.values())
         
-        min_acceptable_posts = int(requested_limit * self.MIN_POST_THRESHOLD)
+        # Calculate consensus metrics
+        median_count = statistics.median(counts)
+        mean_count = statistics.mean(counts) 
+        consensus_count = max(median_count, mean_count)
         
-        # Only penalize if backup scrape found more data than the threshold
-        backup_exceeds_threshold = backup_scrape_count >= min_acceptable_posts
+        bt.logging.info(f"Volume consensus: {consensus_count:.1f} posts (median: {median_count}, mean: {mean_count:.1f})")
         
-        bt.logging.info(f"Backup scrape found {backup_scrape_count} posts. Threshold is {min_acceptable_posts}. Will penalize: {backup_exceeds_threshold}")
+        # Only apply penalties if consensus shows meaningful data availability
+        min_consensus_threshold = requested_limit * self.MIN_CONSENSUS  # At least 30% of request
+        if consensus_count < min_consensus_threshold:
+            bt.logging.info("Consensus shows limited data available - skipping volume penalties")
+            return []
         
-        insufficient_miners = []
-        
-        if not backup_exceeds_threshold:
-            bt.logging.info("Backup scrape shows insufficient data exists - skipping post count penalties")
-            return insufficient_miners
+        penalized_miners = []
         
         for uid, post_count in miner_data_counts.items():
-            if post_count < min_acceptable_posts:
-                insufficient_miners.append(uid)
-                bt.logging.info(f"Miner {uid} provided {post_count}/{requested_limit} posts (below {self.MIN_POST_THRESHOLD*100}% threshold) - backup scrape confirms more data exists")
+            if post_count < consensus_count:
+                # Calculate mult_factor based on degree of underperformance
+                # Scale from 0.0 (at consensus) to 1.0 (at zero posts)
+                underperformance_ratio = 1.0 - (post_count / consensus_count)
+                
+                # Apply penalty only if underperformance is significant (>20%)
+                if underperformance_ratio > 0.2:
+                    # Scale mult_factor: 0.2 underperformance = 0.1 mult_factor, 1.0 underperformance = 1.0 mult_factor
+                    mult_factor = min((underperformance_ratio - 0.2) / 0.8, 1.0)
+                    
+                    penalized_miners.append(uid)
+                    bt.logging.info(f"Miner {uid}: {post_count} posts vs consensus {consensus_count:.1f} "
+                                   f"({underperformance_ratio:.1%} underperformance, {mult_factor:.2f} penalty)")
+                    
+                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
         
-        # Apply penalties only when we know more data exists
-        for uid in insufficient_miners:
-            bt.logging.info(f"Applying full penalty to miner {uid} - backup scrape confirms missed available data")
-            self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
-        
-        return insufficient_miners
+        bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
+        return penalized_miners
     
     async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Dict[str, bool]:
         """Perform cross-validation on pooled miner responses"""
@@ -713,7 +669,7 @@ class OrganicQueryProcessor:
             if miner_failed_validation:
                 miner_scores[uid] = 0
                 bt.logging.info(f"Miner {uid} score zeroed due to failed validation")
-                self.evaluator.scorer.apply_ondemand_penalty(uid, 1)
+                self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         
         bt.logging.info(f"Final miner scores: {miner_scores}")
         return miner_scores
@@ -746,7 +702,6 @@ class OrganicQueryProcessor:
             "non_responsive_miners": len(metadata['non_responsive_uids']),
             "empty_response_miners": len(metadata['empty_uids']),
             "insufficient_post_miners": len(metadata['insufficient_miners']),
-            "backup_scrape_count": metadata['backup_scrape_count'],
             "validation_success_rate": f"{sum(metadata['validation_results'].values())}/{len(metadata['validation_results'])}" if metadata['validation_results'] else "0/0",
             "best_miner_uid": best_uid,
             "best_miner_hotkey": self.metagraph.hotkeys[best_uid],
@@ -762,7 +717,6 @@ class OrganicQueryProcessor:
         synapse.meta = {
             "miners_queried": len(metadata['selected_miners']),
             "miners_responded": len(metadata.get('miner_responses', {})),
-            "backup_scrape_count": metadata.get('backup_scrape_count', 0),
             "consensus": "no_valid_data",
             "cross_validation_performed": len(metadata['validation_results']) > 0
         }
