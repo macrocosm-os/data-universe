@@ -24,7 +24,7 @@ from scraping.scraper import ScraperId, ValidationResult, HFValidationResult, S3
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
-
+import random
 from storage.validator.hf_validator_storage import HFValidationStorage
 from storage.validator.s3_validator_storage import S3ValidationStorage
 
@@ -413,21 +413,64 @@ class MinerEvaluator:
                 self.s3_storage.update_validation_info(hotkey, 0, current_block)
                 return s3_validation_result
 
+            # Import random for job shuffling
+
             total_files = 0
             valid_files = 0
+            jobs_checked = 0
+            min_files_needed = 50  # Need at least 50 files to make a good assessment
+            max_jobs_to_check = len(jobs)  # Check all jobs if needed
 
-            # Validate files in each job
-            for job_id in jobs[:5]:  # Limit to 5 jobs to avoid timeout
+            # Shuffle jobs to get random sampling instead of sequential
+            jobs_to_check = jobs.copy()
+            random.shuffle(jobs_to_check)
+
+            bt.logging.info(
+                f"{hotkey}: Found {len(jobs)} total jobs. Will check randomly until we have {min_files_needed} files or all jobs checked")
+
+            for job_id in jobs_to_check:
                 try:
                     files = await self._get_job_files(hotkey, job_id)
+                    jobs_checked += 1
+
                     if files:
                         bt.logging.info(f"{hotkey}: Found {len(files)} files in job {job_id}")
-                        for file_info in files[:10]:  # Limit to 10 files per job
+
+                        # Check up to 10 files per job to avoid spending too much time on one job
+                        files_in_job = 0
+                        valid_files_in_job = 0
+
+                        for file_info in files[:10]:
                             total_files += 1
+                            files_in_job += 1
                             if await self._validate_s3_file(hotkey, file_info):
                                 valid_files += 1
+                                valid_files_in_job += 1
+
+                        bt.logging.info(f"{hotkey}: Job {job_id}: {valid_files_in_job}/{files_in_job} files valid")
                     else:
-                        bt.logging.warning(f"{hotkey}: No files found in job {job_id}")
+                        bt.logging.debug(f"{hotkey}: No files found in job {job_id}")
+
+                    # Early termination only if we have enough files AND reasonable validation rate
+                    if total_files >= min_files_needed:
+                        current_percentage = (valid_files / total_files * 100) if total_files > 0 else 0.0
+                        bt.logging.info(
+                            f"{hotkey}: Reached {min_files_needed} files threshold. Current validation: {current_percentage:.1f}% ({valid_files}/{total_files})")
+
+                        # If we're doing well (>30%) or poorly (<10%), we can stop early
+                        # If we're borderline (10-30%), keep checking more jobs for better accuracy
+                        if current_percentage > 30.0 or current_percentage < 10.0:
+                            bt.logging.info(f"{hotkey}: Stopping early - clear validation pattern established")
+                            break
+                        elif jobs_checked >= max_jobs_to_check // 2:  # Checked at least half the jobs
+                            bt.logging.info(f"{hotkey}: Checked half the jobs with borderline results, stopping")
+                            break
+
+                    # Safety limit - don't spend forever on one miner
+                    if jobs_checked >= 20:
+                        bt.logging.info(f"{hotkey}: Reached maximum job check limit (20), stopping")
+                        break
+
                 except Exception as e:
                     bt.logging.error(f"{hotkey}: Error validating job {job_id}: {str(e)}")
                     continue
@@ -441,11 +484,11 @@ class MinerEvaluator:
                 validation_percentage=validation_percentage,
                 job_count=len(jobs),
                 total_files=total_files,
-                reason=f"Validated {valid_files}/{total_files} files across {len(jobs)} jobs"
+                reason=f"Validated {valid_files}/{total_files} files across {jobs_checked}/{len(jobs)} jobs checked"
             )
 
             bt.logging.info(
-                f"{hotkey}: S3 validation completed - {validation_percentage:.1f}% valid ({valid_files}/{total_files} files, {len(jobs)} jobs)")
+                f"{hotkey}: S3 validation completed - {validation_percentage:.1f}% valid ({valid_files}/{total_files} files, checked {jobs_checked}/{len(jobs)} jobs)")
 
         except Exception as e:
             bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
@@ -462,7 +505,6 @@ class MinerEvaluator:
             self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
 
         return s3_validation_result
-
     async def _get_miner_s3_jobs(self, hotkey: str) -> List[str]:
         """Get list of job IDs for a miner from S3."""
         try:
