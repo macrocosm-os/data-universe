@@ -446,141 +446,84 @@ class OrganicQueryProcessor:
         
         return validation_results
     
-    def _convert_to_enhanced_x_content(self, post) -> Optional[EnhancedXContent]:
-        """
-        Convert a post (dict or DataEntity) to EnhancedXContent for validation.
-        
-        Args:
-            post: The post data (either dict or DataEntity)
-            
-        Returns:
-            EnhancedXContent: Converted content object, or None if conversion fails
-        """
+    def _extract_content_data(self, post) -> Optional[Dict[str, Any]]:
+        """Shared logic for extracting data from various post formats"""
         try:
             if isinstance(post, dict):
-                # Try to parse as JSON content first
+                # Handle dict with nested JSON content
                 if 'content' in post and isinstance(post['content'], str):
                     try:
-                        content_data = json.loads(post['content'])
-                        # Create EnhancedXContent from parsed JSON
-                        return EnhancedXContent(
-                            username=content_data.get('username', ''),
-                            text=content_data.get('text', ''),
-                            url=content_data.get('url', ''),
-                            timestamp=dt.datetime.fromisoformat(content_data.get('timestamp', dt.datetime.now().isoformat())),
-                            tweet_hashtags=content_data.get('tweet_hashtags', [])
-                        )
-                    except (json.JSONDecodeError, ValueError):
+                        json_data = json.loads(post['content'])
+                        return {**post, **json_data}
+                    except json.JSONDecodeError:
                         pass
-                
-                # Handle dict with direct fields
-                return EnhancedXContent(
-                    username=post.get('username', ''),
-                    text=post.get('text', ''),
-                    url=post.get('url', post.get('uri', '')),
-                    timestamp=self._parse_timestamp(post.get('timestamp', post.get('datetime'))),
-                    tweet_hashtags=post.get('tweet_hashtags', [])
-                )
+                return post
             
             elif hasattr(post, 'content'):
-                # DataEntity object
-                if isinstance(post.content, bytes):
-                    content_str = post.content.decode('utf-8')
-                else:
-                    content_str = post.content
-                    
+                content_str = post.content.decode('utf-8') if isinstance(post.content, bytes) else post.content
                 try:
-                    content_data = json.loads(content_str)
-                    return EnhancedXContent(
-                        username=content_data.get('username', ''),
-                        text=content_data.get('text', ''),
-                        url=content_data.get('url', ''),
-                        timestamp=self._parse_timestamp(content_data.get('timestamp')),
-                        tweet_hashtags=content_data.get('tweet_hashtags', [])
-                    )
+                    return json.loads(content_str)
                 except json.JSONDecodeError:
-                    # Try using EnhancedXContent.from_data_entity
-                    return EnhancedXContent.from_data_entity(post)
+                    return None
                     
         except Exception as e:
-            bt.logging.warning(f"Failed to convert post to EnhancedXContent: {str(e)}")
+            bt.logging.warning(f"Error extracting content data: {str(e)}")
             return None
+    
+    def _convert_to_enhanced_x_content(self, post) -> Optional[EnhancedXContent]:
+        """Convert post to EnhancedXContent - simplified version"""
+        try:
+            data = self._extract_content_data(post)
+            if not data:
+                # Fallback to from_data_entity if it's a DataEntity
+                if hasattr(post, 'content'):
+                    return EnhancedXContent.from_data_entity(post)
+                return None
             
-        return None
+            return EnhancedXContent(
+                username=data.get('username', ''),
+                text=data.get('text', ''),
+                url=data.get('url', data.get('uri', '')),
+                timestamp=self._parse_timestamp(data.get('timestamp', data.get('datetime'))),
+                tweet_hashtags=data.get('tweet_hashtags', []),
+                # Metadata fields
+                tweet_id=data.get('tweet_id', data.get('id')),
+                like_count=data.get('like_count'),
+                retweet_count=data.get('retweet_count'),
+                reply_count=data.get('reply_count'),
+                quote_count=data.get('quote_count'),
+                is_retweet=data.get('is_retweet'),
+                is_reply=data.get('is_reply'),
+                is_quote=data.get('is_quote')
+            )
+        except Exception as e:
+            bt.logging.warning(f"Failed to convert to EnhancedXContent: {str(e)}")
+            return None
     
     def _convert_to_reddit_content(self, post) -> Optional[RedditContent]:
-        """
-        Convert a post (dict or DataEntity) to RedditContent for validation.
-        
-        Args:
-            post: The post data (either dict or DataEntity)
-            
-        Returns:
-            RedditContent: Converted content object, or None if conversion fails
-        """
+        """Convert post to RedditContent - simplified version"""
         try:
-            if isinstance(post, dict):
-                # Try to parse as JSON content first
-                if 'content' in post and isinstance(post['content'], str):
-                    try:
-                        content_data = json.loads(post['content'])
-                        # Create RedditContent from parsed JSON
-                        return RedditContent(
-                            id=content_data.get('id', ''),
-                            url=content_data.get('url', ''),
-                            username=content_data.get('username', ''),
-                            community=content_data.get('communityName', content_data.get('community', '')),
-                            body=content_data.get('body', ''),
-                            created_at=self._parse_timestamp(content_data.get('createdAt', content_data.get('created_at'))),
-                            data_type=content_data.get('dataType', content_data.get('data_type', 'post')),
-                            title=content_data.get('title'),
-                            parent_id=content_data.get('parentId', content_data.get('parent_id'))
-                        )
-                    except (json.JSONDecodeError, ValueError):
-                        pass
-                
-                # Handle dict with direct fields
-                return RedditContent(
-                    id=post.get('id', ''),
-                    url=post.get('url', post.get('uri', '')),
-                    username=post.get('username', ''),
-                    community=post.get('communityName', post.get('community', '')),
-                    body=post.get('body', ''),
-                    created_at=self._parse_timestamp(post.get('createdAt', post.get('created_at', post.get('datetime')))),
-                    data_type=post.get('dataType', post.get('data_type', 'post')),
-                    title=post.get('title'),
-                    parent_id=post.get('parentId', post.get('parent_id'))
-                )
-            
-            elif hasattr(post, 'content'):
-                # DataEntity object
-                if isinstance(post.content, bytes):
-                    content_str = post.content.decode('utf-8')
-                else:
-                    content_str = post.content
-                    
-                try:
-                    content_data = json.loads(content_str)
-                    return RedditContent(
-                        id=content_data.get('id', ''),
-                        url=content_data.get('url', ''),
-                        username=content_data.get('username', ''),
-                        community=content_data.get('communityName', content_data.get('community', '')),
-                        body=content_data.get('body', ''),
-                        created_at=self._parse_timestamp(content_data.get('createdAt', content_data.get('created_at'))),
-                        data_type=content_data.get('dataType', content_data.get('data_type', 'post')),
-                        title=content_data.get('title'),
-                        parent_id=content_data.get('parentId', content_data.get('parent_id'))
-                    )
-                except json.JSONDecodeError:
-                    # Try using RedditContent.from_data_entity
+            data = self._extract_content_data(post)
+            if not data:
+                # Fallback to from_data_entity if it's a DataEntity
+                if hasattr(post, 'content'):
                     return RedditContent.from_data_entity(post)
-                    
-        except Exception as e:
-            bt.logging.warning(f"Failed to convert post to RedditContent: {str(e)}")
-            return None
+                return None
             
-        return None
+            return RedditContent(
+                id=data.get('id', ''),
+                url=data.get('url', data.get('uri', '')),
+                username=data.get('username', ''),
+                community=data.get('communityName', data.get('community', '')),
+                body=data.get('body', ''),
+                created_at=self._parse_timestamp(data.get('createdAt', data.get('created_at', data.get('datetime')))),
+                data_type=data.get('dataType', data.get('data_type', 'post')),
+                title=data.get('title'),
+                parent_id=data.get('parentId', data.get('parent_id'))
+            )
+        except Exception as e:
+            bt.logging.warning(f"Failed to convert to RedditContent: {str(e)}")
+            return None
     
     def _parse_timestamp(self, timestamp_str) -> dt.datetime:
         """
