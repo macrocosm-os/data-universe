@@ -14,7 +14,6 @@ from scraping.reddit.model import RedditContent
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 import datetime as dt
-import json
 
 
 class OrganicQueryProcessor:
@@ -774,14 +773,10 @@ class OrganicQueryProcessor:
             "empty_response_miners": len(metadata['empty_uids']),
             "insufficient_post_miners": len(metadata['insufficient_miners']),
             "backup_scrape_count": metadata['backup_scrape_count'],
-            "backup_scrape_exceeded_threshold": metadata['backup_scrape_count'] >= int(synapse.limit * self.MIN_POST_THRESHOLD),
-            "cross_validation_performed": len(metadata['validation_results']) > 0,
             "validation_success_rate": f"{sum(metadata['validation_results'].values())}/{len(metadata['validation_results'])}" if metadata['validation_results'] else "0/0",
             "best_miner_uid": best_uid,
             "best_miner_hotkey": self.metagraph.hotkeys[best_uid],
-            "cross_validation_scores": miner_scores,
             "items_returned": len(unique_data),
-            "post_count_penalties_applied": "only when backup scrape confirmed more data exists"
         }
         
         return synapse
