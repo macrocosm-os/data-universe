@@ -7,6 +7,7 @@ from typing import Dict, Optional, Any, List
 import os
 import xml.etree.ElementTree as ET
 import urllib.parse
+import asyncio
 
 
 class ValidatorS3Access:
@@ -25,7 +26,7 @@ class ValidatorS3Access:
         if self.debug:
             print(f"DEBUG S3: {message}")
 
-    def ensure_access(self) -> bool:
+    async def ensure_access(self) -> bool:
         """Ensure valid S3 access is available, refreshing if needed"""
         with self.lock:
             current_time = time.time()
@@ -36,7 +37,7 @@ class ValidatorS3Access:
 
             # Get new access
             self._debug_print("Getting new S3 access from auth server")
-            access_data = self.get_validator_access()
+            access_data = await self.get_validator_access()
 
             if not access_data:
                 self._debug_print("Failed to get S3 access from auth server")
@@ -62,7 +63,7 @@ class ValidatorS3Access:
 
             return True
 
-    def get_validator_access(self) -> Optional[Dict[str, Any]]:
+    async def get_validator_access(self) -> Optional[Dict[str, Any]]:
         """Get S3 access using validator signature authentication"""
         try:
             coldkey = self.wallet.get_coldkeypub().ss58_address
@@ -87,11 +88,15 @@ class ValidatorS3Access:
 
             self._debug_print(f"Sending request to: {self.s3_auth_url}/get-validator-access")
 
-            # Send request to S3 auth service
-            response = requests.post(
-                f"{self.s3_auth_url.rstrip('/')}/get-validator-access",
-                json=payload,
-                timeout=30
+            # Use asyncio for HTTP request
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.post(
+                    f"{self.s3_auth_url.rstrip('/')}/get-validator-access",
+                    json=payload,
+                    timeout=30
+                )
             )
 
             self._debug_print(f"Auth server response status: {response.status_code}")
@@ -102,7 +107,7 @@ class ValidatorS3Access:
 
             result = response.json()
             self._debug_print(f"Auth server response structure: {list(result.keys())}")
-            
+
             if 'urls' in result:
                 urls = result['urls']
                 self._debug_print(f"URLs structure: {list(urls.keys())}")
@@ -114,11 +119,12 @@ class ValidatorS3Access:
 
         except Exception as e:
             self._debug_print(f"Exception getting validator access: {str(e)}")
+            bt.logging.error(f"S3 validator access error: {str(e)}")
             return None
 
-    def list_miners_new_format(self) -> List[str]:
+    async def list_miners_new_format(self) -> List[str]:
         """List all miners (hotkeys) using format: data/hotkey={hotkey_id}/"""
-        if not self.ensure_access():
+        if not await self.ensure_access():
             self._debug_print("Failed to ensure S3 access")
             return []
 
@@ -133,8 +139,10 @@ class ValidatorS3Access:
             # Use the presigned URL to list miners
             list_url = miners_urls['list_all_miners']
             self._debug_print(f"Using miners list URL: {list_url[:100]}...")
-            
-            response = requests.get(list_url)
+
+            # Use asyncio for HTTP request
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: requests.get(list_url))
             self._debug_print(f"Miners list response status: {response.status_code}")
 
             if response.status_code != 200:
@@ -164,18 +172,17 @@ class ValidatorS3Access:
 
             self._debug_print(f"All prefixes found: {all_prefixes}")
             self._debug_print(f"Extracted miners: {miners}")
-            
+
             return miners
-            
+
         except Exception as e:
             self._debug_print(f"Exception in list_miners_new_format: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            bt.logging.error(f"S3 list miners error: {str(e)}")
             return []
 
-    def list_jobs(self, miner_hotkey: str) -> List[str]:
+    async def list_jobs(self, miner_hotkey: str) -> List[str]:
         """List jobs for a specific miner using format: data/hotkey={hotkey_id}/job_id={job_id}/"""
-        if not self.ensure_access():
+        if not await self.ensure_access():
             self._debug_print("Failed to ensure S3 access for jobs listing")
             return []
 
@@ -194,8 +201,9 @@ class ValidatorS3Access:
             list_url = global_urls['list_all_data']
             self._debug_print(f"Using unmodified URL: {list_url[:150]}...")
 
-            # Use the URL exactly as provided by auth server
-            response = requests.get(list_url)
+            # Use asyncio for HTTP request
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: requests.get(list_url))
             self._debug_print(f"Jobs response status: {response.status_code}")
 
             if response.status_code != 200:
@@ -215,7 +223,7 @@ class ValidatorS3Access:
                     # URL decode the key first
                     decoded_key = urllib.parse.unquote(key)
                     self._debug_print(f"Found file: {decoded_key}")
-                    
+
                     # Extract job from file path: data/hotkey={hotkey_id}/job_id={job_id}/filename
                     if decoded_key.startswith(target_prefix) and '/job_id=' in decoded_key:
                         # Extract the job_id part
@@ -225,14 +233,14 @@ class ValidatorS3Access:
                             jobs.add(job_part)
                             self._debug_print(f"Extracted job from file: {job_part}")
 
-            # Also check CommonPrefixes (folders) 
+            # Also check CommonPrefixes (folders)
             for job_prefix in root.findall('.//s3:CommonPrefixes', namespaces):
                 prefix_text = job_prefix.find('s3:Prefix', namespaces).text
                 if prefix_text:
                     # URL decode the prefix first
                     decoded_prefix = urllib.parse.unquote(prefix_text)
                     self._debug_print(f"Found prefix: {decoded_prefix}")
-                    
+
                     # Extract job_id from: data/hotkey={hotkey_id}/job_id={job_id}/
                     if decoded_prefix.startswith(target_prefix) and '/job_id=' in decoded_prefix:
                         job_part_full = decoded_prefix[len(target_prefix):]  # Remove miner prefix
@@ -244,16 +252,15 @@ class ValidatorS3Access:
             jobs_list = list(jobs)
             self._debug_print(f"Found {len(jobs_list)} jobs for {miner_hotkey}: {jobs_list}")
             return jobs_list
-            
+
         except Exception as e:
             self._debug_print(f"Exception in list_jobs: {str(e)}")
-            import traceback
-            traceback.print_exc()
+            bt.logging.error(f"S3 list jobs error for {miner_hotkey}: {str(e)}")
             return []
 
-    def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
+    async def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
         """List files for a specific miner and job using format: data/hotkey={hotkey_id}/job_id={job_id}/"""
-        if not self.ensure_access():
+        if not await self.ensure_access():
             return []
 
         try:
@@ -268,9 +275,10 @@ class ValidatorS3Access:
                 return []
 
             list_url = global_urls['list_all_data']
-            
-            # Use the URL exactly as provided by auth server
-            response = requests.get(list_url)
+
+            # Use asyncio for HTTP request
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(None, lambda: requests.get(list_url))
 
             if response.status_code != 200:
                 self._debug_print(f"Failed files response: {response.text[:500]}")
@@ -291,7 +299,7 @@ class ValidatorS3Access:
                 if key:
                     # URL decode the key
                     decoded_key = urllib.parse.unquote(key)
-                    
+
                     # Filter: only files that start with our target prefix
                     if decoded_key.startswith(target_prefix):
                         files.append({
@@ -303,27 +311,8 @@ class ValidatorS3Access:
 
             self._debug_print(f"Found {len(files)} files in {miner_hotkey}/{job_id}")
             return files
-            
+
         except Exception as e:
             self._debug_print(f"Exception in list_files: {str(e)}")
+            bt.logging.error(f"S3 list files error for {miner_hotkey}/{job_id}: {str(e)}")
             return []
-
-    def test_direct_url(self, url: str) -> Dict[str, Any]:
-        """Test a presigned URL directly and return response info"""
-        try:
-            self._debug_print(f"Testing direct URL: {url[:100]}...")
-            response = requests.get(url)
-            
-            result = {
-                'status_code': response.status_code,
-                'headers': dict(response.headers),
-                'content_preview': response.text[:1000] if response.status_code == 200 else response.text,
-                'success': response.status_code == 200
-            }
-            
-            self._debug_print(f"Direct URL test result: status={result['status_code']}, success={result['success']}")
-            return result
-            
-        except Exception as e:
-            self._debug_print(f"Exception testing direct URL: {str(e)}")
-            return {'success': False, 'error': str(e)}
