@@ -220,3 +220,28 @@ class EnhancedXContent(BaseModel):
             }
 
         return result
+
+
+    @classmethod
+    def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
+        """Converts the EnhancedXContent to a DataEntity."""
+        entity_timestamp = content.timestamp
+        content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
+        content_bytes = content.json(exclude_none=True).encode("utf-8")
+
+        return DataEntity(
+            uri=content.url,
+            datetime=entity_timestamp,
+            source=DataSource.X,
+            label=(
+                DataLabel(
+                    value=content.tweet_hashtags[0].lower()[
+                        : constants.MAX_LABEL_LENGTH
+                    ]
+                )
+                if content.tweet_hashtags
+                else None
+            ),
+            content=content_bytes,
+            content_size_bytes=len(content_bytes),
+        )

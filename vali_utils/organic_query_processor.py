@@ -303,146 +303,27 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation (random sampling)")
         return posts_to_validate
     
-    def _validate_requested_fields(self, synapse: OrganicRequest, post) -> bool:
-        """
-        Validate that the returned data matches the requested fields (usernames, keywords, time range).
-        
-        Args:
-            synapse: The organic request with validation criteria
-            post: The post data (either dict or DataEntity)
-            
-        Returns:
-            bool: True if the post matches the request criteria, False otherwise
-        """
-        try:
-            if synapse.source.upper() == 'X':
-                # Convert to EnhancedXContent for validation
-                x_content = self._convert_to_enhanced_x_content(post)
-                if not x_content:
-                    return False
-                
-                # Validate username if specified
-                if synapse.usernames:
-                    requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
-                    post_username = x_content.username.strip('@').lower()
-                    if post_username not in requested_usernames:
-                        bt.logging.debug(f"Username mismatch: post has {post_username}, requested {requested_usernames}")
-                        return False
-                
-                # Validate keywords if specified
-                if synapse.keywords:
-                    post_text = x_content.text.lower()
-                    keyword_found = any(keyword.lower() in post_text for keyword in synapse.keywords)
-                    if not keyword_found:
-                        bt.logging.debug(f"Keyword mismatch: none of {synapse.keywords} found in post text")
-                        return False
-                
-                # Validate time range
-                if not self._validate_time_range(synapse, x_content.timestamp):
-                    return False
-                
-                # Validate tweet metadata completeness
-                if not self._validate_x_metadata_completeness(x_content):
-                    return False
-                    
-            else: 
-                # Reddit validation
-                reddit_content = self._convert_to_reddit_content(post)
-                if not reddit_content:
-                    return False
-                
-                # Validate username if specified
-                if synapse.usernames:
-                    requested_usernames = [u.lower() for u in synapse.usernames]
-                    post_username = reddit_content.username.lower()
-                    if post_username not in requested_usernames:
-                        bt.logging.debug(f"Reddit username mismatch: post has {post_username}, requested {requested_usernames}")
-                        return False
-                
-                # Validate subreddits (labels) if specified
-                if synapse.keywords:  # In Reddit context, keywords could be subreddit names or text keywords
-                    # Check if keywords match subreddit names (removing r/ prefix)
-                    post_community = reddit_content.community.lower().removeprefix('r/')
-                    subreddit_match = any(keyword.lower().removeprefix('r/') == post_community for keyword in synapse.keywords)
-                    
-                    # Also check if keywords appear in post content (body + title)
-                    content_text = (reddit_content.body or '').lower()
-                    if reddit_content.title:
-                        content_text += ' ' + reddit_content.title.lower()
-                    
-                    keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords)
-                    
-                    if not (subreddit_match or keyword_in_content):
-                        bt.logging.debug(f"Reddit keyword mismatch: none of {synapse.keywords} found in subreddit '{post_community}' or content")
-                        return False
-                
-                # Validate time range
-                if not self._validate_time_range(synapse, reddit_content.created_at):
-                    return False
-                
-            return True
-            
-        except Exception as e:
-            bt.logging.error(f"Error validating requested fields: {str(e)}")
-            return False
-    
     async def _validate_posts(self, synapse: OrganicRequest, posts_to_validate: List) -> Dict[str, bool]:
-        """Validate selected posts using appropriate scraper"""
+        """
+        Performs request field matching, enhanced field validation, and content validation on posts. 
+        """
         validation_results = {}
         
         if not posts_to_validate:
             return validation_results
         
-        try:
-            scraper = self._get_scraper(synapse.source)
-            if not scraper:
-                bt.logging.warning("No scraper available for validation")
-                return validation_results
+        for post in posts_to_validate:
+            post_id = self._get_post_id(post)
             
-            # Convert posts to validation format
-            posts_for_validation = []
-            for post in posts_to_validate:
-                if isinstance(post, dict):
-                    posts_for_validation.append(post)
-                else:
-                    post_dict = {
-                        'uri': getattr(post, 'uri', None),
-                        'datetime': getattr(post, 'datetime', None),
-                        'source': getattr(post, 'source', None),
-                        'content': getattr(post, 'content', None)
-                    }
-                    posts_for_validation.append(post_dict)
+            # convert to RedditContent or XContent 
+            content_model = self._convert_post_to_content_model(post, synapse.source)
+            if content_model is None:
+                validation_results[post_id] = False
+                bt.logging.info(f"Post {post_id} failed content model conversion")
+                continue
             
-            # Perform request matching validation first
-            bt.logging.info(f"Performing request field validation on {len(posts_for_validation)} posts")
-            request_validated_posts = []
-            for post in posts_for_validation:
-                if self._validate_requested_fields(synapse, post):
-                    request_validated_posts.append(post)
-                else:
-                    # Post failed request matching validation - mark as invalid
-                    post_id = self._get_post_id(post) if post in posts_to_validate else str(hash(str(post)))
-                    validation_results[post_id] = False
-                    bt.logging.info(f"Post {post_id} failed request field validation")
-            
-            bt.logging.info(f"Request field validation: {len(request_validated_posts)}/{len(posts_for_validation)} posts passed")
-
-            # Perform standard validation only on posts that passed request validation
-            if request_validated_posts:
-                validation_check_results = await scraper.validate(request_validated_posts)
-                
-                # Map results back to post IDs for posts that passed request validation
-                for i, result in enumerate(validation_check_results):
-                    if i < len(request_validated_posts):
-                        # Find the original post in posts_to_validate
-                        validated_post = request_validated_posts[i]
-                        original_post_index = posts_for_validation.index(validated_post)
-                        if original_post_index < len(posts_to_validate):
-                            post_id = self._get_post_id(posts_to_validate[original_post_index])
-                            validation_results[post_id] = result.is_valid if hasattr(result, 'is_valid') else bool(result)
-            
-        except Exception as e:
-            bt.logging.error(f"Error during validation: {str(e)}")
+            is_valid = await self._validate_content_model(synapse, content_model, post_id)
+            validation_results[post_id] = is_valid
         
         return validation_results
     
@@ -618,7 +499,7 @@ class OrganicQueryProcessor:
                 bt.logging.info(f"Tweet {x_content.url} missing required metadata: {missing_fields}")
                 return False
             
-            # Additional validation: ensure numeric fields are actually numeric
+            # ensure numeric fields are actually numeric
             numeric_fields = ['like_count', 'retweet_count', 'reply_count', 'quote_count']
             for field_name in numeric_fields:
                 field_value = getattr(x_content, field_name, None)
@@ -630,7 +511,7 @@ class OrganicQueryProcessor:
                         bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not numeric)")
                         return False
             
-            # Additional validation: ensure boolean fields are actually boolean
+            # ensure boolean fields are actually boolean
             boolean_fields = ['is_retweet', 'is_reply', 'is_quote']
             for field_name in boolean_fields:
                 field_value = getattr(x_content, field_name, None)
@@ -643,6 +524,156 @@ class OrganicQueryProcessor:
         except Exception as e:
             bt.logging.error(f"Error validating X metadata completeness: {str(e)}")
             return False
+    
+    def _convert_post_to_content_model(self, post, source: str):
+        """Single conversion method based on source"""
+        if source.upper() == 'X':
+            return self._convert_to_enhanced_x_content(post)
+        else:
+            return self._convert_to_reddit_content(post)
+    
+    async def _validate_content_model(self, synapse: OrganicRequest, content_model, post_id: str) -> bool:
+        """
+        Three-phase validation:
+        1. Request field validation 
+        2. Metadata completeness validation 
+        3. Scraper validation 
+        """
+        try:
+            # Phase 1: Request field validation 
+            if not self._validate_request_fields_direct(synapse, content_model):
+                bt.logging.debug(f"Post {post_id} failed request field validation")
+                return False
+            
+            # Phase 2: Metadata completeness validation (X only)
+            if synapse.source.upper() == 'X':
+                if not self._validate_x_metadata_completeness(content_model):
+                    bt.logging.info(f"Post {post_id} failed metadata completeness validation")
+                    return False
+            
+            # Phase 3: Scraper validation (only if previous validation passes)
+            scraper_result = await self._validate_with_scraper(synapse, content_model, post_id)
+            return scraper_result
+            
+        except Exception as e:
+            bt.logging.error(f"Validation error for {post_id}: {str(e)}")
+            return False
+    
+    def _validate_request_fields(self, synapse: OrganicRequest, content_model) -> bool:
+        """
+        Validates whether the returned content fields match the request fields.
+        """
+        try:
+            if synapse.source.upper() == 'X':
+                return self._validate_x_request_fields(synapse, content_model)
+            else:
+                return self._validate_reddit_request_fields(synapse, content_model)
+        except Exception as e:
+            bt.logging.error(f"Error in request field validation: {str(e)}")
+            return False
+    
+    def _validate_x_request_fields(self, synapse: OrganicRequest, x_content) -> bool:
+        """X request field validation with EnhancedXContent"""
+        # Username validation
+        if synapse.usernames:
+            requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
+            post_username = x_content.username.strip('@').lower()
+            if post_username not in requested_usernames:
+                bt.logging.debug(f"Username mismatch: {post_username} not in {requested_usernames}")
+                return False
+        
+        # Keyword validation
+        if synapse.keywords:
+            post_text = x_content.text.lower()
+            if not any(keyword.lower() in post_text for keyword in synapse.keywords):
+                bt.logging.debug(f"No keywords found in post text")
+                return False
+        
+        # Time range validation
+        if not self._validate_time_range(synapse, x_content.timestamp):
+            return False
+        
+        return True
+    
+    def _validate_reddit_request_fields(self, synapse: OrganicRequest, reddit_content) -> bool:
+        """Reddit request field validation with RedditContent"""
+        # Username validation
+        if synapse.usernames:
+            requested_usernames = [u.lower() for u in synapse.usernames]
+            if reddit_content.username.lower() not in requested_usernames:
+                bt.logging.debug(f"Reddit username mismatch: {reddit_content.username}")
+                return False
+        
+        # Keywords validation (subreddit or content)
+        if synapse.keywords:
+            post_community = reddit_content.community.lower().removeprefix('r/')
+            subreddit_match = any(keyword.lower().removeprefix('r/') == post_community 
+                                for keyword in synapse.keywords)
+            
+            content_text = (reddit_content.body or '').lower()
+            if reddit_content.title:
+                content_text += ' ' + reddit_content.title.lower()
+            
+            keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords)
+            
+            if not (subreddit_match or keyword_in_content):
+                bt.logging.debug(f"Reddit keyword mismatch in subreddit '{post_community}' and content")
+                return False
+        
+        # Time range validation
+        if not self._validate_time_range(synapse, reddit_content.created_at):
+            return False
+        
+        return True
+    
+    async def _validate_with_scraper(self, synapse: OrganicRequest, content_model, post_id: str) -> bool:
+        """
+        Scraper validation working directly with content model.
+        Converts to DataEntity using proper to_data_entity() methods.
+        """
+        try:
+            scraper = self._get_scraper(synapse.source)
+            if not scraper:
+                bt.logging.warning(f"No scraper available for {synapse.source}")
+                return False
+            
+            # Convert content model to DataEntity using existing methods
+            data_entity = self._content_model_to_data_entity(content_model)
+            if not data_entity:
+                bt.logging.error(f"Failed to convert content model to DataEntity for {post_id}")
+                return False
+            
+            # Call scraper validation
+            results = await scraper.validate([data_entity])
+            if results and len(results) > 0:
+                result = results[0]
+                is_valid = result.is_valid if hasattr(result, 'is_valid') else bool(result)
+                if not is_valid:
+                    bt.logging.info(f"Post {post_id} failed scraper validation: {getattr(result, 'reason', 'Unknown')}")
+                return is_valid
+            else:
+                bt.logging.error(f"No scraper validation results for {post_id}")
+                return False
+                
+        except Exception as e:
+            bt.logging.error(f"Scraper validation error for {post_id}: {str(e)}")
+            return False
+    
+    def _content_model_to_data_entity(self, content_model):
+        """
+        Convert content model to DataEntity using existing to_data_entity methods.
+        Uses EnhancedXContent.to_data_entity() or RedditContent.to_data_entity().
+        """
+        try:
+            if hasattr(content_model, '__class__') and hasattr(content_model.__class__, 'to_data_entity'):
+                return content_model.__class__.to_data_entity(content_model)
+            else:
+                bt.logging.error(f"Content model {type(content_model)} has no to_data_entity method")
+                return None
+                
+        except Exception as e:
+            bt.logging.error(f"Failed to convert content model to DataEntity: {str(e)}")
+            return None
     
     def _get_scraper(self, source: str):
         """Get appropriate scraper for the data source"""
