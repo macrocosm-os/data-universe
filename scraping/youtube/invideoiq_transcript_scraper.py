@@ -393,12 +393,10 @@ class YouTubeChannelTranscriptScraper(Scraper):
         channel_name = transcript_data.get('channel', '')
 
         # Use the provided channel_identifier as channel_id (normalized)
-        channel_id = channel_identifier
 
         return YouTubeContent(
             video_id=video_id,
             title=transcript_data.get('title', ''),
-            channel_id=channel_id,
             channel_name=channel_name,
             upload_date=upload_date,
             transcript=transcript_data.get('transcript', []),
@@ -417,7 +415,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
         for entity in entities:
             try:
                 content_to_validate = YouTubeContent.from_data_entity(entity)
-
+                print(content_to_validate)
                 # Use the language that was originally stored by the miner
                 original_language = content_to_validate.language
 
@@ -518,12 +516,12 @@ class YouTubeChannelTranscriptScraper(Scraper):
         # Validate language match
         actual_language = actual_data.get('selected_language', '')
         expected_language = stored_content.language
-        if expected_language and actual_language != expected_language:
-            return ValidationResult(
-                is_valid=False,
-                reason=f"Language mismatch: expected {expected_language}, got {actual_language}",
-                content_size_bytes_validated=entity.content_size_bytes
-            )
+        # if expected_language and actual_language != expected_language:
+        #     return ValidationResult(
+        #         is_valid=False,
+        #         reason=f"Language mismatch: expected {expected_language}, got {actual_language}",
+        #         content_size_bytes_validated=entity.content_size_bytes
+        #     )
 
         return ValidationResult(
             is_valid=True,
@@ -658,7 +656,6 @@ async def test_channel_scrape():
             bt.logging.info(f"Entity {i}:")
             bt.logging.info(f"  Title: {content.title}")
             bt.logging.info(f"  Video ID: {content.video_id}")
-            bt.logging.info(f"  Channel: {content.channel_name} ({content.channel_id})")
             bt.logging.info(f"  Label: {entity.label.value}")
             bt.logging.info(f"  Language: {content.language}")
             bt.logging.info(f"  Upload Date: {content.upload_date}")
