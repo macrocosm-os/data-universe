@@ -52,15 +52,15 @@ class OrganicQueryProcessor:
             # Step 4: Apply consensus-based volume penalties 
             insufficient_miners = self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit)
             
-            # Step 5: Perform cross-validation
-            validation_results = await self._perform_cross_validation(synapse, miner_responses)
+            # Step 5: Perform cross-validation and get pooled data
+            validation_results, pooled_data = await self._perform_cross_validation(synapse, miner_responses)
             
             # Step 6: Calculate final scores with all penalties applied
             miner_scores = self._apply_validation_penalties(miner_responses, validation_results)
             
             # Step 7: Select best data and format response
             return self._create_success_response(
-                synapse, miner_responses, miner_scores, {
+                synapse, miner_responses, miner_scores, pooled_data, {
                     'selected_miners': selected_miners,
                     'non_responsive_uids': non_responsive_uids,
                     'empty_uids': empty_uids,
@@ -209,7 +209,7 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
         return penalized_miners
     
-    async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Dict[str, bool]:
+    async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Tuple[Dict[str, bool], List]:
         """Perform cross-validation on pooled miner responses"""
         bt.logging.info("Starting cross-validation process...")
         
@@ -223,7 +223,7 @@ class OrganicQueryProcessor:
         validation_results = await self._validate_posts(synapse, posts_to_validate)
         
         bt.logging.info(f"Cross-validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
-        return validation_results
+        return validation_results, all_posts
     
     def _pool_responses(self, miner_responses: Dict[int, List]) -> Tuple[List, Dict[str, List[int]]]:
         """Pool all miner responses and track duplicates"""
@@ -668,34 +668,31 @@ class OrganicQueryProcessor:
             
             if miner_failed_validation:
                 miner_scores[uid] = 0
-                bt.logging.info(f"Miner {uid} score zeroed due to failed validation")
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         
         bt.logging.info(f"Final miner scores: {miner_scores}")
         return miner_scores
     
     def _create_success_response(self, synapse: OrganicRequest, miner_responses: Dict[int, List], 
-                               miner_scores: Dict[int, int], metadata: Dict) -> OrganicRequest:
-        """Create successful response with best miner data"""
+                               miner_scores: Dict[int, int], pooled_data: List, metadata: Dict) -> OrganicRequest:
+        """Create successful response with pooled data from all miners"""
         miners_with_valid_data = {uid: score for uid, score in miner_scores.items() if score > 0}
         
-        if not miners_with_valid_data:
+        if not miners_with_valid_data and not pooled_data:
             return self._create_empty_response(synapse, metadata)
         
-        # Select best miner
-        best_uid = max(miners_with_valid_data.keys(), key=lambda uid: miner_scores[uid])
-        best_data = miner_responses[best_uid]
+        # Process pooled data from all miners (already deduplicated)
+        processed_data = self._process_response_data(synapse, pooled_data)
         
-        bt.logging.info(f"Selected miner {best_uid} with score {miner_scores[best_uid]}")
+        # Select best miner for metadata purposes
+        best_uid = max(miners_with_valid_data.keys(), key=lambda uid: miner_scores[uid]) if miners_with_valid_data else None
         
-        # Process data
-        processed_data = self._process_response_data(synapse, best_data)
-        
-        # Remove duplicates
-        unique_data = self._remove_duplicates(processed_data)
+        bt.logging.info(f"Using pooled data from all miners, {len(processed_data)} unique items")
+        if best_uid:
+            bt.logging.info(f"Best performing miner: {best_uid} with score {miner_scores[best_uid]}")
         
         synapse.status = "success"
-        synapse.data = unique_data[:synapse.limit]
+        synapse.data = processed_data[:synapse.limit]
         synapse.meta = {
             "miners_queried": len(metadata['selected_miners']),
             "miners_responded": len(miner_responses),
@@ -704,8 +701,8 @@ class OrganicQueryProcessor:
             "insufficient_post_miners": len(metadata['insufficient_miners']),
             "validation_success_rate": f"{sum(metadata['validation_results'].values())}/{len(metadata['validation_results'])}" if metadata['validation_results'] else "0/0",
             "best_miner_uid": best_uid,
-            "best_miner_hotkey": self.metagraph.hotkeys[best_uid],
-            "items_returned": len(unique_data),
+            "best_miner_hotkey": self.metagraph.hotkeys[best_uid] if best_uid else None,
+            "items_returned": len(processed_data)
         }
         
         return synapse
@@ -763,19 +760,6 @@ class OrganicQueryProcessor:
                 processed_data.append(item_dict)
         
         return processed_data
-    
-    def _remove_duplicates(self, data: List[Dict]) -> List[Dict]:
-        """Remove duplicate items from processed data"""
-        seen = set()
-        unique_data = []
-        
-        for item in data:
-            item_str = str(sorted(item.items()))
-            if item_str not in seen:
-                seen.add(item_str)
-                unique_data.append(item)
-        
-        return unique_data
     
     def _get_post_id(self, post) -> str:
         """Generate consistent post identifier"""
