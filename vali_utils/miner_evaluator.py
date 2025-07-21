@@ -33,7 +33,7 @@ from storage.validator.s3_validator_storage import S3ValidationStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import utils as vali_utils
 
-from typing import List, Optional, Tuple, Dict
+from typing import List, Optional, Tuple, Dict, Any
 from vali_utils.validator_s3_access import ValidatorS3Access
 import pandas as pd
 import io
@@ -394,11 +394,11 @@ class MinerEvaluator:
         try:
             bt.logging.info(f"{hotkey}: Starting enhanced S3 validation")
             
-            # Get all job IDs from dynamic desirability model
+            # Step 1: Job Discovery
             all_job_ids = self.scorer.data_value_calculator.model.get_all_job_ids()
             bt.logging.info(f"{hotkey}: Found {len(all_job_ids)} job IDs from dynamic desirability model")
             
-            # Analyze miner's job completion and calculate parquet file sizes
+            # Step 2: Miner Job Completion Analysis
             miner_job_data = await self._analyze_miner_job_completion(hotkey, all_job_ids)
             
             if not miner_job_data['completed_jobs']:
@@ -411,7 +411,7 @@ class MinerEvaluator:
                 self.s3_storage.update_validation_info(hotkey, 0, current_block)
                 return
             
-            # Select random job for deep validation
+            # Step 3: Random Job Selection
             selected_job_data = self._select_random_job_for_validation(miner_job_data)
             
             if not selected_job_data:
@@ -424,7 +424,7 @@ class MinerEvaluator:
                 self.s3_storage.update_validation_info(hotkey, len(miner_job_data['completed_jobs']), current_block)
                 return
             
-            # Step 1: Perform basic S3 validation (prerequisite)
+            # Step 4: Perform basic S3 validation (prerequisite)
             basic_validation_result = await self._perform_basic_s3_file_validation(hotkey, selected_job_data)
             
             if not basic_validation_result.is_valid:
@@ -433,10 +433,10 @@ class MinerEvaluator:
                 self.s3_storage.update_validation_info(hotkey, len(miner_job_data['completed_jobs']), current_block)
                 return
             
-            # Step 2: Perform content validation on selected job
+            # Step 5: Perform content validation on selected job
             validation_results = await self._deep_validate_job_parquets(hotkey, selected_job_data)
             
-            # Update S3 scoring and credibility (equivalent of on_miner_evaluated for S3)
+            # Step 6: Update S3 scoring and credibility (equivalent of on_miner_evaluated for S3)
             self.scorer.on_s3_evaluated(uid, miner_job_data['completed_jobs'], validation_results)
             
             bt.logging.info(f"{hotkey}: Enhanced S3 validation completed - {len(validation_results)} entities validated")
@@ -449,7 +449,7 @@ class MinerEvaluator:
                                                             content_size_bytes_validated=0,
                                                             reason=f"{hotkey}: Error in S3 validation: {str(e)}"))
         
-        # Update S3 validation storage for enhanced validation
+        # Step 7: Update S3 validation storage for enhanced validation
         self.s3_storage.update_validation_info(hotkey, len(miner_job_data['completed_jobs']), current_block)
         
 
@@ -726,7 +726,7 @@ class MinerEvaluator:
                 try:
                     # Get validation results for this parquet file
                     file_validation_results = await self._validate_parquet_content(
-                        hotkey, file_info, data_source, job_keyword
+                        hotkey, file_info, data_source, job_keyword, job_data
                     )
                     all_validation_results.extend(file_validation_results)
                         
@@ -751,7 +751,7 @@ class MinerEvaluator:
             )]
 
     async def _validate_parquet_content(
-        self, hotkey: str, file_info: Dict, data_source: DataSource, job_keyword: Optional[str]
+        self, hotkey: str, file_info: Dict, data_source: DataSource, job_keyword: Optional[str], job_data: Dict
     ) -> List[S3ValidationResult]:
         """
         Validate content of a single parquet file by converting rows to DataEntities.
@@ -761,6 +761,7 @@ class MinerEvaluator:
             file_info: S3 file information
             data_source: DataSource enum (REDDIT, X, YOUTUBE)
             job_keyword: Optional keyword to validate in content
+            job_data: Complete job data dictionary containing all parameters
             
         Returns:
             List[S3ValidationResult]: One result per validated row
@@ -811,6 +812,19 @@ class MinerEvaluator:
             
             for idx, row in sampled_rows.iterrows():
                 try:
+                    # Step 5c: Validate that row conforms to job parameters
+                    job_param_validation_result = self._validate_job_parameters_conformance(
+                        row, job_data, data_source
+                    )
+                    
+                    if not job_param_validation_result['is_valid']:
+                        validation_results.append(S3ValidationResult(
+                            is_valid=False,
+                            content_size_bytes_validated=0,
+                            reason=f"Job parameter validation failed: {job_param_validation_result['reason']}"
+                        ))
+                        continue
+                    
                     # Convert row to appropriate content model and then to DataEntity
                     data_entity = self._convert_row_to_data_entity(row, data_source)
                     
@@ -822,12 +836,12 @@ class MinerEvaluator:
                         ))
                         continue
                     
-                    # Validate using appropriate scraper
+                    # Step 5d: Validate using appropriate scraper (previously step 5c)
                     entity_validation_results = await self._validate_data_entity(data_entity, data_source)
                     
                     # Convert ValidationResult to S3ValidationResult and add keyword validation
                     for val_result in entity_validation_results:
-                        # Perform keyword validation if required
+                        # Step 5e: Perform keyword validation if required (previously step 5d)
                         keyword_valid = self._validate_keyword_in_content(data_entity, job_keyword, data_source)
                         
                         # Entity is valid only if both content validation AND keyword validation pass
@@ -966,6 +980,174 @@ class MinerEvaluator:
                 content_size_bytes_validated=data_entity.content_size_bytes if data_entity else 0,
                 reason=f"Entity validation error: {str(e)}"
             )]
+
+    def _validate_job_parameters_conformance(self, row: pd.Series, job_data: Dict, data_source: DataSource) -> Dict[str, Any]:
+        """
+        Validate that the row conforms to job parameters including label, keyword, and time range.
+        
+        Args:
+            row: Pandas Series containing the row data
+            job_data: Job data dictionary containing parameters
+            data_source: DataSource enum (REDDIT, X, YOUTUBE)
+            
+        Returns:
+            Dict with 'is_valid' boolean and 'reason' string
+        """
+        try:
+            # Extract job parameters
+            job_label = job_data.get('label')
+            job_keyword = job_data.get('keyword')
+            start_timebucket = job_data.get('start_timebucket')
+            end_timebucket = job_data.get('end_timebucket')
+            
+            # Convert row to dict for easier field access
+            row_dict = row.to_dict()
+            
+            # Validate label field based on data source
+            if job_label and not self._validate_label_field(row_dict, job_label, data_source):
+                return {
+                    'is_valid': False,
+                    'reason': f"Row label does not match job label '{job_label}' for {data_source.name}"
+                }
+            
+            # Validate keyword field based on data source
+            if job_keyword and not self._validate_keyword_field(row_dict, job_keyword, data_source):
+                return {
+                    'is_valid': False,
+                    'reason': f"Row does not contain keyword '{job_keyword}' for {data_source.name}"
+                }
+            
+            # Validate time range if specified
+            if (start_timebucket is not None or end_timebucket is not None) and \
+               not self._validate_time_range(row_dict, start_timebucket, end_timebucket, data_source):
+                return {
+                    'is_valid': False,
+                    'reason': f"Row timestamp not within job time range [{start_timebucket}-{end_timebucket}]"
+                }
+            
+            return {'is_valid': True, 'reason': 'Job parameter validation passed'}
+            
+        except Exception as e:
+            bt.logging.error(f"Error in job parameter validation: {str(e)}")
+            return {
+                'is_valid': False,
+                'reason': f"Job parameter validation error: {str(e)}"
+            }
+
+    def _validate_label_field(self, row_dict: dict, job_label: str, data_source: DataSource) -> bool:
+        """Validate that the row's label field matches the job label."""
+        try:
+            if data_source == DataSource.REDDIT:
+                # For Reddit, label is the community field (subreddit)
+                community = row_dict.get('community', '')
+                # Remove 'r/' prefix if present for comparison
+                community_clean = community.replace('r/', '') if community.startswith('r/') else community
+                job_label_clean = job_label.replace('r/', '') if job_label.startswith('r/') else job_label
+                return community_clean.lower() == job_label_clean.lower()
+                
+            elif data_source == DataSource.X:
+                # For X, label should be present in tweet_hashtags
+                hashtags = row_dict.get('tweet_hashtags', [])
+                if isinstance(hashtags, list):
+                    # Check if job_label appears in any hashtag (case-insensitive)
+                    hashtags_str = ' '.join(hashtags).lower()
+                    return job_label.lower() in hashtags_str
+                return False
+                
+            elif data_source == DataSource.YOUTUBE:
+                # For YouTube, the label could be channel or video related
+                # This would need to be implemented based on YouTube label structure
+                bt.logging.warning(f"YouTube label validation not yet implemented for label: {job_label}")
+                return True  # Allow for now until YouTube structure is clarified
+                
+            else:
+                bt.logging.warning(f"Unknown data source for label validation: {data_source}")
+                return True  # Allow unknown sources
+                
+        except Exception as e:
+            bt.logging.error(f"Error validating label field: {str(e)}")
+            return False
+
+    def _validate_keyword_field(self, row_dict: dict, job_keyword: str, data_source: DataSource) -> bool:
+        """Validate that the row contains the job keyword in the appropriate text field."""
+        try:
+            if data_source == DataSource.REDDIT:
+                # For Reddit, keyword should be in the body field
+                body = row_dict.get('body', '')
+                return job_keyword.lower() in body.lower()
+                
+            elif data_source == DataSource.X:
+                # For X, keyword should be in the text field
+                text = row_dict.get('text', '')
+                return job_keyword.lower() in text.lower()
+                
+            elif data_source == DataSource.YOUTUBE:
+                # For YouTube, keyword should be in the title field (changed from transcript per user request)
+                title = row_dict.get('title', '')
+                return job_keyword.lower() in title.lower()
+                
+            else:
+                bt.logging.warning(f"Unknown data source for keyword validation: {data_source}")
+                return True  # Allow unknown sources
+                
+        except Exception as e:
+            bt.logging.error(f"Error validating keyword field: {str(e)}")
+            return False
+
+    def _validate_time_range(self, row_dict: dict, start_timebucket: Optional[int], 
+                           end_timebucket: Optional[int], data_source: DataSource) -> bool:
+        """Validate that the row's timestamp falls within the job's time range."""
+        try:
+            # Get the datetime field based on data source
+            if data_source == DataSource.REDDIT:
+                datetime_field = 'created_at'
+            elif data_source == DataSource.X:
+                datetime_field = 'timestamp'
+            elif data_source == DataSource.YOUTUBE:
+                # YouTube might use different field names depending on implementation
+                datetime_field = 'published_at'  # Common field name for YouTube
+                if datetime_field not in row_dict:
+                    # Try alternative field names
+                    for alt_field in ['upload_date', 'created_at', 'timestamp']:
+                        if alt_field in row_dict:
+                            datetime_field = alt_field
+                            break
+            else:
+                bt.logging.warning(f"Unknown data source for time validation: {data_source}")
+                return True  # Allow unknown sources
+            
+            # Get the datetime value from the row
+            datetime_value = row_dict.get(datetime_field)
+            if not datetime_value:
+                bt.logging.warning(f"Missing datetime field '{datetime_field}' in row for {data_source}")
+                return False
+            
+            # Convert to datetime if it's a string
+            if isinstance(datetime_value, str):
+                try:
+                    import pandas as pd
+                    datetime_value = pd.to_datetime(datetime_value)
+                except Exception:
+                    bt.logging.error(f"Failed to parse datetime string: {datetime_value}")
+                    return False
+            
+            # Convert datetime to timebucket using the same logic as TimeBucket.from_datetime
+            from common import utils
+            datetime_timestamp = datetime_value.timestamp()
+            row_timebucket = utils.seconds_to_hours(datetime_timestamp)
+            
+            # Check if timebucket falls within the specified range
+            if start_timebucket is not None and row_timebucket < start_timebucket:
+                return False
+            
+            if end_timebucket is not None and row_timebucket > end_timebucket:
+                return False
+            
+            return True
+            
+        except Exception as e:
+            bt.logging.error(f"Error validating time range: {str(e)}")
+            return False
 
     def _validate_keyword_in_content(self, data_entity: DataEntity, job_keyword: Optional[str], data_source: DataSource) -> bool:
         """Validate that keyword appears in the content text field using clean property approach."""
