@@ -144,10 +144,9 @@ class MinerEvaluator:
         # Perform S3 validation (only if enabled by date)
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
         s3_validation_result = None
-        current_time = dt.datetime.now(tz=dt.timezone.utc)
-        if current_time >= constants.S3_VALIDATION_ENABLED_DATE:
-            if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
-                s3_validation_result = await self._perform_s3_validation(hotkey, uid, current_block)
+
+        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
+            s3_validation_result = await self._perform_s3_validation(hotkey, uid, current_block)
         ##########
 
         # From that index, find a data entity bucket to sample and get it from the miner.
