@@ -415,7 +415,6 @@ class YouTubeChannelTranscriptScraper(Scraper):
         for entity in entities:
             try:
                 content_to_validate = YouTubeContent.from_data_entity(entity)
-                print(content_to_validate)
                 # Use the language that was originally stored by the miner
                 original_language = content_to_validate.language
 
