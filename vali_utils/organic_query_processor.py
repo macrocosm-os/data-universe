@@ -151,7 +151,7 @@ class OrganicQueryProcessor:
                         
                         bt.logging.info(f"Miner {uid} ({hotkey}) returned {data_count} items")
                     else:
-                        bt.logging.warning(f"Miner {uid} ({hotkey}) failed to respond properly")
+                        bt.logging.error(f"Miner {uid} ({hotkey}) failed to respond properly")
         
         return miner_responses, miner_data_counts
     
@@ -211,7 +211,10 @@ class OrganicQueryProcessor:
                     "no_data_available": True
                 })
                 return non_responsive_uids, empty_uids, empty_response
-        
+            
+        for uid in empty_uids:
+                    bt.logging.info(f"Applying penalty to miner {uid} for returning empty results when data exists")
+                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         return non_responsive_uids, empty_uids, None
     
     def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int) -> List[int]:
@@ -370,7 +373,7 @@ class OrganicQueryProcessor:
             content_model = self._convert_post_to_content_model(post, synapse.source)
             if content_model is None:
                 validation_results[post_id] = False
-                bt.logging.info(f"Post {post_id} failed content model conversion")
+                bt.logging.error(f"Post {post_id} failed content model conversion")
                 continue
             
             is_valid = await self._validate_content_model(synapse, content_model, post_id)
@@ -412,24 +415,44 @@ class OrganicQueryProcessor:
                     return EnhancedXContent.from_data_entity(post)
                 return None
             
+            # Extract user data (nested under 'user' key)
+            user_data = data.get('user', {})
+            
+            # Extract tweet data (nested under 'tweet' key)  
+            tweet_data = data.get('tweet', {})
+            
+            # Handle in_reply_to nested data
+            in_reply_to_data = tweet_data.get('in_reply_to', {})
+            
             return EnhancedXContent(
-                username=data.get('username', ''),
-                text=data.get('text', ''),
-                url=data.get('url', data.get('uri', '')),
-                timestamp=self._parse_timestamp(data.get('timestamp', data.get('datetime'))),
-                tweet_hashtags=data.get('tweet_hashtags', []),
-                # Metadata fields
-                tweet_id=data.get('tweet_id', data.get('id')),
-                like_count=data.get('like_count'),
-                retweet_count=data.get('retweet_count'),
-                reply_count=data.get('reply_count'),
-                quote_count=data.get('quote_count'),
-                is_retweet=data.get('is_retweet'),
-                is_reply=data.get('is_reply'),
-                is_quote=data.get('is_quote')
+                username=user_data.get('username', ''),
+                text=data.get('content', data.get('text', '')),  # 'content' field contains the tweet text
+                url=data.get('uri', data.get('url', '')),  # 'uri' field contains the URL
+                timestamp=self._parse_timestamp(data.get('datetime', data.get('timestamp'))),  # 'datetime' field
+                tweet_hashtags=tweet_data.get('hashtags', data.get('tweet_hashtags', [])),
+                # Metadata fields from tweet object
+                tweet_id=tweet_data.get('id', data.get('tweet_id')),
+                like_count=tweet_data.get('like_count'),
+                retweet_count=tweet_data.get('retweet_count'),  
+                reply_count=tweet_data.get('reply_count'),
+                quote_count=tweet_data.get('quote_count'),
+                is_retweet=tweet_data.get('is_retweet'),
+                is_reply=tweet_data.get('is_reply'),
+                is_quote=tweet_data.get('is_quote'),
+                # Additional user metadata
+                user_id=user_data.get('id'),
+                user_display_name=user_data.get('display_name'),
+                user_verified=user_data.get('verified'),
+                user_followers_count=user_data.get('followers_count'),
+                user_following_count=user_data.get('following_count'),
+                # Additional tweet metadata
+                media_urls=tweet_data.get('media_urls', []),
+                media_types=tweet_data.get('media_types', []),
+                conversation_id=tweet_data.get('conversation_id'),
+                in_reply_to_user_id=in_reply_to_data.get('user_id')
             )
         except Exception as e:
-            bt.logging.warning(f"Failed to convert to EnhancedXContent: {str(e)}")
+            bt.logging.error(f"Failed to convert to EnhancedXContent: {str(e)}")
             return None
     
     def _convert_to_reddit_content(self, post) -> Optional[RedditContent]:
@@ -454,7 +477,7 @@ class OrganicQueryProcessor:
                 parent_id=data.get('parentId', data.get('parent_id'))
             )
         except Exception as e:
-            bt.logging.warning(f"Failed to convert to RedditContent: {str(e)}")
+            bt.logging.error(f"Failed to convert to RedditContent: {str(e)}")
             return None
     
     def _parse_timestamp(self, timestamp_str) -> dt.datetime:
@@ -481,7 +504,7 @@ class OrganicQueryProcessor:
                 # Try common Twitter format
                 return dt.datetime.strptime(timestamp_str, "%a %b %d %H:%M:%S %z %Y")
             except ValueError:
-                bt.logging.warning(f"Failed to parse timestamp: {timestamp_str}")
+                bt.logging.error(f"Failed to parse timestamp: {timestamp_str}")
                 return dt.datetime.now(dt.timezone.utc)
     
     def _validate_time_range(self, synapse: OrganicRequest, post_timestamp: dt.datetime) -> bool:
@@ -593,13 +616,13 @@ class OrganicQueryProcessor:
         try:
             # Phase 1: Request field validation 
             if not self._validate_request_fields(synapse, content_model):
-                bt.logging.debug(f"Post {post_id} failed request field validation")
+                bt.logging.error(f"Post {post_id} failed request field validation")
                 return False
             
             # Phase 2: Metadata completeness validation (X only)
             if synapse.source.upper() == 'X':
                 if not self._validate_x_metadata_completeness(content_model):
-                    bt.logging.info(f"Post {post_id} failed metadata completeness validation")
+                    bt.logging.error(f"Post {post_id} failed metadata completeness validation")
                     return False
             
             # Phase 3: Scraper validation (only if previous validation passes)
@@ -625,6 +648,7 @@ class OrganicQueryProcessor:
     
     def _validate_x_request_fields(self, synapse: OrganicRequest, x_content) -> bool:
         """X request field validation with EnhancedXContent"""
+        bt.logging.debug(x_content)
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
@@ -637,7 +661,7 @@ class OrganicQueryProcessor:
         if synapse.keywords:
             post_text = x_content.text.lower()
             if not any(keyword.lower() in post_text for keyword in synapse.keywords):
-                bt.logging.debug(f"No keywords found in post text")
+                bt.logging.debug(f"No keywords found in post {post_text}")
                 return False
         
         # Time range validation
@@ -700,7 +724,7 @@ class OrganicQueryProcessor:
                 result = results[0]
                 is_valid = result.is_valid if hasattr(result, 'is_valid') else bool(result)
                 if not is_valid:
-                    bt.logging.info(f"Post {post_id} failed scraper validation: {getattr(result, 'reason', 'Unknown')}")
+                    bt.logging.error(f"Post {post_id} failed scraper validation: {getattr(result, 'reason', 'Unknown')}")
                 return is_valid
             else:
                 bt.logging.error(f"No scraper validation results for {post_id}")
@@ -758,7 +782,7 @@ class OrganicQueryProcessor:
                     validated_posts_count += 1
                     if not validation_results[post_id]:
                         miner_failed_validation = True
-                        bt.logging.info(f"Miner {uid} failed validation for post {post_id}")
+                        bt.logging.error(f"Miner {uid} failed validation for post {post_id}")
                         break
             
             if miner_failed_validation:

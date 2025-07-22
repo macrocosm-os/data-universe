@@ -58,7 +58,7 @@ class EnhancedXContent(BaseModel):
         """Converts the EnhancedXContent to a DataEntity."""
         entity_timestamp = content.timestamp
         content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
-        content_bytes = content.json(exclude_none=True).encode("utf-8")
+        content_bytes = content.text.json(exclude_none=True).encode("utf-8")
 
         return DataEntity(
             uri=content.url,
@@ -225,9 +225,30 @@ class EnhancedXContent(BaseModel):
     @classmethod
     def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
         """Converts the EnhancedXContent to a DataEntity."""
+        from scraping.x.model import XContent
+        
         entity_timestamp = content.timestamp
-        content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
-        content_bytes = content.json(exclude_none=True).encode("utf-8")
+        obfuscated_timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
+        
+        # Create basic XContent with only the fields the original model expects
+        basic_content = XContent(
+            username=content.username,
+            text=content.text,
+            url=content.url,
+            timestamp=obfuscated_timestamp,
+            tweet_hashtags=content.tweet_hashtags,
+            media=content.media_urls if content.media_urls else None,
+            user_id=content.user_id,
+            user_display_name=content.user_display_name,
+            user_verified=content.user_verified,
+            tweet_id=content.tweet_id,
+            is_reply=content.is_reply,
+            is_quote=content.is_quote,
+            conversation_id=content.conversation_id,
+            in_reply_to_user_id=content.in_reply_to_user_id
+        )
+        
+        content_bytes = basic_content.json(exclude_none=True).encode("utf-8")
 
         return DataEntity(
             uri=content.url,
