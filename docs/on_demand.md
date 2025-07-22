@@ -39,14 +39,14 @@ You can:
 
 1. **Simple Integration**: Import the enhanced scraper and provider:
    ```python
-   from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
-   from scraping.x.on_demand_model import EnhancedXContent
+   from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
+   from scraping.x.model import XContent
    ```
 
 2. **Update your scraper provider**:
    ```python
    # Create enhanced scraper provider 
-   scraper_provider = EnhancedScraperProvider()
+   scraper_provider = ApiDojoTwitterScraper()
    ```
 
 3. **Enjoy richer data**: The enhanced content is automatically used for X/Twitter requests

@@ -45,10 +45,10 @@ from common.data import DataSource, DataLabel, DataEntity
 from common import constants
 from common.protocol import OnDemandRequest
 from common import utils
-from scraping.scraper import ScrapeConfig, ValidationResult
+from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 from scraping.provider import ScraperProvider
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.load_balancer.validator_registry import ValidatorRegistry
 import random
@@ -838,7 +838,7 @@ class Validator:
                     # For X data, use exactly the same approach as miners
                     if on_demand_synapse.source == DataSource.X:
                         # Initialize the enhanced scraper directly as miners do
-                        scraper = EnhancedApiDojoTwitterScraper()
+                        scraper = ApiDojoTwitterScraper()
                     elif on_demand_synapse.source == DataSource.REDDIT:
                         # For other sources, use the standard provider
                         scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(on_demand_synapse.source)
