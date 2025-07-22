@@ -1,28 +1,31 @@
-import time
-from common import constants, utils
-from common.date_range import DateRange
-from scraping.reddit import model
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
-import bittensor as bt
-from common.data import DataEntity, DataLabel, DataSource
-from typing import List
+import os
+import random
+import asyncio
 import asyncpraw
+import traceback
+import datetime as dt
+import bittensor as bt
+
+from common.data import DataEntity, DataLabel, DataSource
 from scraping.reddit.utils import (
     is_valid_reddit_url,
     validate_reddit_content,
+    validate_media_content,
+    validate_nsfw_content,
     get_time_input,
     get_custom_sort_input,
     normalize_label,
     normalize_permalink,
+    extract_media_urls
 )
-from scraping.reddit.model import RedditContent, RedditDataType
-import traceback
-import datetime as dt
-import asyncio
-import random
-import os
 
+from common.date_range import DateRange
+from scraping.reddit import model
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
+from scraping.reddit.model import RedditContent, RedditDataType
+from typing import List
 from dotenv import load_dotenv
+
 
 load_dotenv()
 
@@ -38,7 +41,6 @@ class RedditCustomScraper(Scraper):
         """
         Validate a list of DataEntity objects.
 
-        * Fails automatically if a submission is NSFW (over_18=True).
         * For comments, it checks the parent submission (and subreddit) NSFW flag.
         """
         if not entities:
@@ -74,29 +76,17 @@ class RedditCustomScraper(Scraper):
             # 3) Fetch live data from Reddit
             try:
                 async with asyncpraw.Reddit(
-                    client_id=os.getenv("REDDIT_CLIENT_ID"),
-                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                    username=os.getenv("REDDIT_USERNAME"),
-                    password=os.getenv("REDDIT_PASSWORD"),
-                    user_agent=self.USER_AGENT,
+                        client_id=os.getenv("REDDIT_CLIENT_ID"),
+                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                        username=os.getenv("REDDIT_USERNAME"),
+                        password=os.getenv("REDDIT_PASSWORD"),
+                        user_agent=self.USER_AGENT,
                 ) as reddit:
 
                     # ---- A) POST branch ----
                     if ent_content.data_type == RedditDataType.POST:
                         submission = await reddit.submission(url=ent_content.url)
-                        await submission.load()                       # ensure attrs
-
-                        # Check NSFW only after the filter date
-                        if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and 
-                            submission.over_18):                        # NSFW post
-                            results.append(
-                                ValidationResult(
-                                    is_valid=False,
-                                    reason="Submission is NSFW (over_18).",
-                                    content_size_bytes_validated=entity.content_size_bytes,
-                                )
-                            )
-                            continue
+                        await submission.load()  # ensure attrs
 
                         live_content = self._best_effort_parse_submission(submission)
 
@@ -106,21 +96,9 @@ class RedditCustomScraper(Scraper):
                         await comment.load()
 
                         parent = comment.submission
-                        await parent.load()                           # full parent
+                        await parent.load()  # full parent
                         subreddit = comment.subreddit
-                        await subreddit.load()                        # full subreddit
-
-                        # Check NSFW only after the filter date
-                        if (dt.datetime.now(tz=dt.timezone.utc) >= constants.NSFW_REDDIT_FILTER_DATE and 
-                            (parent.over_18 or subreddit.over18)):
-                            results.append(
-                                ValidationResult(
-                                    is_valid=False,
-                                    reason="Parent submission or subreddit is NSFW (over_18).",
-                                    content_size_bytes_validated=entity.content_size_bytes,
-                                )
-                            )
-                            continue
+                        await subreddit.load()  # full subreddit
 
                         live_content = self._best_effort_parse_comment(comment)
 
@@ -147,12 +125,24 @@ class RedditCustomScraper(Scraper):
                 continue
 
             # 5) Field-by-field validation
-            results.append(
-                validate_reddit_content(
-                    actual_content=live_content,
-                    entity_to_validate=entity,
-                )
+            validation_result = validate_reddit_content(
+                actual_content=live_content,
+                entity_to_validate=entity,
             )
+
+            # 6) Media validation (strict check to prevent fake media URLs)
+            if validation_result.is_valid:
+                media_validation_result = validate_media_content(ent_content, live_content, entity)
+                if not media_validation_result.is_valid:
+                    validation_result = media_validation_result
+
+            # 7) NSFW validation (check NSFW content - no date restrictions)
+            if validation_result.is_valid:
+                nsfw_validation_result = validate_nsfw_content(ent_content, live_content, entity)
+                if not nsfw_validation_result.is_valid:
+                    validation_result = nsfw_validation_result
+
+            results.append(validation_result)
 
         return results
 
@@ -201,7 +191,8 @@ class RedditCustomScraper(Scraper):
 
         # Check if at least 60% of the data is valid
         is_valid = valid_percentage >= 60
-        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percentage, reason=f"Validation Percentage = {valid_percentage}")
+        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percentage,
+                                  reason=f"Validation Percentage = {valid_percentage}")
 
     def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
         """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""
@@ -239,7 +230,7 @@ class RedditCustomScraper(Scraper):
         )
 
         assert (
-            not scrape_config.labels or len(scrape_config.labels) <= 1
+                not scrape_config.labels or len(scrape_config.labels) <= 1
         ), "Can only scrape 1 subreddit at a time."
 
         # Strip the r/ from the config or use 'all' if no label is provided.
@@ -248,7 +239,7 @@ class RedditCustomScraper(Scraper):
         )
 
         bt.logging.trace(
-             f"Running custom Reddit scraper with search: {subreddit_name}."
+            f"Running custom Reddit scraper with search: {subreddit_name}."
         )
 
         # Randomize between fetching submissions and comments to reduce api calls.
@@ -263,11 +254,11 @@ class RedditCustomScraper(Scraper):
         contents = None
         try:
             async with asyncpraw.Reddit(
-                client_id=os.getenv("REDDIT_CLIENT_ID"),
-                client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                username=os.getenv("REDDIT_USERNAME"),
-                password=os.getenv("REDDIT_PASSWORD"),
-                user_agent=RedditCustomScraper.USER_AGENT,
+                    client_id=os.getenv("REDDIT_CLIENT_ID"),
+                    client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                    username=os.getenv("REDDIT_USERNAME"),
+                    password=os.getenv("REDDIT_PASSWORD"),
+                    user_agent=RedditCustomScraper.USER_AGENT,
             ) as reddit:
                 subreddit = await reddit.subreddit(subreddit_name)
 
@@ -315,7 +306,7 @@ class RedditCustomScraper(Scraper):
         return data_entities
 
     def _best_effort_parse_submission(
-        self, submission: asyncpraw.models.Submission
+            self, submission: asyncpraw.models.Submission
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit submission into a RedditContent
 
@@ -323,16 +314,14 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
-            # Skip NSFW content
-            if getattr(submission, 'over_18', False):
-                bt.logging.trace(f"Skipping NSFW submission: {submission.permalink}")
-                return None
-                
+            # Extract media URLs once
+            media_urls = extract_media_urls(submission)
+
             user = submission.author.name if submission.author else model.DELETED_USER
             content = RedditContent(
                 id=submission.name,
                 url="https://www.reddit.com"
-                + normalize_permalink(submission.permalink),
+                    + normalize_permalink(submission.permalink),
                 username=user,
                 communityName=submission.subreddit_name_prefixed,
                 body=submission.selftext,
@@ -344,6 +333,9 @@ class RedditCustomScraper(Scraper):
                 title=submission.title,
                 # Comment only fields
                 parentId=None,
+                # Media fields
+                media=media_urls if media_urls else None,
+                is_nsfw=submission.over_18,
             )
         except Exception:
             bt.logging.trace(
@@ -353,7 +345,7 @@ class RedditCustomScraper(Scraper):
         return content
 
     def _best_effort_parse_comment(
-        self, comment: asyncpraw.models.Comment
+            self, comment: asyncpraw.models.Comment
     ) -> RedditContent:
         """Performs a best effort parsing of a Reddit comment into a RedditContent
 
@@ -361,13 +353,10 @@ class RedditCustomScraper(Scraper):
         content = None
 
         try:
-            # Skip comments from NSFW submissions or subreddits
-            if (getattr(comment.submission, 'over_18', False) or 
-                getattr(comment.subreddit, 'over18', False)):
-                bt.logging.trace(f"Skipping comment from NSFW submission/subreddit: {comment.permalink}")
-                return None
-                
             user = comment.author.name if comment.author else model.DELETED_USER
+            # Comments typically don't have media, but check parent submission for NSFW
+            parent_nsfw = getattr(comment.submission, 'over_18', False) if hasattr(comment, 'submission') else False
+            subreddit_nsfw = getattr(comment.subreddit, 'over18', False) if hasattr(comment, 'subreddit') else False
             content = RedditContent(
                 id=comment.name,
                 url="https://www.reddit.com" + normalize_permalink(comment.permalink),
@@ -382,6 +371,9 @@ class RedditCustomScraper(Scraper):
                 title=None,
                 # Comment only fields
                 parentId=comment.parent_id,
+                # Media fields
+                media=None,  # Comments don't have media
+                is_nsfw=parent_nsfw or subreddit_nsfw,
             )
         except Exception:
             bt.logging.trace(

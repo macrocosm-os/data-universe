@@ -40,9 +40,7 @@ python -m pip install -e .
 
 5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
-6. (Optional) Setup a wandb account and login so your validator can store logs beyond 7 days. From your virtual environment, run
-```shell
-wandb login
+6. (Optional) Setup macrocosmos logging by running your validator with the --mclogger flag.
 ```
 
 This will prompt you to navigate to https://wandb.ai/authorize and copy your api key back into the terminal.
