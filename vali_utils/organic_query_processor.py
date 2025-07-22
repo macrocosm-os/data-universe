@@ -47,7 +47,11 @@ class OrganicQueryProcessor:
             miner_responses, miner_data_counts = await self._query_miners(synapse, selected_miners)
             
             # Step 3: Apply basic penalties (timeouts, empty responses)
-            non_responsive_uids, empty_uids = self._apply_basic_penalties(selected_miners, miner_responses)
+            non_responsive_uids, empty_uids, early_response = await self._apply_basic_penalties(synapse, selected_miners, miner_responses)
+            
+            # If early response (all miners empty), return immediately
+            if early_response:
+                return early_response
             
             # Step 4: Apply consensus-based volume penalties 
             insufficient_miners = self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit)
@@ -151,8 +155,11 @@ class OrganicQueryProcessor:
         
         return miner_responses, miner_data_counts
     
-    def _apply_basic_penalties(self, selected_miners: List[int], miner_responses: Dict[int, List]) -> Tuple[List[int], List[int]]:
-        """Apply penalties for timeouts and empty responses"""
+    async def _apply_basic_penalties(self, 
+                                     synapse: OrganicRequest,
+                                     selected_miners: List[int], 
+                                     miner_responses: Dict[int, List]) -> Tuple[List[int], List[int], Optional[OrganicRequest]]:
+        """Apply penalties for timeouts and empty responses, with data check rescrape"""
         # Non-responsive miners
         non_responsive_uids = [uid for uid in selected_miners if uid not in miner_responses]
         for uid in non_responsive_uids:
@@ -162,7 +169,50 @@ class OrganicQueryProcessor:
         # Empty response miners
         empty_uids = [uid for uid, rows in miner_responses.items() if len(rows) == 0]
         
-        return non_responsive_uids, empty_uids
+        # Check if ALL responding miners returned empty data
+        responding_miners = [uid for uid in selected_miners if uid in miner_responses]
+        all_empty = len(responding_miners) > 0 and all(len(miner_responses[uid]) == 0 for uid in responding_miners)
+        
+        if all_empty:
+            bt.logging.info("All miners returned empty results - performing data check rescrape")
+            verification_data = await self._perform_verification_rescrape(synapse)
+            
+            if verification_data:
+                bt.logging.info(f"Verification found {len(verification_data)} items - applying penalties and returning verification data")
+                # Apply penalties to all miners that returned empty results when data exists
+                for uid in empty_uids:
+                    bt.logging.info(f"Applying penalty to miner {uid} for returning empty results when data exists")
+                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                
+                # Return verification data as response
+                processed_data = self._process_response_data(synapse, verification_data)
+                synapse.status = "success"
+                synapse.data = processed_data[:synapse.limit]
+                synapse.meta = {
+                    "verification_rescrape": True,
+                    "items_returned": len(processed_data),
+                    "miners_queried": len(selected_miners),
+                    "all_miners_empty": True
+                }
+                return non_responsive_uids, empty_uids, synapse
+            else:
+                bt.logging.info("Verification found no data - empty response is legitimate, exiting early")
+                # Return empty response using existing method and exit early
+                metadata = {
+                    'selected_miners': selected_miners,
+                    'miner_responses': miner_responses,
+                    'verification_rescrape': True,
+                    'no_data_available': True
+                }
+                empty_response = self._create_empty_response(synapse, metadata)
+                empty_response.meta.update({
+                    "verification_rescrape": True,
+                    "all_miners_empty": True,
+                    "no_data_available": True
+                })
+                return non_responsive_uids, empty_uids, empty_response
+        
+        return non_responsive_uids, empty_uids, None
     
     def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int) -> List[int]:
         """
@@ -224,6 +274,51 @@ class OrganicQueryProcessor:
         
         bt.logging.info(f"Cross-validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
         return validation_results, all_posts
+    
+    async def _perform_verification_rescrape(self, synapse: OrganicRequest) -> Optional[List]:
+        """Perform verification rescrape using the same logic as miners"""
+        try:
+            # Initialize scraper based on source
+            if synapse.source.upper() == 'X':
+                scraper = EnhancedApiDojoTwitterScraper()
+            else:
+                scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(DataSource[synapse.source.upper()])
+                scraper = ScraperProvider().get(scraper_id) if scraper_id else None
+            
+            if not scraper:
+                bt.logging.warning(f"No scraper available for verification of {synapse.source}")
+                return None
+            
+            # Create verification config (limited scope)
+            labels = []
+            if synapse.keywords:
+                labels.extend([DataLabel(value=k) for k in synapse.keywords])
+            if synapse.usernames:
+                labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in synapse.usernames])
+            
+            start_date = utils.parse_iso_date(synapse.start_date) if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+            end_date = utils.parse_iso_date(synapse.end_date) if synapse.end_date else dt.datetime.now(dt.timezone.utc)
+            
+            verify_config = ScrapeConfig(
+                entity_limit=min(synapse.limit, 10),  # Limit to reduce API costs
+                date_range=DateRange(start=start_date, end=end_date),
+                labels=labels,
+            )
+            
+            # Perform scraping based on source
+            if synapse.source.upper() == 'X':
+                await scraper.scrape(verify_config)
+                enhanced_content = scraper.get_enhanced_content()
+                # Convert EnhancedXContent to dictionaries using to_api_response
+                verification_data = [content.to_api_response() for content in enhanced_content]
+            else:
+                verification_data = await scraper.scrape(verify_config)
+            
+            return verification_data if verification_data else None
+            
+        except Exception as e:
+            bt.logging.error(f"Error during verification rescrape: {str(e)}")
+            return None
     
     def _pool_responses(self, miner_responses: Dict[int, List]) -> Tuple[List, Dict[str, List[int]]]:
         """Pool all miner responses and track duplicates"""
@@ -714,8 +809,7 @@ class OrganicQueryProcessor:
         synapse.meta = {
             "miners_queried": len(metadata['selected_miners']),
             "miners_responded": len(metadata.get('miner_responses', {})),
-            "consensus": "no_valid_data",
-            "cross_validation_performed": len(metadata['validation_results']) > 0
+            "consensus": "no_valid_data"
         }
         return synapse
     
