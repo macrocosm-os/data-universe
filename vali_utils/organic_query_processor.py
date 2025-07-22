@@ -62,7 +62,7 @@ class OrganicQueryProcessor:
             # Step 6: Calculate final scores with all penalties applied
             miner_scores = self._apply_validation_penalties(miner_responses, validation_results)
             
-            # Step 7: Select best data and format response
+            # Step 7: Format response
             return self._create_success_response(
                 synapse, miner_responses, miner_scores, pooled_data, {
                     'selected_miners': selected_miners,
@@ -225,11 +225,16 @@ class OrganicQueryProcessor:
         if not miner_data_counts or len(miner_data_counts) < 2:
             return []
         
-        counts = list(miner_data_counts.values())
+        # Filter out miners with 0 posts for consensus calculation
+        non_zero_counts = [count for count in miner_data_counts.values() if count > 0]
         
-        # Calculate consensus metrics
-        median_count = statistics.median(counts)
-        mean_count = statistics.mean(counts) 
+        if len(non_zero_counts) < 2:
+            bt.logging.info("Not enough miners with data for consensus - skipping volume penalties")
+            return []
+        
+        # Calculate consensus metrics from miners who actually found data
+        median_count = statistics.median(non_zero_counts)
+        mean_count = statistics.mean(non_zero_counts) 
         consensus_count = max(median_count, mean_count)
         
         bt.logging.info(f"Volume consensus: {consensus_count:.1f} posts (median: {median_count}, mean: {mean_count:.1f})")
@@ -827,13 +832,6 @@ class OrganicQueryProcessor:
         # Process pooled data from all miners (already deduplicated)
         processed_data = self._process_response_data(synapse, pooled_data)
         
-        # Select best miner for metadata purposes
-        best_uid = max(miners_with_valid_data.keys(), key=lambda uid: miner_scores[uid]) if miners_with_valid_data else None
-        
-        bt.logging.info(f"Using pooled data from all miners, {len(processed_data)} unique items")
-        if best_uid:
-            bt.logging.info(f"Best performing miner: {best_uid} with score {miner_scores[best_uid]}")
-        
         synapse.status = "success"
         synapse.data = processed_data[:synapse.limit]
         synapse.meta = {
@@ -843,8 +841,6 @@ class OrganicQueryProcessor:
             "empty_response_miners": len(metadata['empty_uids']),
             "insufficient_post_miners": len(metadata['insufficient_miners']),
             "validation_success_rate": f"{sum(metadata['validation_results'].values())}/{len(metadata['validation_results'])}" if metadata['validation_results'] else "0/0",
-            "best_miner_uid": best_uid,
-            "best_miner_hotkey": self.metagraph.hotkeys[best_uid] if best_uid else None,
             "items_returned": len(processed_data)
         }
         
