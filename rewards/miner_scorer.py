@@ -198,29 +198,29 @@ class MinerScorer:
             f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
         )
 
-def apply_ondemand_penalty(self, uid: int, mult_factor: float):
-    """Applies a credibility penalty to a given miner based on their ondemand result"""
-    with self.lock:
-        cred_penalty = MinerScorer.ONDEMAND_MAX_CRED_PENALTY * mult_factor
-        old_cred = float(self.miner_credibility[uid])
-        
-        # Apply credibility penalty
-        self.miner_credibility[uid] = max(self.miner_credibility[uid] - cred_penalty, 0)
-        new_cred = float(self.miner_credibility[uid])
-        
-        # Adjust score based on the credibility ratio change
-        if old_cred > 0:
-            cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
-            old_score = float(self.scores[uid])
-            self.scores[uid] *= cred_ratio
+    def apply_ondemand_penalty(self, uid: int, mult_factor: float):
+        """Applies a credibility penalty to a given miner based on their ondemand result"""
+        with self.lock:
+            cred_penalty = MinerScorer.ONDEMAND_MAX_CRED_PENALTY * mult_factor
+            old_cred = float(self.miner_credibility[uid])
             
-            bt.logging.info(
-                f"OnDemand penalty for Miner {uid}: "
-                f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
-                f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
-            )
-        else:
-            bt.logging.info(f"OnDemand penalty for Miner {uid}: Credibility already at 0")
+            # Apply credibility penalty
+            self.miner_credibility[uid] = max(self.miner_credibility[uid] - cred_penalty, 0)
+            new_cred = float(self.miner_credibility[uid])
+            
+            # Adjust score based on the credibility ratio change
+            if old_cred > 0:
+                cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
+                old_score = float(self.scores[uid])
+                self.scores[uid] *= cred_ratio
+                
+                bt.logging.info(
+                    f"OnDemand penalty for Miner {uid}: "
+                    f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
+                    f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
+                )
+            else:
+                bt.logging.info(f"OnDemand penalty for Miner {uid}: Credibility already at 0")
 
     def on_miner_evaluated(
         self,

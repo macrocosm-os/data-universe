@@ -592,7 +592,7 @@ class OrganicQueryProcessor:
         """
         try:
             # Phase 1: Request field validation 
-            if not self._validate_request_fields_direct(synapse, content_model):
+            if not self._validate_request_fields(synapse, content_model):
                 bt.logging.debug(f"Post {post_id} failed request field validation")
                 return False
             
