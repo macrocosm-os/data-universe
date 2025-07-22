@@ -366,8 +366,13 @@ class OrganicQueryProcessor:
         if not posts_to_validate:
             return validation_results
         
+        # Create validation tasks for concurrent execution
+        validation_tasks = []
+        post_ids = []
+        
         for post in posts_to_validate:
             post_id = self._get_post_id(post)
+            post_ids.append(post_id)
             
             # convert to RedditContent or XContent 
             content_model = self._convert_post_to_content_model(post, synapse.source)
@@ -376,8 +381,28 @@ class OrganicQueryProcessor:
                 bt.logging.error(f"Post {post_id} failed content model conversion")
                 continue
             
-            is_valid = await self._validate_content_model(synapse, content_model, post_id)
-            validation_results[post_id] = is_valid
+            # Create async task for validation
+            task = self._validate_content_model(synapse, content_model, post_id)
+            validation_tasks.append(task)
+        
+        # Run all validations concurrently
+        if validation_tasks:
+            validation_task_results = await asyncio.gather(*validation_tasks, return_exceptions=True)
+            
+            # Process results
+            task_index = 0
+            for i, post_id in enumerate(post_ids):
+                if post_id in validation_results:
+                    continue  # Already failed conversion
+                    
+                result = validation_task_results[task_index]
+                task_index += 1
+                
+                if isinstance(result, Exception):
+                    bt.logging.error(f"Validation error for {post_id}: {str(result)}")
+                    validation_results[post_id] = False
+                else:
+                    validation_results[post_id] = result
         
         return validation_results
     
@@ -648,7 +673,6 @@ class OrganicQueryProcessor:
     
     def _validate_x_request_fields(self, synapse: OrganicRequest, x_content) -> bool:
         """X request field validation with EnhancedXContent"""
-        bt.logging.debug(x_content)
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
