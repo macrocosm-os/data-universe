@@ -499,12 +499,11 @@ class OrganicQueryProcessor:
                 id=data.get('id', ''),
                 url=data.get('url', data.get('uri', '')),
                 username=data.get('username', ''),
-                community=data.get('communityName', data.get('community', '')),
+                communityName=data.get('communityName', data.get('community', '')),
                 body=data.get('body', ''),
-                created_at=self._parse_timestamp(data.get('createdAt', data.get('created_at', data.get('datetime')))),
-                data_type=data.get('dataType', data.get('data_type', 'post')),
-                title=data.get('title'),
-                parent_id=data.get('parentId', data.get('parent_id'))
+                createdAt=self._parse_timestamp(data.get('createdAt', data.get('created_at', data.get('datetime')))),
+                dataType=data.get('dataType', data.get('data_type', 'post')),
+                title=data.get('title')
             )
         except Exception as e:
             bt.logging.error(f"Failed to convert to RedditContent: {str(e)}")
