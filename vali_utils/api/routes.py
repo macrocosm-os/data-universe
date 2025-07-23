@@ -336,7 +336,7 @@ async def list_hf_repo_names(
 async def health_check(validator=Depends(get_validator),
                        api_key: str = Depends(verify_api_key)):
     """Health check endpoint"""
-    miner_uids = utils.get_miner_uids(validator.metagraph, validator.uid, 10_000)
+    miner_uids = utils.get_miner_uids(validator.metagraph, validator.config.vpermit_rao_limit)
     return {
         "status": "healthy" if validator.is_healthy() else "unhealthy",
         "timestamp": dt.datetime.utcnow(),
