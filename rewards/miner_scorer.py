@@ -27,7 +27,7 @@ class MinerScorer:
     # The exponent used to scale the miner's score by its credibility.
     _CREDIBILITY_EXP = 2.5
 
-    ONDEMAND_MAX_CRED_PENALTY = 0.075
+    ONDEMAND_MAX_CRED_PENALTY = 0.05
 
     def __init__(
         self,
