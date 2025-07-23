@@ -294,13 +294,22 @@ class RedditCustomScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         parsed_contents = [content for content in contents if content != None]
+        
+        # Filter out NSFW content with media (same validation logic as in validate_nsfw_content)
+        filtered_contents = []
+        for content in parsed_contents:
+            # Skip NSFW content with media - not valid for the subnet
+            if content.is_nsfw and content.media:
+                bt.logging.trace(f"Skipping NSFW content with media: {content.url}")
+                continue
+            filtered_contents.append(content)
 
         bt.logging.success(
-            f"Completed scrape for subreddit {subreddit_name}. Scraped {len(parsed_contents)} items."
+            f"Completed scrape for subreddit {subreddit_name}. Scraped {len(filtered_contents)} items (filtered out {len(parsed_contents) - len(filtered_contents)} NSFW+media posts)."
         )
 
         data_entities = []
-        for content in parsed_contents:
+        for content in filtered_contents:
             data_entities.append(RedditContent.to_data_entity(content=content))
 
         return data_entities
