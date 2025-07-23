@@ -73,7 +73,7 @@ class MinerEvaluator:
 
         # Setup dependencies.
         self.miner_iterator = MinerIterator(
-            utils.get_miner_uids(self.metagraph, self.uid, self.vpermit_rao_limit)
+            utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit)
         )
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
@@ -743,7 +743,7 @@ class MinerEvaluator:
                         )
             # Update the iterator. It will keep its current position if possible.
             self.miner_iterator.set_miner_uids(
-                utils.get_miner_uids(self.metagraph, self.uid, self.vpermit_rao_limit)
+                utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit)
             )
 
             # Check to see if the metagraph has changed size.

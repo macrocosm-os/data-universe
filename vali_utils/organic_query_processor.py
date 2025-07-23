@@ -82,7 +82,7 @@ class OrganicQueryProcessor:
     
     def _select_miners(self) -> List[int]:
         """Select diverse set of miners for querying"""
-        miner_uids = utils.get_miner_uids(self.metagraph, self.validator.uid, 10000)
+        miner_uids = utils.get_miner_uids(self.metagraph, self.evaluator.vpermit_rao_limit)
         miner_scores = [(uid, float(self.metagraph.I[uid])) for uid in miner_uids]
         miner_scores.sort(key=lambda x: x[1], reverse=True)
         
@@ -108,7 +108,7 @@ class OrganicQueryProcessor:
         
         # Fill remaining slots if needed
         if len(selected_miners) < 1:
-            for uid in utils.get_miner_uids(self.metagraph, self.validator.uid, 10000):
+            for uid in utils.get_miner_uids(self.metagraph, self.evaluator.vpermit_rao_limit):
                 if uid not in selected_miners:
                     selected_miners.append(uid)
                     if len(selected_miners) >= self.NUM_MINERS_TO_QUERY:
