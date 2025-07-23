@@ -15,16 +15,19 @@ from scraping.reddit.model import RedditContent
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 import datetime as dt
+from vali_utils.miner_evaluator import MinerEvaluator
 
 
 class OrganicQueryProcessor:
     """Handles organic query processing, cross-validation, and miner evaluation"""
     
-    def __init__(self, validator):
-        self.validator = validator
-        self.wallet = validator.wallet
-        self.metagraph = validator.metagraph
-        self.evaluator = validator.evaluator
+    def __init__(self, 
+                 wallet: bt.wallet,
+                 metagraph: bt.metagraph, 
+                 evaluator: MinerEvaluator):
+        self.wallet = wallet
+        self.metagraph = metagraph
+        self.evaluator = evaluator
         
         # constants
         self.NUM_MINERS_TO_QUERY = 5

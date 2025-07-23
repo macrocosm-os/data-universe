@@ -179,7 +179,11 @@ class Validator:
         else:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
-        self.organic_processor = OrganicQueryProcessor(self)
+        self.organic_processor = OrganicQueryProcessor(
+            wallet=self.wallet,
+            metagraph=self.metagraph,
+            evaluator=self.evaluator
+        )
         
         self.is_setup = True
 
