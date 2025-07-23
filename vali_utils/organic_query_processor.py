@@ -311,7 +311,7 @@ class OrganicQueryProcessor:
             end_date = utils.parse_iso_date(synapse.end_date) if synapse.end_date else dt.datetime.now(dt.timezone.utc)
             
             verify_config = ScrapeConfig(
-                entity_limit=min(synapse.limit, 10),  # Limit to reduce API costs
+                entity_limit=synapse.limit,  
                 date_range=DateRange(start=start_date, end=end_date),
                 labels=labels,
             )
