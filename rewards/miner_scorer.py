@@ -27,6 +27,8 @@ class MinerScorer:
     # The exponent used to scale the miner's score by its credibility.
     _CREDIBILITY_EXP = 2.5
 
+    ONDEMAND_MAX_CRED_PENALTY = 0.05
+
     def __init__(
         self,
         num_neurons: int,
@@ -197,11 +199,28 @@ class MinerScorer:
         )
 
     def apply_ondemand_penalty(self, uid: int, mult_factor: float):
-        """Applies a 5% credibility penalty to a given miner"""
-        cred_penalty = 0.05 * mult_factor
-        adj_cred = max(self.miner_credibility[uid] - cred_penalty, 0)
-        bt.logging.info(f"After {100*cred_penalty:.2f}% OnDemand penalty, Miner {uid} credibility decreased from {float(self.miner_credibility[uid])} to {adj_cred}.")
-        self.miner_credibility[uid] = adj_cred
+        """Applies a credibility penalty to a given miner based on their ondemand result"""
+        with self.lock:
+            cred_penalty = MinerScorer.ONDEMAND_MAX_CRED_PENALTY * mult_factor
+            old_cred = float(self.miner_credibility[uid])
+            
+            # Apply credibility penalty
+            self.miner_credibility[uid] = max(self.miner_credibility[uid] - cred_penalty, 0)
+            new_cred = float(self.miner_credibility[uid])
+            
+            # Adjust score based on the credibility ratio change
+            if old_cred > 0:
+                cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
+                old_score = float(self.scores[uid])
+                self.scores[uid] *= cred_ratio
+                
+                bt.logging.info(
+                    f"OnDemand penalty for Miner {uid}: "
+                    f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
+                    f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
+                )
+            else:
+                bt.logging.info(f"OnDemand penalty for Miner {uid}: Credibility already at 0")
 
     def on_miner_evaluated(
         self,
