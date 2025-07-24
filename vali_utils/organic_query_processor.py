@@ -478,9 +478,9 @@ class OrganicQueryProcessor:
                 user_verified=user_data.get('verified'),
                 user_followers_count=user_data.get('followers_count'),
                 user_following_count=user_data.get('following_count'),
-                # Additional tweet metadata
-                media_urls=tweet_data.get('media_urls', []),
-                media_types=tweet_data.get('media_types', []),
+                # Additional tweet metadata - extract from top-level media array
+                media_urls=[item.get('url') for item in data.get('media', []) if item.get('url')],
+                media_types=[item.get('type') for item in data.get('media', []) if item.get('type')],
                 conversation_id=tweet_data.get('conversation_id'),
                 in_reply_to_user_id=in_reply_to_data.get('user_id')
             )
@@ -506,7 +506,10 @@ class OrganicQueryProcessor:
                 body=data.get('body', ''),
                 createdAt=self._parse_timestamp(data.get('createdAt', data.get('created_at', data.get('datetime')))),
                 dataType=data.get('dataType', data.get('data_type', 'post')),
-                title=data.get('title')
+                title=data.get('title', None),
+                parent_id=data.get('parentId', data.get('parent_id', None)),
+                media=data.get('media', None),
+                is_nsfw=data.get('is_nsfw', data.get('over_18', None))
             )
         except Exception as e:
             bt.logging.error(f"Failed to convert to RedditContent: {str(e)}")

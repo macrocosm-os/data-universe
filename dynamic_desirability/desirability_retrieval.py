@@ -169,7 +169,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 continue
                 
             # Skip labels that are longer than MAX_LABEL_LENGTH
-            if len(job["params"]["label"]) > constants.MAX_LABEL_LENGTH:
+            if job["params"]["label"] and len(job["params"]["label"]) > constants.MAX_LABEL_LENGTH:
                 continue
                 
             job_weight = job.get("weight", 1.0)
