@@ -251,7 +251,7 @@ class OrganicQueryProcessor:
         penalized_miners = []
         
         for uid, post_count in miner_data_counts.items():
-            if post_count < consensus_count:
+            if post_count > 0 and post_count < consensus_count: 
                 # Calculate mult_factor based on degree of underperformance
                 # Scale from 0.0 (at consensus) to 1.0 (at zero posts)
                 underperformance_ratio = 1.0 - (post_count / consensus_count)
@@ -504,10 +504,10 @@ class OrganicQueryProcessor:
                 username=data.get('username', ''),
                 communityName=data.get('communityName', data.get('community', '')),
                 body=data.get('body', ''),
-                createdAt=self._parse_timestamp(data.get('createdAt', data.get('created_at', data.get('datetime')))),
+                createdAt=self._parse_timestamp(post.datetime), # non-obfuscated datetime
                 dataType=data.get('dataType', data.get('data_type', 'post')),
                 title=data.get('title', None),
-                parent_id=data.get('parentId', data.get('parent_id', None)),
+                parentId=data.get('parentId', data.get('parent_id', None)),
                 media=data.get('media', None),
                 is_nsfw=data.get('is_nsfw', data.get('over_18', None))
             )
