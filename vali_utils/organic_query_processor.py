@@ -507,6 +507,7 @@ class OrganicQueryProcessor:
                 createdAt=self._parse_timestamp(post.datetime), # non-obfuscated datetime
                 dataType=data.get('dataType', data.get('data_type', 'post')),
                 title=data.get('title', None),
+
                 parentId=data.get('parentId', data.get('parent_id', None)),
                 media=data.get('media', None),
                 is_nsfw=data.get('is_nsfw', data.get('over_18', None))

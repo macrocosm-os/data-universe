@@ -7,6 +7,8 @@ import pyarrow.parquet as pq
 class S3ValidationStorage:
     def __init__(self, storage_path):
         self.file_path = storage_path
+        # Ensure directory exists
+        os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         self._ensure_file_exists()
 
     def _ensure_file_exists(self):
