@@ -18,7 +18,7 @@ class Job(StrictBaseModel):
         description="Optionally, the keyword associated with the job."
     )
 
-    label: str = Field(
+    label: Optional[str] = Field(
         description="The actual incentivized label or keyword."
     )
 
