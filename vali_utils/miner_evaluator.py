@@ -273,7 +273,7 @@ class MinerEvaluator:
         if s3_validation_result:
             if s3_validation_result.is_valid:
                 bt.logging.info(
-                    f"{hotkey}: Miner {uid} passed S3 validation. Validation: {s3_validation_result.validation_percentage:.1f}%, Jobs: {s3_validation_result.valid_jobs}/{s3_validation_result.job_count}, Files: {s3_validation_result.total_files}")
+                    f"{hotkey}: Miner {uid} passed S3 validation. Validation: {s3_validation_result.validation_percentage:.1f}%, Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}")
             else:
                 bt.logging.info(f"{hotkey}: Miner {uid} did not pass S3 validation. Reason: {s3_validation_result.reason}")
 

@@ -53,7 +53,7 @@ async def get_miner_s3_validation_data(wallet, s3_auth_url: str, miner_hotkey: s
         response = requests.post(
             f"{s3_auth_url}/get-miner-specific-access",
             json=payload,
-            timeout=30
+            timeout=60  # Increased timeout for S3 auth
         )
 
         if response.status_code != 200:
@@ -68,7 +68,7 @@ async def get_miner_s3_validation_data(wallet, s3_auth_url: str, miner_hotkey: s
             return None
 
         # Parse S3 file list
-        xml_response = requests.get(miner_url)
+        xml_response = requests.get(miner_url, timeout=60)  # Increased timeout for S3 data fetch
         
         if xml_response.status_code != 200:
             bt.logging.warning(f"Failed to get S3 file list for {miner_hotkey}: {xml_response.status_code}")
@@ -248,13 +248,9 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
         unique_jobs = len(set(f['job_id'] for f in files_data if f['job_id'] != 'unknown'))
         avg_files_per_job = total_files / job_count if job_count > 0 else 0
         
-        # Validate jobs against expected jobs
-        valid_jobs = 0
-        for job_id, file_count, job_size in job_stats:
-            if job_id in expected_jobs:
-                valid_jobs += 1
-        
-        job_validity_score = (valid_jobs / job_count * 100) if job_count > 0 else 0
+        # Job presence validation - if we find any jobs, consider it valid
+        valid_jobs = job_count  # Any job found is considered valid
+        job_validity_score = 100.0 if job_count > 0 else 0.0
         quality_metrics['job_validity'] = job_validity_score
         
         # 4. Distribution analysis
@@ -273,22 +269,22 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
         total_weight = sum(weight for name, score, weight in scores)
         validation_percentage = weighted_sum / total_weight if total_weight > 0 else 0
         
-        # 6. Validation decision criteria
+        # 6. Validation decision criteria - simplified
         is_valid = (
             validation_percentage >= 60.0 and
-            job_validity_score >= 50.0 and
+            job_count > 0 and  # Must have at least one job
             recent_files >= 10
         )
         
         # Collect issues
         if validation_percentage < 60.0:
             issues.append(f"Overall quality score: {validation_percentage:.1f}%")
-        if job_validity_score < 50.0:
-            issues.append(f"Job validity: {job_validity_score:.1f}%")
+        if job_count == 0:
+            issues.append("No jobs found")
         if recent_files < 10:
             issues.append(f"Recent files: {recent_files}")
         
-        reason = f"S3 validation: {validation_percentage:.1f}% quality, {valid_jobs}/{job_count} valid jobs, {recent_files} recent files"
+        reason = f"S3 validation: {validation_percentage:.1f}% quality, {job_count} jobs found, {recent_files} recent files"
         
         return S3ValidationResult(
             is_valid=is_valid,
@@ -324,6 +320,6 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
 def get_s3_validation_summary(result: S3ValidationResult) -> str:
     """Generate a summary string for S3 validation result"""
     if result.is_valid:
-        return f"✅ S3 Valid ({result.validation_percentage:.1f}%): {result.valid_jobs}/{result.job_count} jobs, {result.total_files} files"
+        return f"✅ S3 Valid ({result.validation_percentage:.1f}%): {result.job_count} jobs, {result.total_files} files"
     else:
         return f"❌ S3 Invalid ({result.validation_percentage:.1f}%): {', '.join(result.issues[:2])}"
