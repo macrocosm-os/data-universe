@@ -1,9 +1,11 @@
+import os
 import copy
+import random
+import asyncio
 import datetime
 import traceback
-import asyncio
 import threading
-import os
+
 from common import constants
 from common.data_v2 import ScorableMinerIndex
 from common.metagraph_syncer import MetagraphSyncer
@@ -20,11 +22,10 @@ from common.data import (
 from common.protocol import GetDataEntityBucket, GetMinerIndex, GetHuggingFaceMetadata, DecodeURLRequest
 from rewards.data_value_calculator import DataValueCalculator
 from scraping.provider import ScraperProvider
-from scraping.scraper import ScraperId, ValidationResult, HFValidationResult, S3ValidationResult
+from scraping.scraper import ScraperId, ValidationResult, HFValidationResult
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
-
 from storage.validator.hf_validator_storage import HFValidationStorage
 from storage.validator.s3_validator_storage import S3ValidationStorage
 
@@ -40,7 +41,7 @@ from vali_utils.hf_utils import (
     validate_hf_content,
     compare_latest_commits_parquet_files
 )
-
+from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
 
 from rewards.miner_scorer import MinerScorer
 
@@ -144,10 +145,9 @@ class MinerEvaluator:
         # Perform S3 validation (only if enabled by date)
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
         s3_validation_result = None
-        current_time = dt.datetime.now(tz=dt.timezone.utc)
-        if current_time >= constants.S3_VALIDATION_ENABLED_DATE:
-            if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
-                s3_validation_result = await self._perform_s3_validation(hotkey, uid, current_block)
+
+        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
+            s3_validation_result = await self._perform_s3_validation(hotkey, current_block)
         ##########
 
         # From that index, find a data entity bucket to sample and get it from the miner.
@@ -261,18 +261,21 @@ class MinerEvaluator:
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
         if hf_validation_result:
-            if hf_validation_result.is_valid == True:
-                bt.logging.info(f"{hotkey}: Miner {uid} passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
+            if hf_validation_result.is_valid:
+                bt.logging.info(
+                    f"{hotkey}: Miner {uid} passed HF validation. HF Validation Percentage: {hf_validation_result.validation_percentage}")
             else:
-                bt.logging.info(f"{hotkey}: Miner {uid} did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
+                bt.logging.info(
+                    f"{hotkey}: Miner {uid} did not pass HF validation, no bonus awarded. Reason: {hf_validation_result.reason}")
 
             self.scorer.update_hf_boost_and_cred(uid, hf_validation_result.validation_percentage)
 
         if s3_validation_result:
-            if s3_validation_result.is_valid == True:
-                bt.logging.info(f"{hotkey}: Miner {uid} passed S3 validation. S3 Validation Percentage: {s3_validation_result.validation_percentage:.1f}%, Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}")
+            if s3_validation_result.is_valid:
+                bt.logging.info(
+                    f"{hotkey}: Miner {uid} passed S3 validation. Validation: {s3_validation_result.validation_percentage:.1f}%, Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}")
             else:
-                bt.logging.info(f"{hotkey}: Miner {uid} did not pass S3 validation. Reason: Data validation failed")
+                bt.logging.info(f"{hotkey}: Miner {uid} did not pass S3 validation. Reason: {s3_validation_result.reason}")
 
             self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage)
 
@@ -304,7 +307,7 @@ class MinerEvaluator:
                 # Temporarily remove parquet check until SN stabilizes
 
                 # Check if the two latest commits are identical.
-                #same_commits, _, _ = compare_latest_commits_parquet_files(hf_metadata.repo_name)
+                # same_commits, _, _ = compare_latest_commits_parquet_files(hf_metadata.repo_name)
                 # if same_commits:
                 #     bt.logging.info(
                 #         f"{hotkey}: Latest commits for {hf_metadata.repo_name} are identical. Marking HF validation as False."
@@ -323,8 +326,8 @@ class MinerEvaluator:
                         bt.logging.info(f"{hotkey}: Commit date is in string format, converting to datetime.datetime.")
                         commit_date = dt.datetime.fromisoformat(commit_date)
                     except Exception as e:
-                        bt.logging.error(f"{hotkey}: Failed to parse commit date: {commit_date}. Error: {str(e)}") 
-                     
+                        bt.logging.error(f"{hotkey}: Failed to parse commit date: {commit_date}. Error: {str(e)}")
+
                 if commit_date and (dt.datetime.now(dt.timezone.utc) - commit_date) > dt.timedelta(hours=19):
                     bt.logging.info(
                         f"{hotkey}: Latest commit for {hf_metadata.repo_name} is greater than 19 hours old. Marking HF validation as False."
@@ -382,66 +385,29 @@ class MinerEvaluator:
         return hf_validation_result
 
     async def _perform_s3_validation(
-            self, hotkey: str, uid: int, current_block: int
+            self, hotkey: str, current_block: int
     ) -> Optional[S3ValidationResult]:
         """
-        Performs S3 validation for a miner using S3 data access.
-        Validates data freshness, file structure, and content format.
-        
-        SECURITY NOTE: All logging in this method must be public-safe as validator logs
-        are publicly visible. Never log URLs, credentials, or sensitive data.
-        
+        Performs comprehensive S3 validation using metadata analysis and statistical methods.
+        Validates file structure, job alignment, data quality, and temporal patterns.
+
         Returns:
             An S3ValidationResult with validation details or None if no S3 data is found.
         """
-        s3_validation_result = None
+        bt.logging.info(f"{hotkey}: Starting comprehensive S3 validation")
+
         try:
-            bt.logging.info(f"{hotkey}: Starting S3 validation")
+            # Use new comprehensive S3 validation system
+            s3_auth_url = "https://sn13-data.api.macrocosmos.ai"  # TODO: Make configurable
+            s3_validation_result = await validate_s3_miner_data(self.wallet, s3_auth_url, hotkey)
             
-            # Check if miner has any jobs in S3
-            jobs = await self._get_miner_s3_jobs(hotkey)
-            if not jobs:
-                bt.logging.info(f"{hotkey}: No S3 jobs found")
-                s3_validation_result = S3ValidationResult(
-                    is_valid=False,
-                    validation_percentage=0.0,
-                    job_count=0,
-                    total_files=0,
-                    reason="No S3 data found"
-                )
-                self.s3_storage.update_validation_info(hotkey, 0, current_block)
-                return s3_validation_result
+            # Log results
+            summary = get_s3_validation_summary(s3_validation_result)
+            bt.logging.info(f"{hotkey}: {summary}")
             
-            total_files = 0
-            valid_files = 0
-            
-            # Validate files in each job
-            for job_id in jobs[:5]:  # Limit to 5 jobs to avoid timeout
-                try:
-                    files = await self._get_job_files(hotkey, job_id)
-                    if files:
-                        for file_info in files[:10]:  # Limit to 10 files per job
-                            total_files += 1
-                            if await self._validate_s3_file(hotkey, file_info):
-                                valid_files += 1
-                except Exception as e:
-                    bt.logging.warning(f"{hotkey}: Error validating job {job_id}: Connection error")
-                    continue
-            
-            # Calculate validation percentage
-            validation_percentage = (valid_files / total_files * 100) if total_files > 0 else 0.0
-            is_valid = validation_percentage >= 50.0  # At least 50% of files must be valid
-            
-            s3_validation_result = S3ValidationResult(
-                is_valid=is_valid,
-                validation_percentage=validation_percentage,
-                job_count=len(jobs),
-                total_files=total_files,
-                reason=f"Validated {valid_files}/{total_files} files across {len(jobs)} jobs"
-            )
-            
-            bt.logging.info(f"{hotkey}: S3 validation completed - {validation_percentage:.1f}% valid ({valid_files}/{total_files} files, {len(jobs)} jobs)")
-            
+            if not s3_validation_result.is_valid and s3_validation_result.issues:
+                bt.logging.debug(f"{hotkey}: S3 validation issues: {', '.join(s3_validation_result.issues[:3])}")
+
         except Exception as e:
             bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
             s3_validation_result = S3ValidationResult(
@@ -449,63 +415,20 @@ class MinerEvaluator:
                 validation_percentage=0.0,
                 job_count=0,
                 total_files=0,
-                reason=f"S3 validation error: {str(e)}"
+                total_size_bytes=0,
+                valid_jobs=0,
+                recent_files=0,
+                quality_metrics={},
+                issues=[f"Validation error: {str(e)}"],
+                reason=f"S3 validation failed: {str(e)}"
             )
-        
+
         # Update S3 validation storage
         if s3_validation_result:
             self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
-        
+
         return s3_validation_result
 
-    async def _get_miner_s3_jobs(self, hotkey: str) -> List[str]:
-        """Get list of job IDs for a miner from S3."""
-        try:
-            return await self.s3_reader.list_jobs(hotkey)
-        except Exception as e:
-            bt.logging.warning(f"Failed to get S3 jobs for {hotkey}: Connection error")
-            return []
-
-    async def _get_job_files(self, hotkey: str, job_id: str) -> List[dict]:
-        """Get list of files for a specific job."""
-        try:
-            return await self.s3_reader.list_files(hotkey, job_id)
-        except Exception as e:
-            bt.logging.warning(f"Failed to get S3 files for {hotkey}: Connection error")
-            return []
-
-    async def _validate_s3_file(self, hotkey: str, file_info: dict) -> bool:
-        """Validate a single S3 file."""
-        try:
-            # Basic validation checks
-            if not file_info.get('Key'):
-                return False
-            
-            # Check file extension is parquet
-            if not file_info['Key'].endswith('.parquet'):
-                return False
-            
-            # Check file size is reasonable (not empty, not too large)
-            size = file_info.get('Size', 0)
-            if size < 1024 or size > 100 * 1024 * 1024:  # 1KB to 100MB
-                return False
-            
-            # Check last modified date (within 30 days)
-            import datetime as dt
-            if 'LastModified' in file_info:
-                last_modified = file_info['LastModified']
-                if isinstance(last_modified, str):
-                    last_modified = dt.datetime.fromisoformat(last_modified.replace('Z', '+00:00'))
-                
-                age = dt.datetime.now(dt.timezone.utc) - last_modified
-                if age > dt.timedelta(days=30):
-                    return False
-            
-            return True
-            
-        except Exception as e:
-            bt.logging.warning(f"Error validating S3 file for {hotkey}: Validation error")
-            return False
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
@@ -753,8 +676,5 @@ class MinerEvaluator:
 
             self.metagraph = copy.deepcopy(metagraph)
 
-
-
     def exit(self):
         self.should_exit = True
-

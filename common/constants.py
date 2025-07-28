@@ -36,12 +36,6 @@ MINER_CACHE_FRESHNESS = dt.timedelta(minutes=20)
 # Date after which only x.com URLs are accepted
 NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # December 28, 2024 UTC
 
-# Date after which media content is required for tweets that contain media
-BYTE_ALLOWANCE_DATE = dt.datetime(2025, 6, 7, tzinfo=dt.timezone.utc)  # June 7, 2025 UTC
-
-# Date after which S3 validation becomes active for miners
-S3_VALIDATION_ENABLED_DATE = dt.datetime(2025, 7, 7, tzinfo=dt.timezone.utc)  # July 7, 2025 UTC
-
 # Date after which media content is required for Reddit posts that contain media
 REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # August 7, 2025 UTC (one month from now)
 
