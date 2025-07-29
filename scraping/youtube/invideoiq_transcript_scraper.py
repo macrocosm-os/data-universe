@@ -8,7 +8,7 @@ import httpx
 
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
 from scraping.apify import ActorRunner, RunConfig, ActorRunError
 
@@ -444,52 +444,6 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 ))
 
         return results
-
-    async def validate_hf(self, entities) -> HFValidationResult:
-        """Validate HuggingFace dataset entries."""
-        if not entities:
-            return HFValidationResult(
-                is_valid=True,
-                validation_percentage=100,
-                reason="No entities to validate"
-            )
-
-        validation_results = []
-
-        for entity in entities:
-            try:
-                video_id = self._extract_video_id_from_url(entity.get('url', ''))
-                language = entity.get('language', self.DEFAULT_LANGUAGE)
-
-                if not video_id:
-                    validation_results.append(False)
-                    continue
-
-                transcript_data = await self._get_transcript_from_actor(video_id, language)
-                if not transcript_data:
-                    validation_results.append(False)
-                    continue
-
-                if entity.get('text'):
-                    actual_text = self._extract_transcript_text(transcript_data.get('transcript', []))
-                    stored_text = entity.get('text', '')
-
-                    similarity = self._calculate_text_similarity(actual_text, stored_text)
-                    validation_results.append(similarity >= 0.7)
-                else:
-                    validation_results.append(False)
-
-            except Exception:
-                validation_results.append(False)
-
-        valid_count = sum(1 for result in validation_results if result)
-        validation_percentage = (valid_count / len(validation_results)) * 100 if validation_results else 0
-
-        return HFValidationResult(
-            is_valid=validation_percentage >= 60,
-            validation_percentage=validation_percentage,
-            reason=f"Validation Percentage = {validation_percentage}"
-        )
 
     def _validate_content_match(self, actual_data: Dict[str, Any], stored_content: YouTubeContent,
                                 entity: DataEntity) -> ValidationResult:

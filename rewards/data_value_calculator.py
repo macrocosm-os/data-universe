@@ -3,9 +3,9 @@ from typing import Optional, List, Dict, Tuple
 from common.data import DataSource, TimeBucket, DateRange
 from common.data_v2 import ScorableDataEntityBucket
 from rewards.data import DataDesirabilityLookup
-from scraping.scraper import HFValidationResult
 from rewards import data_desirability_lookup
 from common import utils
+
 
 class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""

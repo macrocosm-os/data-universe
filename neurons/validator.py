@@ -193,7 +193,6 @@ class Validator:
             model = sync_run_retrieval(self.config)
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
-            bt.logging.info(f"Desirable data list: {model}")
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
             bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
         except Exception as e:
@@ -398,10 +397,10 @@ class Validator:
                 # Check if we should start a new wandb run.
                 if not self.config.wandb.off:
                     if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
-                        days=1
+                        hours=12
                     ):
                         bt.logging.info(
-                            "Current wandb run is more than 1 day old. Starting a new run."
+                            "Current wandb run is more than 12 hours old. Starting a new run."
                         )
                         self.wandb_run.finish()
                         self.new_wandb_run()

@@ -122,52 +122,6 @@ def are_hashtags_valid(tweet_to_verify_hashtags: List, actual_tweet_hashtags: Li
         len(tweet_to_verify_hashtags) <= 2.5 * len(actual_tweet_hashtags)
 
 
-def hf_tweet_validation(validation_results: List[ValidationResult]):
-    total_count = len(validation_results)
-    true_count = sum(1 for item in validation_results if item.is_valid)
-    true_percentage = (true_count / total_count) * 100
-
-    return true_percentage >= 50, true_percentage
-
-
-def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> ValidationResult:
-    """Validates the tweet based on URL, text, and date."""
-    # Check URL
-    if not is_valid_twitter_url(tweet_to_verify.get('url')):
-        return ValidationResult(is_valid=False, reason="Invalid URL", content_size_bytes_validated=0)
-
-    if normalize_url(tweet_to_verify.get('url')) != normalize_url(actual_tweet.get('url')):
-        return ValidationResult(is_valid=False, reason="Tweet URLs do not match", content_size_bytes_validated=0)
-
-    # Check text
-    if tweet_to_verify.get('text') != actual_tweet.get('text'):
-        return ValidationResult(is_valid=False, reason="Tweet texts do not match", content_size_bytes_validated=0)
-
-    # If we're after the media required date, validate media content
-
-    actual_media = actual_tweet.get('media', [])
-    verify_media = tweet_to_verify.get('media', [])
-
-    # Check if both have media or both don't have media
-    if bool(actual_media) != bool(verify_media):
-        return ValidationResult(
-            is_valid=False,
-            reason="Media presence mismatch - one has media while the other doesn't",
-            content_size_bytes_validated=0
-        )
-
-    # If both have media, check that they match
-    if actual_media and verify_media:
-        if len(actual_media) != len(verify_media):
-            return ValidationResult(
-                is_valid=False,
-                reason=f"Media count mismatch - expected {len(actual_media)}, got {len(verify_media)}",
-                content_size_bytes_validated=0
-            )
-
-    return ValidationResult(is_valid=True, reason="Tweet is valid", content_size_bytes_validated=0)
-
-
 def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
     """Validate all tweet fields between submitted and actual tweet data.
     
