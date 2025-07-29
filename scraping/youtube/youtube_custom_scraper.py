@@ -14,7 +14,7 @@ from youtube_transcript_api import YouTubeTranscriptApi, TranscriptsDisabled, No
 import httpx
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
 import isodate
 from dotenv import load_dotenv
@@ -488,73 +488,6 @@ class YouTubeTranscriptScraper(Scraper):
                 )
 
         return results
-
-    async def validate_hf(self, entities) -> HFValidationResult:
-        """
-        Validate the correctness of a list of HF-stored YouTube transcript entries.
-        """
-        if not entities:
-            return HFValidationResult(
-                is_valid=True,
-                validation_percentage=100,
-                reason="No entities to validate"
-            )
-
-        validation_results = []
-
-        for entity in entities:
-            # Extract the video ID from the URL
-            video_id = self._extract_video_id(entity.get('url', ''))
-            if not video_id:
-                validation_results.append(False)
-                continue
-
-            try:
-                # Respect rate limiting
-                await self._wait_for_rate_limit()
-
-                # Verify metadata
-                video_metadata = await self._get_video_metadata_from_api(video_id)
-                if not video_metadata:
-                    validation_results.append(False)
-                    continue
-
-                # Check if the text field contains valid content
-                if entity.get('text'):
-                    # Verify transcript
-                    try:
-                        transcript_data = await self._get_transcript(video_id)
-                        if transcript_data:
-                            # Extract full text from transcript
-                            actual_text = " ".join([item.get('text', '') for item in transcript_data])
-
-                            # Compare with stored text (simplified comparison)
-                            similarity = self._calculate_text_similarity(actual_text, entity.get('text', ''))
-                            validation_results.append(similarity >= 0.7)  # 70% similarity threshold
-                        else:
-                            validation_results.append(False)
-                    except (TranscriptsDisabled, NoTranscriptFound):
-                        # If entity indicates no transcript, this is valid
-                        if entity.get('status') == 'no_transcript':
-                            validation_results.append(True)
-                        else:
-                            validation_results.append(False)
-                else:
-                    validation_results.append(False)
-
-            except Exception as e:
-                bt.logging.error(f"Error validating video {video_id}: {str(e)}")
-                validation_results.append(False)
-
-        # Calculate the validation percentage
-        valid_count = sum(1 for result in validation_results if result)
-        validation_percentage = (valid_count / len(validation_results)) * 100 if validation_results else 0
-
-        return HFValidationResult(
-            is_valid=validation_percentage >= 60,  # 60% threshold for valid dataset
-            validation_percentage=validation_percentage,
-            reason=f"Validation Percentage = {validation_percentage}"
-        )
 
     def _compress_transcript(self, content: YouTubeContent) -> YouTubeContent:
         """
