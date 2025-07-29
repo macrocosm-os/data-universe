@@ -93,33 +93,6 @@ class GetContentsByBuckets(BaseProtocol):
     )
 
 
-class DecodeURLRequest(BaseProtocol):
-    """
-    Protocol by which Validators can request URL decoding from a Miner.
-
-    Attributes:
-    - encoded_urls: A list of encoded URL strings to be decoded
-    - decoded_urls: A list of decoded URL strings returned by the miner
-    """
-
-    encoded_urls: List[str] = Field(
-        title="encoded_urls",
-        description="List of encoded URLs that need to be decoded",
-        frozen=True,
-        repr=False,
-        default_factory=list,
-        max_length=10  # Changed from validator to direct Field constraint
-    )
-
-    decoded_urls: List[str] = Field(
-        title="decoded_urls",
-        description="List of decoded URLs corresponding to the encoded URLs",
-        frozen=False,
-        repr=False,
-        default_factory=list,
-    )
-
-
 class OnDemandRequest(BaseProtocol):
     """Protocol for on-demand data retrieval requests"""
 
@@ -175,6 +148,5 @@ REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
     GetMinerIndex: 1,
     GetDataEntityBucket: 1,
     GetContentsByBuckets: 5,
-    DecodeURLRequest: 2,
     OnDemandRequest: 5,
 }
