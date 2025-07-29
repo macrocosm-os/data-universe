@@ -6,7 +6,7 @@ from typing import List, Tuple, Optional, Dict, Any
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
