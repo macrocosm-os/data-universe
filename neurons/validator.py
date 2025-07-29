@@ -193,7 +193,6 @@ class Validator:
             model = sync_run_retrieval(self.config)
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
-            bt.logging.info(f"Desirable data list: {model}")
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
             bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
         except Exception as e:
