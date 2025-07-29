@@ -129,7 +129,7 @@ class MinerEvaluator:
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
         s3_validation_result = None
 
-        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 5100:  # ~17 hrs
+        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 2550:  # ~17 hrs
             s3_validation_result = await self._perform_s3_validation(hotkey, current_block)
         ##########
 
