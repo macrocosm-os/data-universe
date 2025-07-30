@@ -137,7 +137,7 @@ class Miner:
         self.lock = threading.RLock()
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
-        if self.use_uploader:
+        if self.use_uploader and not self.config.offline:
             self.s3_partitioned_uploader = S3PartitionedUploader(
                 db_path=self.config.neuron.database_name,
                 subtensor=self.subtensor,
