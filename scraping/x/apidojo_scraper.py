@@ -87,14 +87,18 @@ class ApiDojoTwitterScraper(Scraper):
                         )
 
                 # Parse the response
-                tweets, is_retweets = self._best_effort_parse_dataset(dataset)
+                tweets, is_retweets, author_datas, view_counts = self._best_effort_parse_dataset(dataset)
 
                 actual_tweet = None
+                actual_author_data = None
+                actual_view_count = 0
 
                 for index, tweet in enumerate(tweets):
                     if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
                         actual_tweet = tweet
                         is_retweet = is_retweets[index]
+                        actual_author_data = author_datas[index]
+                        actual_view_count = view_counts[index]
                         break
 
                 bt.logging.debug(actual_tweet)
@@ -110,7 +114,9 @@ class ApiDojoTwitterScraper(Scraper):
                     return utils.validate_tweet_content(
                         actual_tweet=actual_tweet,
                         entity=entity,
-                        is_retweet=is_retweet
+                        is_retweet=is_retweet,
+                        author_data=actual_author_data,
+                        view_count=actual_view_count
                     )
 
         if not entities:
@@ -197,7 +203,7 @@ class ApiDojoTwitterScraper(Scraper):
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
-        x_contents, is_retweets = self._best_effort_parse_dataset(dataset)
+        x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(dataset)
 
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
@@ -209,20 +215,32 @@ class ApiDojoTwitterScraper(Scraper):
 
         return data_entities
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
+    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool], List[dict], List[int]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
         Any errors are logged and ignored."""
 
         if dataset == [{"zero_result": True}] or not dataset:
-            return [], []
+            return [], [], [], []
 
         results: List[XContent] = []
         is_retweets: List[bool] = []
+        author_datas: List[dict] = []
+        view_counts: List[int] = []
         
         for data in dataset:
             try:
                 # Check that we have the required fields.
                 if not all(field in data for field in ["text", "url", "createdAt"]):
+                    continue
+
+                # Filter spam accounts using engagement metrics
+                if 'author' in data and utils.is_spam_account(data['author']):
+                    bt.logging.debug(f"Filtered spam account: {data.get('author', {}).get('userName', 'unknown')}")
+                    continue
+                
+                # Filter low engagement tweets
+                if utils.is_low_engagement_tweet(data):
+                    bt.logging.debug(f"Filtered low engagement tweet: {data.get('url', 'unknown')}")
                     continue
 
                 # Extract reply information (tuple of (user_id, username))
@@ -237,6 +255,10 @@ class ApiDojoTwitterScraper(Scraper):
 
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
+                
+                # Extract engagement data for validation
+                author_datas.append(data.get('author', {}))
+                view_counts.append(data.get('viewCount', 0))
                 
                 results.append(
                     XContent(
@@ -266,7 +288,7 @@ class ApiDojoTwitterScraper(Scraper):
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
         
-        return results, is_retweets
+        return results, is_retweets, author_datas, view_counts
 
     def _extract_reply_info(self, data: dict) -> Tuple[Optional[str], Optional[str]]:
         """Extract reply information, returning (user_id, username) or (None, None)"""
@@ -430,6 +452,45 @@ async def test_validate():
     results = await scraper.validate(entities=true_entities)
     for result in results:
         print(result)
+
+
+async def test_shadowban_detection():
+    """Test shadowban detection for HelenRoach32601 account"""
+    scraper = ApiDojoTwitterScraper()
+    
+    # Test the suspected shadowbanned account
+    username = "HelenRoach32601"
+    
+    run_input = {
+        **ApiDojoTwitterScraper.BASE_RUN_INPUT,
+        "searchTerms": [f"from:{username}"],
+        "maxTweets": 5,
+    }
+    
+    run_config = RunConfig(
+        actor_id=ApiDojoTwitterScraper.ACTOR_ID,
+        debug_info=f"Shadowban test for {username}",
+        max_data_entities=5,
+        timeout_secs=60,
+    )
+    
+    bt.logging.success(f"Testing shadowban detection for @{username}")
+    
+    try:
+        dataset: List[dict] = await scraper.runner.run(run_config, run_input)
+        
+        if not dataset or dataset == [{"zero_result": True}]:
+            bt.logging.success(f"✅ SHADOWBANNED: @{username} - No results from 'from:username' search")
+            return True  # Account is shadowbanned
+        else:
+            bt.logging.info(f"❌ NOT SHADOWBANNED: @{username} - Found {len(dataset)} results")
+            for tweet in dataset[:2]:  # Show first 2 results
+                bt.logging.info(f"  - Tweet: {tweet.get('text', '')[:100]}...")
+            return False  # Account is not shadowbanned
+            
+    except Exception as e:
+        bt.logging.error(f"Error testing shadowban for @{username}: {e}")
+        return None  # Unknown status
 
 
 async def test_multi_thread_validate():
