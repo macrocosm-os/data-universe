@@ -127,10 +127,15 @@ class YouTubeChannelTranscriptScraper(Scraper):
                             continue
 
                         # Get upload date from API
-                        upload_date = await self._get_upload_date_from_api(video_id)
+                        upload_date, view_count = await self._get_video_data_from_api(video_id)
                         if not upload_date:
                             bt.logging.warning(f"No upload date for video {video_id}, using current time")
                             upload_date = dt.datetime.now(dt.timezone.utc)
+                        
+                        # Filter low engagement videos (100+ views required)
+                        if view_count < 100:
+                            bt.logging.info(f"Video {video_id} has only {view_count} views, skipping (minimum 100 required)")
+                            continue
 
                         # Check date range
                         if not self._is_within_date_range(upload_date, scrape_config.date_range):
@@ -207,7 +212,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 response = await client.get(url, params=params)
                 response.raise_for_status()
                 data = response.json()
-
+                print('DATA from YT google response')
+                print(data)
                 if not data.get("items"):
                     bt.logging.warning(f"No channel data found for ID: {channel_id}")
                     return []
@@ -357,17 +363,17 @@ class YouTubeChannelTranscriptScraper(Scraper):
             bt.logging.error(f"Error getting transcript for video {video_id} in {language}: {str(e)}")
             return None
 
-    async def _get_upload_date_from_api(self, video_id: str) -> Optional[dt.datetime]:
-        """Get upload date from YouTube API (minimal usage)."""
+    async def _get_video_data_from_api(self, video_id: str) -> tuple[Optional[dt.datetime], int]:
+        """Get upload date and view count from YouTube API."""
         if not self.youtube_api_key:
-            return None
+            return None, 0
 
         try:
             url = "https://www.googleapis.com/youtube/v3/videos"
             params = {
                 "id": video_id,
-                "part": "snippet",
-                "fields": "items(snippet(publishedAt))",
+                "part": "snippet,statistics",  # Add statistics for view count
+                "fields": "items(snippet(publishedAt),statistics(viewCount))",  # Add viewCount field
                 "key": self.youtube_api_key
             }
 
@@ -377,13 +383,16 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 data = response.json()
 
                 if data.get("items") and len(data["items"]) > 0:
-                    published_at = data["items"][0]["snippet"]["publishedAt"]
-                    return dt.datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                    item = data["items"][0]
+                    published_at = item["snippet"]["publishedAt"]
+                    view_count = int(item.get("statistics", {}).get("viewCount", "0"))
+                    upload_date = dt.datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+                    return upload_date, view_count
 
         except Exception as e:
-            bt.logging.warning(f"Failed to get upload date for {video_id}: {str(e)}")
+            bt.logging.warning(f"Failed to get video data for {video_id}: {str(e)}")
 
-        return None
+        return None, 0
 
     def _create_youtube_content(self, video_id: str, language: str, upload_date: dt.datetime,
                                 transcript_data: Dict[str, Any], channel_identifier: str) -> YouTubeContent:
@@ -427,6 +436,16 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     results.append(ValidationResult(
                         is_valid=False,
                         reason="Video transcript not available in original language",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
+
+                # Validate view count during validation
+                _, view_count = await self._get_video_data_from_api(content_to_validate.video_id)
+                if view_count < 100:
+                    results.append(ValidationResult(
+                        is_valid=False,
+                        reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
                         content_size_bytes_validated=entity.content_size_bytes
                     ))
                     continue
