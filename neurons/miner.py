@@ -30,8 +30,6 @@ from common.protocol import (
     GetDataEntityBucket,
     GetMinerIndex,
     GetContentsByBuckets,
-    GetHuggingFaceMetadata,
-    DecodeURLRequest,
     REQUEST_LIMIT_BY_TYPE_PER_PERIOD
 )
 
@@ -40,9 +38,7 @@ from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
-from upload_utils.huggingface_uploader import DualUploader
 from upload_utils.s3_uploader import S3PartitionedUploader
-from upload_utils.encoding_system import EncodingKeyManager, decode_url
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
 from common.data import DataLabel, DataSource, DataEntity
@@ -56,6 +52,7 @@ import json
 # Enable logging to the miner TODO move it to some different location
 bt.logging.set_info(True)
 bt.logging.set_debug(True)
+
 
 class Miner:
     """The Glorious Miner."""
@@ -122,14 +119,6 @@ class Miner:
                 blacklist_fn=self.get_contents_by_buckets_blacklist,
                 priority_fn=self.get_contents_by_buckets_priority,
             ).attach(
-                forward_fn=self.get_huggingface_metadata,
-                blacklist_fn=self.get_huggingface_metadata_blacklist,
-                priority_fn=self.get_huggingface_metadata_priority,
-            ).attach(
-                forward_fn=self.decode_urls,
-                blacklist_fn=self.decode_urls_blacklist,
-                priority_fn=self.decode_urls_priority
-            ).attach(
                 forward_fn=self.handle_on_demand,
                 blacklist_fn=self.handle_on_demand_blacklist,
                 priority_fn=self.handle_on_demand_priority
@@ -142,28 +131,13 @@ class Miner:
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.compressed_index_refresh_thread: threading.Thread = None
-        self.hugging_face_thread: threading.Thread = None
+        self.lookup_thread: threading.Thread = None
+        self.s3_partitioned_thread: threading.Thread = None
+
         self.lock = threading.RLock()
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
-        self.vpermit_rao_limit = self.config.vpermit_rao_limit
-
-        # Instantiate encoding keys
-        self.encoding_key_manager = EncodingKeyManager(key_path=self.config.encoding_key_json_file)
-        self.private_encoding_key_manager = EncodingKeyManager(key_path=self.config.private_encoding_key_json_file)
-
-        bt.logging.info("Initialized EncodingKeyManager for URL encoding/decoding.")
-
-        if self.use_uploader:
-            self.hf_uploader = DualUploader(
-                db_path=self.config.neuron.database_name,
-                encoding_key_manager=self.encoding_key_manager,
-                private_encoding_key_manager=self.private_encoding_key_manager,
-                wallet=self.wallet,
-                subtensor=self.subtensor,
-                state_file=self.config.miner_upload_state_file,
-
-            )
+        if self.use_uploader and not self.config.offline:
             self.s3_partitioned_uploader = S3PartitionedUploader(
                 db_path=self.config.neuron.database_name,
                 subtensor=self.subtensor,
@@ -257,29 +231,6 @@ class Miner:
                 bt.logging.exception("Exception details:")
                 time.sleep(300)  # Wait 5 minutes before trying again
 
-    def upload_hugging_face(self):
-        """Going to be removed"""
-        if not self.use_uploader:
-            bt.logging.info("HuggingFace Uploader is not enabled.")
-            return
-
-        time_sleep_val = dt.timedelta(minutes=60).total_seconds()
-        time.sleep(time_sleep_val)
-
-        while not self.should_exit:
-            try:
-                unique_id = self.hf_uploader.unique_id  # Assuming this exists in the DualUploader
-                if self.storage.should_upload_hf_data(unique_id):
-                    bt.logging.info("Trying to upload the data into HuggingFace and S3.")
-                    hf_metadata_list = self.hf_uploader.upload_sql_to_huggingface()
-                    if hf_metadata_list:
-                        self.storage.store_hf_dataset_info(hf_metadata_list)
-            except Exception:
-                bt.logging.error(traceback.format_exc())
-
-            time_sleep_val = dt.timedelta(minutes=90).total_seconds()
-            time.sleep(time_sleep_val)
-
     def upload_s3_partitioned(self):
         """Upload DD data to S3 in partitioned format"""
         # Wait 10 minutes before starting first upload
@@ -297,7 +248,7 @@ class Miner:
             except Exception:
                 bt.logging.error(traceback.format_exc())
 
-            # Upload every 2 hours (more frequent than HF since it's smaller, focused dataset)
+            # Upload every 2 hours
             time_sleep_val = dt.timedelta(hours=2).total_seconds()
             time.sleep(time_sleep_val)
 
@@ -384,11 +335,6 @@ class Miner:
                 target=self.get_updated_lookup, daemon=True
             )
             self.lookup_thread.start()
-
-            self.hugging_face_thread = threading.Thread(
-                target=self.upload_hugging_face, daemon=True
-            )
-            self.hugging_face_thread.start()
 
             self.s3_partitioned_thread = threading.Thread(
                 target=self.upload_s3_partitioned, daemon=True
@@ -519,50 +465,6 @@ class Miner:
         )
 
         return synapse
-
-    async def get_huggingface_metadata(self, synapse: GetHuggingFaceMetadata) -> GetHuggingFaceMetadata:
-        bt.logging.info(f"Got a GetHuggingFaceMetadata request from {synapse.dendrite.hotkey}.")
-
-        # Query the HuggingFace metadata from the database
-        synapse.metadata = self.storage.get_hf_metadata(unique_id=self.hf_uploader.unique_id)
-
-        if not synapse.metadata:
-            bt.logging.info(f"No HuggingFace metadata available. Returning empty list to {synapse.dendrite.hotkey}.")
-        else:
-            bt.logging.success(
-                f"Returning {len(synapse.metadata)} HuggingFace metadata entries to {synapse.dendrite.hotkey}.")
-
-        return synapse
-
-    async def decode_urls(self, synapse: DecodeURLRequest) -> DecodeURLRequest:
-        """Handle URL decoding requests using miner's keys."""
-        bt.logging.info(f"Processing URL decode request from {synapse.dendrite.hotkey}")
-
-        # Try decoding with both private and public keys
-        decoded_urls = []
-        for url in synapse.encoded_urls:
-            # Try private key first, then public key if no result
-            result = decode_url(url, self.private_encoding_key_manager.get_fernet())
-            if not result:
-                result = decode_url(url, self.encoding_key_manager.get_fernet())
-            decoded_urls.append(result if result else "")
-
-        synapse.decoded_urls = decoded_urls
-        return synapse
-
-    async def decode_urls_blacklist(self, synapse: DecodeURLRequest) -> typing.Tuple[bool, str]:
-        """The blacklist function for decode URL requests."""
-        return self.default_blacklist(synapse)
-
-    async def decode_urls_priority(self, synapse: DecodeURLRequest) -> float:
-        """The priority function for decode URL requests."""
-        return self.default_priority(synapse)
-
-    async def get_huggingface_metadata_blacklist(self, synapse: GetHuggingFaceMetadata) -> typing.Tuple[bool, str]:
-        return self.default_blacklist(synapse)
-
-    async def get_huggingface_metadata_priority(self, synapse: GetHuggingFaceMetadata) -> float:
-        return self.default_priority(synapse)
 
     async def get_data_entity_bucket_blacklist(
         self, synapse: GetDataEntityBucket

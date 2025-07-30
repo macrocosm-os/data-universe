@@ -77,13 +77,13 @@ def get_validator_data(metagraph: bt.metagraph, vpermit_rao_limit: int) -> Dict[
     return validator_data
 
 
-def get_miner_uids(metagraph: bt.metagraph, my_uid: int, vpermit_rao_limit: int) -> List[int]:
+def get_miner_uids(metagraph: bt.metagraph, vpermit_rao_limit: int) -> List[int]:
     """Gets the uids of all miners in the metagraph."""
     return sorted(
         [
             uid.item()
             for uid in metagraph.uids
-            if is_miner(uid.item(), metagraph, vpermit_rao_limit) and uid.item() != my_uid
+            if is_miner(uid.item(), metagraph, vpermit_rao_limit)
         ]
     )
 

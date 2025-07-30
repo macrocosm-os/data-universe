@@ -21,7 +21,7 @@ from scraping.reddit.utils import (
 
 from common.date_range import DateRange
 from scraping.reddit import model
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.reddit.model import RedditContent, RedditDataType
 from typing import List
 from dotenv import load_dotenv
@@ -146,83 +146,6 @@ class RedditCustomScraper(Scraper):
 
         return results
 
-    async def validate_hf(self, entities) -> HFValidationResult:
-        """Validate the correctness of HFEntities by URL, focusing on username, date (hour), and text."""
-        if not entities:
-            return True
-
-        validation_results = []
-
-        for entity in entities:
-            if not is_valid_reddit_url(entity.get('url')):
-                validation_results.append(False)
-                continue
-
-            content = None
-            try:
-                async with asyncpraw.Reddit(
-                        client_id=os.getenv("REDDIT_CLIENT_ID"),
-                        client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
-                        username=os.getenv("REDDIT_USERNAME"),
-                        password=os.getenv("REDDIT_PASSWORD"),
-                        user_agent=RedditCustomScraper.USER_AGENT,
-                ) as reddit:
-                    if entity.get('dataType') == RedditDataType.COMMENT:
-                        comment = await reddit.comment(url=entity.get('url'))
-                        content = self._best_effort_parse_comment(comment)
-                    else:
-                        submission = await reddit.submission(url=entity.get('url'))
-                        content = self._best_effort_parse_submission(submission)
-            except Exception as e:
-                bt.logging.error(
-                    f"Failed to validate entity ({entity.get('url')}): {traceback.format_exc()}."
-                )
-                validation_results.append(False)
-                continue
-
-            if not content:
-                validation_results.append(False)
-                continue
-
-            validation_result = self._validate_hf_reddit_content(content, entity)
-            validation_results.append(validation_result)
-
-        valid_percentage = sum(validation_results) / len(validation_results) * 100
-
-        # Check if at least 60% of the data is valid
-        is_valid = valid_percentage >= 60
-        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percentage,
-                                  reason=f"Validation Percentage = {valid_percentage}")
-
-    def _validate_hf_reddit_content(self, actual_content: RedditContent, entity_to_validate: dict) -> bool:
-        """Validate the Reddit content against the entity to validate, focusing on username, date (hour), and text."""
-
-        # Compare date (year, month, day)
-        entity_datetime = dt.datetime.fromisoformat(entity_to_validate.get('datetime'))
-        actual_datetime = actual_content.created_at
-
-        if isinstance(actual_datetime, str):
-            actual_datetime = dt.datetime.fromisoformat(actual_datetime)
-
-        if (entity_datetime.year != actual_datetime.year or
-                entity_datetime.month != actual_datetime.month or
-                entity_datetime.day != actual_datetime.day):
-            bt.logging.info(f'HF validation failed for {entity_to_validate} due to date mismatch')
-            return False
-
-        # Compare text content
-        if actual_content.data_type == RedditDataType.POST:
-            # For posts, combine title and body
-            actual_text = f"{actual_content.title}\n\n{actual_content.body}".strip()
-        else:
-            actual_text = actual_content.body.strip()
-
-        if actual_text != entity_to_validate.get('text', '').strip():
-            bt.logging.info(f'HF validation failed for {entity_to_validate} due to text mismatch')
-            return False
-
-        return True
-
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
         bt.logging.trace(
@@ -294,13 +217,22 @@ class RedditCustomScraper(Scraper):
 
         # Return the parsed results, ignoring data that can't be parsed.
         parsed_contents = [content for content in contents if content != None]
+        
+        # Filter out NSFW content with media (same validation logic as in validate_nsfw_content)
+        filtered_contents = []
+        for content in parsed_contents:
+            # Skip NSFW content with media - not valid for the subnet
+            if content.is_nsfw and content.media:
+                bt.logging.trace(f"Skipping NSFW content with media: {content.url}")
+                continue
+            filtered_contents.append(content)
 
         bt.logging.success(
-            f"Completed scrape for subreddit {subreddit_name}. Scraped {len(parsed_contents)} items."
+            f"Completed scrape for subreddit {subreddit_name}. Scraped {len(filtered_contents)} items (filtered out {len(parsed_contents) - len(filtered_contents)} NSFW+media posts)."
         )
 
         data_entities = []
-        for content in parsed_contents:
+        for content in filtered_contents:
             data_entities.append(RedditContent.to_data_entity(content=content))
 
         return data_entities

@@ -1,5 +1,4 @@
 import datetime as dt
-import json
 from typing import Dict, List, Optional, Any
 from pydantic import BaseModel, Field
 
@@ -53,29 +52,6 @@ class EnhancedXContent(BaseModel):
     conversation_id: Optional[str] = None
     in_reply_to_user_id: Optional[str] = None
 
-    @classmethod
-    def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
-        """Converts the EnhancedXContent to a DataEntity."""
-        entity_timestamp = content.timestamp
-        content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
-        content_bytes = content.json(exclude_none=True).encode("utf-8")
-
-        return DataEntity(
-            uri=content.url,
-            datetime=entity_timestamp,
-            source=DataSource.X,
-            label=(
-                DataLabel(
-                    value=content.tweet_hashtags[0].lower()[
-                          : constants.MAX_LABEL_LENGTH
-                          ]
-                )
-                if content.tweet_hashtags
-                else None
-            ),
-            content=content_bytes,
-            content_size_bytes=len(content_bytes),
-        )
 
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "EnhancedXContent":
@@ -220,3 +196,41 @@ class EnhancedXContent(BaseModel):
             }
 
         return result
+
+
+    @classmethod
+    def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
+        """Converts the EnhancedXContent to a DataEntity."""
+        from scraping.x.model import XContent
+        
+        entity_timestamp = content.timestamp
+        obfuscated_timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
+        
+        # Create basic XContent with core fields
+        basic_content = XContent(
+            username=content.username,
+            text=content.text,
+            url=content.url,
+            timestamp=obfuscated_timestamp,
+            tweet_hashtags=content.tweet_hashtags,
+            media=content.media_urls if content.media_urls else None
+        )
+        
+        content_bytes = basic_content.json(exclude_none=True).encode("utf-8")
+
+        return DataEntity(
+            uri=content.url,
+            datetime=entity_timestamp,
+            source=DataSource.X,
+            label=(
+                DataLabel(
+                    value=content.tweet_hashtags[0].lower()[
+                        : constants.MAX_LABEL_LENGTH
+                    ]
+                )
+                if content.tweet_hashtags
+                else None
+            ),
+            content=content_bytes,
+            content_size_bytes=len(content_bytes),
+        )

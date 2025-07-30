@@ -3,10 +3,9 @@ import threading
 import traceback
 import bittensor as bt
 from typing import List, Tuple, Optional
-from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult, HFValidationResult
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
 from scraping.x.model import XContent
 from scraping.x import utils
@@ -88,14 +87,18 @@ class ApiDojoTwitterScraper(Scraper):
                         )
 
                 # Parse the response
-                tweets, is_retweets = self._best_effort_parse_dataset(dataset)
+                tweets, is_retweets, author_datas, view_counts = self._best_effort_parse_dataset(dataset)
 
                 actual_tweet = None
+                actual_author_data = None
+                actual_view_count = 0
 
                 for index, tweet in enumerate(tweets):
                     if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
                         actual_tweet = tweet
                         is_retweet = is_retweets[index]
+                        actual_author_data = author_datas[index]
+                        actual_view_count = view_counts[index]
                         break
 
                 bt.logging.debug(actual_tweet)
@@ -111,7 +114,9 @@ class ApiDojoTwitterScraper(Scraper):
                     return utils.validate_tweet_content(
                         actual_tweet=actual_tweet,
                         entity=entity,
-                        is_retweet=is_retweet
+                        is_retweet=is_retweet,
+                        author_data=actual_author_data,
+                        view_count=actual_view_count
                     )
 
         if not entities:
@@ -129,101 +134,6 @@ class ApiDojoTwitterScraper(Scraper):
             )
 
         return results
-
-    async def validate_hf(self, entities) -> HFValidationResult:
-        """Validate the correctness of a HFEntities by URL."""
-
-        async def validate_hf_entity(entity) -> ValidationResult:
-            if not utils.is_valid_twitter_url(entity.get('url')):
-                return ValidationResult(
-                    is_valid=False,
-                    reason="Invalid URI.",
-                    content_size_bytes_validated=0,
-                )
-
-            attempt = 0
-            max_attempts = 2
-
-            while attempt < max_attempts:
-                # Increment attempt.
-                attempt += 1
-
-                # On attempt 1 we fetch the exact number of tweets. On retry we fetch more in case they are in replies.
-                tweet_count = 1 if attempt == 1 else 5
-
-                run_input = {
-                    **ApiDojoTwitterScraper.BASE_RUN_INPUT,
-                    "startUrls": [entity.get('url')],
-                    "maxItems": tweet_count,
-                }
-                run_config = RunConfig(
-                    actor_id=ApiDojoTwitterScraper.ACTOR_ID,
-                    debug_info=f"Validate {entity.get('url')}",
-                    max_data_entities=tweet_count,
-                )
-
-                # Retrieve the tweets from Apify.
-                dataset: List[dict] = None
-                try:
-                    dataset: List[dict] = await self.runner.run(run_config, run_input)
-                except (
-                        Exception
-                ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
-                    if attempt != max_attempts:
-                        # Retrying.
-                        continue
-                    else:
-                        bt.logging.error(
-                            f"Failed to run actor: {traceback.format_exc()}."
-                        )
-                        # This is an unfortunate situation. We have no way to distinguish a genuine failure from
-                        # one caused by malicious input. In my own testing I was able to make the Actor timeout by
-                        # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
-                        # pass malicious input for chunks they don't have.
-                        return ValidationResult(
-                            is_valid=False,
-                            reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
-                            content_size_bytes_validated=0,
-                        )
-
-                # Parse the response
-                tweets = self._best_effort_parse_hf_dataset(dataset)
-                actual_tweet = None
-
-                for index, tweet in enumerate(tweets):
-                    if utils.normalize_url(tweet['url']) == utils.normalize_url(entity.get('url')):
-                        actual_tweet = tweet
-                        break
-
-                bt.logging.debug(actual_tweet)
-                if actual_tweet is None:
-                    # Only append a failed result if on final attempt.
-                    if attempt == max_attempts:
-                        return ValidationResult(
-                            is_valid=False,
-                            reason="Tweet not found or is invalid.",
-                            content_size_bytes_validated=0,
-                        )
-                else:
-                    return utils.validate_hf_retrieved_tweet(
-                        actual_tweet=actual_tweet,
-                        tweet_to_verify=entity
-                    )
-
-        # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
-        bt.logging.trace("Acquiring semaphore for concurrent apidojo validations.")
-
-        with ApiDojoTwitterScraper.concurrent_validates_semaphore:
-            bt.logging.trace(
-                "Acquired semaphore for concurrent apidojo validations."
-            )
-            results = await asyncio.gather(
-                *[validate_hf_entity(entity) for entity in entities]
-            )
-
-        is_valid, valid_percent = utils.hf_tweet_validation(validation_results=results)
-        return HFValidationResult(is_valid=is_valid, validation_percentage=valid_percent,
-                                  reason=f"Validation Percentage = {valid_percent}")
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
@@ -293,7 +203,7 @@ class ApiDojoTwitterScraper(Scraper):
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
-        x_contents, is_retweets = self._best_effort_parse_dataset(dataset)
+        x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(dataset)
 
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
@@ -305,20 +215,32 @@ class ApiDojoTwitterScraper(Scraper):
 
         return data_entities
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
+    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool], List[dict], List[int]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
         Any errors are logged and ignored."""
 
         if dataset == [{"zero_result": True}] or not dataset:
-            return [], []
+            return [], [], [], []
 
         results: List[XContent] = []
         is_retweets: List[bool] = []
+        author_datas: List[dict] = []
+        view_counts: List[int] = []
         
         for data in dataset:
             try:
                 # Check that we have the required fields.
                 if not all(field in data for field in ["text", "url", "createdAt"]):
+                    continue
+
+                # Filter spam accounts using engagement metrics
+                if 'author' in data and utils.is_spam_account(data['author']):
+                    bt.logging.debug(f"Filtered spam account: {data.get('author', {}).get('userName', 'unknown')}")
+                    continue
+                
+                # Filter low engagement tweets
+                if utils.is_low_engagement_tweet(data):
+                    bt.logging.debug(f"Filtered low engagement tweet: {data.get('url', 'unknown')}")
                     continue
 
                 # Extract reply information (tuple of (user_id, username))
@@ -333,6 +255,10 @@ class ApiDojoTwitterScraper(Scraper):
 
                 is_retweet = data.get('isRetweet', False)
                 is_retweets.append(is_retweet)
+                
+                # Extract engagement data for validation
+                author_datas.append(data.get('author', {}))
+                view_counts.append(data.get('viewCount', 0))
                 
                 results.append(
                     XContent(
@@ -362,7 +288,7 @@ class ApiDojoTwitterScraper(Scraper):
                     f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
                 )
         
-        return results, is_retweets
+        return results, is_retweets, author_datas, view_counts
 
     def _extract_reply_info(self, data: dict) -> Tuple[Optional[str], Optional[str]]:
         """Extract reply information, returning (user_id, username) or (None, None)"""
@@ -419,45 +345,6 @@ class ApiDojoTwitterScraper(Scraper):
                 media_urls.append(media_item)
         
         return media_urls
-
-    def _best_effort_parse_hf_dataset(self, dataset: List[dict]) -> List[dict]:
-        """Performs a best effort parsing of Apify dataset into List[XContent]
-        Any errors are logged and ignored."""
-        if dataset == [{"zero_result": True}] or not dataset:  # Todo remove first statement if it's not necessary
-            return []
-        results: List[dict] = []
-        i = 0
-        for data in dataset:
-            i = i + 1
-            if (
-                    ("text" not in data)
-                    or "url" not in data
-                    or "createdAt" not in data
-            ):
-                continue
-
-            text = data['text']
-            url = data['url']
-
-            # Extract media URLs
-            media_urls = []
-            if 'media' in data and isinstance(data['media'], list):
-                for media_item in data['media']:
-                    if isinstance(media_item, dict) and 'media_url_https' in media_item:
-                        media_urls.append(media_item['media_url_https'])
-                    elif isinstance(media_item, str):
-                        media_urls.append(media_item)
-
-            results.append({
-                "text": utils.sanitize_scraped_tweet(text),
-                "url": url,
-                "datetime": dt.datetime.strptime(
-                    data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
-                ),
-                "media": media_urls if media_urls else None
-            })
-
-        return results
 
 
 async def test_scrape():
@@ -565,6 +452,45 @@ async def test_validate():
     results = await scraper.validate(entities=true_entities)
     for result in results:
         print(result)
+
+
+async def test_shadowban_detection():
+    """Test shadowban detection for HelenRoach32601 account"""
+    scraper = ApiDojoTwitterScraper()
+    
+    # Test the suspected shadowbanned account
+    username = "HelenRoach32601"
+    
+    run_input = {
+        **ApiDojoTwitterScraper.BASE_RUN_INPUT,
+        "searchTerms": [f"from:{username}"],
+        "maxTweets": 5,
+    }
+    
+    run_config = RunConfig(
+        actor_id=ApiDojoTwitterScraper.ACTOR_ID,
+        debug_info=f"Shadowban test for {username}",
+        max_data_entities=5,
+        timeout_secs=60,
+    )
+    
+    bt.logging.success(f"Testing shadowban detection for @{username}")
+    
+    try:
+        dataset: List[dict] = await scraper.runner.run(run_config, run_input)
+        
+        if not dataset or dataset == [{"zero_result": True}]:
+            bt.logging.success(f"✅ SHADOWBANNED: @{username} - No results from 'from:username' search")
+            return True  # Account is shadowbanned
+        else:
+            bt.logging.info(f"❌ NOT SHADOWBANNED: @{username} - Found {len(dataset)} results")
+            for tweet in dataset[:2]:  # Show first 2 results
+                bt.logging.info(f"  - Tweet: {tweet.get('text', '')[:100]}...")
+            return False  # Account is not shadowbanned
+            
+    except Exception as e:
+        bt.logging.error(f"Error testing shadowban for @{username}: {e}")
+        return None  # Unknown status
 
 
 async def test_multi_thread_validate():

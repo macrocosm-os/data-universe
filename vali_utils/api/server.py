@@ -128,18 +128,13 @@ class ValidatorAPI:
         self.server_thread.start()
         bt.logging.success(f"API server started on port {self.port}")
 
-    def stop(self):
-        """Stop API server"""
-        bt.logging.info("Stopping API server")
-        # The uvicorn server will stop when the thread is terminated
-        self.server_thread = None  # Allow for garbage collection
-
     def restart(self):
         """Restart API server"""
         bt.logging.info("Restarting API server")
         self.stop()
         time.sleep(2)  # Give it a moment to fully stop
         self.start()
+
     def stop(self):
         """Stop API server"""
         if self.server_thread and self.server_thread.is_alive():

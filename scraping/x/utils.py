@@ -5,7 +5,7 @@ import bittensor as bt
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_TWITTER_URLS_DATE
+from common.constants import NO_TWITTER_URLS_DATE, LOW_ENGAGEMENT_FILTER_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -120,52 +120,6 @@ def are_hashtags_valid(tweet_to_verify_hashtags: List, actual_tweet_hashtags: Li
     """
     return set(tweet_to_verify_hashtags).issubset(set(actual_tweet_hashtags)) and \
         len(tweet_to_verify_hashtags) <= 2.5 * len(actual_tweet_hashtags)
-
-
-def hf_tweet_validation(validation_results: List[ValidationResult]):
-    total_count = len(validation_results)
-    true_count = sum(1 for item in validation_results if item.is_valid)
-    true_percentage = (true_count / total_count) * 100
-
-    return true_percentage >= 50, true_percentage
-
-
-def validate_hf_retrieved_tweet(actual_tweet: Dict, tweet_to_verify: Dict) -> ValidationResult:
-    """Validates the tweet based on URL, text, and date."""
-    # Check URL
-    if not is_valid_twitter_url(tweet_to_verify.get('url')):
-        return ValidationResult(is_valid=False, reason="Invalid URL", content_size_bytes_validated=0)
-
-    if normalize_url(tweet_to_verify.get('url')) != normalize_url(actual_tweet.get('url')):
-        return ValidationResult(is_valid=False, reason="Tweet URLs do not match", content_size_bytes_validated=0)
-
-    # Check text
-    if tweet_to_verify.get('text') != actual_tweet.get('text'):
-        return ValidationResult(is_valid=False, reason="Tweet texts do not match", content_size_bytes_validated=0)
-
-    # If we're after the media required date, validate media content
-
-    actual_media = actual_tweet.get('media', [])
-    verify_media = tweet_to_verify.get('media', [])
-
-    # Check if both have media or both don't have media
-    if bool(actual_media) != bool(verify_media):
-        return ValidationResult(
-            is_valid=False,
-            reason="Media presence mismatch - one has media while the other doesn't",
-            content_size_bytes_validated=0
-        )
-
-    # If both have media, check that they match
-    if actual_media and verify_media:
-        if len(actual_media) != len(verify_media):
-            return ValidationResult(
-                is_valid=False,
-                reason=f"Media count mismatch - expected {len(actual_media)}, got {len(verify_media)}",
-                content_size_bytes_validated=0
-            )
-
-    return ValidationResult(is_valid=True, reason="Tweet is valid", content_size_bytes_validated=0)
 
 
 def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
@@ -362,8 +316,71 @@ def validate_data_entity_fields(actual_tweet: XContent, entity: DataEntity) -> V
     )
 
 
+def is_spam_account(author_data: dict) -> bool:
+    """Check if an account exhibits spam characteristics.
+    
+    Args:
+        author_data: Author data from actor response
+        
+    Returns:
+        True if account should be filtered as spam
+    """
+    # Only enforce filtering after the deadline
+    if dt.datetime.now(dt.timezone.utc) < LOW_ENGAGEMENT_FILTER_DATE:
+        return False
+    
+    if not isinstance(author_data, dict):
+        return True
+    
+    # Check minimum followers (50+)
+    followers = author_data.get('followers', 0)
+    if followers < 50:
+        return True
+    
+    # Check account age (30+ days)
+    created_at_str = author_data.get('createdAt')
+    if created_at_str:
+        try:
+            created_at = dt.datetime.strptime(created_at_str, "%a %b %d %H:%M:%S %z %Y")
+            account_age = dt.datetime.now(dt.timezone.utc) - created_at
+            if account_age.days < 30:
+                return True
+        except (ValueError, TypeError):
+            # If we can't parse the date, be conservative and reject
+            return True
+    else:
+        # No creation date = suspicious
+        return True
+    
+    return False
+
+
+def is_low_engagement_tweet(tweet_data: dict) -> bool:
+    """Check if a tweet has suspiciously low engagement.
+    
+    Args:
+        tweet_data: Tweet data from actor response
+        
+    Returns:
+        True if tweet should be filtered for low engagement
+    """
+    # Only enforce filtering after the deadline
+    if dt.datetime.now(dt.timezone.utc) < LOW_ENGAGEMENT_FILTER_DATE:
+        return False
+    
+    if not isinstance(tweet_data, dict):
+        return True
+    
+    # Check minimum views (50+)
+    view_count = tweet_data.get('viewCount', 0)
+    if view_count < 50:
+        return True
+    
+    return False
+
+
 def validate_tweet_content(
-        actual_tweet: XContent, entity: DataEntity, is_retweet: bool
+        actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None
 ) -> ValidationResult:
     """Validates the tweet is valid by the definition provided by entity."""
     # Decode tweet from entity
@@ -384,6 +401,25 @@ def validate_tweet_content(
             reason="Retweets are no longer eligible after July 6, 2024.",
             content_size_bytes_validated=entity.content_size_bytes
         )
+
+    # Validate account quality if data is available
+    if author_data is not None and view_count is not None:
+        # Check if account is spam (low followers/new account)
+        if is_spam_account(author_data):
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet from spam account (low followers/new account).",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        
+        # Check if tweet has low engagement
+        tweet_data = {'viewCount': view_count}
+        if is_low_engagement_tweet(tweet_data):
+            return ValidationResult(
+                is_valid=False,
+                reason="Tweet has low engagement (insufficient views).",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
 
     # Validate all basic fields using the unified function
     field_validation_result = validate_tweet_fields(tweet_to_verify, actual_tweet, entity)
