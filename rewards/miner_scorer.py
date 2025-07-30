@@ -123,25 +123,12 @@ class MinerScorer:
             self.scores = torch.cat(
                 [self.scores, torch.zeros(to_add, dtype=torch.float32)]
             )
-            self.hf_boosts = torch.cat(
-                [self.hf_boosts, torch.zeros(to_add, dtype=torch.float32)]
-            )
             self.miner_credibility = torch.cat(
                 [
                     self.miner_credibility,
                     torch.full(
                         (to_add, 1),
                         MinerScorer.STARTING_CREDIBILITY,
-                        dtype=torch.float32,
-                    ),
-                ]
-            )
-            self.hf_credibility = torch.cat(
-                [
-                    self.hf_credibility,
-                    torch.full(
-                        (to_add, 1),
-                        MinerScorer.STARTING_HF_CREDIBILITY,
                         dtype=torch.float32,
                     ),
                 ]
