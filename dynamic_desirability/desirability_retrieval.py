@@ -11,7 +11,7 @@ import bittensor as bt
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
-from common.utils import get_validator_data, is_validator, time_bucket_id_from_datetime
+from common.utils import get_validator_data, is_validator, time_bucket_id_from_datetime, parse_iso_date
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup, Job, JobMatcher
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
@@ -266,8 +266,9 @@ def datetime_to_timebucket(datetime_str: Optional[str]) -> Optional[int]:
         return None
     
     try:
-        # Import datetime class correctly
-        dt_obj = datetime.fromisoformat(datetime_str)
+        dt_obj = parse_iso_date(datetime_str)
+        if dt_obj is None:
+            return None
         return time_bucket_id_from_datetime(dt_obj)
     except (ValueError, TypeError) as e:
         # Log an error or warning
