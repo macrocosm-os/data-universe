@@ -237,6 +237,188 @@ class RedditCustomScraper(Scraper):
 
         return data_entities
 
+    async def on_demand_scrape(
+        self,
+        usernames: List[str] = None,
+        subreddit: str = None,
+        keywords: List[str] = None,
+        start_datetime: dt.datetime = None,
+        end_datetime: dt.datetime = None,
+        limit: int = 100
+    ) -> List[DataEntity]:
+        """
+        Scrapes Reddit data based on specific search criteria.
+        
+        Args:
+            usernames: List of target usernames - content from any of these users will be included (OR logic)
+            subreddit: Target specific subreddit (without r/ prefix)
+            keywords: List of keywords that must ALL be present in the content
+            start_datetime: Earliest datetime for content (UTC)
+            end_datetime: Latest datetime for content (UTC)
+            limit: Maximum number of items to return (applies per username if usernames provided)
+        
+        Returns:
+            List of DataEntity objects matching the criteria
+        """
+        
+        # Return empty list if all parameters are None
+        if all(param is None for param in [usernames, subreddit, keywords, start_datetime, end_datetime]):
+            bt.logging.trace("All parameters are None, returning empty list")
+            return []
+        
+        bt.logging.trace(
+            f"On-demand scrape with usernames={usernames}, subreddit={subreddit}, "
+            f"keywords={keywords}, start={start_datetime}, end={end_datetime}"
+        )
+        
+        contents = []
+        
+        try:
+            async with asyncpraw.Reddit(
+                client_id=os.getenv("REDDIT_CLIENT_ID"),
+                client_secret=os.getenv("REDDIT_CLIENT_SECRET"),
+                username=os.getenv("REDDIT_USERNAME"),
+                password=os.getenv("REDDIT_PASSWORD"),
+                user_agent=self.USER_AGENT,
+            ) as reddit:
+                
+                # Case 1: Search by usernames
+                if usernames:
+                    for username in usernames:
+                        try:
+                            user = await reddit.redditor(username)
+                            
+                            # Get user's posts (submissions)
+                            async for submission in user.submissions.new(limit=limit):
+                                content = self._best_effort_parse_submission(submission)
+                                if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                                    contents.append(content)
+                            
+                            # Get user's comments
+                            async for comment in user.comments.new(limit=limit):
+                                content = self._best_effort_parse_comment(comment)
+                                if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                                    contents.append(content)
+                        except Exception as e:
+                            bt.logging.warning(f"Failed to scrape user '{username}': {e}")
+                            continue
+                
+                # Case 2: Search by subreddit (with optional keywords)
+                elif subreddit:
+                    subreddit_name = subreddit.removeprefix("r/") if subreddit.startswith('r/') else subreddit
+                    sub = await reddit.subreddit(subreddit_name)
+                    
+                    # If we have keywords, use Reddit's search functionality
+                    if keywords:
+                        search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
+                        search_results = sub.search(search_query, sort='new', limit=limit)
+                        
+                        async for item in search_results:
+                            if hasattr(item, 'title'): 
+                                content = self._best_effort_parse_submission(item)
+                            else: 
+                                content = self._best_effort_parse_comment(item)
+                            
+                            if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                                contents.append(content)
+                    else:
+                        # No keywords, just get recent posts from subreddit
+                        async for submission in sub.new(limit=limit):
+                            content = self._best_effort_parse_submission(submission)
+                            if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                                contents.append(content)
+                
+                # Case 3: Search by keywords across all of Reddit
+                elif keywords:
+                    search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
+                    all_subreddit = await reddit.subreddit('all')
+                    search_results = all_subreddit.search(search_query, sort='new', limit=limit)
+                    
+                    async for item in search_results:
+                        if hasattr(item, 'title'):  
+                            content = self._best_effort_parse_submission(item)
+                        else:  
+                            content = self._best_effort_parse_comment(item)
+                        
+                        if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                            contents.append(content)
+                
+                # Case 4: Just date range filtering (get recent content from r/all)
+                else:
+                    sub = await reddit.subreddit('all')
+                    async for submission in sub.new(limit=limit):
+                        content = self._best_effort_parse_submission(submission)
+                        if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                            contents.append(content)
+        
+        except Exception as e:
+            bt.logging.error(f"Failed to perform on-demand scrape: {e}")
+            bt.logging.error(traceback.format_exc())
+            return []
+        
+        # Filter out NSFW content with media (same as in regular scrape method)
+        filtered_contents = []
+        for content in contents:
+            if content.is_nsfw and content.media:
+                bt.logging.trace(f"Skipping NSFW content with media: {content.url}")
+                continue
+            filtered_contents.append(content)
+        
+        bt.logging.success(
+            f"On-demand scrape completed. Found {len(filtered_contents)} items "
+            f"(filtered out {len(contents) - len(filtered_contents)} NSFW+media posts)."
+        )
+        
+        # Convert to DataEntity objects
+        data_entities = []
+        for content in filtered_contents:
+            data_entities.append(RedditContent.to_data_entity(content=content))
+        
+        return data_entities
+
+    def _matches_criteria(
+        self,
+        content: RedditContent,
+        keywords: List[str] = None,
+        start_datetime: dt.datetime = None,
+        end_datetime: dt.datetime = None
+    ) -> bool:
+        """
+        Check if content matches the specified criteria.
+        
+        Args:
+            content: RedditContent object to check
+            keywords: List of keywords that must ALL be present
+            start_datetime: Earliest datetime for content
+            end_datetime: Latest datetime for content
+        
+        Returns:
+            True if content matches all criteria, False otherwise
+        """
+        
+        # Check date range
+        if start_datetime and content.created_at < start_datetime:
+            return False
+        
+        if end_datetime and content.created_at > end_datetime:
+            return False
+        
+        # Check keywords - all must be present in title + body (case insensitive)
+        if keywords:
+            # Combine title and body for searching
+            searchable_text = ""
+            if content.title:
+                searchable_text += content.title.lower() + " "
+            if content.body:
+                searchable_text += content.body.lower()
+            
+            # All keywords must be present
+            for keyword in keywords:
+                if keyword.lower() not in searchable_text:
+                    return False
+        
+        return True
+
     def _best_effort_parse_submission(
             self, submission: asyncpraw.models.Submission
     ) -> RedditContent:
@@ -441,7 +623,123 @@ async def test_u_deleted():
     print(f"Expecting a passed validation: {result}")
 
 
+async def test_on_demand_scrape():
+    """Test the on_demand_scrape method with various parameter combinations."""
+    scraper = RedditCustomScraper()
+    
+    print("=" * 60)
+    print("TESTING ON-DEMAND SCRAPE")
+    print("=" * 60)
+    
+    # Test 1: All parameters None (should return empty list)
+    print("\n1. Testing with all parameters None...")
+    entities = await scraper.on_demand_scrape()
+    print(f"   Result: {len(entities)} entities (expected: 0)")
+    
+    # Test 2: Search by subreddit only
+    print("\n2. Testing subreddit search (r/bittensor_)...")
+    entities = await scraper.on_demand_scrape(subreddit="r/bittensor_", limit=5)
+    print(f"   Result: {len(entities)} entities from r/bittensor_")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 3: Search by keywords only
+    print("\n3. Testing keyword search ('bittensor', 'TAO')...")
+    entities = await scraper.on_demand_scrape(keywords=["bittensor", "TAO"], limit=3)
+    print(f"   Result: {len(entities)} entities with both keywords")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 4: Search by subreddit + keywords
+    print("\n4. Testing subreddit + keywords (r/cryptocurrency + 'bitcoin')...")
+    entities = await scraper.on_demand_scrape(
+        subreddit="r/cryptocurrency", 
+        keywords=["bitcoin"], 
+        limit=3
+    )
+    print(f"   Result: {len(entities)} entities from r/cryptocurrency with 'bitcoin'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 5: Search by single username
+    print("\n5. Testing single username search...")
+    entities = await scraper.on_demand_scrape(usernames=["spez"], limit=3)
+    print(f"   Result: {len(entities)} entities from user 'spez'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 6: Search by multiple usernames =
+    print("\n6. Testing multiple usernames search...")
+    entities = await scraper.on_demand_scrape(usernames=["spez", "AutoModerator"], limit=5)
+    print(f"   Result: {len(entities)} entities from users 'spez' OR 'AutoModerator'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+        # Show which users were found
+        found_users = set()
+        for entity in entities[:3]:  # Check first 3 entities
+            try:
+                content = RedditContent.from_data_entity(entity)
+                found_users.add(content.username)
+            except:
+                pass
+        print(f"   Found content from users: {found_users}")
+    
+    # Test 7: Search by usernames + keywords (both conditions must be met)
+    print("\n7. Testing usernames + keywords...")
+    entities = await scraper.on_demand_scrape(
+        usernames=["spez", "AutoModerator"],
+        keywords=["reddit"], 
+        limit=3
+    )
+    print(f"   Result: {len(entities)} entities from specified users containing 'reddit'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 8: Date range filtering
+    print("\n8. Testing date range filtering (last 7 days)...")
+    end_time = dt.datetime.now(tz=dt.timezone.utc)
+    start_time = end_time - dt.timedelta(days=7)
+    entities = await scraper.on_demand_scrape(
+        subreddit="r/python",
+        start_datetime=start_time,
+        end_datetime=end_time,
+        limit=3
+    )
+    print(f"   Result: {len(entities)} entities from r/python in last 7 days")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+        print(f"   Sample date: {entities[0].datetime}")
+    
+    # Test 9: Complex search (usernames + keywords + date range)
+    print("\n9. Testing complex search (usernames + keywords + date range)...")
+    end_time = dt.datetime.now(tz=dt.timezone.utc)
+    start_time = end_time - dt.timedelta(days=30)
+    entities = await scraper.on_demand_scrape(
+        usernames=["spez", "AutoModerator"],
+        keywords=["announcement"],
+        start_datetime=start_time,
+        end_datetime=end_time,
+        limit=2
+    )
+    print(f"   Result: {len(entities)} entities matching complex criteria")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+        print(f"   Sample date: {entities[0].datetime}")
+    
+    # Test 10: Invalid/non-existent usernames (should handle gracefully)
+    print("\n10. Testing with invalid usernames...")
+    entities = await scraper.on_demand_scrape(
+        usernames=["nonexistentuser12345", "anotherfakeuser99999"], 
+        limit=3
+    )
+    print(f"   Result: {len(entities)} entities from invalid usernames (expected: 0 or very few)")
+    
+    print("\n" + "=" * 60)
+    print("ON-DEMAND SCRAPE TESTS COMPLETED")
+    print("=" * 60)
+
 if __name__ == "__main__":
     asyncio.run(test_scrape())
     asyncio.run(test_validate())
     asyncio.run(test_u_deleted())
+    asyncio.run(test_on_demand_scrape())
