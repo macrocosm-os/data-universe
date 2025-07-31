@@ -1,4 +1,5 @@
 import datetime as dt
+import hashlib
 import re
 import unicodedata
 from typing import Dict, List, Optional
@@ -6,13 +7,56 @@ from pydantic.v1 import BaseModel, Field
 from common.data import DataEntity, DataLabel, DataSource
 
 
-def normalize_channel_name(name: str) -> str:
-    """Normalize channel name to a lowercase slug (used in labels)."""
-    name = unicodedata.normalize("NFKD", name).encode("ascii", "ignore").decode("utf-8")
-    name = name.lower()
-    name = re.sub(r"[^\w\s-]", "", name)
-    name = re.sub(r"\s+", "-", name).strip("-")
-    return name[:50]
+def normalize_channel_name(name: str, max_len: int = 50) -> str:
+    """
+    Normalize channel name to a lowercase ASCII slug with fallback for non-ASCII content.
+    
+    Handles:
+    - Pure emoji channels: 😀🎮🔥 → chan-a1b2c3d4 (deterministic hash)
+    - Non-English languages: 中文频道 → chan-a1b2c3d4 (deterministic hash)
+    - Mixed content: Gaming 🎮 → gaming-chan-a1b2c3d4 (ASCII part + hash)
+    - Regular ASCII: Fireship → fireship (unchanged)
+    
+    Args:
+        name: Original channel name
+        max_len: Maximum length of output slug
+        
+    Returns:
+        Normalized slug that's always ASCII-safe and deterministic
+    """
+    if not name or not name.strip():
+        return "unknown"
+    
+    name = name.strip()
+    
+    # First, try to extract ASCII content
+    ascii_text = (
+        unicodedata
+        .normalize("NFKD", name)
+        .encode("ascii", "ignore")
+        .decode("utf-8")
+    )
+    
+    # Create ASCII slug from available ASCII characters
+    ascii_slug = ascii_text.lower()
+    ascii_slug = re.sub(r"[^\w\s-]", "", ascii_slug)
+    ascii_slug = re.sub(r"\s+", "-", ascii_slug).strip("-")
+    
+    # If we have a good ASCII slug (3+ chars), use it
+    if ascii_slug and len(ascii_slug) >= 3:
+        return ascii_slug[:max_len]
+    
+    # Fallback: create deterministic hash for non-ASCII content
+    # Use first 8 characters of SHA256 for deterministic short hash
+    hash_suffix = hashlib.sha256(name.encode("utf-8")).hexdigest()[:8]
+    
+    # If we have some ASCII content, combine it with hash
+    if ascii_slug:
+        combined = f"{ascii_slug}-chan-{hash_suffix}"
+        return combined[:max_len]
+    
+    # Pure non-ASCII case: use chan- prefix with hash
+    return f"chan-{hash_suffix}"
 
 
 class YouTubeContent(BaseModel):
