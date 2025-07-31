@@ -8,6 +8,7 @@ import httpx
 
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
+from common.constants import LOW_ENGAGEMENT_FILTER_DATE
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
 from scraping.apify import ActorRunner, RunConfig, ActorRunError
@@ -132,8 +133,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
                             bt.logging.warning(f"No upload date for video {video_id}, using current time")
                             upload_date = dt.datetime.now(dt.timezone.utc)
                         
-                        # Filter low engagement videos (100+ views required)
-                        if view_count < 100:
+                        # Filter low engagement videos (100+ views required) - enforced after deadline
+                        if dt.datetime.now(dt.timezone.utc) >= LOW_ENGAGEMENT_FILTER_DATE and view_count < 100:
                             bt.logging.info(f"Video {video_id} has only {view_count} views, skipping (minimum 100 required)")
                             continue
 
@@ -440,15 +441,16 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     ))
                     continue
 
-                # Validate view count during validation
-                _, view_count = await self._get_video_data_from_api(content_to_validate.video_id)
-                if view_count < 100:
-                    results.append(ValidationResult(
-                        is_valid=False,
-                        reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
-                        content_size_bytes_validated=entity.content_size_bytes
-                    ))
-                    continue
+                # Validate view count during validation - enforced after deadline
+                if dt.datetime.now(dt.timezone.utc) >= LOW_ENGAGEMENT_FILTER_DATE:
+                    _, view_count = await self._get_video_data_from_api(content_to_validate.video_id)
+                    if view_count < 100:
+                        results.append(ValidationResult(
+                            is_valid=False,
+                            reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
+                            content_size_bytes_validated=entity.content_size_bytes
+                        ))
+                        continue
 
                 # Validate content
                 validation_result = self._validate_content_match(transcript_data, content_to_validate, entity)
