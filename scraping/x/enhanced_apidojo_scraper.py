@@ -37,7 +37,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
             Tuple[List[XContent], List[bool]]: (standard_parsed_content, is_retweets)
         """
         # Call the parent class method to get standard parsed content
-        standard_contents, is_retweets = super()._best_effort_parse_dataset(dataset)
+        standard_contents, is_retweets, author_datas, view_counts = super()._best_effort_parse_dataset(dataset)
 
         # Also parse into enhanced content and store it in a class attribute
         self.enhanced_contents = self._parse_enhanced_content(dataset)
@@ -269,9 +269,10 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
             if username_labels:
                 query_parts.append(f"({' OR '.join(username_labels)})")
 
-            # Add keywords with OR between them if there are any
+            # Add keywords with AND between them if there are any (with exact matching using quotes)
             if keyword_labels:
-                query_parts.append(f"({' OR '.join(keyword_labels)})")
+                quoted_keywords = [f'"{keyword}"' for keyword in keyword_labels]
+                query_parts.append(f"({' AND '.join(quoted_keywords)})")
         else:
             # HACK: The search query doesn't work if only a time range is provided.
             # If no label is specified, just search for "e", the most common letter in the English alphabet.
