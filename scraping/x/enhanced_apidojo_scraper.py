@@ -145,7 +145,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                             media_types.append('photo')
 
                 # Create timestamp from createdAt
-                timestamp = None
+                timestamp = dt.datetime.now(dt.timezone.utc)
                 if 'createdAt' in data:
                     try:
                         timestamp = dt.datetime.strptime(
@@ -156,7 +156,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                         try:
                             timestamp = dt.datetime.fromisoformat(data["createdAt"])
                         except ValueError:
-                            timestamp = dt.datetime.now(dt.timezone.utc)
+                            bt.logging.debug(f"Failed to parse timestamp: {data['createdAt']}. Fallback: {timestamp}")
 
                 # Create the enhanced content object
                 enhanced_content = EnhancedXContent(

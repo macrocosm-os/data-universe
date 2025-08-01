@@ -566,8 +566,7 @@ class Miner:
 
                 # Update response with enhanced data entities
                 synapse.data = enhanced_data_entities[:synapse.limit] if synapse.limit else enhanced_data_entities
-            else:
-                # For Reddit, use the provider that's part of the coordinator
+            elif synapse.source == DataSource.REDDIT:
                 from scraping.provider import ScraperProvider
 
                 # Create a new scraper provider and get the appropriate scraper
@@ -579,7 +578,11 @@ class Miner:
                     synapse.data = []
                     return synapse
 
-                data = await scraper.scrape(config)
+                data = await scraper.on_demand_scrape(usernames=synapse.usernames,
+                                                      subreddit=synapse.keywords[0] if synapse.keywords else None,
+                                                      keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
+                                                      start_datetime=start_dt,
+                                                      end_datetime=end_dt)
                 synapse.data = data[:synapse.limit] if synapse.limit else data
 
             synapse.version = constants.PROTOCOL_VERSION
