@@ -695,8 +695,8 @@ class OrganicQueryProcessor:
         # Keyword validation
         if synapse.keywords:
             post_text = x_content.text.lower()
-            if not any(keyword.lower() in post_text for keyword in synapse.keywords):
-                bt.logging.debug(f"No keywords found in post {post_text}")
+            if not all(keyword.lower() in post_text for keyword in synapse.keywords):
+                bt.logging.debug(f"Not all keywords found in post {post_text}")
                 return False
         
         # Time range validation
@@ -724,7 +724,7 @@ class OrganicQueryProcessor:
             if reddit_content.title:
                 content_text += ' ' + reddit_content.title.lower()
             
-            keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords)
+            keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords)
             
             if not (subreddit_match or keyword_in_content):
                 bt.logging.debug(f"Reddit keyword mismatch in subreddit '{post_community}' and content")
