@@ -396,12 +396,19 @@ class RedditCustomScraper(Scraper):
             True if content matches all criteria, False otherwise
         """
         
-        # Check date range
-        if start_datetime and content.created_at < start_datetime:
-            return False
+        if start_datetime:
+            # If start_datetime is naive, assume it's UTC
+            if start_datetime.tzinfo is None:
+                start_datetime = start_datetime.replace(tzinfo=dt.timezone.utc)
+            if content.created_at < start_datetime:
+                return False
         
-        if end_datetime and content.created_at > end_datetime:
-            return False
+        if end_datetime:
+            # If end_datetime is naive, assume it's UTC
+            if end_datetime.tzinfo is None:
+                end_datetime = end_datetime.replace(tzinfo=dt.timezone.utc)
+            if content.created_at > end_datetime:
+                return False
         
         # Check keywords - all must be present in title + body (case insensitive)
         if keywords:
