@@ -322,8 +322,12 @@ class OrganicQueryProcessor:
                 enhanced_content = scraper.get_enhanced_content()
                 # Convert EnhancedXContent to dictionaries using to_api_response
                 verification_data = [content.to_api_response() for content in enhanced_content]
-            else:
-                verification_data = await scraper.scrape(verify_config)
+            elif synapse.source.upper() == 'REDDIT':
+                verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
+                                                                   subreddit=synapse.keywords[0] if synapse.keywords else None,
+                                                                   keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
+                                                                   start_datetime=start_date,
+                                                                   end_datetime=end_date)
             
             return verification_data if verification_data else None
             
@@ -695,8 +699,8 @@ class OrganicQueryProcessor:
         # Keyword validation
         if synapse.keywords:
             post_text = x_content.text.lower()
-            if not any(keyword.lower() in post_text for keyword in synapse.keywords):
-                bt.logging.debug(f"No keywords found in post {post_text}")
+            if not all(keyword.lower() in post_text for keyword in synapse.keywords):
+                bt.logging.debug(f"Not all keywords found in post {post_text}")
                 return False
         
         # Time range validation
@@ -724,7 +728,7 @@ class OrganicQueryProcessor:
             if reddit_content.title:
                 content_text += ' ' + reddit_content.title.lower()
             
-            keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords)
+            keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords)
             
             if not (subreddit_match or keyword_in_content):
                 bt.logging.debug(f"Reddit keyword mismatch in subreddit '{post_community}' and content")
