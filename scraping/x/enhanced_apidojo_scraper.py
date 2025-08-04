@@ -42,7 +42,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         # Also parse into enhanced content and store it in a class attribute
         self.enhanced_contents = self._parse_enhanced_content(dataset)
 
-        return standard_contents, is_retweets
+        return standard_contents, is_retweets, author_datas, view_counts 
 
     def _parse_enhanced_content(self, dataset: List[dict]) -> List[EnhancedXContent]:
         """
@@ -309,7 +309,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
             return []
 
         # Parse the results using both standard and enhanced methods
-        x_contents, is_retweets = self._best_effort_parse_dataset(dataset)
+        x_contents, is_retweets, _, _  = self._best_effort_parse_dataset(dataset)
 
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
