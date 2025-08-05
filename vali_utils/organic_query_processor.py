@@ -633,7 +633,7 @@ class OrganicQueryProcessor:
             requested_channels = [u.strip('@').lower() for u in synapse.usernames]
             requested_channel = requested_channels[0]   # take only the first requested channel
             channel_name = youtube_content_dict["channel_name"]
-            if channel_name != requested_channel:
+            if channel_name.lower() != requested_channel.lower():
                 bt.logging.debug(f"Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
                 return False
             
