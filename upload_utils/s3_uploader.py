@@ -140,6 +140,8 @@ class S3PartitionedUploader:
                         source_int = DataSource.REDDIT.value
                     elif platform in ['x', 'twitter']:
                         source_int = DataSource.X.value
+                    elif platform == 'youtube':
+                        source_int = DataSource.YOUTUBE.value
                     else:
                         continue
 
@@ -182,6 +184,12 @@ class S3PartitionedUploader:
             label_conditions = [
                 f"LOWER(label) = '{normalized_label}'",
                 f"LOWER(label) = 'r/{normalized_label.removeprefix('r/')}'",
+            ]
+        elif source == DataSource.YOUTUBE.value:
+            # For YouTube: check channel labels with #ytc_c_ prefix
+            label_conditions = [
+                f"LOWER(label) = '{normalized_label}'",
+                f"LOWER(label) = '#ytc_c_{normalized_label.removeprefix('#ytc_c_')}'",
             ]
         else:
             # For X: check hashtags with and without #
@@ -285,6 +293,21 @@ class S3PartitionedUploader:
                     'dataType': df['decoded_content'].apply(lambda x: x.get('dataType')),
                     'parentId': df['decoded_content'].apply(lambda x: x.get('parentId')),
                     'url': df['decoded_content'].apply(lambda x: x.get('url'))
+                })
+            elif source == DataSource.YOUTUBE.value:
+                # YouTube data structure
+                result_df = pd.DataFrame({
+                    'uri': df['uri'],
+                    'datetime': df['datetime'],
+                    'label': df['label'],
+                    'video_id': df['decoded_content'].apply(lambda x: x.get('video_id')),
+                    'title': df['decoded_content'].apply(lambda x: x.get('title')),
+                    'channel_name': df['decoded_content'].apply(lambda x: x.get('channel_name')),
+                    'upload_date': df['decoded_content'].apply(lambda x: x.get('upload_date')),
+                    'transcript': df['decoded_content'].apply(lambda x: x.get('transcript', [])),
+                    'url': df['decoded_content'].apply(lambda x: x.get('url')),
+                    'duration_seconds': df['decoded_content'].apply(lambda x: x.get('duration_seconds', 0)),
+                    'language': df['decoded_content'].apply(lambda x: x.get('language', 'en'))
                 })
             else:
                 # X/Twitter data structure
