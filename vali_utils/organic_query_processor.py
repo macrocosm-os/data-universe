@@ -2,7 +2,7 @@ import random
 import json
 import asyncio
 import statistics
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Optional
 import bittensor as bt
 from common.data import DataSource, DataLabel, DataEntity
 from common.protocol import OnDemandRequest
@@ -11,7 +11,6 @@ from common import constants, utils
 from scraping.provider import ScraperProvider
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from scraping.x.on_demand_model import EnhancedXContent
-from scraping.reddit.model import RedditContent
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 import datetime as dt
@@ -34,6 +33,7 @@ class OrganicQueryProcessor:
         self.CROSS_VALIDATION_SAMPLE_SIZE = 10
         self.MIN_CONSENSUS = 0.3    # if consensus is <30% of request size, consensus penalties skipped
     
+
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
         """
         Main entry point for processing organic queries
@@ -80,6 +80,7 @@ class OrganicQueryProcessor:
             bt.logging.error(f"Error in organic query processing: {str(e)}")
             return self._create_error_response(synapse, str(e))
     
+
     def _select_miners(self) -> List[int]:
         """Select diverse set of miners for querying"""
         miner_uids = utils.get_miner_uids(self.metagraph, self.evaluator.vpermit_rao_limit)
@@ -117,6 +118,7 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Selected {len(selected_miners)} miners for query: {selected_miners}")
         return selected_miners
     
+
     async def _query_miners(self, synapse: OrganicRequest, selected_miners: List[int]) -> Tuple[Dict[int, List], Dict[int, int]]:
         """Query selected miners and return their responses"""
         on_demand_synapse = OnDemandRequest(
@@ -158,6 +160,7 @@ class OrganicQueryProcessor:
         
         return miner_responses, miner_data_counts
     
+
     async def _apply_basic_penalties(self, 
                                      synapse: OrganicRequest,
                                      selected_miners: List[int], 
@@ -220,6 +223,7 @@ class OrganicQueryProcessor:
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         return non_responsive_uids, empty_uids, None
     
+
     def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int) -> List[int]:
         """
         Apply volume-based penalties using consensus validation with dynamic penalty scaling.
@@ -270,6 +274,7 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
         return penalized_miners
     
+
     async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Tuple[Dict[str, bool], List]:
         """Perform cross-validation on pooled miner responses"""
         bt.logging.info("Starting cross-validation process...")
@@ -328,6 +333,8 @@ class OrganicQueryProcessor:
                                                                    keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
                                                                    start_datetime=start_date,
                                                                    end_datetime=end_date)
+            elif synapse.source.upper() == 'YOUTUBE':
+                verification_data = await scraper.scrape(verify_config)
             
             return verification_data if verification_data else None
             
@@ -368,8 +375,9 @@ class OrganicQueryProcessor:
         
         bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation (random sampling)")
         return posts_to_validate
-    
-    async def _validate_posts(self, synapse: OrganicRequest, posts_to_validate: List) -> Dict[str, bool]:
+
+
+    async def _validate_posts(self, synapse: OrganicRequest, posts_to_validate: List[DataEntity]) -> Dict[str, bool]:
         """
         Performs request field matching, enhanced field validation, and content validation on posts. 
         """
@@ -386,15 +394,8 @@ class OrganicQueryProcessor:
             post_id = self._get_post_id(post)
             post_ids.append(post_id)
             
-            # convert to RedditContent or XContent 
-            content_model = self._convert_post_to_content_model(post, synapse.source)
-            if content_model is None:
-                validation_results[post_id] = False
-                bt.logging.error(f"Post {post_id} failed content model conversion")
-                continue
-            
             # Create async task for validation
-            task = self._validate_content_model(synapse, content_model, post_id)
+            task = self._validate_entity(synapse=synapse, entity=post, post_id=post_id)
             validation_tasks.append(task)
         
         # Run all validations concurrently
@@ -418,135 +419,7 @@ class OrganicQueryProcessor:
         
         return validation_results
     
-    def _extract_content_data(self, post) -> Optional[Dict[str, Any]]:
-        """Shared logic for extracting data from various post formats"""
-        try:
-            if isinstance(post, dict):
-                # Handle dict with nested JSON content
-                if 'content' in post and isinstance(post['content'], str):
-                    try:
-                        json_data = json.loads(post['content'])
-                        return {**post, **json_data}
-                    except json.JSONDecodeError:
-                        pass
-                return post
-            
-            elif hasattr(post, 'content'):
-                content_str = post.content.decode('utf-8') if isinstance(post.content, bytes) else post.content
-                try:
-                    return json.loads(content_str)
-                except json.JSONDecodeError:
-                    return None
-                    
-        except Exception as e:
-            bt.logging.warning(f"Error extracting content data: {str(e)}")
-            return None
-    
-    def _convert_to_enhanced_x_content(self, post) -> Optional[EnhancedXContent]:
-        """Convert post to EnhancedXContent - simplified version"""
-        try:
-            data = self._extract_content_data(post)
-            if not data:
-                # Fallback to from_data_entity if it's a DataEntity
-                if hasattr(post, 'content'):
-                    return EnhancedXContent.from_data_entity(post)
-                return None
-            
-            # Extract user data (nested under 'user' key)
-            user_data = data.get('user', {})
-            
-            # Extract tweet data (nested under 'tweet' key)  
-            tweet_data = data.get('tweet', {})
-            
-            # Handle in_reply_to nested data
-            in_reply_to_data = tweet_data.get('in_reply_to', {})
-            
-            return EnhancedXContent(
-                username=user_data.get('username', ''),
-                text=data.get('content', data.get('text', '')),  # 'content' field contains the tweet text
-                url=data.get('uri', data.get('url', '')),  # 'uri' field contains the URL
-                timestamp=self._parse_timestamp(data.get('datetime', data.get('timestamp'))),  # 'datetime' field
-                tweet_hashtags=tweet_data.get('hashtags', data.get('tweet_hashtags', [])),
-                # Metadata fields from tweet object
-                tweet_id=tweet_data.get('id', data.get('tweet_id')),
-                like_count=tweet_data.get('like_count'),
-                retweet_count=tweet_data.get('retweet_count'),  
-                reply_count=tweet_data.get('reply_count'),
-                quote_count=tweet_data.get('quote_count'),
-                is_retweet=tweet_data.get('is_retweet'),
-                is_reply=tweet_data.get('is_reply'),
-                is_quote=tweet_data.get('is_quote'),
-                # Additional user metadata
-                user_id=user_data.get('id'),
-                user_display_name=user_data.get('display_name'),
-                user_verified=user_data.get('verified'),
-                user_followers_count=user_data.get('followers_count'),
-                user_following_count=user_data.get('following_count'),
-                # Additional tweet metadata - extract from top-level media array
-                media_urls=[item.get('url') for item in data.get('media', []) if item.get('url')],
-                media_types=[item.get('type') for item in data.get('media', []) if item.get('type')],
-                conversation_id=tweet_data.get('conversation_id'),
-                in_reply_to_user_id=in_reply_to_data.get('user_id')
-            )
-        except Exception as e:
-            bt.logging.error(f"Failed to convert to EnhancedXContent: {str(e)}")
-            return None
-    
-    def _convert_to_reddit_content(self, post) -> Optional[RedditContent]:
-        """Convert post to RedditContent - simplified version"""
-        try:
-            data = self._extract_content_data(post)
-            if not data:
-                # Fallback to from_data_entity if it's a DataEntity
-                if hasattr(post, 'content'):
-                    return RedditContent.from_data_entity(post)
-                return None
-            
-            return RedditContent(
-                id=data.get('id', ''),
-                url=data.get('url', data.get('uri', '')),
-                username=data.get('username', ''),
-                communityName=data.get('communityName', data.get('community', '')),
-                body=data.get('body', ''),
-                createdAt=self._parse_timestamp(post.datetime), # non-obfuscated datetime
-                dataType=data.get('dataType', data.get('data_type', 'post')),
-                title=data.get('title', None),
 
-                parentId=data.get('parentId', data.get('parent_id', None)),
-                media=data.get('media', None),
-                is_nsfw=data.get('is_nsfw', data.get('over_18', None))
-            )
-        except Exception as e:
-            bt.logging.error(f"Failed to convert to RedditContent: {str(e)}")
-            return None
-    
-    def _parse_timestamp(self, timestamp_str) -> dt.datetime:
-        """
-        Parse timestamp string to datetime object.
-        
-        Args:
-            timestamp_str: Timestamp as string or datetime object
-            
-        Returns:
-            dt.datetime: Parsed datetime, defaults to current time if parsing fails
-        """
-        if isinstance(timestamp_str, dt.datetime):
-            return timestamp_str
-            
-        if not timestamp_str:
-            return dt.datetime.now(dt.timezone.utc)
-            
-        try:
-            # Try ISO format first
-            return dt.datetime.fromisoformat(timestamp_str.replace('Z', '+00:00'))
-        except ValueError:
-            try:
-                # Try common Twitter format
-                return dt.datetime.strptime(timestamp_str, "%a %b %d %H:%M:%S %z %Y")
-            except ValueError:
-                bt.logging.error(f"Failed to parse timestamp: {timestamp_str}")
-                return dt.datetime.now(dt.timezone.utc)
-    
     def _validate_time_range(self, synapse: OrganicRequest, post_timestamp: dt.datetime) -> bool:
         """
         Validate that the post timestamp falls within the requested time range.
@@ -577,6 +450,7 @@ class OrganicQueryProcessor:
             bt.logging.error(f"Error validating time range: {str(e)}")
             return False
     
+
     def _validate_x_metadata_completeness(self, x_content: EnhancedXContent) -> bool:
         """
         Validate that X content has all required tweet metadata fields present.
@@ -639,14 +513,8 @@ class OrganicQueryProcessor:
             bt.logging.error(f"Error validating X metadata completeness: {str(e)}")
             return False
     
-    def _convert_post_to_content_model(self, post, source: str):
-        """Single conversion method based on source"""
-        if source.upper() == 'X':
-            return self._convert_to_enhanced_x_content(post)
-        else:
-            return self._convert_to_reddit_content(post)
-    
-    async def _validate_content_model(self, synapse: OrganicRequest, content_model, post_id: str) -> bool:
+
+    async def _validate_entity(self, synapse: OrganicRequest, entity: DataEntity, post_id: str) -> bool:
         """
         Three-phase validation:
         1. Request field validation 
@@ -655,78 +523,86 @@ class OrganicQueryProcessor:
         """
         try:
             # Phase 1: Request field validation 
-            if not self._validate_request_fields(synapse, content_model):
+            if not self._validate_request_fields(synapse, entity):
                 bt.logging.error(f"Post {post_id} failed request field validation")
                 return False
             
             # Phase 2: Metadata completeness validation (X only)
             if synapse.source.upper() == 'X':
-                if not self._validate_x_metadata_completeness(content_model):
+                x_content = EnhancedXContent.from_data_entity(entity)
+                if not self._validate_x_metadata_completeness(x_content=x_content):
                     bt.logging.error(f"Post {post_id} failed metadata completeness validation")
                     return False
             
             # Phase 3: Scraper validation (only if previous validation passes)
-            scraper_result = await self._validate_with_scraper(synapse, content_model, post_id)
+            scraper_result = await self._validate_with_scraper(synapse, entity, post_id)
             return scraper_result
             
         except Exception as e:
             bt.logging.error(f"Validation error for {post_id}: {str(e)}")
             return False
     
-    def _validate_request_fields(self, synapse: OrganicRequest, content_model) -> bool:
+
+    def _validate_request_fields(self, synapse: OrganicRequest, entity: DataEntity) -> bool:
         """
         Validates whether the returned content fields match the request fields.
         """
         try:
             if synapse.source.upper() == 'X':
-                return self._validate_x_request_fields(synapse, content_model)
-            else:
-                return self._validate_reddit_request_fields(synapse, content_model)
+                return self._validate_x_request_fields(synapse, x_entity=entity)
+            elif synapse.source.upper() == 'REDDIT':
+                return self._validate_reddit_request_fields(synapse, reddit_entity=entity)
+            elif synapse.source.upper() == 'YOUTUBE':
+                return self._validate_youtube_request_fields(synapse, youtube_entity=entity)
         except Exception as e:
             bt.logging.error(f"Error in request field validation: {str(e)}")
             return False
     
-    def _validate_x_request_fields(self, synapse: OrganicRequest, x_content) -> bool:
-        """X request field validation with EnhancedXContent"""
+
+    def _validate_x_request_fields(self, synapse: OrganicRequest, x_entity: DataEntity) -> bool:
+        """X request field validation with the X DataEntity"""
+        x_content_dict = json.loads(x_entity.content.decode('utf-8'))
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
-            post_username = x_content.username.strip('@').lower()
+            post_username = x_content_dict["username"].strip('@').lower()
             if post_username not in requested_usernames:
                 bt.logging.debug(f"Username mismatch: {post_username} not in {requested_usernames}")
                 return False
         
         # Keyword validation
         if synapse.keywords:
-            post_text = x_content.text.lower()
+            post_text = x_content_dict["text"].lower()
             if not all(keyword.lower() in post_text for keyword in synapse.keywords):
                 bt.logging.debug(f"Not all keywords found in post {post_text}")
                 return False
         
         # Time range validation
-        if not self._validate_time_range(synapse, x_content.timestamp):
+        if not self._validate_time_range(synapse, x_entity.datetime):
             return False
         
         return True
     
-    def _validate_reddit_request_fields(self, synapse: OrganicRequest, reddit_content) -> bool:
-        """Reddit request field validation with RedditContent"""
+
+    def _validate_reddit_request_fields(self, synapse: OrganicRequest, reddit_entity: DataEntity) -> bool:
+        """Reddit request field validation with the Reddit DataEntity"""
+        reddit_content_dict = json.loads(reddit_entity.content.decode('utf-8'))
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.lower() for u in synapse.usernames]
-            if reddit_content.username.lower() not in requested_usernames:
-                bt.logging.debug(f"Reddit username mismatch: {reddit_content.username}")
+            if reddit_content_dict["username"].lower() not in requested_usernames:
+                bt.logging.debug(f"Reddit username mismatch: {reddit_content_dict['username']}")
                 return False
         
         # Keywords validation (subreddit or content)
         if synapse.keywords:
-            post_community = reddit_content.community.lower().removeprefix('r/')
+            post_community = reddit_content_dict["communityName"].lower().removeprefix('r/')
             subreddit_match = any(keyword.lower().removeprefix('r/') == post_community 
                                 for keyword in synapse.keywords)
             
-            content_text = (reddit_content.body or '').lower()
-            if reddit_content.title:
-                content_text += ' ' + reddit_content.title.lower()
+            content_text = (reddit_content_dict["body"] or '').lower()
+            if reddit_content_dict["title"]:
+                content_text += ' ' + reddit_content_dict["title"].lower()
             
             keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords)
             
@@ -734,13 +610,34 @@ class OrganicQueryProcessor:
                 bt.logging.debug(f"Reddit keyword mismatch in subreddit '{post_community}' and content")
                 return False
         
-        # Time range validation
-        if not self._validate_time_range(synapse, reddit_content.created_at):
+        # Time range validation using non-obfuscated datetime
+        if not self._validate_time_range(synapse, reddit_entity.datetime):
             return False
         
         return True
     
-    async def _validate_with_scraper(self, synapse: OrganicRequest, content_model, post_id: str) -> bool:
+
+    def _validate_youtube_request_fields(self, synapse: OrganicRequest, youtube_entity: DataEntity) -> bool:
+        """YouTube request field validation with the Youtube DataEntity"""
+        youtube_content_dict = json.loads(youtube_entity.content.decode('utf-8'))
+
+        # Username validation
+        if synapse.usernames:
+            requested_channels = [u.strip('@').lower() for u in synapse.usernames]
+            requested_channel = requested_channels[0]   # take only the first requested channel
+            channel_name = youtube_content_dict["channel_name"]
+            if channel_name != requested_channel:
+                bt.logging.debug(f"Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
+                return False
+            
+        # Time range validation
+        if not self._validate_time_range(synapse, youtube_entity.datetime):
+            return False
+        
+        return True
+
+
+    async def _validate_with_scraper(self, synapse: OrganicRequest, data_entity: DataEntity, post_id: str) -> bool:
         """
         Scraper validation working directly with content model.
         Converts to DataEntity using proper to_data_entity() methods.
@@ -749,12 +646,6 @@ class OrganicQueryProcessor:
             scraper = self._get_scraper(synapse.source)
             if not scraper:
                 bt.logging.warning(f"No scraper available for {synapse.source}")
-                return False
-            
-            # Convert content model to DataEntity using existing methods
-            data_entity = self._content_model_to_data_entity(content_model)
-            if not data_entity:
-                bt.logging.error(f"Failed to convert content model to DataEntity for {post_id}")
                 return False
             
             # Call scraper validation
@@ -773,22 +664,7 @@ class OrganicQueryProcessor:
             bt.logging.error(f"Scraper validation error for {post_id}: {str(e)}")
             return False
     
-    def _content_model_to_data_entity(self, content_model):
-        """
-        Convert content model to DataEntity using existing to_data_entity methods.
-        Uses EnhancedXContent.to_data_entity() or RedditContent.to_data_entity().
-        """
-        try:
-            if hasattr(content_model, '__class__') and hasattr(content_model.__class__, 'to_data_entity'):
-                return content_model.__class__.to_data_entity(content_model)
-            else:
-                bt.logging.error(f"Content model {type(content_model)} has no to_data_entity method")
-                return None
-                
-        except Exception as e:
-            bt.logging.error(f"Failed to convert content model to DataEntity: {str(e)}")
-            return None
-    
+
     def _get_scraper(self, source: str):
         """Get appropriate scraper for the data source"""
         try:
@@ -802,6 +678,7 @@ class OrganicQueryProcessor:
             bt.logging.error(f"Error getting scraper for {source}: {str(e)}")
         return None
     
+
     def _apply_validation_penalties(self, miner_responses: Dict[int, List], validation_results: Dict[str, bool]) -> Dict[int, int]:
         """Calculate final scores incorporating all penalties"""
         miner_scores = {}
@@ -831,6 +708,7 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Final miner scores: {miner_scores}")
         return miner_scores
     
+
     def _create_success_response(self, synapse: OrganicRequest, miner_responses: Dict[int, List], 
                                miner_scores: Dict[int, int], pooled_data: List, metadata: Dict) -> OrganicRequest:
         """Create successful response with pooled data from all miners"""
@@ -856,6 +734,7 @@ class OrganicQueryProcessor:
         
         return synapse
     
+
     def _create_empty_response(self, synapse: OrganicRequest, metadata: Dict) -> OrganicRequest:
         """Create response when no valid data is available"""
         synapse.status = "success"
@@ -867,6 +746,7 @@ class OrganicQueryProcessor:
         }
         return synapse
     
+
     def _create_error_response(self, synapse: OrganicRequest, error_msg: str) -> OrganicRequest:
         """Create error response"""
         synapse.status = "error"
@@ -874,41 +754,47 @@ class OrganicQueryProcessor:
         synapse.data = []
         return synapse
     
+
+    def _create_entity_dictionary(self, data_entity: DataEntity) -> Dict:
+        entity_dict = {}
+
+        entity_dict["uri"] = data_entity.uri
+        entity_dict["datetime"] = data_entity.datetime
+        entity_dict["source"] = DataSource(data_entity.source)
+        entity_dict["label"] = data_entity.label
+        entity_dict["content_size_bytes"] = data_entity.content_size_bytes
+
+        try:
+            content_dict = json.loads(data_entity.content.decode("utf-8"))
+            entity_dict.update(content_dict)
+        except Exception as e:
+            bt.logging.error(f"Error decoding content from DataEntity. Content: {data_entity.content}")
+            entity_dict["content"] = data_entity.content
+
+        return entity_dict
+
+
     def _process_response_data(self, synapse: OrganicRequest, data: List) -> List[Dict]:
         """Process raw response data into standardized format"""
         processed_data = []
         
         for item in data:
-            if isinstance(item, dict):
-                processed_data.append(item)
+            if isinstance(item, DataEntity):
+                processed_data.append(self._create_entity_dictionary(data_entity=item))
             else:
-                # Handle DataEntity objects
-                if synapse.source.upper() == 'X':
-                    try:
-                        if hasattr(item, 'content') and item.content:
-                            content_str = item.content.decode('utf-8') if isinstance(item.content, bytes) else item.content
-                            try:
-                                item_dict = json.loads(content_str)
-                                processed_data.append(item_dict)
-                                continue
-                            except json.JSONDecodeError:
-                                pass
-                    except Exception as e:
-                        bt.logging.error(f"Error processing X content: {str(e)}")
-                
-                # Standard processing
-                item_dict = {
-                    'uri': getattr(item, 'uri', None),
-                    'datetime': getattr(item, 'datetime', None).isoformat() if hasattr(item, 'datetime') and item.datetime else None,
-                    'source': DataSource(getattr(item, 'source')).name if hasattr(item, 'source') else None,
-                    'label': getattr(item, 'label').value if hasattr(item, 'label') and item.label else None,
-                    'content': item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content, bytes) else
-                              getattr(item, 'content', None)
-                }
+                item_dict = {}
+                item_dict["uri"] = getattr(item, 'uri', None),
+                item_dict["datetime"] = getattr(item, 'datetime', None).isoformat() if hasattr(item, 'datetime') and item.datetime else None,
+                item_dict["source"] = DataSource(getattr(item, 'source')).name if hasattr(item, 'source') else None,
+                item_dict["label"] = getattr(item, 'label').value if hasattr(item, 'label') and item.label else None,
+                item_dict["content"] = item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content, bytes) else getattr(item, 'content', None),
+                item_dict["content_size_bytes"] = getattr(item, 'content_size_bytes', 0)
+
                 processed_data.append(item_dict)
         
         return processed_data
     
+
     def _get_post_id(self, post) -> str:
         """Generate consistent post identifier"""
         if isinstance(post, dict):
