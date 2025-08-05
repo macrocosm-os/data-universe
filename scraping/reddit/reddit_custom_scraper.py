@@ -460,6 +460,7 @@ class RedditCustomScraper(Scraper):
                 # Score fields
                 score=getattr(submission, 'score', None),
                 upvote_ratio=getattr(submission, 'upvote_ratio', None),
+                num_comments=getattr(submission, 'num_comments', None),
             )
         except Exception:
             bt.logging.trace(
@@ -501,6 +502,7 @@ class RedditCustomScraper(Scraper):
                 # Score fields
                 score=getattr(comment, 'score', None),
                 upvote_ratio=None,  # Not available for comments
+                num_comments=None,  # Not applicable for comments
             )
         except Exception:
             bt.logging.trace(

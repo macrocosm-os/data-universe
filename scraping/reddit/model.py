@@ -74,6 +74,10 @@ class RedditContent(BaseModel):
         default=None,
         description="Ratio of upvotes to total votes (submissions only, 0.0-1.0). Can be None for backward compatibility.",
     )
+    num_comments: Optional[int] = Field(
+        default=None,
+        description="Number of comments on the post (submissions only). Can be None for backward compatibility.",
+    )
 
     @classmethod
     def to_data_entity(cls, content: "RedditContent") -> DataEntity:

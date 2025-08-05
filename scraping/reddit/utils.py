@@ -224,6 +224,11 @@ def validate_reddit_content(
     if not score_validation_result.is_valid:
         return score_validation_result
 
+    # Comment count validation (with sophisticated growth modeling)
+    comment_validation_result = validate_comment_count(content_to_validate, actual_content, entity_to_validate)
+    if not comment_validation_result.is_valid:
+        return comment_validation_result
+
     # At last, all checks have passed. The DataEntity is indeed valid. Nice work!
     return ValidationResult(
         is_valid=True,
@@ -650,3 +655,251 @@ def _calculate_max_reasonable_score(content: RedditContent, content_age: dt.time
     
     # Return the minimum of time-based and absolute maximum
     return min(time_based_max, max_absolute)
+
+
+def validate_comment_count(submitted_content: RedditContent, actual_content: RedditContent,
+                          entity: DataEntity) -> ValidationResult:
+    """
+    Validate comment count with sophisticated growth modeling and anti-cheating mechanisms.
+    Comments grow differently than scores - they can only increase and follow predictable patterns.
+    Backward compatible: only validates if miner provided num_comments field.
+    
+    Args:
+        submitted_content: Content submitted by miner
+        actual_content: Actual content from Reddit API
+        entity: DataEntity being validated
+        
+    Returns:
+        ValidationResult indicating if comment count is valid
+    """
+    # Skip validation if miner didn't provide num_comments field (backward compatibility)
+    if submitted_content.num_comments is None:
+        return ValidationResult(
+            is_valid=True,
+            reason="Comment count validation skipped - field not provided (backward compatibility)",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Comment count only applies to posts, not comments
+    if submitted_content.data_type != RedditDataType.POST:
+        if submitted_content.num_comments is not None:
+            bt.logging.info("Miner provided num_comments for a comment (should only be for posts)")
+            return ValidationResult(
+                is_valid=False,
+                reason="Comment count provided for content that doesn't support it (comments don't have comment counts)",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        return ValidationResult(
+            is_valid=True,
+            reason="Comment count validation skipped - not applicable to comments",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Basic sanity check: comment count must be non-negative
+    if submitted_content.num_comments < 0:
+        bt.logging.info(f"Invalid negative comment count: {submitted_content.num_comments}")
+        return ValidationResult(
+            is_valid=False,
+            reason=f"Invalid negative comment count: {submitted_content.num_comments}",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Calculate content age for validation logic
+    now = dt.datetime.now(dt.timezone.utc)
+    content_age = now - submitted_content.created_at
+    
+    # Anti-cheating: Maximum reasonable comment count based on content age and viral potential
+    max_reasonable_comments = _calculate_max_reasonable_comment_count(submitted_content, content_age)
+    if submitted_content.num_comments > max_reasonable_comments:
+        bt.logging.info(f"Submitted comment count {submitted_content.num_comments} exceeds reasonable maximum {max_reasonable_comments} for content age {content_age}")
+        return ValidationResult(
+            is_valid=False,
+            reason=f"Comment count {submitted_content.num_comments} is unreasonably high for content of this age",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Sophisticated tolerance based on comment growth patterns
+    comment_tolerance = _calculate_comment_count_tolerance(submitted_content, actual_content, content_age)
+    
+    # Comments can ONLY increase over time (Reddit doesn't delete comments automatically)
+    # Allow very small decreases only for edge cases (deleted spam comments)
+    max_allowed_comments = actual_content.num_comments + comment_tolerance
+    min_allowed_comments = max(0, actual_content.num_comments - min(comment_tolerance // 10, 2))  # Very strict on decreases
+    
+    # Special case: If actual count is 0, allow some initial growth
+    if actual_content.num_comments == 0:
+        min_allowed_comments = 0
+        # Fresh posts can get initial comments quickly
+        max_allowed_comments = max(comment_tolerance, 10)
+    
+    # Validate comment count is within sophisticated bounds
+    if not (min_allowed_comments <= submitted_content.num_comments <= max_allowed_comments):
+        bt.logging.info(
+            f"Comment count validation failed: submitted={submitted_content.num_comments}, "
+            f"actual={actual_content.num_comments}, allowed_range=[{min_allowed_comments}, {max_allowed_comments}], "
+            f"content_age={content_age}, tolerance={comment_tolerance}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason=f"Comment count {submitted_content.num_comments} outside acceptable range [{min_allowed_comments}, {max_allowed_comments}] for content age {content_age}",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Advanced validation: Check comment-to-score ratio for suspicious patterns
+    suspicious_ratio_result = _validate_comment_score_ratio(submitted_content, actual_content, entity)
+    if not suspicious_ratio_result.is_valid:
+        return suspicious_ratio_result
+    
+    return ValidationResult(
+        is_valid=True,
+        reason="Comment count validation passed",
+        content_size_bytes_validated=entity.content_size_bytes,
+    )
+
+
+def _calculate_comment_count_tolerance(submitted_content: RedditContent, actual_content: RedditContent, 
+                                     content_age: dt.timedelta) -> int:
+    """
+    Calculate sophisticated tolerance for comment count changes based on content patterns.
+    
+    Args:
+        submitted_content: Content submitted by miner
+        actual_content: Actual content from Reddit API
+        content_age: Age of the content
+        
+    Returns:
+        Comment count tolerance (absolute number)
+    """
+    base_count = actual_content.num_comments or 0
+    
+    # Age-based tolerance - newer content has more comment activity
+    if content_age < dt.timedelta(hours=1):
+        # Very fresh: high comment velocity
+        age_tolerance_percent = 0.50  # 50% tolerance
+        min_tolerance = 5
+    elif content_age < dt.timedelta(hours=6):
+        # Recent: moderate comment velocity
+        age_tolerance_percent = 0.35  # 35% tolerance
+        min_tolerance = 3
+    elif content_age < dt.timedelta(days=1):
+        # Day-old: slowing down
+        age_tolerance_percent = 0.25  # 25% tolerance
+        min_tolerance = 2
+    elif content_age < dt.timedelta(days=7):
+        # Week-old: much slower
+        age_tolerance_percent = 0.15  # 15% tolerance
+        min_tolerance = 1
+    else:
+        # Old: very slow growth
+        age_tolerance_percent = 0.10  # 10% tolerance
+        min_tolerance = 1
+    
+    # Score-based adjustment: higher scoring posts get more comments
+    score_multiplier = 1.0
+    if submitted_content.score and submitted_content.score > 100:
+        # High-scoring posts attract more comments
+        score_multiplier = min(2.0, 1.0 + (submitted_content.score / 1000))
+    
+    # Calculate final tolerance
+    base_tolerance = max(int(base_count * age_tolerance_percent), min_tolerance)
+    final_tolerance = int(base_tolerance * score_multiplier)
+    
+    return final_tolerance
+
+
+def _calculate_max_reasonable_comment_count(content: RedditContent, content_age: dt.timedelta) -> int:
+    """
+    Calculate maximum reasonable comment count to prevent extreme cheating.
+    
+    Args:
+        content: The Reddit content
+        content_age: Age of the content
+        
+    Returns:
+        Maximum reasonable comment count for this content
+    """
+    # Base comment velocity (comments per hour)
+    base_hourly_rate = 50  # Max 50 comments per hour for normal posts
+    max_absolute = 5000    # Absolute maximum comments for any post
+    
+    # Viral content multiplier based on score
+    viral_multiplier = 1.0
+    if content.score and content.score > 1000:
+        # Very high scoring posts can get many more comments
+        viral_multiplier = min(10.0, content.score / 1000)  # Up to 10x for 10k+ score posts
+    elif content.score and content.score > 100:
+        # Moderately high scoring posts get modest boost
+        viral_multiplier = min(3.0, 1.0 + (content.score / 500))
+    
+    # Calculate time-based maximum with viral adjustment
+    age_hours = max(content_age.total_seconds() / 3600, 0.1)  # Minimum 0.1 hours
+    time_based_max = int(base_hourly_rate * viral_multiplier * age_hours)
+    
+    # Apply diminishing returns for very old content
+    if age_hours > 48:  # After 48 hours, comment growth slows significantly
+        time_based_max = int(time_based_max * 0.6)
+    if age_hours > 168:  # After 1 week, very little new comment activity
+        time_based_max = int(time_based_max * 0.3)
+    
+    return min(time_based_max, max_absolute)
+
+
+def _validate_comment_score_ratio(submitted_content: RedditContent, actual_content: RedditContent,
+                                entity: DataEntity) -> ValidationResult:
+    """
+    Advanced validation: Check for suspicious comment-to-score ratios that might indicate cheating.
+    
+    Args:
+        submitted_content: Content submitted by miner
+        actual_content: Actual content from Reddit API
+        entity: DataEntity being validated
+        
+    Returns:
+        ValidationResult indicating if the comment-score ratio is reasonable
+    """
+    # Skip if we don't have both score and comment data
+    if not (submitted_content.score and submitted_content.num_comments):
+        return ValidationResult(
+            is_valid=True,
+            reason="Comment-score ratio validation skipped - insufficient data",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Calculate comment-to-score ratio
+    if submitted_content.score <= 0:
+        # Edge case: negative or zero score posts can still have comments
+        if submitted_content.num_comments > 50:  # But not too many
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Suspicious: {submitted_content.num_comments} comments on post with score {submitted_content.score}",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        return ValidationResult(
+            is_valid=True,
+            reason="Comment-score ratio acceptable for low/negative score post",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Normal case: positive score
+    comment_to_score_ratio = submitted_content.num_comments / submitted_content.score
+    
+    # Typical Reddit patterns:
+    # - Most posts: 0.1-2.0 comments per upvote (10-200 comments per 100 score)
+    # - Controversial posts: higher ratio (lots of arguing)
+    # - Simple memes: lower ratio (just upvote and move on)
+    
+    max_reasonable_ratio = 5.0  # 5 comments per net upvote is very high but possible
+    
+    if comment_to_score_ratio > max_reasonable_ratio:
+        bt.logging.info(f"Suspicious comment-to-score ratio: {comment_to_score_ratio:.2f} (comments={submitted_content.num_comments}, score={submitted_content.score})")
+        return ValidationResult(
+            is_valid=False,
+            reason=f"Suspicious comment-to-score ratio: {comment_to_score_ratio:.2f} exceeds reasonable maximum {max_reasonable_ratio}",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    return ValidationResult(
+        is_valid=True,
+        reason="Comment-score ratio is reasonable",
+        content_size_bytes_validated=entity.content_size_bytes,
+    )
