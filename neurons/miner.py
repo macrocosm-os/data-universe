@@ -513,7 +513,8 @@ class Miner:
                 # For YouTube, only channel identifiers are supported ('usernames')
                 labels = []
                 if synapse.usernames:
-                    labels.extend([DataLabel(value=f"#ytc_c_{u.strip('@')}") for u in synapse.usernames])
+                    from scraping.youtube.model import YouTubeContent
+                    labels.extend([DataLabel(value=YouTubeContent.create_channel_label(u)) for u in synapse.usernames])
 
             if not scraper_id:
                 bt.logging.error(f"No scraper ID for source {synapse.source}")
