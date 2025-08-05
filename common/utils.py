@@ -126,12 +126,13 @@ def time_bucket_id_to_date_range(bucket: int) -> DateRange:
 def parse_iso_date(date_str: str) -> Optional[dt.datetime]:
     """
     Parse ISO date string, handling 'Z' suffix for UTC timezone.
+    Assumes UTC for timezone-naive objects and always returns a timezone-aware object.
     
     Args:
         date_str: ISO format date string, potentially with 'Z' suffix
         
     Returns:
-        Parsed datetime object or None if parsing fails
+        Timezone-aware datetime object or None if parsing fails
     """
     if not date_str:
         return None
@@ -141,7 +142,13 @@ def parse_iso_date(date_str: str) -> Optional[dt.datetime]:
         date_str = date_str[:-1] + '+00:00'
     
     try:
-        return dt.datetime.fromisoformat(date_str)
+        parsed_dt = dt.datetime.fromisoformat(date_str)
+        
+        # If the parsed datetime is timezone-naive, assume UTC
+        if parsed_dt.tzinfo is None:
+            parsed_dt = parsed_dt.replace(tzinfo=dt.timezone.utc)
+        
+        return parsed_dt
     except ValueError as e:
         bt.logging.warning(f"Failed to parse date '{date_str}': {e}")
         return None
