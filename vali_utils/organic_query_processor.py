@@ -11,6 +11,7 @@ from common import constants, utils
 from scraping.provider import ScraperProvider
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from scraping.x.on_demand_model import EnhancedXContent
+from scraping.youtube.model import YouTubeContent
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 import datetime as dt
@@ -334,6 +335,12 @@ class OrganicQueryProcessor:
                                                                    start_datetime=start_date,
                                                                    end_datetime=end_date)
             elif synapse.source.upper() == 'YOUTUBE':
+                yt_label = DataLabel(value=YouTubeContent.create_channel_label(synapse.usernames[0]))
+                verify_config = ScrapeConfig(
+                    entity_limit=synapse.limit,  
+                    date_range=DateRange(start=start_date, end=end_date),
+                    labels=[yt_label],
+                )
                 verification_data = await scraper.scrape(verify_config)
             
             return verification_data if verification_data else None
@@ -781,16 +788,8 @@ class OrganicQueryProcessor:
         for item in data:
             if isinstance(item, DataEntity):
                 processed_data.append(self._create_entity_dictionary(data_entity=item))
-            else:
-                item_dict = {}
-                item_dict["uri"] = getattr(item, 'uri', None),
-                item_dict["datetime"] = getattr(item, 'datetime', None).isoformat() if hasattr(item, 'datetime') and item.datetime else None,
-                item_dict["source"] = DataSource(getattr(item, 'source')).name if hasattr(item, 'source') else None,
-                item_dict["label"] = getattr(item, 'label').value if hasattr(item, 'label') and item.label else None,
-                item_dict["content"] = item.content.decode('utf-8') if hasattr(item, 'content') and isinstance(item.content, bytes) else getattr(item, 'content', None),
-                item_dict["content_size_bytes"] = getattr(item, 'content_size_bytes', 0)
-
-                processed_data.append(item_dict)
+            elif isinstance(item, Dict):
+                processed_data.append(item)
         
         return processed_data
     
