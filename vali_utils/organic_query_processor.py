@@ -529,6 +529,8 @@ class OrganicQueryProcessor:
         3. Scraper validation 
         """
         try:
+            entity_for_validation = entity
+
             # Phase 1: Request field validation 
             if not self._validate_request_fields(synapse, entity):
                 bt.logging.error(f"Post {post_id} failed request field validation")
@@ -540,9 +542,10 @@ class OrganicQueryProcessor:
                 if not self._validate_x_metadata_completeness(x_content=x_content):
                     bt.logging.error(f"Post {post_id} failed metadata completeness validation")
                     return False
+                entity_for_validation = EnhancedXContent.to_data_entity(x_content)
             
             # Phase 3: Scraper validation (only if previous validation passes)
-            scraper_result = await self._validate_with_scraper(synapse, entity, post_id)
+            scraper_result = await self._validate_with_scraper(synapse, entity_for_validation, post_id)
             return scraper_result
             
         except Exception as e:

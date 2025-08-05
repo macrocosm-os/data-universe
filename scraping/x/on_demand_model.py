@@ -252,7 +252,7 @@ class EnhancedXContent(BaseModel):
         url = content_dict.get("uri", "")
         
         # Handle timestamp - could be in content_dict or data_entity
-        timestamp = utils.obfuscate_datetime_to_minute(data_entity.datetime)
+        timestamp = data_entity.datetime
         
         # Extract hashtags from tweet info
         hashtags = tweet_info.get("hashtags", [])
