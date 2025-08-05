@@ -14,7 +14,7 @@ class QueryRequest(StrictBaseModel):
     """Request model for data queries"""
     source: str = Field(
         ...,  # Required field
-        description="Data source (x or reddit)"
+        description="Data source (x, reddit, or youtube)"
     )
     usernames: List[str] = Field(
         default_factory=list,
