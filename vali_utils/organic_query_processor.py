@@ -572,15 +572,16 @@ class OrganicQueryProcessor:
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
-            post_username = x_content_dict["username"].strip('@').lower()
-            if post_username not in requested_usernames:
+            user_dict = x_content_dict.get("user", {})
+            post_username = user_dict.get("username", "").strip('@').lower()
+            if not post_username or post_username not in requested_usernames:
                 bt.logging.debug(f"Username mismatch: {post_username} not in {requested_usernames}")
                 return False
         
         # Keyword validation
         if synapse.keywords:
-            post_text = x_content_dict["text"].lower()
-            if not all(keyword.lower() in post_text for keyword in synapse.keywords):
+            post_text = x_content_dict.get("content", "").lower()
+            if not post_text or not all(keyword.lower() in post_text for keyword in synapse.keywords):
                 bt.logging.debug(f"Not all keywords found in post {post_text}")
                 return False
         
@@ -597,21 +598,26 @@ class OrganicQueryProcessor:
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.lower() for u in synapse.usernames]
-            if reddit_content_dict["username"].lower() not in requested_usernames:
-                bt.logging.debug(f"Reddit username mismatch: {reddit_content_dict['username']}")
+            post_username = reddit_content_dict.get("username")
+            if not post_username or post_username.lower() not in requested_usernames:
+                bt.logging.debug(f"Reddit username mismatch: {post_username} not in {requested_usernames}")
                 return False
         
         # Keywords validation (subreddit or content)
         if synapse.keywords:
-            post_community = reddit_content_dict["communityName"].lower().removeprefix('r/')
-            subreddit_match = any(keyword.lower().removeprefix('r/') == post_community 
-                                for keyword in synapse.keywords)
+            post_community = reddit_content_dict.get("communityName")
+            if post_community:
+                post_community = post_community.lower().removeprefix('r/')
+                subreddit_match = any(keyword.lower().removeprefix('r/') == post_community 
+                                    for keyword in synapse.keywords)
+            else:
+                subreddit_match = False
             
-            content_text = (reddit_content_dict["body"] or '').lower()
-            if reddit_content_dict["title"]:
-                content_text += ' ' + reddit_content_dict["title"].lower()
+            body_text = reddit_content_dict.get("body") or ""
+            title_text = reddit_content_dict.get("title") or ""
+            content_text = (body_text + ' ' + title_text).lower().strip()
             
-            keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords)
+            keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
             
             if not (subreddit_match or keyword_in_content):
                 bt.logging.debug(f"Reddit keyword mismatch in subreddit '{post_community}' and content")
@@ -632,8 +638,8 @@ class OrganicQueryProcessor:
         if synapse.usernames:
             requested_channels = [u.strip('@').lower() for u in synapse.usernames]
             requested_channel = requested_channels[0]   # take only the first requested channel
-            channel_name = youtube_content_dict["channel_name"]
-            if channel_name.lower() != requested_channel.lower():
+            channel_name = youtube_content_dict.get("channel_name")
+            if not channel_name or channel_name.lower() != requested_channel.lower():
                 bt.logging.debug(f"Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
                 return False
             
