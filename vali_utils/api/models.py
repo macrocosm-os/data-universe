@@ -14,7 +14,7 @@ class QueryRequest(StrictBaseModel):
     """Request model for data queries"""
     source: str = Field(
         ...,  # Required field
-        description="Data source (x or reddit)"
+        description="Data source (x, reddit, or youtube)"
     )
     usernames: List[str] = Field(
         default_factory=list,
@@ -53,6 +53,32 @@ class QueryRequest(StrictBaseModel):
         except KeyError:
             valid_sources = [s.name.lower() for s in DataSource if s.weight > 0]
             raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
+
+    @field_validator('usernames')
+    @classmethod
+    def validate_usernames_for_youtube(cls, v: List[str], info) -> List[str]:
+        # Get the source from the model context
+        source = info.data.get('source', '').upper()
+        
+        if source == 'YOUTUBE':
+            if len(v) != 1:
+                raise ValueError("YouTube requests must have exactly one username")
+            if not v[0].strip():
+                raise ValueError("YouTube username cannot be empty")
+        
+        return v
+
+    @field_validator('keywords')
+    @classmethod
+    def validate_keywords_for_youtube(cls, v: List[str], info) -> List[str]:
+        # Get the source from the model context
+        source = info.data.get('source', '').upper()
+        
+        if source == 'YOUTUBE':
+            if len(v) > 0:
+                raise ValueError("YouTube requests cannot have keywords")
+        
+        return v
 
 
 class QueryResponse(StrictBaseModel):
