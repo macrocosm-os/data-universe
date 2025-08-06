@@ -860,9 +860,9 @@ def _calculate_max_reasonable_comment_count(content: RedditContent, content_age:
     Returns:
         Maximum reasonable comment count for this content
     """
-    # Base comment velocity (comments per hour)
-    base_hourly_rate = 50  # Max 50 comments per hour for normal posts
-    max_absolute = 5000    # Absolute maximum comments for any post
+    # Base comment velocity (comments per hour) - Reddit can get MASSIVELY viral
+    base_hourly_rate = 200  # Max 200 comments per hour for normal posts (increased from 50)
+    max_absolute = 100000   # Absolute maximum comments (increased from 5000 to handle mega-viral posts like COVID threads, AMAs, breaking news)
     
     # Viral content multiplier based on score
     viral_multiplier = 1.0
