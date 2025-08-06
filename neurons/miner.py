@@ -508,6 +508,14 @@ class Miner:
                 else:
                     labels = []
 
+            elif synapse.source == DataSource.YOUTUBE:
+                scraper_id = ScraperId.YOUTUBE_APIFY_TRANSCRIPT
+                # For YouTube, only channel identifiers are supported ('usernames')
+                labels = []
+                if synapse.usernames:
+                    from scraping.youtube.model import YouTubeContent
+                    labels.extend([DataLabel(value=YouTubeContent.create_channel_label(u)) for u in synapse.usernames])
+
             if not scraper_id:
                 bt.logging.error(f"No scraper ID for source {synapse.source}")
                 synapse.data = []
@@ -584,7 +592,22 @@ class Miner:
                                                       start_datetime=start_dt,
                                                       end_datetime=end_dt)
                 synapse.data = data[:synapse.limit] if synapse.limit else data
-                
+            elif synapse.source == DataSource.YOUTUBE:
+                from scraping.provider import ScraperProvider
+
+                # Create a new scraper provider and get the YouTube scraper
+                provider = ScraperProvider()
+                scraper = provider.get(scraper_id)
+
+                if not scraper:
+                    bt.logging.error(f"No scraper available for ID {scraper_id}")
+                    synapse.data = []
+                    return synapse
+
+                # Use the scraper's regular scrape method with the ScrapeConfig
+                data_entities = await scraper.scrape(config)
+                synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
+
             synapse.version = constants.PROTOCOL_VERSION
 
             bt.logging.success(
