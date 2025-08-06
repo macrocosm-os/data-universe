@@ -108,6 +108,13 @@ class JobParams(BaseModel):
         # Validate that at least one of keyword or label is provided
         if self.keyword is None and self.label is None:
             raise ValueError("At least one of 'keyword' or 'label' must be provided")
+        
+        # YouTube-specific validation
+        if self.platform == 'youtube':
+            if self.label is None:
+                raise ValueError("YouTube jobs must have a label (channel name)")
+            if self.keyword is not None:
+                raise ValueError("YouTube jobs cannot have keywords - use label for channel name only")
             
         # Validate datetime order if both are present
         start = self.post_start_datetime
