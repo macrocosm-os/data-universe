@@ -7,7 +7,7 @@ from typing import List
 from urllib.parse import urlparse
 from scraping import utils
 from scraping.scraper import ValidationResult
-from scraping.reddit.model import RedditContent
+from scraping.reddit.model import RedditContent, RedditDataType
 from common.data import DataEntity, DataLabel
 from common.constants import REDDIT_MEDIA_REQUIRED_DATE
 
@@ -568,17 +568,38 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
     max_allowed_score = actual_content.score + tolerance
     min_allowed_score = actual_content.score - min(tolerance // 2, 10)  # Less tolerance for decreases
     
-    # Validate score is within reasonable bounds
+    # Validate score is within reasonable bounds - use penalty system for outliers
     if not (min_allowed_score <= submitted_content.score <= max_allowed_score):
+        # Calculate how far off the score is (penalty factor)
+        if submitted_content.score > max_allowed_score:
+            score_deviation = (submitted_content.score - max_allowed_score) / max(max_allowed_score, 1)
+        else:
+            score_deviation = (min_allowed_score - submitted_content.score) / max(actual_content.score, 1)
+        
+        # For very extreme outliers (>500% off), still reject to prevent major cheating
+        if score_deviation > 5.0:  # More than 5x off
+            bt.logging.info(
+                f"Score validation failed - extreme outlier: submitted={submitted_content.score}, "
+                f"actual={actual_content.score}, deviation={score_deviation:.2f}x"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Score {submitted_content.score} is extremely unrealistic (deviation: {score_deviation:.2f}x)",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        
+        # For moderate outliers, apply penalty but still validate
+        penalty_factor = min(0.5, score_deviation * 0.1)  # Max 50% penalty, scales with deviation
+        penalized_bytes = int(entity.content_size_bytes * (1.0 - penalty_factor))
+        
         bt.logging.info(
-            f"Score validation failed: submitted={submitted_content.score}, "
-            f"actual={actual_content.score}, allowed_range=[{min_allowed_score}, {max_allowed_score}], "
-            f"content_age={content_age}"
+            f"Score validation passed with penalty: submitted={submitted_content.score}, "
+            f"actual={actual_content.score}, deviation={score_deviation:.2f}x, penalty={penalty_factor:.2f}"
         )
         return ValidationResult(
-            is_valid=False,
-            reason=f"Score {submitted_content.score} outside acceptable range [{min_allowed_score}, {max_allowed_score}] for content age {content_age}",
-            content_size_bytes_validated=entity.content_size_bytes,
+            is_valid=True,
+            reason=f"Score validation passed with penalty for viral outlier (deviation: {score_deviation:.2f}x)",
+            content_size_bytes_validated=penalized_bytes,
         )
     
     # Validate upvote_ratio if provided (submissions only)
@@ -732,17 +753,38 @@ def validate_comment_count(submitted_content: RedditContent, actual_content: Red
         # Fresh posts can get initial comments quickly
         max_allowed_comments = max(comment_tolerance, 10)
     
-    # Validate comment count is within sophisticated bounds
+    # Validate comment count is within sophisticated bounds - use penalty system for viral outliers
     if not (min_allowed_comments <= submitted_content.num_comments <= max_allowed_comments):
+        # Calculate how far off the comment count is
+        if submitted_content.num_comments > max_allowed_comments:
+            comment_deviation = (submitted_content.num_comments - max_allowed_comments) / max(max_allowed_comments, 1)
+        else:
+            comment_deviation = (min_allowed_comments - submitted_content.num_comments) / max(actual_content.num_comments, 1)
+        
+        # For very extreme outliers (>800% off), still reject to prevent major cheating
+        if comment_deviation > 8.0:  # More than 8x off (comments can be more viral than scores)
+            bt.logging.info(
+                f"Comment count validation failed - extreme outlier: submitted={submitted_content.num_comments}, "
+                f"actual={actual_content.num_comments}, deviation={comment_deviation:.2f}x"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Comment count {submitted_content.num_comments} is extremely unrealistic (deviation: {comment_deviation:.2f}x)",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        
+        # For moderate outliers, apply penalty but still validate
+        penalty_factor = min(0.4, comment_deviation * 0.08)  # Max 40% penalty for comments, scales with deviation
+        penalized_bytes = int(entity.content_size_bytes * (1.0 - penalty_factor))
+        
         bt.logging.info(
-            f"Comment count validation failed: submitted={submitted_content.num_comments}, "
-            f"actual={actual_content.num_comments}, allowed_range=[{min_allowed_comments}, {max_allowed_comments}], "
-            f"content_age={content_age}, tolerance={comment_tolerance}"
+            f"Comment count validation passed with penalty: submitted={submitted_content.num_comments}, "
+            f"actual={actual_content.num_comments}, deviation={comment_deviation:.2f}x, penalty={penalty_factor:.2f}"
         )
         return ValidationResult(
-            is_valid=False,
-            reason=f"Comment count {submitted_content.num_comments} outside acceptable range [{min_allowed_comments}, {max_allowed_comments}] for content age {content_age}",
-            content_size_bytes_validated=entity.content_size_bytes,
+            is_valid=True,
+            reason=f"Comment count validation passed with penalty for viral outlier (deviation: {comment_deviation:.2f}x)",
+            content_size_bytes_validated=penalized_bytes,
         )
     
     # Advanced validation: Check comment-to-score ratio for suspicious patterns
