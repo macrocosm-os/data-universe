@@ -864,14 +864,17 @@ def _calculate_max_reasonable_comment_count(content: RedditContent, content_age:
     base_hourly_rate = 200  # Max 200 comments per hour for normal posts (increased from 50)
     max_absolute = 100000   # Absolute maximum comments (increased from 5000 to handle mega-viral posts like COVID threads, AMAs, breaking news)
     
-    # Viral content multiplier based on score
+    # Viral content multiplier based on score - handle mega-viral events
     viral_multiplier = 1.0
-    if content.score and content.score > 1000:
+    if content.score and content.score > 10000:
+        # Mega-viral posts (COVID, breaking news, major AMAs) can get 50x+ comments
+        viral_multiplier = min(50.0, content.score / 1000)  # Up to 50x for 50k+ score posts
+    elif content.score and content.score > 1000:
         # Very high scoring posts can get many more comments
-        viral_multiplier = min(10.0, content.score / 1000)  # Up to 10x for 10k+ score posts
+        viral_multiplier = min(20.0, content.score / 1000)  # Up to 20x for 20k+ score posts
     elif content.score and content.score > 100:
         # Moderately high scoring posts get modest boost
-        viral_multiplier = min(3.0, 1.0 + (content.score / 500))
+        viral_multiplier = min(5.0, 1.0 + (content.score / 500))  # Up to 5x
     
     # Calculate time-based maximum with viral adjustment
     age_hours = max(content_age.total_seconds() / 3600, 0.1)  # Minimum 0.1 hours
