@@ -589,16 +589,16 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
             )
         
         # For moderate outliers, apply penalty but still validate
-        penalty_factor = min(0.5, score_deviation * 0.1)  # Max 50% penalty, scales with deviation
-        penalized_bytes = int(entity.content_size_bytes * (1.0 - penalty_factor))
+        penalty_factor = min(0.5, score_deviation * 0.1)                    # Max 50% penalty, scales with deviation
+        penalized_bytes = int(entity.content_size_bytes * penalty_factor)   # lower penalties for less score deviation
         
         bt.logging.info(
             f"Score validation passed with penalty: submitted={submitted_content.score}, "
             f"actual={actual_content.score}, deviation={score_deviation:.2f}x, penalty={penalty_factor:.2f}"
         )
         return ValidationResult(
-            is_valid=True,
-            reason=f"Score validation passed with penalty for viral outlier (deviation: {score_deviation:.2f}x)",
+            is_valid=False,
+            reason=f"Score validation failed with adjusted penalty for viral outlier (deviation: {score_deviation:.2f}x)",
             content_size_bytes_validated=penalized_bytes,
         )
     
