@@ -777,7 +777,7 @@ class OrganicQueryProcessor:
         entity_dict["uri"] = data_entity.uri
         entity_dict["datetime"] = data_entity.datetime
         entity_dict["source"] = DataSource(data_entity.source).name
-        entity_dict["label"] = data_entity.label
+        entity_dict["label"] = data_entity.label.value if data_entity.label else None
         entity_dict["content_size_bytes"] = data_entity.content_size_bytes
 
         try:
