@@ -5,7 +5,7 @@ import bittensor as bt
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_TWITTER_URLS_DATE, LOW_ENGAGEMENT_FILTER_DATE
+from common.constants import NO_TWITTER_URLS_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -325,9 +325,6 @@ def is_spam_account(author_data: dict) -> bool:
     Returns:
         True if account should be filtered as spam
     """
-    # Only enforce filtering after the deadline
-    if dt.datetime.now(dt.timezone.utc) < LOW_ENGAGEMENT_FILTER_DATE:
-        return False
     
     if not isinstance(author_data, dict):
         return True
@@ -364,9 +361,6 @@ def is_low_engagement_tweet(tweet_data: dict) -> bool:
     Returns:
         True if tweet should be filtered for low engagement
     """
-    # Only enforce filtering after the deadline
-    if dt.datetime.now(dt.timezone.utc) < LOW_ENGAGEMENT_FILTER_DATE:
-        return False
     
     if not isinstance(tweet_data, dict):
         return True

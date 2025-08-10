@@ -39,7 +39,5 @@ NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # Dece
 # Date after which media content is required for Reddit posts that contain media
 REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # August 7, 2025 UTC (one month from now)
 
-# Date after which low engagement account filtering is enforced for X/Twitter
-LOW_ENGAGEMENT_FILTER_DATE = dt.datetime(2025, 8, 10, tzinfo=dt.timezone.utc)  # August 10, 2025 UTC
 
 EVALUATION_ON_STARTUP = 15
