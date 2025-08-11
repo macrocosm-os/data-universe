@@ -65,6 +65,20 @@ class RedditContent(BaseModel):
         description="Whether the post/comment is marked as NSFW (over_18).",
     )
 
+    # Score fields.
+    score: Optional[int] = Field(
+        default=None,
+        description="Net score (upvotes minus downvotes) for the post/comment. Can be None for backward compatibility.",
+    )
+    upvote_ratio: Optional[float] = Field(
+        default=None,
+        description="Ratio of upvotes to total votes (submissions only, 0.0-1.0). Can be None for backward compatibility.",
+    )
+    num_comments: Optional[int] = Field(
+        default=None,
+        description="Number of comments on the post (submissions only). Can be None for backward compatibility.",
+    )
+
     @classmethod
     def to_data_entity(cls, content: "RedditContent") -> DataEntity:
         """Converts the RedditContent to a DataEntity."""

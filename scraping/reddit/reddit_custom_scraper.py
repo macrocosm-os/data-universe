@@ -457,6 +457,10 @@ class RedditCustomScraper(Scraper):
                 # Media fields
                 media=media_urls if media_urls else None,
                 is_nsfw=submission.over_18,
+                # Score fields
+                score=getattr(submission, 'score', None),
+                upvote_ratio=getattr(submission, 'upvote_ratio', None),
+                num_comments=getattr(submission, 'num_comments', None),
             )
         except Exception:
             bt.logging.trace(
@@ -495,6 +499,10 @@ class RedditCustomScraper(Scraper):
                 # Media fields
                 media=None,  # Comments don't have media
                 is_nsfw=parent_nsfw or subreddit_nsfw,
+                # Score fields
+                score=getattr(comment, 'score', None),
+                upvote_ratio=None,  # Not available for comments
+                num_comments=None,  # Not applicable for comments
             )
         except Exception:
             bt.logging.trace(
