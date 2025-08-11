@@ -13,6 +13,7 @@ from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data, is_validator, time_bucket_id_from_datetime, parse_iso_date
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup, Job, JobMatcher
+from scraping.youtube.model import YouTubeContent
 from dynamic_desirability.constants import (REPO_URL,
                                             PREFERENCES_FOLDER,
                                             DEFAULT_JSON_PATH,
@@ -116,13 +117,16 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
             if "params" not in job or not all(k in job["params"] for k in ["keyword", "platform", "label"]):
                 bt.logging.warning(f"Skipping malformed default job: {job}")
                 continue
+            
+            # Apply channel label conversion for YouTube jobs
+            job_params = _apply_channel_label_conversion(job["params"])
                 
-            job_key = create_job_key(job["params"])
+            job_key = create_job_key(job_params)
             # Store the ID from default jobs (or generate one if missing)
             job_ids[job_key] = job.get("id", f"default_{len(job_ids)}")
             aggregated_jobs[job_key] = {
                 "weight": job.get("weight", 1.0),
-                "params": job["params"].copy()
+                "params": job_params
             }
     except FileNotFoundError:
         bt.logging.error(f"Warning: {default_json_path} not found. Proceeding without default jobs.")
@@ -173,7 +177,11 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
                 continue
                 
             job_weight = job.get("weight", 1.0)
-            job_key = create_job_key(job["params"])
+            
+            # Apply channel label conversion for YouTube jobs
+            job_params = _apply_channel_label_conversion(job["params"])
+            
+            job_key = create_job_key(job_params)
             
             # Store the first ID we encounter for this job key (to preserve custom IDs)
             if job_key not in job_ids:
@@ -186,7 +194,7 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
             else:
                 aggregated_jobs[job_key] = {
                     "weight": weighted_job_value,
-                    "params": job["params"].copy()
+                    "params": job_params
                 }
                 
             # Cap job weight at 5.0
@@ -240,7 +248,7 @@ def to_lookup(json_path: str):
             Job(
                 id=job.get('id'),  # Preserve job ID
                 keyword=job['params'].get('keyword'),  # Use get() with default None to handle missing keys
-                label=job['params'].get('label'),      # Use label as label
+                label=job['params'].get('label'),
                 job_weight=job['weight'],
                 # Convert datetime strings to time bucket IDs during initial parsing
                 start_timebucket=datetime_to_timebucket(job['params'].get('post_start_datetime')),
@@ -274,6 +282,13 @@ def datetime_to_timebucket(datetime_str: Optional[str]) -> Optional[int]:
         # Log an error or warning
         print(f"Warning: Could not parse datetime string: {datetime_str}. Error: {e}")
         return None
+
+def _apply_channel_label_conversion(job_params: Dict[str, Any]) -> Dict[str, Any]:
+    """Apply channel label conversion for YouTube jobs."""
+    converted_params = job_params.copy()
+    if converted_params.get("platform") == "youtube" and converted_params.get("label"):
+        converted_params["label"] = YouTubeContent.create_channel_label(converted_params["label"])
+    return converted_params
 
 def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
     """Gets the unscaled JSON submisson for a specified validator hotkey. 
