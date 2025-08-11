@@ -4,6 +4,7 @@ Provides comprehensive validation of S3-stored miner data using metadata analysi
 """
 
 import asyncio
+import random
 import requests
 import time
 import xml.etree.ElementTree as ET
@@ -13,9 +14,17 @@ import json
 import os
 import duckdb
 import datetime as dt
+import math
 import bittensor as bt
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
+
+from scraping.provider import ScraperProvider
+from scraping.scraper import ScraperId, ValidationResult
+from scraping.x.model import XContent
+from scraping.reddit.model import RedditContent
+from scraping.youtube.model import YouTubeContent
+from common.data import DataEntity, DataSource
 
 
 @dataclass
@@ -31,6 +40,755 @@ class S3ValidationResult:
     quality_metrics: Dict[str, float]
     issues: List[str]
     reason: str
+    
+    # Enhanced validation fields (optional, for backward compatibility)
+    enhanced_validation: Optional['S3ValidationResultDetailed'] = None
+
+
+@dataclass
+class S3ValidationResultDetailed:
+    """Detailed S3 validation result with comprehensive metrics"""
+    is_valid: bool
+    validation_percentage: float
+    
+    # Job and file metrics
+    total_active_jobs: int
+    recent_jobs_analyzed: int
+    recent_files_count: int
+    total_size_bytes: int
+    
+    # Duplicate analysis
+    has_duplicates: bool
+    duplicate_percentage: float
+    
+    # Scraper validation metrics
+    entities_validated: int
+    entities_passed_scraper: int
+    scraper_success_rate: float
+    
+    # Issues and reasoning
+    validation_issues: List[str]
+    reason: str
+    
+    # Sample data for transparency
+    sample_duplicate_uris: List[str]
+    sample_validation_results: List[str]
+
+
+# Mapping of scrapers to use based on the data source to validate
+PREFERRED_SCRAPERS = {
+    DataSource.X: ScraperId.X_APIDOJO,
+    DataSource.REDDIT: ScraperId.REDDIT_CUSTOM,
+    DataSource.YOUTUBE: ScraperId.YOUTUBE_APIFY_TRANSCRIPT
+}
+
+
+class S3Validator:
+    """
+    S3 validator that performs comprehensive validation including:
+    - Recent data analysis (3 hour window)
+    - Duplicate detection within validation batches
+    - Real scraper validation using actual scrapers
+    - Composite scoring with multiple factors
+    """
+    
+    def __init__(self):
+        self.scraper_provider = ScraperProvider()
+    
+    async def validate_miner_s3_data(
+        self, 
+        wallet, 
+        s3_auth_url: str, 
+        miner_hotkey: str,
+        expected_jobs: Dict
+    ) -> S3ValidationResultDetailed:
+        """
+        Perform S3 validation for a miner
+        
+        Args:
+            wallet: Validator wallet for S3 authentication
+            s3_auth_url: S3 authentication service URL
+            miner_hotkey: Target miner's hotkey
+            expected_jobs: Dictionary of expected job configurations
+            
+        Returns:
+            S3ValidationResultDetailed with comprehensive validation metrics
+        """
+        bt.logging.info(f"Starting S3 validation for miner: {miner_hotkey}")
+        
+        try:
+            # Step 1: Get miner job folders
+            job_folders = await self._get_miner_job_folders(wallet, s3_auth_url, miner_hotkey)
+            if not job_folders:
+                return self._create_failed_result("Could not access miner S3 data")
+            
+            # Step 2: Filter active jobs
+            active_job_folders = [
+                jf for jf in job_folders 
+                if jf.get('job_id') in expected_jobs
+            ]
+            
+            if not active_job_folders:
+                return self._create_failed_result("No active jobs found")
+            
+            bt.logging.info(
+                f"Found {len(active_job_folders)} active jobs out of "
+                f"{len(job_folders)} total for {miner_hotkey}"
+            )
+            
+            # Step 3: Analyze recent data
+            recent_data_analysis = await self._analyze_recent_data(
+                wallet, s3_auth_url, miner_hotkey, active_job_folders
+            )
+            
+            if not recent_data_analysis['has_recent_data']:
+                return self._create_failed_result(
+                    "No recent data found in last 3 hours"
+                )
+            
+            # Step 4: Check for duplicates
+            duplicate_analysis = await self._check_for_duplicates(
+                wallet, s3_auth_url, miner_hotkey, recent_data_analysis['recent_job_files']
+            )
+            
+            # Step 5: Perform scraper validation
+            scraper_validation = await self._perform_scraper_validation(
+                wallet, s3_auth_url, miner_hotkey, 
+                recent_data_analysis['recent_job_files'], expected_jobs
+            )
+            
+            # Step 6: Calculate final validation result
+            return self._calculate_final_result(
+                len(active_job_folders),
+                recent_data_analysis,
+                duplicate_analysis,
+                scraper_validation
+            )
+            
+        except Exception as e:
+            bt.logging.error(f"S3 validation error for {miner_hotkey}: {str(e)}")
+            return self._create_failed_result(f"Validation error: {str(e)}")
+    
+    async def _get_miner_job_folders(
+        self, wallet, s3_auth_url: str, miner_hotkey: str
+    ) -> List[Dict]:
+        """Get job folders for the specified miner"""
+        try:
+            hotkey = wallet.hotkey.ss58_address
+            timestamp = int(time.time())
+            commitment = f"s3:validator:folders:{hotkey}:{timestamp}"
+            signature = wallet.hotkey.sign(commitment.encode())
+            
+            payload = {
+                "hotkey": hotkey,
+                "timestamp": timestamp,
+                "signature": signature.hex()
+            }
+            
+            response = requests.post(
+                f"{s3_auth_url}/get-folder-presigned-urls",
+                json=payload,
+                timeout=180
+            )
+            
+            if response.status_code != 200:
+                return []
+            
+            folder_data = response.json()
+            folder_urls = folder_data.get('folder_urls', {})
+            
+            return folder_urls.get(miner_hotkey, {}).get('job_folders', [])
+            
+        except Exception as e:
+            bt.logging.error(f"Error getting job folders for {miner_hotkey}: {str(e)}")
+            return []
+    
+    async def _analyze_recent_data(
+        self, wallet, s3_auth_url: str, miner_hotkey: str, job_folders: List[Dict]
+    ) -> Dict:
+        """Analyze data uploaded in the recent time window"""
+        now = dt.datetime.now(dt.timezone.utc)
+        threshold_time = now - dt.timedelta(hours=3)  # 3 hour window
+        
+        recent_job_files = {}
+        total_recent_files = 0
+        total_size_bytes = 0
+        recent_jobs_count = 0
+        
+        # Sample jobs to avoid overwhelming analysis
+        sample_jobs = random.sample(
+            job_folders, min(5, len(job_folders))
+        )
+        
+        for job_folder in sample_jobs:
+            job_id = job_folder['job_id']
+            presigned_url = job_folder['presigned_url']
+            
+            # Get files in job
+            job_files = await self._get_job_files(presigned_url)
+            if not job_files:
+                continue
+            
+            # Check if any file in the job is recent - if so, include entire job
+            has_recent_file = False
+            for file_info in job_files:
+                try:
+                    last_modified_str = file_info.get('last_modified', '')
+                    if self._is_file_recent(last_modified_str, threshold_time):
+                        has_recent_file = True
+                        break
+                except Exception:
+                    continue
+            
+            # If any file is recent, include the entire job for validation
+            if has_recent_file:
+                for file_info in job_files:
+                    total_size_bytes += file_info.get('size', 0)
+                
+                recent_job_files[job_id] = {
+                    'files': job_files,  # Include ALL files in the job
+                    'presigned_url': presigned_url
+                }
+                total_recent_files += len(job_files)  # Count all files
+                recent_jobs_count += 1
+        
+        return {
+            'has_recent_data': total_recent_files > 0,
+            'recent_jobs_count': recent_jobs_count,
+            'recent_files_count': total_recent_files,
+            'total_size_bytes': total_size_bytes,
+            'recent_job_files': recent_job_files
+        }
+    
+    async def _check_for_duplicates(
+        self, wallet, s3_auth_url: str, miner_hotkey: str, recent_job_files: Dict
+    ) -> Dict:
+        """Check for URI duplicates within the validation batch"""
+        validation_batch_uris = set()
+        duplicate_uris = []
+        total_entities = 0
+        duplicate_entities = 0
+        
+        for job_id, job_data in recent_job_files.items():
+            files = job_data['files']
+            
+            # Sample files for duplicate checking
+            sample_files = random.sample(
+                files, min(3, len(files))  # files_per_job_sample = 3
+            )
+            file_keys = [f['key'] for f in sample_files]
+            
+            # Get presigned URLs for files
+            file_urls = await self._get_file_presigned_urls(
+                wallet, s3_auth_url, miner_hotkey, file_keys
+            )
+            if not file_urls:
+                continue
+            
+            # Check URIs in files
+            for file_key, file_info in file_urls.items():
+                try:
+                    presigned_url = file_info.get('presigned_url')
+                    if not presigned_url:
+                        continue
+                    
+                    df = pd.read_parquet(presigned_url)
+                    
+                    # Sample rows to check for duplicates
+                    sample_size = min(20, len(df))  # rows_per_file_sample = 20
+                    sample_df = df.head(sample_size)
+                    
+                    for _, row in sample_df.iterrows():
+                        uri_value = self._get_uri_value(row)
+                        if uri_value:
+                            total_entities += 1
+                            if uri_value in validation_batch_uris:
+                                duplicate_entities += 1
+                                duplicate_uris.append(uri_value)
+                            else:
+                                validation_batch_uris.add(uri_value)
+                                
+                except Exception as e:
+                    bt.logging.debug(f"Error checking file for duplicates: {str(e)}")
+                    continue
+        
+        duplicate_percentage = (
+            (duplicate_entities / total_entities * 100) 
+            if total_entities > 0 else 0
+        )
+        
+        return {
+            'total_entities': total_entities,
+            'duplicate_entities': duplicate_entities,
+            'duplicate_percentage': duplicate_percentage,
+            'sample_duplicates': duplicate_uris[:10]
+        }
+    
+    async def _perform_scraper_validation(
+        self, wallet, s3_auth_url: str, miner_hotkey: str, 
+        recent_job_files: Dict, expected_jobs: Dict
+    ) -> Dict:
+        """Validate random entities using real scrapers"""
+        all_entities = []
+        sample_results = []
+        
+        # Collect entities from recent job files
+        for job_id, job_data in recent_job_files.items():
+            files = job_data['files']
+            expected_job = expected_jobs.get(job_id, {})
+            platform = expected_job.get('params', {}).get('platform', 'unknown').lower()
+            
+            if files and len(all_entities) < 15:  # Get extra to ensure we have enough
+                sample_file = random.choice(files)
+                file_keys = [sample_file['key']]
+                
+                file_urls = await self._get_file_presigned_urls(
+                    wallet, s3_auth_url, miner_hotkey, file_keys
+                )
+                
+                if file_urls:
+                    for file_key, file_info in file_urls.items():
+                        try:
+                            presigned_url = file_info.get('presigned_url')
+                            if presigned_url:
+                                df = pd.read_parquet(presigned_url)
+                                
+                                # Sample rows from this file
+                                sample_size = min(3, len(df))
+                                sample_df = df.head(sample_size)
+                                
+                                for _, row in sample_df.iterrows():
+                                    entity = self._create_data_entity_from_row(row, platform)
+                                    if entity:
+                                        all_entities.append((entity, platform, job_id))
+                                        
+                                    if len(all_entities) >= 15:
+                                        break
+                                        
+                                if len(all_entities) >= 15:
+                                    break
+                                    
+                        except Exception as e:
+                            bt.logging.debug(f"Error reading file for validation: {str(e)}")
+                            continue
+            
+            if len(all_entities) >= 15:
+                break
+        
+        # Select entities for validation
+        entities_to_validate = random.sample(
+            all_entities, min(10, len(all_entities))  # sample_size = 10
+        )
+        
+        # Group by platform for efficient validation
+        entities_by_platform = {}
+        for entity, platform, job_id in entities_to_validate:
+            if platform not in entities_by_platform:
+                entities_by_platform[platform] = []
+            entities_by_platform[platform].append((entity, job_id))
+        
+        # Validate with real scrapers
+        total_validated = 0
+        total_passed = 0
+        
+        for platform, platform_entities in entities_by_platform.items():
+            entities_only = [e[0] for e in platform_entities]
+            
+            try:
+                validation_results = await self._validate_entities_with_scraper(
+                    entities_only, platform
+                )
+                
+                for i, result in enumerate(validation_results):
+                    total_validated += 1
+                    job_id = (
+                        platform_entities[i][1] 
+                        if i < len(platform_entities) else "unknown"
+                    )
+                    
+                    if result.is_valid:
+                        total_passed += 1
+                        sample_results.append(f"✅ {platform} ({job_id}): {result.reason}")
+                    else:
+                        sample_results.append(f"❌ {platform} ({job_id}): {result.reason}")
+                        
+            except Exception as e:
+                bt.logging.error(f"Error validating {platform} entities: {str(e)}")
+                # Count as failed validation
+                total_validated += len(entities_only)
+                for i in range(len(entities_only)):
+                    sample_results.append(f"❌ {platform}: Scraper error - {str(e)}")
+        
+        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+        
+        return {
+            'entities_validated': total_validated,
+            'entities_passed': total_passed,
+            'success_rate': success_rate,
+            'sample_results': sample_results
+        }
+    
+    def _calculate_final_result(
+        self, total_active_jobs: int, recent_data_analysis: Dict,
+        duplicate_analysis: Dict, scraper_validation: Dict
+    ) -> S3ValidationResultDetailed:
+        """Calculate final validation result based on all analyses"""
+        
+        # Determine if duplicates are acceptable - zero tolerance for duplicates
+        duplicate_threshold = 0.0  # Any duplicates = cheating
+        has_duplicates = (
+            duplicate_analysis['duplicate_percentage'] > duplicate_threshold
+        )
+        duplicate_validation_passed = not has_duplicates
+        
+        # Determine if scraper validation passed
+        min_scraper_success_rate = 60.0  # min_scraper_success_rate = 60.0
+        scraper_validation_passed = (
+            scraper_validation['success_rate'] >= min_scraper_success_rate
+        )
+        
+        # Calculate size bonus (logarithmic scaling - bigger uploads = better scores with diminishing returns)
+        size_bytes = recent_data_analysis['total_size_bytes']
+        min_size_for_bonus = 10 * 1024 * 1024  # 10MB minimum for any bonus
+        if size_bytes >= min_size_for_bonus:
+            size_bonus = math.log10(size_bytes / min_size_for_bonus) * 20  # Log base 10 scaling
+        else:
+            size_bonus = 0
+        
+        # Final validation decision
+        is_valid = duplicate_validation_passed and scraper_validation_passed
+        
+        # Calculate overall validation percentage (including size bonus)
+        base_validation_percentage = (
+            (50.0 if duplicate_validation_passed else 0.0) +
+            (scraper_validation['success_rate'] * 0.5)
+        )
+        
+        # Apply size bonus to base validation (no cap on final score)
+        validation_percentage = base_validation_percentage + size_bonus
+        
+        # Collect validation issues
+        issues = []
+        if has_duplicates:
+            issues.append(
+                f"Too many duplicates: {duplicate_analysis['duplicate_percentage']:.1f}%"
+            )
+        if not scraper_validation_passed:
+            issues.append(
+                f"Low scraper success rate: {scraper_validation['success_rate']:.1f}%"
+            )
+        
+        reason = (
+            f"S3 validation: {'PASSED' if is_valid else 'FAILED'} - "
+            f"Duplicates: {duplicate_analysis['duplicate_percentage']:.1f}%, "
+            f"Scraper: {scraper_validation['success_rate']:.1f}%"
+        )
+        
+        return S3ValidationResultDetailed(
+            is_valid=is_valid,
+            validation_percentage=validation_percentage,
+            total_active_jobs=total_active_jobs,
+            recent_jobs_analyzed=recent_data_analysis['recent_jobs_count'],
+            recent_files_count=recent_data_analysis['recent_files_count'],
+            total_size_bytes=recent_data_analysis['total_size_bytes'],
+            has_duplicates=has_duplicates,
+            duplicate_percentage=duplicate_analysis['duplicate_percentage'],
+            entities_validated=scraper_validation['entities_validated'],
+            entities_passed_scraper=scraper_validation['entities_passed'],
+            scraper_success_rate=scraper_validation['success_rate'],
+            validation_issues=issues,
+            reason=reason,
+            sample_duplicate_uris=duplicate_analysis['sample_duplicates'][:5],
+            sample_validation_results=scraper_validation['sample_results'][:5]
+        )
+    
+    async def _validate_entities_with_scraper(
+        self, entities: List[DataEntity], platform: str
+    ) -> List[ValidationResult]:
+        """Validate entities using appropriate scraper"""
+        try:
+            # Map platform to data source and get scraper using provider
+            data_source = None
+            if platform in ['x', 'twitter']:
+                data_source = DataSource.X
+            elif platform == 'reddit':
+                data_source = DataSource.REDDIT
+            elif platform == 'youtube':
+                data_source = DataSource.YOUTUBE
+            else:
+                return [ValidationResult(
+                    is_valid=False,
+                    reason=f"Unknown platform: {platform}",
+                    content_size_bytes_validated=0
+                ) for _ in entities]
+            
+            # Get scraper using provider (like in miner_evaluator)
+            scraper = self.scraper_provider.get(PREFERRED_SCRAPERS[data_source])
+            return await scraper.validate(entities)
+            
+        except Exception as e:
+            return [ValidationResult(
+                is_valid=False,
+                reason=f"Scraper error: {str(e)}",
+                content_size_bytes_validated=0
+            ) for _ in entities]
+    
+    def _create_failed_result(self, reason: str) -> S3ValidationResultDetailed:
+        """Create a failed validation result"""
+        return S3ValidationResultDetailed(
+            is_valid=False,
+            validation_percentage=0.0,
+            total_active_jobs=0,
+            recent_jobs_analyzed=0,
+            recent_files_count=0,
+            total_size_bytes=0,
+            has_duplicates=True,
+            duplicate_percentage=100.0,
+            entities_validated=0,
+            entities_passed_scraper=0,
+            scraper_success_rate=0.0,
+            validation_issues=[reason],
+            reason=reason,
+            sample_duplicate_uris=[],
+            sample_validation_results=[]
+        )
+    
+    # Additional helper methods
+    async def _get_job_files(self, presigned_url: str) -> List[Dict]:
+        """Get parquet files from job using proven XML parsing"""
+        try:
+            response = requests.get(presigned_url, timeout=30)
+            if response.status_code != 200:
+                return []
+            
+            root = ET.fromstring(response.text)
+            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+            
+            files = []
+            for content in root.findall('.//s3:Contents', namespaces):
+                try:
+                    key_elem = content.find('s3:Key', namespaces)
+                    size_elem = content.find('s3:Size', namespaces)
+                    modified_elem = content.find('s3:LastModified', namespaces)
+                    
+                    if key_elem is not None and key_elem.text:
+                        key = urllib.parse.unquote(key_elem.text)
+                        size = int(size_elem.text) if size_elem is not None and size_elem.text else 0
+                        last_modified = modified_elem.text if modified_elem is not None else ""
+                        
+                        if key.endswith('.parquet'):
+                            files.append({
+                                'key': key,
+                                'size': size,
+                                'last_modified': last_modified
+                            })
+                except Exception:
+                    continue
+            
+            return files
+            
+        except Exception:
+            return []
+    
+    def _is_file_recent(self, last_modified_str: str, threshold_time: dt.datetime) -> bool:
+        """Check if file was modified after threshold time"""
+        try:
+            if last_modified_str and 'T' in last_modified_str:
+                if last_modified_str.endswith('Z'):
+                    parsed_time = dt.datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
+                else:
+                    parsed_time = dt.datetime.fromisoformat(last_modified_str)
+                
+                if parsed_time.tzinfo is None:
+                    parsed_time = parsed_time.replace(tzinfo=dt.timezone.utc)
+                
+                return parsed_time >= threshold_time
+        except Exception:
+            pass
+        return False
+    
+    async def _get_file_presigned_urls(
+        self, wallet, s3_auth_url: str, miner_hotkey: str, file_keys: List[str]
+    ) -> Optional[Dict]:
+        """Get presigned URLs for specific files"""
+        try:
+            hotkey = wallet.hotkey.ss58_address
+            timestamp = int(time.time())
+            commitment = f"s3:validator:files:{miner_hotkey}:{hotkey}:{timestamp}"
+            signature = wallet.hotkey.sign(commitment.encode())
+            
+            payload = {
+                "hotkey": hotkey,
+                "timestamp": timestamp,
+                "signature": signature.hex(),
+                "miner_hotkey": miner_hotkey,
+                "file_keys": file_keys,
+                "expiry_hours": 1
+            }
+            
+            response = requests.post(
+                f"{s3_auth_url}/get-file-presigned-urls",
+                json=payload,
+                timeout=60
+            )
+            
+            return response.json().get('file_urls', {}) if response.status_code == 200 else None
+            
+        except Exception:
+            return None
+    
+    def _get_uri_value(self, row) -> str:
+        """Extract URI/URL value from DataFrame row"""
+        try:
+            for uri_field in ['uri', 'url', 'link', 'source_url']:
+                if uri_field in row.index and pd.notna(row[uri_field]):
+                    uri_value = str(row[uri_field]).strip()
+                    if uri_value and uri_value != '':
+                        return uri_value
+            return ""
+        except Exception:
+            return ""
+    
+    def _create_data_entity_from_row(self, row, platform: str) -> Optional[DataEntity]:
+        """Create DataEntity from parquet row based on platform"""
+        try:
+            if platform in ['x', 'twitter']:
+                return self._create_twitter_data_entity(row)
+            elif platform == 'reddit':
+                return self._create_reddit_data_entity(row)
+            elif platform == 'youtube':
+                return self._create_youtube_data_entity(row)
+            else:
+                return None
+        except Exception:
+            return None
+    
+    def _create_twitter_data_entity(self, row) -> Optional[DataEntity]:
+        """Create Twitter DataEntity from parquet row"""
+        try:
+            # Get required fields
+            username = row.get('username', '')
+            text = row.get('text', '')
+            url = row.get('url', row.get('uri', ''))
+            
+            if not all([username, text, url]):
+                return None
+            
+            # Get datetime from row or use current time
+            datetime_val = row.get('datetime', row.get('timestamp', ''))
+            if datetime_val and pd.notna(datetime_val):
+                try:
+                    timestamp = pd.to_datetime(datetime_val)
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=dt.timezone.utc)
+                except Exception:
+                    timestamp = dt.datetime.now(dt.timezone.utc)
+            else:
+                timestamp = dt.datetime.now(dt.timezone.utc)
+            
+            # Create XContent object
+            x_content = XContent(
+                username=str(username),
+                text=str(text),
+                url=str(url),
+                timestamp=timestamp,
+                tweet_hashtags=row.get('tweet_hashtags', []) if pd.notna(row.get('tweet_hashtags')) else [],
+                user_id=str(row.get('user_id', '')),
+                user_display_name=str(row.get('user_display_name', username)),
+                user_verified=bool(row.get('user_verified', False)),
+                tweet_id=str(row.get('tweet_id', '')),
+                is_reply=bool(row.get('is_reply', False)),
+                is_quote=bool(row.get('is_quote', False)),
+                conversation_id=str(row.get('conversation_id', '')),
+                in_reply_to_user_id=str(row.get('in_reply_to_user_id', ''))
+            )
+            
+            return XContent.to_data_entity(x_content)
+        except Exception:
+            return None
+    
+    def _create_reddit_data_entity(self, row) -> Optional[DataEntity]:
+        """Create Reddit DataEntity from parquet row"""
+        try:
+            # Get required fields
+            username = row.get('username', '')
+            body = row.get('body', row.get('text', ''))
+            url = row.get('url', row.get('uri', ''))
+            reddit_id = row.get('id', '')
+            
+            if not all([username, body, url, reddit_id]):
+                return None
+            
+            # Get datetime from row or use current time
+            datetime_val = row.get('datetime', row.get('createdAt', ''))
+            if datetime_val and pd.notna(datetime_val):
+                try:
+                    created_at = pd.to_datetime(datetime_val)
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=dt.timezone.utc)
+                except Exception:
+                    created_at = dt.datetime.now(dt.timezone.utc)
+            else:
+                created_at = dt.datetime.now(dt.timezone.utc)
+            
+            # Obfuscate timestamp to minute for Reddit validation
+            created_at = created_at.replace(second=0, microsecond=0)
+            
+            # Create RedditContent object
+            reddit_content = RedditContent(
+                id=str(reddit_id),
+                username=str(username),
+                body=str(body),
+                url=str(url),
+                communityName=str(row.get('communityName', '')),
+                createdAt=created_at,
+                dataType=str(row.get('dataType', 'post')),
+                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None
+            )
+            
+            return RedditContent.to_data_entity(reddit_content)
+        except Exception:
+            return None
+    
+    def _create_youtube_data_entity(self, row) -> Optional[DataEntity]:
+        """Create YouTube DataEntity from parquet row"""
+        try:
+            # Get required fields
+            video_id = row.get('video_id', '')
+            title = row.get('title', '')
+            channel_name = row.get('channel_name', '')
+            url = row.get('url', row.get('uri', ''))
+            
+            if not all([video_id, title, channel_name, url]):
+                return None
+            
+            # Get datetime from row or use current time
+            datetime_val = row.get('upload_date', row.get('datetime', ''))
+            if datetime_val and pd.notna(datetime_val):
+                try:
+                    upload_date = pd.to_datetime(datetime_val)
+                    if upload_date.tzinfo is None:
+                        upload_date = upload_date.replace(tzinfo=dt.timezone.utc)
+                except Exception:
+                    upload_date = dt.datetime.now(dt.timezone.utc)
+            else:
+                upload_date = dt.datetime.now(dt.timezone.utc)
+            
+            # Create YouTubeContent object
+            youtube_content = YouTubeContent(
+                video_id=str(video_id),
+                title=str(title),
+                channel_name=str(channel_name),
+                upload_date=upload_date,
+                transcript=row.get('transcript', []) if pd.notna(row.get('transcript')) else [],
+                url=str(url),
+                duration_seconds=int(row.get('duration_seconds', 0)) if pd.notna(row.get('duration_seconds')) else 0,
+                language=str(row.get('language', 'en'))
+            )
+            
+            return YouTubeContent.to_data_entity(youtube_content)
+        except Exception:
+            return None
 
 
 async def get_miner_s3_validation_data(wallet, s3_auth_url: str, miner_hotkey: str) -> Optional[List[Dict]]:
@@ -142,13 +900,59 @@ def load_expected_jobs_from_gravity() -> Dict:
         return {}
 
 
-async def validate_s3_miner_data(wallet, s3_auth_url: str, miner_hotkey: str) -> S3ValidationResult:
+async def validate_s3_miner_data(
+    wallet, s3_auth_url: str, miner_hotkey: str, 
+    use_enhanced_validation: bool = False, config=None
+) -> S3ValidationResult:
     """
     Comprehensive S3 validation using metadata analysis and statistical methods.
     Validates file structure, job alignment, and data quality indicators.
+    
+    Args:
+        wallet: Validator wallet for S3 authentication
+        s3_auth_url: S3 authentication service URL
+        miner_hotkey: Target miner's hotkey
+        use_enhanced_validation: If True, performs enhanced validation with real scrapers
+        config: Configuration object with enhanced validation settings
+    
+    Returns:
+        S3ValidationResult with validation metrics
     """
     
-    # Get miner file data
+    # Load expected jobs
+    expected_jobs = load_expected_jobs_from_gravity()
+    
+    if use_enhanced_validation:
+        # Use enhanced validation with real scrapers
+        try:
+            validator = S3Validator()
+            enhanced_result = await validator.validate_miner_s3_data(
+                wallet, s3_auth_url, miner_hotkey, expected_jobs
+            )
+            
+            # Convert enhanced result to standard S3ValidationResult format
+            return S3ValidationResult(
+                is_valid=enhanced_result.is_valid,
+                validation_percentage=enhanced_result.validation_percentage,
+                job_count=enhanced_result.total_active_jobs,
+                total_files=enhanced_result.recent_files_count,
+                total_size_bytes=enhanced_result.total_size_bytes,
+                valid_jobs=enhanced_result.recent_jobs_analyzed,
+                recent_files=enhanced_result.recent_files_count,
+                quality_metrics={
+                    'duplicate_percentage': enhanced_result.duplicate_percentage,
+                    'scraper_success_rate': enhanced_result.scraper_success_rate
+                },
+                issues=enhanced_result.validation_issues,
+                reason=enhanced_result.reason,
+                enhanced_validation=enhanced_result
+            )
+            
+        except Exception as e:
+            bt.logging.error(f"S3 validation with real scrapers failed for {miner_hotkey}: {str(e)}")
+            # Fall back to basic validation
+            
+    # Get miner file data (basic validation)
     files_data = await get_miner_s3_validation_data(wallet, s3_auth_url, miner_hotkey)
     if not files_data:
         return S3ValidationResult(
@@ -164,10 +968,7 @@ async def validate_s3_miner_data(wallet, s3_auth_url: str, miner_hotkey: str) ->
             reason="Could not access miner S3 data"
         )
     
-    # Load expected jobs
-    expected_jobs = load_expected_jobs_from_gravity()
-    
-    # Perform comprehensive analysis
+    # Perform basic analysis
     return analyze_miner_s3_data(files_data, expected_jobs, miner_hotkey)
 
 
