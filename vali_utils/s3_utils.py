@@ -228,23 +228,27 @@ class S3Validator:
             if not job_files:
                 continue
             
-            # Filter for recent files
-            recent_files = []
+            # Check if any file in the job is recent - if so, include entire job
+            has_recent_file = False
             for file_info in job_files:
                 try:
                     last_modified_str = file_info.get('last_modified', '')
                     if self._is_file_recent(last_modified_str, threshold_time):
-                        recent_files.append(file_info)
-                        total_size_bytes += file_info.get('size', 0)
+                        has_recent_file = True
+                        break
                 except Exception:
                     continue
             
-            if recent_files:
+            # If any file is recent, include the entire job for validation
+            if has_recent_file:
+                for file_info in job_files:
+                    total_size_bytes += file_info.get('size', 0)
+                
                 recent_job_files[job_id] = {
-                    'files': recent_files,
+                    'files': job_files,  # Include ALL files in the job
                     'presigned_url': presigned_url
                 }
-                total_recent_files += len(recent_files)
+                total_recent_files += len(job_files)  # Count all files
                 recent_jobs_count += 1
         
         return {
@@ -429,8 +433,8 @@ class S3Validator:
     ) -> S3ValidationResultDetailed:
         """Calculate final validation result based on all analyses"""
         
-        # Determine if duplicates are acceptable
-        duplicate_threshold = 15.0  # duplicate_threshold_percent = 15.0
+        # Determine if duplicates are acceptable - zero tolerance for duplicates
+        duplicate_threshold = 0.0  # Any duplicates = cheating
         has_duplicates = (
             duplicate_analysis['duplicate_percentage'] > duplicate_threshold
         )
