@@ -14,6 +14,7 @@ import json
 import os
 import duckdb
 import datetime as dt
+import math
 import bittensor as bt
 from typing import Dict, List, Optional, Tuple
 from dataclasses import dataclass
@@ -446,14 +447,25 @@ class S3Validator:
             scraper_validation['success_rate'] >= min_scraper_success_rate
         )
         
+        # Calculate size bonus (logarithmic scaling - bigger uploads = better scores with diminishing returns)
+        size_bytes = recent_data_analysis['total_size_bytes']
+        min_size_for_bonus = 10 * 1024 * 1024  # 10MB minimum for any bonus
+        if size_bytes >= min_size_for_bonus:
+            size_bonus = math.log10(size_bytes / min_size_for_bonus) * 20  # Log base 10 scaling
+        else:
+            size_bonus = 0
+        
         # Final validation decision
         is_valid = duplicate_validation_passed and scraper_validation_passed
         
-        # Calculate overall validation percentage
-        validation_percentage = (
+        # Calculate overall validation percentage (including size bonus)
+        base_validation_percentage = (
             (50.0 if duplicate_validation_passed else 0.0) +
             (scraper_validation['success_rate'] * 0.5)
         )
+        
+        # Apply size bonus to base validation (no cap on final score)
+        validation_percentage = base_validation_percentage + size_bonus
         
         # Collect validation issues
         issues = []
