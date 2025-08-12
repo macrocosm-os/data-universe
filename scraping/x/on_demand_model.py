@@ -195,16 +195,22 @@ class EnhancedXContent(BaseModel):
     @classmethod
     def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
         """Converts the EnhancedXContent to a DataEntity."""
+        from scraping.x.model import XContent
         
         entity_timestamp = content.timestamp
         obfuscated_timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
-        api_response = content.to_api_response()
         
-        # Update the timestamp to use the obfuscated one
-        api_response['datetime'] = obfuscated_timestamp.isoformat() if obfuscated_timestamp else None
+        # Create basic XContent with core fields
+        basic_content = XContent(
+            username=content.username,
+            text=content.text,
+            url=content.url,
+            timestamp=obfuscated_timestamp,
+            tweet_hashtags=content.tweet_hashtags,
+            media=content.media_urls if content.media_urls else None
+        )
         
-        # Convert to JSON bytes
-        content_bytes = json.dumps(api_response, ensure_ascii=False).encode("utf-8")
+        content_bytes = basic_content.json(exclude_none=True).encode("utf-8")
 
         return DataEntity(
             uri=content.url,
