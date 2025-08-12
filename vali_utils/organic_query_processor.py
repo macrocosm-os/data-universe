@@ -326,8 +326,8 @@ class OrganicQueryProcessor:
             if synapse.source.upper() == 'X':
                 await scraper.scrape(verify_config)
                 enhanced_content = scraper.get_enhanced_content()
-                # Convert EnhancedXContent to dictionaries using to_api_response
-                verification_data = [content.to_api_response() for content in enhanced_content]
+                # Convert EnhancedXContent to DataEntities
+                verification_data = [EnhancedXContent.to_data_entity(content) for content in enhanced_content]
             elif synapse.source.upper() == 'REDDIT':
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
@@ -772,8 +772,10 @@ class OrganicQueryProcessor:
     
 
     def _create_entity_dictionary(self, data_entity: DataEntity) -> Dict:
+        """Create entity dictionary with nested structure instead of flattened"""
         entity_dict = {}
 
+        # Top-level entity fields
         entity_dict["uri"] = data_entity.uri
         entity_dict["datetime"] = data_entity.datetime
         entity_dict["source"] = DataSource(data_entity.source).name
@@ -782,7 +784,63 @@ class OrganicQueryProcessor:
 
         try:
             content_dict = json.loads(data_entity.content.decode("utf-8"))
-            entity_dict.update(content_dict)
+            bt.logging.debug(f"CONTENT DICT: ")
+            for item in content_dict:
+                bt.logging.debug(item)
+            
+            # Handle different sources with appropriate nesting
+            if data_entity.source == DataSource.X:
+                entity_dict["content"] = content_dict.get("content", "")
+                entity_dict["user"] = content_dict.get("user")
+                entity_dict["tweet"] = content_dict.get("tweet")
+                
+                # Add in_reply_to if it exists
+                if content_dict.get("in_reply_to_user_id") or content_dict.get("in_reply_to_username"):
+                    entity_dict["tweet"]["in_reply_to"] = {
+                        "user_id": content_dict.get("in_reply_to_user_id"),
+                        "username": content_dict.get("in_reply_to_username")
+                    }
+                
+                # Add media if it exists
+                if "media" in content_dict:
+                    entity_dict["media"] = content_dict["media"]
+                    
+            elif data_entity.source == DataSource.REDDIT:
+                # Handle Reddit structure based on RedditContent model
+                entity_dict["content"] = content_dict.get("body", "")
+                entity_dict["title"] = content_dict.get("title")
+                entity_dict["username"] = content_dict.get("username")
+                entity_dict["communityName"] = content_dict.get("communityName")
+                entity_dict["dataType"] = content_dict.get("dataType")
+                entity_dict["createdAt"] = content_dict.get("createdAt")
+                entity_dict["id"] = content_dict.get("id")
+                entity_dict["url"] = content_dict.get("url")
+                
+                # Optional fields
+                if "parentId" in content_dict:
+                    entity_dict["parentId"] = content_dict["parentId"]
+                if "media" in content_dict:
+                    entity_dict["media"] = content_dict["media"]
+                if "is_nsfw" in content_dict:
+                    entity_dict["is_nsfw"] = content_dict["is_nsfw"]
+                
+            elif data_entity.source == DataSource.YOUTUBE:
+                # Handle YouTube structure based on YouTubeContent model
+                entity_dict["video_id"] = content_dict.get("video_id")
+                entity_dict["title"] = content_dict.get("title", "")
+                entity_dict["channel_name"] = content_dict.get("channel_name")
+                entity_dict["upload_date"] = content_dict.get("upload_date")
+                entity_dict["url"] = content_dict.get("url")
+                entity_dict["duration_seconds"] = content_dict.get("duration_seconds", 0)
+                entity_dict["language"] = content_dict.get("language", "en")
+                
+                if "transcript" in content_dict:
+                    entity_dict["transcript"] = content_dict["transcript"]
+                
+            else:
+                # Fallback for unknown sources - keep original flattened structure
+                entity_dict.update(content_dict)
+                
         except Exception as e:
             bt.logging.error(f"Error decoding content from DataEntity. Content: {data_entity.content}")
             entity_dict["content"] = data_entity.content
