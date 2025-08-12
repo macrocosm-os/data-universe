@@ -5,6 +5,7 @@ import json
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from scraping import utils
+from scraping.x.model import XContent
 
 
 class EnhancedXContent(BaseModel):
@@ -195,8 +196,6 @@ class EnhancedXContent(BaseModel):
     @classmethod
     def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
         """Converts the EnhancedXContent to a DataEntity."""
-        from scraping.x.model import XContent
-        
         entity_timestamp = content.timestamp
         obfuscated_timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
         
