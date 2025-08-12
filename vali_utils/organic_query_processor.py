@@ -784,10 +784,9 @@ class OrganicQueryProcessor:
 
         try:
             content_dict = json.loads(data_entity.content.decode("utf-8"))
-            bt.logging.debug(f"CONTENT DICT: ")
+            # Response content based off of the Data Source's given fields
             for item in content_dict:
                 entity_dict[item] = content_dict.get(item)
-                bt.logging.debug(f"item: {item}, \t value: {entity_dict[item]}")
 
         except Exception as e:
             bt.logging.error(f"Error decoding content from DataEntity. Content: {data_entity.content}")
