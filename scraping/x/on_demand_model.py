@@ -153,7 +153,7 @@ class EnhancedXContent(BaseModel):
             'datetime': self.timestamp.isoformat() if self.timestamp else None,
             'source': 'X',
             'label': self.tweet_hashtags[0] if self.tweet_hashtags else None,
-            'content': self.text,
+            'text': self.text,
             'user': {
                 'username': self.username,
                 'display_name': self.user_display_name,
