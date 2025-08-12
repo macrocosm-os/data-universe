@@ -622,7 +622,8 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
             )
         
         # Allow some tolerance for upvote_ratio changes (typically more stable than raw scores)
-        ratio_tolerance = 0.05  # 5% tolerance
+        # Increased tolerance to account for Reddit's vote fuzzing and natural variance
+        ratio_tolerance = 0.12  # 12% tolerance (was 5% - too strict)
         if abs(submitted_content.upvote_ratio - actual_content.upvote_ratio) > ratio_tolerance:
             bt.logging.info(
                 f"Upvote ratio validation failed: submitted={submitted_content.upvote_ratio}, "
@@ -932,8 +933,15 @@ def _validate_comment_score_ratio(submitted_content: RedditContent, actual_conte
     # - Most posts: 0.1-2.0 comments per upvote (10-200 comments per 100 score)
     # - Controversial posts: higher ratio (lots of arguing)
     # - Simple memes: lower ratio (just upvote and move on)
+    # - Low-score posts (1-5 points): Often have 6-10 comments per point due to discussions
     
-    max_reasonable_ratio = 5.0  # 5 comments per net upvote is very high but possible
+    # Dynamic threshold based on score - low-score posts naturally have higher ratios
+    if submitted_content.score <= 3:
+        max_reasonable_ratio = 10.0  # Low-score posts can have high engagement
+    elif submitted_content.score <= 10:
+        max_reasonable_ratio = 8.0   # Moderate adjustment for medium-low scores
+    else:
+        max_reasonable_ratio = 5.0   # Keep original threshold for higher scores
     
     if comment_to_score_ratio > max_reasonable_ratio:
         bt.logging.info(f"Suspicious comment-to-score ratio: {comment_to_score_ratio:.2f} (comments={submitted_content.num_comments}, score={submitted_content.score})")
