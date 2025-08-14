@@ -59,7 +59,7 @@ VALIDATOR_INFO = Info(
 # Register metrics you wish to track with grafana here and they will automatically show up on /metrics
 
 MAIN_LOOP_ITERATIONS = Counter(
-    "vali_main_loop_iterations_total",
+    "main_loop_iterations_total",
     "Total successful main-loop iterations",
     labelnames=["hotkey"],
     **_params
@@ -67,42 +67,42 @@ MAIN_LOOP_ITERATIONS = Counter(
 )
 
 MAIN_LOOP_ERRORS = Counter(
-    "vali_main_loop_errors_total",
+    "main_loop_errors_total",
     "Total main-loop iterations that errored",
     labelnames=["hotkey"],
     **_params
 )
 
 MAIN_LOOP_DURATION = Gauge(
-    "vali_main_loop_duration_seconds",
+    "main_loop_duration_seconds",
     "Duration of a main-loop iteration in seconds",
     labelnames=["hotkey"],
     **_params
 )
 
 MAIN_LOOP_LAST_SUCCESS_TS = Gauge(
-    "vali_main_loop_last_success_timestamp_seconds",
+    "main_loop_last_success_timestamp_seconds",
     "Unix timestamp of the last successful iteration",
     labelnames=["hotkey"],
     **_params
 )
 
 SET_WEIGHTS_LAST_TS_ATTEMPTED = Gauge(
-    "sn13_validator_set_weights_last_ts_attempted",
+    "set_weights_last_ts_attempted",
     "Unix timestamp of the last set_weights() attempt",
     labelnames=["hotkey"],
     **_params
 )
 
 SET_WEIGHTS_LAST_TS_SUCCESSFUL = Gauge(
-    "sn13_validator_set_weights_last_ts_successful",
+    "set_weights_last_ts_successful",
     "Unix timestamp of the last successful set_weights()",
     labelnames=["hotkey"],
     **_params
 )
 
 SET_WEIGHTS_SUBTENSOR_DURATION = Histogram(
-    "sn13_validator_set_weights_subtensor_duration_seconds",
+    "set_weights_subtensor_duration_seconds",
     "Duration of the subtensor.set_weights() call",
     labelnames=["hotkey"],
     buckets=(
