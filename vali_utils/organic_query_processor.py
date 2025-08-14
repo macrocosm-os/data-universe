@@ -33,6 +33,10 @@ class OrganicQueryProcessor:
         self.NUM_MINERS_TO_QUERY = 5
         self.CROSS_VALIDATION_SAMPLE_SIZE = 10
         self.MIN_CONSENSUS = 0.3    # if consensus is <30% of request size, consensus penalties skipped
+        
+        # Volume verification constants
+        self.VOLUME_VERIFICATION_RATE = 0.1    # 10% chance to perform volume verification rescrape
+        self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
     
 
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
@@ -57,8 +61,11 @@ class OrganicQueryProcessor:
             if early_response:
                 return early_response
             
-            # Step 4: Apply consensus-based volume penalties 
-            insufficient_miners = self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit)
+            # Step 4: Calculate consensus, check for volume verification, and apply volume-based penalties
+            consensus_count = self._calculate_volume_consensus(miner_data_counts)
+            volume_verification_response = await self._apply_volume_consensus_penalties(synapse, miner_data_counts, selected_miners, consensus_count)
+            if volume_verification_response:
+                return volume_verification_response
             
             # Step 5: Perform cross-validation 
             validation_results = await self._perform_cross_validation(synapse, miner_responses)
@@ -75,7 +82,6 @@ class OrganicQueryProcessor:
                     'selected_miners': selected_miners,
                     'non_responsive_uids': non_responsive_uids,
                     'empty_uids': empty_uids,
-                    'insufficient_miners': insufficient_miners,
                     'validation_results': validation_results
                 }
             )
@@ -226,22 +232,21 @@ class OrganicQueryProcessor:
                     bt.logging.info(f"Applying penalty to miner {uid} for returning empty results when data exists")
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         return non_responsive_uids, empty_uids, None
-    
 
-    def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int) -> List[int]:
+
+    def _calculate_volume_consensus(self, miner_data_counts: Dict[int, int]) -> Optional[float]:
         """
-        Apply volume-based penalties using consensus validation with dynamic penalty scaling.
-        Uses mult_factor to scale penalties based on degree of underperformance.
+        Calculate volume consensus from miner data counts.
+        Returns the higher of mean and median of non-zero responses, or None if insufficient data.
         """
         if not miner_data_counts or len(miner_data_counts) < 2:
-            return []
+            return None
         
         # Filter out miners with 0 posts for consensus calculation
         non_zero_counts = [count for count in miner_data_counts.values() if count > 0]
         
         if len(non_zero_counts) < 2:
-            bt.logging.info("Not enough miners with data for consensus - skipping volume penalties")
-            return []
+            return None
         
         # Calculate consensus metrics from miners who actually found data
         median_count = statistics.median(non_zero_counts)
@@ -249,6 +254,16 @@ class OrganicQueryProcessor:
         consensus_count = max(median_count, mean_count)
         
         bt.logging.info(f"Volume consensus: {consensus_count:.1f} posts (median: {median_count}, mean: {mean_count:.1f})")
+        return consensus_count
+
+
+    def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int, consensus_count: Optional[float]) -> List[int]:
+        """
+        Apply consensus volume penalties when verification is not triggered.
+        """
+        if consensus_count is None:
+            bt.logging.info("Not enough miners with data for consensus - skipping volume penalties")
+            return []
         
         # Only apply penalties if consensus shows meaningful data availability
         min_consensus_threshold = requested_limit * self.MIN_CONSENSUS  # At least 30% of request
@@ -277,6 +292,93 @@ class OrganicQueryProcessor:
         
         bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
         return penalized_miners
+
+
+    async def _apply_volume_consensus_penalties(self, 
+                                                 synapse: OrganicRequest, 
+                                                 miner_data_counts: Dict[int, int], 
+                                                 selected_miners: List[int], 
+                                                 consensus_count: Optional[float]) -> Optional[OrganicRequest]:
+        """
+        Check if volume consensus is below threshold and potentially perform verification rescrape.
+        Returns early response if verification is triggered, None otherwise.
+        """
+        if consensus_count is None:
+            bt.logging.info("No consensus available for volume verification check")
+            return None
+        
+        # Check if consensus is below threshold
+        threshold_count = synapse.limit * self.VOLUME_CONSENSUS_THRESHOLD
+        
+        if consensus_count >= threshold_count:
+            bt.logging.info(f"Volume consensus {consensus_count:.1f} meets threshold {threshold_count:.1f}")
+            return None
+        
+        bt.logging.info(f"Volume consensus {consensus_count:.1f} below threshold {threshold_count:.1f}")
+        
+        # Randomly decide whether to perform verification (10% chance)
+        if random.random() > self.VOLUME_VERIFICATION_RATE:
+            bt.logging.info("Volume verification not triggered, applying volume consensus penalties...")
+            # Apply consensus penalties instead of verification penalties
+            self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit, consensus_count)
+            return None
+        
+        bt.logging.info("Volume verification triggered - performing verification rescrape")
+        
+        # Perform verification rescrape
+        verification_data = await self._perform_verification_rescrape(synapse)
+        
+        if verification_data is None:
+            bt.logging.info("Volume verification failed - no data found")
+            return None
+        
+        verification_count = len(verification_data)
+        bt.logging.info(f"Volume verification found {verification_count} items")
+        
+        # Apply penalties based on verification results
+        if verification_count >= synapse.limit:
+            # if verification rescrape meets request limit, punish miners who underperformed
+            bt.logging.info("Verification shows sufficient data available - applying penalties to underperforming miners")
+            for uid in miner_data_counts:
+                miner_count = miner_data_counts[uid]
+                if miner_count < synapse.limit: 
+                    bt.logging.info(f"Applying volume verification penalty to miner {uid} ({miner_count} < {synapse.limit})")
+                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+        else:
+            # if verification rescrape doesn't meet request limit, apply scaled penalties
+            bt.logging.info("Verification shows limited data - applying percentage-based penalties")
+            for uid, miner_count in miner_data_counts.items():
+                if miner_count > 0: 
+                    # Check for fake data padding: if miner returned more than verification found
+                    if miner_count > verification_count:
+                        bt.logging.info(f"Miner {uid}: fake data padding detected - {miner_count} posts vs {verification_count} verified, applying 1.0 penalty")
+                        self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                    else:
+                        # Calculate percentage difference: how far off was the miner from actual available data
+                        percentage_difference = abs(miner_count - verification_count) / max(verification_count, 1)
+                        
+                        # Convert to penalty multiplier: cap at 1.0, scale based on difference
+                        mult_factor = min(percentage_difference, 1.0)
+                        
+                        if mult_factor > 0.1: 
+                            bt.logging.info(f"Miner {uid}: {miner_count} posts vs {verification_count} verified "
+                                           f"({percentage_difference:.1%} difference, {mult_factor:.2f} penalty)")
+                            self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
+        
+        # Return verification data as response
+        processed_data = self._process_response_data(synapse, verification_data)
+        synapse.status = "success"
+        synapse.data = processed_data[:synapse.limit]
+        synapse.meta = {
+            "volume_verification_triggered": True,
+            "verification_data_count": verification_count,
+            "volume_consensus": consensus_count,
+            "threshold_count": threshold_count,
+            "items_returned": len(processed_data),
+            "miners_queried": len(selected_miners)
+        }
+        
+        return synapse
     
 
     async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Dict[str, bool]:
@@ -295,6 +397,7 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Cross-validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
         return validation_results
     
+
     async def _perform_verification_rescrape(self, synapse: OrganicRequest) -> Optional[List]:
         """Perform verification rescrape using the same logic as miners"""
         try:
@@ -352,6 +455,7 @@ class OrganicQueryProcessor:
             bt.logging.error(f"Error during verification rescrape: {str(e)}")
             return None
     
+
     def _pool_responses(self, miner_responses: Dict[int, List]) -> Tuple[List, Dict[str, List[int]]]:
         """Pool all miner responses and track duplicates"""
         all_posts = []
@@ -372,6 +476,7 @@ class OrganicQueryProcessor:
         
         bt.logging.info(f"Found {len(all_posts)} unique posts with {sum(len(miners) - 1 for miners in post_to_miners.values())} duplicates")
         return all_posts, post_to_miners
+    
     
     def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]]) -> List:
         """Select posts for validation, prioritizing those with fewer miners (more suspicious)"""
@@ -814,7 +919,6 @@ class OrganicQueryProcessor:
             "miners_responded": len(miner_responses),
             "non_responsive_miners": len(metadata['non_responsive_uids']),
             "empty_response_miners": len(metadata['empty_uids']),
-            "insufficient_post_miners": len(metadata['insufficient_miners']),
             "validation_success_rate": f"{sum(metadata['validation_results'].values())}/{len(metadata['validation_results'])}" if metadata['validation_results'] else "0/0",
             "items_returned": len(processed_data)
         }
