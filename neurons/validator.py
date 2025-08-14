@@ -184,8 +184,7 @@ class Validator:
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
-            bt.logging.info(f"Updated dynamic lookup at {dt.datetime.now(dt.timezone.utc)
-}")
+            bt.logging.info(f"Updated dynamic lookup at {dt.datetime.now(dt.timezone.utc)}")
         except Exception as e:
             bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
             bt.logging.exception("Exception details:")
@@ -290,8 +289,7 @@ class Validator:
                 # wait until the next evaluation loop.
                 wait_time = max(
                     0,
-                    (next_batch_start_time - dt.datetime.now(dt.timezone.utc)
-                    ).total_seconds(),
+                    (next_batch_start_time - dt.datetime.now(dt.timezone.utc)).total_seconds(),
                 )
 
                 if wait_time > 0:

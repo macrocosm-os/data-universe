@@ -41,8 +41,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         # Check inserting the same miner again returns the same id.
         next_id = self.test_storage._upsert_miner(
-            "test_hotkey", dt.datetime.now(dt.timezone.utc)
-, credibility=0.5
+            "test_hotkey", dt.datetime.now(dt.timezone.utc), credibility=0.5
         )
         self.assertEqual(next_id, miner_id)
 
@@ -54,8 +53,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         # Finally, insert a new miner and make sure it has a new id.
         other_id = self.test_storage._upsert_miner(
-            "other_hotkey", dt.datetime.now(dt.timezone.utc)
-, credibility=0.5
+            "other_hotkey", dt.datetime.now(dt.timezone.utc), credibility=0.5
         )
         self.assertNotEqual(other_id, miner_id)
 
@@ -323,8 +321,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         self.assertTrue(
             scorable_index.last_updated
-            > (dt.datetime.now(dt.timezone.utc)
- - dt.timedelta(minutes=1))
+            > (dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=1))
         )
 
     def test_read_miner_index_with_duplicate_data_entity_buckets(self):
