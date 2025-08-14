@@ -14,6 +14,7 @@ from vali_utils.api.utils import endpoint_error_handler
 from vali_utils.metrics import (
     COMMON_HIST_DURATION_BUKCET,
     prometheus_collector_registry,
+    NAMESPACE, SUBSYSTEM
 )
 
 import prometheus_fastapi_instrumentator.metrics as prometheus_metrics
@@ -25,7 +26,7 @@ from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 class ValidatorAPI:
     """API server for validator on-demand queries"""
 
-    def __init__(self, validator, port: int = 8000, expose_otel_metrics: bool = True):
+    def __init__(self, validator, port: int = 8000):
         """
         Initialize API server
 
@@ -38,7 +39,6 @@ class ValidatorAPI:
         self.key_manager = key_manager
         self.app = self._create_app()
         self.server_thread: Optional[Thread] = None
-        self.expose_otel_metrics = expose_otel_metrics
 
     def _create_app(self) -> FastAPI:
         """Create and configure FastAPI application"""
@@ -50,28 +50,27 @@ class ValidatorAPI:
             redoc_url=None,  # Disable default redoc route
         )
 
-        if self.expose_otel_metrics:
-            instrumentator = Instrumentator(registry=prometheus_collector_registry)
+        instrumentator = Instrumentator(registry=prometheus_collector_registry)
 
-            instrumentator.add(
-                prometheus_metrics.latency(buckets=COMMON_HIST_DURATION_BUKCET)
+        instrumentator.add(
+            prometheus_metrics.latency(buckets=COMMON_HIST_DURATION_BUKCET)
+        )
+
+        instrumentator.add(prometheus_metrics.requests())
+        instrumentator.add(prometheus_metrics.response_size())
+        instrumentator.add(prometheus_metrics.request_size())
+        instrumentator.add(prometheus_metrics.combined_size())
+
+        instrumentator.instrument(
+            app, metric_namespace=NAMESPACE, metric_subsystem=SUBSYSTEM
+        )
+
+        @app.get("/metrics", include_in_schema=False)
+        def metrics(_: None = Depends(require_metrics_api_key)):
+            return Response(
+                generate_latest(prometheus_collector_registry),
+                media_type=CONTENT_TYPE_LATEST,
             )
-
-            instrumentator.add(prometheus_metrics.requests())
-            instrumentator.add(prometheus_metrics.response_size())
-            instrumentator.add(prometheus_metrics.request_size())
-            instrumentator.add(prometheus_metrics.combined_size())
-
-            instrumentator.instrument(
-                app, metric_namespace="sn13", metric_subsystem="validator"
-            )
-
-            @app.get("/metrics", include_in_schema=False)
-            def metrics(_: None = Depends(require_metrics_api_key)):
-                return Response(
-                    generate_latest(instrumentator.registry),
-                    media_type=CONTENT_TYPE_LATEST,
-                )
 
         # Add CORS middleware
         app.add_middleware(

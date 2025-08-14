@@ -207,7 +207,7 @@ async def require_metrics_api_key(api_key_header: str = Security(api_key_header)
     if not key_manager.is_metrics_api_key(api_key_header):
         raise HTTPException(
             status_code=403,
-            detail="Invalid master key"
+            detail="Invalid metrics api key"
         )
 
     return True
