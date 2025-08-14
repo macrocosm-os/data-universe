@@ -326,8 +326,8 @@ class OrganicQueryProcessor:
             if synapse.source.upper() == 'X':
                 await scraper.scrape(verify_config)
                 enhanced_content = scraper.get_enhanced_content()
-                # Convert EnhancedXContent to dictionaries using to_api_response
-                verification_data = [content.to_api_response() for content in enhanced_content]
+                # Convert EnhancedXContent to DataEntities
+                verification_data = [EnhancedXContent.to_data_entity(content) for content in enhanced_content]
             elif synapse.source.upper() == 'REDDIT':
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
@@ -772,8 +772,10 @@ class OrganicQueryProcessor:
     
 
     def _create_entity_dictionary(self, data_entity: DataEntity) -> Dict:
+        """Create entity dictionary with nested structure instead of flattened"""
         entity_dict = {}
 
+        # Top-level entity fields
         entity_dict["uri"] = data_entity.uri
         entity_dict["datetime"] = data_entity.datetime
         entity_dict["source"] = DataSource(data_entity.source).name
@@ -782,7 +784,10 @@ class OrganicQueryProcessor:
 
         try:
             content_dict = json.loads(data_entity.content.decode("utf-8"))
-            entity_dict.update(content_dict)
+            # Response content based off of the Data Source's given fields
+            for item in content_dict:
+                entity_dict[item] = content_dict.get(item)
+
         except Exception as e:
             bt.logging.error(f"Error decoding content from DataEntity. Content: {data_entity.content}")
             entity_dict["content"] = data_entity.content

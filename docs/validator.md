@@ -40,7 +40,6 @@ python -m pip install -e .
 
 5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
 
-6. (Optional) Setup macrocosmos logging by running your validator with the --mclogger flag.
 ```
 
 This will prompt you to navigate to https://wandb.ai/authorize and copy your api key back into the terminal.

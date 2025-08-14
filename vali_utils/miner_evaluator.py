@@ -260,6 +260,8 @@ class MinerEvaluator:
         """
         Performs comprehensive S3 validation using metadata analysis and statistical methods.
         Validates file structure, job alignment, data quality, and temporal patterns.
+        
+        Can use enhanced validation with real scrapers if enabled in configuration.
 
         Returns:
             An S3ValidationResult with validation details or None if no S3 data is found.
@@ -267,9 +269,13 @@ class MinerEvaluator:
         bt.logging.info(f"{hotkey}: Starting comprehensive S3 validation")
 
         try:
-            # Use new comprehensive S3 validation system
-            s3_auth_url = "https://sn13-data.api.macrocosmos.ai"  # TODO: Make configurable
-            s3_validation_result = await validate_s3_miner_data(self.wallet, s3_auth_url, hotkey)
+            # Use S3 auth URL from config
+            s3_auth_url = self.config.s3_auth_url
+            
+            s3_validation_result = await validate_s3_miner_data(
+                self.wallet, s3_auth_url, hotkey, 
+                use_enhanced_validation=True, config=self.config
+            )
             
             # Log results
             summary = get_s3_validation_summary(s3_validation_result)
