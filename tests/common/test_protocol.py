@@ -117,8 +117,7 @@ class TestGetDataEntityBucket(unittest.TestCase):
         """Tests that the protocol messages can be serialized/deserialized for transport."""
         request = GetDataEntityBucket(
             data_entity_bucket_id=DataEntityBucketId(
-                time_bucket=TimeBucket.from_datetime(dt.datetime.now(dt.timezone.utc)
-),
+                time_bucket=TimeBucket.from_datetime(dt.datetime.utcnow()),
                 label=DataLabel(value="r/bittensor_"),
                 source=DataSource.REDDIT,
             )
