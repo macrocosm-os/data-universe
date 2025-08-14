@@ -60,13 +60,16 @@ class OrganicQueryProcessor:
             # Step 4: Apply consensus-based volume penalties 
             insufficient_miners = self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit)
             
-            # Step 5: Perform cross-validation and get pooled data
-            validation_results, pooled_data = await self._perform_cross_validation(synapse, miner_responses)
+            # Step 5: Perform cross-validation 
+            validation_results = await self._perform_cross_validation(synapse, miner_responses)
             
             # Step 6: Calculate final scores with all penalties applied
-            miner_scores = self._apply_validation_penalties(miner_responses, validation_results)
+            miner_scores, failed_miners = self._apply_validation_penalties(miner_responses, validation_results)
             
-            # Step 7: Format response
+            # Step 7: Pool only valid responses (excludes failed miners)
+            pooled_data = self._pool_valid_responses(miner_responses, failed_miners)
+            
+            # Step 8: Format response
             return self._create_success_response(
                 synapse, miner_responses, miner_scores, pooled_data, {
                     'selected_miners': selected_miners,
@@ -276,7 +279,7 @@ class OrganicQueryProcessor:
         return penalized_miners
     
 
-    async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Tuple[Dict[str, bool], List]:
+    async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Dict[str, bool]:
         """Perform cross-validation on pooled miner responses"""
         bt.logging.info("Starting cross-validation process...")
         
@@ -290,7 +293,7 @@ class OrganicQueryProcessor:
         validation_results = await self._validate_posts(synapse, posts_to_validate)
         
         bt.logging.info(f"Cross-validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
-        return validation_results, all_posts
+        return validation_results
     
     async def _perform_verification_rescrape(self, synapse: OrganicRequest) -> Optional[List]:
         """Perform verification rescrape using the same logic as miners"""
@@ -371,16 +374,61 @@ class OrganicQueryProcessor:
         return all_posts, post_to_miners
     
     def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]]) -> List:
-        """Select posts for validation randomly from the unique pool"""
+        """Select posts for validation, prioritizing those with fewer miners (more suspicious)"""
         validation_sample_size = min(self.CROSS_VALIDATION_SAMPLE_SIZE, len(all_posts))
         
         if validation_sample_size == 0:
             return []
         
-        # Simple random sampling from all unique posts
-        posts_to_validate = random.sample(all_posts, validation_sample_size)
+        # Create list of (post, miner_count) tuples
+        post_miner_counts = []
+        for post in all_posts:
+            post_id = self._get_post_id(post)
+            miner_count = len(post_to_miners.get(post_id, []))
+            post_miner_counts.append((post, miner_count))
         
-        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation (random sampling)")
+        # Sort by ascending miner count - posts with fewer miners first
+        post_miner_counts.sort(key=lambda x: x[1])
+        
+        # Group posts by miner count for weighted sampling
+        posts_by_count = {}
+        for post, count in post_miner_counts:
+            if count not in posts_by_count:
+                posts_by_count[count] = []
+            posts_by_count[count].append(post)
+        
+        # Weighted selection: heavily favor posts with fewer miners (most suspicious)
+        posts_to_validate = []
+        
+        single_miner_posts = posts_by_count.get(1, [])
+        posts_to_validate.extend(single_miner_posts[:validation_sample_size])
+        
+        # and take from higher counts with decreasing probability
+        remaining_needed = validation_sample_size - len(posts_to_validate)
+        if remaining_needed > 0:
+            for count in sorted(posts_by_count.keys()):
+                if count == 1:
+                    continue  
+                
+                available_posts = posts_by_count[count]
+                take_count = min(remaining_needed, max(1, len(available_posts) // count))
+                
+                if available_posts:
+                    selected = random.sample(available_posts, min(take_count, len(available_posts)))
+                    posts_to_validate.extend(selected)
+                    remaining_needed -= len(selected)
+                    
+                if remaining_needed <= 0:
+                    break
+        
+        # Log the distribution
+        count_distribution = {}
+        for post in posts_to_validate:
+            post_id = self._get_post_id(post)
+            count = len(post_to_miners.get(post_id, []))
+            count_distribution[count] = count_distribution.get(count, 0) + 1
+        
+        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation with distribution: {count_distribution}")
         return posts_to_validate
 
 
@@ -695,9 +743,10 @@ class OrganicQueryProcessor:
         return None
     
 
-    def _apply_validation_penalties(self, miner_responses: Dict[int, List], validation_results: Dict[str, bool]) -> Dict[int, int]:
-        """Calculate final scores incorporating all penalties"""
+    def _apply_validation_penalties(self, miner_responses: Dict[int, List], validation_results: Dict[str, bool]) -> Tuple[Dict[int, int], List[int]]:
+        """Calculate final scores incorporating all penalties and return failed miners"""
         miner_scores = {}
+        failed_miners = []
         
         for uid in miner_responses.keys():
             if not miner_responses[uid]:
@@ -719,10 +768,32 @@ class OrganicQueryProcessor:
             
             if miner_failed_validation:
                 miner_scores[uid] = 0
+                failed_miners.append(uid)
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         
         bt.logging.info(f"Final miner scores: {miner_scores}")
-        return miner_scores
+        bt.logging.info(f"Failed validation miners: {failed_miners}")
+        return miner_scores, failed_miners
+    
+
+    def _pool_valid_responses(self, miner_responses: Dict[int, List], failed_miners: List[int]) -> List:
+        """Pool only responses from miners who passed validation"""
+        failed_miner_set = set(failed_miners)
+        seen_posts = set()
+        pooled_data = []
+        
+        for uid, posts in miner_responses.items():
+            if uid in failed_miner_set or not posts:
+                continue
+                
+            for post in posts:
+                post_id = self._get_post_id(post)
+                if post_id not in seen_posts:
+                    seen_posts.add(post_id)
+                    pooled_data.append(post)
+        
+        bt.logging.info(f"Pooled {len(pooled_data)} unique posts from {len([uid for uid in miner_responses.keys() if uid not in failed_miner_set])} valid miners")
+        return pooled_data
     
 
     def _create_success_response(self, synapse: OrganicRequest, miner_responses: Dict[int, List], 
