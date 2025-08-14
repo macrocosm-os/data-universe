@@ -63,7 +63,7 @@ class OrganicQueryProcessor:
             
             # Step 4: Calculate consensus, check for volume verification, and apply volume-based penalties
             consensus_count = self._calculate_volume_consensus(miner_data_counts)
-            volume_verification_response = await self._apply_volume_consensus_penalties(synapse, miner_data_counts, selected_miners, consensus_count)
+            volume_verification_response = await self._apply_volume_penalties(synapse, miner_data_counts, selected_miners, consensus_count)
             if volume_verification_response:
                 return volume_verification_response
             
@@ -294,11 +294,11 @@ class OrganicQueryProcessor:
         return penalized_miners
 
 
-    async def _apply_volume_consensus_penalties(self, 
-                                                 synapse: OrganicRequest, 
-                                                 miner_data_counts: Dict[int, int], 
-                                                 selected_miners: List[int], 
-                                                 consensus_count: Optional[float]) -> Optional[OrganicRequest]:
+    async def _apply_volume_penalties(self, 
+                                      synapse: OrganicRequest, 
+                                      miner_data_counts: Dict[int, int], 
+                                      selected_miners: List[int], 
+                                      consensus_count: Optional[float]) -> Optional[OrganicRequest]:
         """
         Check if volume consensus is below threshold and potentially perform verification rescrape.
         Returns early response if verification is triggered, None otherwise.
@@ -477,7 +477,7 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Found {len(all_posts)} unique posts with {sum(len(miners) - 1 for miners in post_to_miners.values())} duplicates")
         return all_posts, post_to_miners
     
-    
+
     def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]]) -> List:
         """Select posts for validation, prioritizing those with fewer miners (more suspicious)"""
         validation_sample_size = min(self.CROSS_VALIDATION_SAMPLE_SIZE, len(all_posts))
