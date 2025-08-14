@@ -508,5 +508,4 @@ async def system_health_check(
     _: bool = Depends(require_master_key)
 ):
     """Internal health check endpoint for monitoring"""
-    return {"status": "healthy", "timestamp": dt.datetime.now(dt.timezone.utc)
-.isoformat()}
+    return {"status": "healthy", "timestamp": dt.datetime.now(dt.timezone.utc).isoformat()}

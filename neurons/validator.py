@@ -291,8 +291,9 @@ class Validator:
                 wait_time = max(
                     0,
                     (next_batch_start_time - dt.datetime.now(dt.timezone.utc)
-).total_seconds(),
+                    ).total_seconds(),
                 )
+
                 if wait_time > 0:
                     bt.logging.info(
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
@@ -428,8 +429,7 @@ class Validator:
     def is_healthy(self) -> bool:
         """Returns true if the validator is healthy and is evaluating Miners."""
         with self.lock:
-            return dt.datetime.now(dt.timezone.utc)
- - self.last_eval_time < dt.timedelta(minutes=35)
+            return dt.datetime.now(dt.timezone.utc) - self.last_eval_time < dt.timedelta(minutes=35)
 
     def should_set_weights(self) -> bool:
         # Check if enough epoch blocks have elapsed since the last epoch.
@@ -451,8 +451,7 @@ class Validator:
                 return False
 
             # Normal 20-minute interval check for subsequent weight settings
-            return dt.datetime.now(dt.timezone.utc)
- - self.last_weights_set_time > dt.timedelta(minutes=20)
+            return dt.datetime.now(dt.timezone.utc) - self.last_weights_set_time > dt.timedelta(minutes=20)
 
     def _start_api_monitoring(self):
         """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
