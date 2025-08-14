@@ -9,7 +9,7 @@ import bittensor as bt
 from typing import Optional
 from .routes import router, get_validator
 from vali_utils.api.auth.key_routes import router as key_router
-from vali_utils.api.auth.auth import key_manager, require_master_key
+from vali_utils.api.auth.auth import key_manager, require_master_key, require_metrics_api_key
 from vali_utils.api.utils import endpoint_error_handler
 from vali_utils.metrics import (
     COMMON_HIST_DURATION_BUKCET,
@@ -67,7 +67,7 @@ class ValidatorAPI:
             )
 
             @app.get("/metrics", include_in_schema=False)
-            def metrics(_: None = Depends(require_master_key)):
+            def metrics(_: None = Depends(require_metrics_api_key)):
                 return Response(
                     generate_latest(instrumentator.registry),
                     media_type=CONTENT_TYPE_LATEST,

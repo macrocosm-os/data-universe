@@ -282,7 +282,6 @@ class Validator:
 
                 metrics.MAIN_LOOP_ITERATIONS.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
                 metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
-                
                 metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(time.perf_counter() - work_start)
 
                 wait_time = max(0.0, float(next_batch_delay_secs))

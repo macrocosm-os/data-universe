@@ -1,3 +1,4 @@
+from uuid import uuid4
 from fastapi import HTTPException, Security
 from fastapi.security.api_key import APIKeyHeader
 import os
@@ -18,6 +19,8 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME)
 
 class APIKeyManager:
     def __init__(self, db_path: str = None):
+        self.metrics_api_key = os.getenv('METRICS_API_KEY', str(uuid4()))
+
         # Master key from environment
         self.master_key = os.getenv('MASTER_KEY')
         if not self.master_key:
@@ -95,6 +98,9 @@ class APIKeyManager:
             )
             result = cursor.fetchone()
             return bool(result and result[0])
+
+    def is_metrics_api_key(self, key: str) -> bool:
+        return key == self.metrics_api_key
 
     def is_master_key(self, api_key: str) -> bool:
         """Check if key is the master key"""
@@ -191,6 +197,17 @@ async def require_master_key(api_key_header: str = Security(api_key_header)):
             status_code=429,
             detail="Rate limit exceeded",
             headers=headers
+        )
+
+    return True
+
+
+async def require_metrics_api_key(api_key_header: str = Security(api_key_header)):
+    """Verify master API key"""
+    if not key_manager.is_metrics_api_key(api_key_header):
+        raise HTTPException(
+            status_code=403,
+            detail="Invalid master key"
         )
 
     return True

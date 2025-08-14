@@ -49,7 +49,7 @@ VALIDATOR_INFO = Info(
 )
 
 ## Metrics ##
-# Register metrics you wish to track with grafana here
+# Register metrics you wish to track with grafana here and they will automatically show up on /metrics
 
 MAIN_LOOP_ITERATIONS = Counter(
     "vali_main_loop_iterations_total",
@@ -68,13 +68,6 @@ MAIN_LOOP_ERRORS = Counter(
 MAIN_LOOP_DURATION = Gauge(
     "vali_main_loop_duration_seconds",
     "Duration of a main-loop iteration in seconds",
-    labelnames=["hotkey"],
-    registry=_registry,
-)
-
-MAIN_LOOP_HEALTHY = Gauge(
-    "vali_main_loop_healthy",
-    "1 if main loop is making progress, else 0",
     labelnames=["hotkey"],
     registry=_registry,
 )
