@@ -194,22 +194,33 @@ class EnhancedXContent(BaseModel):
 
 
     @classmethod
-    def to_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
-        """Converts the EnhancedXContent to a DataEntity."""
+    def to_data_entity(cls, content: "EnhancedXContent", enhanced: bool = False) -> DataEntity:
+        """Converts the EnhancedXContent to a DataEntity.
+        
+        Args:
+            content: The EnhancedXContent instance to convert
+            enhanced: If True, uses the enhanced API response format.
+                            If False, uses the basic XContent format for validation compatibility.
+        """
         entity_timestamp = content.timestamp
         obfuscated_timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
         
-        # Create basic XContent with core fields
-        basic_content = XContent(
-            username=content.username,
-            text=content.text,
-            url=content.url,
-            timestamp=obfuscated_timestamp,
-            tweet_hashtags=content.tweet_hashtags,
-            media=content.media_urls if content.media_urls else None
-        )
-        
-        content_bytes = basic_content.json(exclude_none=True).encode("utf-8")
+        if enhanced:
+            # Use the enhanced API response format
+            api_response = content.to_api_response()
+            api_response['datetime'] = obfuscated_timestamp.isoformat() if obfuscated_timestamp else None
+            content_bytes = json.dumps(api_response, ensure_ascii=False).encode("utf-8")
+        else:
+            # Use basic XContent format for validation compatibility
+            basic_content = XContent(
+                username=content.username,
+                text=content.text,
+                url=content.url,
+                timestamp=obfuscated_timestamp,
+                tweet_hashtags=content.tweet_hashtags,
+                media=content.media_urls if content.media_urls else None
+            )
+            content_bytes = basic_content.json(exclude_none=True).encode("utf-8")
 
         return DataEntity(
             uri=content.url,
@@ -227,6 +238,14 @@ class EnhancedXContent(BaseModel):
             content=content_bytes,
             content_size_bytes=len(content_bytes),
         )
+
+    @classmethod
+    def to_enhanced_data_entity(cls, content: "EnhancedXContent") -> DataEntity:
+        """Converts the EnhancedXContent to a DataEntity with enhanced format.
+        
+        This is a convenience method that calls to_data_entity with enhanced=True.
+        """
+        return cls.to_data_entity(content, enhanced=True)
     
 
     @classmethod

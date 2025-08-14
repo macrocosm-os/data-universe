@@ -364,7 +364,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         # Convert the enhanced content to DataEntity objects
         data_entities = []
         for content in self.get_enhanced_content():
-            data_entities.append(EnhancedXContent.to_data_entity(content=content))
+            data_entities.append(EnhancedXContent.to_enhanced_data_entity(content=content))
 
         return data_entities
 

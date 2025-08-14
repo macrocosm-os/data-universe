@@ -433,7 +433,7 @@ class OrganicQueryProcessor:
                 await scraper.scrape(verify_config)
                 enhanced_content = scraper.get_enhanced_content()
                 # Convert EnhancedXContent to DataEntities
-                verification_data = [EnhancedXContent.to_data_entity(content) for content in enhanced_content]
+                verification_data = [EnhancedXContent.to_enhanced_data_entity(content=content) for content in enhanced_content]
             elif synapse.source.upper() == 'REDDIT':
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
@@ -695,7 +695,7 @@ class OrganicQueryProcessor:
                 if not self._validate_x_metadata_completeness(x_content=x_content):
                     bt.logging.error(f"Post {post_id} failed metadata completeness validation")
                     return False
-                entity_for_validation = EnhancedXContent.to_data_entity(x_content)
+                entity_for_validation = EnhancedXContent.to_data_entity(content=x_content)
             
             # Phase 3: Scraper validation (only if previous validation passes)
             scraper_result = await self._validate_with_scraper(synapse, entity_for_validation, post_id)
