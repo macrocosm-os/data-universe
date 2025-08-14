@@ -309,7 +309,8 @@ async def health_check(validator=Depends(get_validator),
     miner_uids = utils.get_miner_uids(validator.metagraph, validator.config.vpermit_rao_limit)
     return {
         "status": "healthy" if validator.is_healthy() else "unhealthy",
-        "timestamp": dt.datetime.utcnow(),
+        "timestamp": dt.datetime.now(dt.timezone.utc)
+,
         "miners_available": len(miner_uids),
         "netuid": validator.config.netuid,
         "hotkey": validator.wallet.hotkey.ss58_address,
@@ -507,4 +508,5 @@ async def system_health_check(
     _: bool = Depends(require_master_key)
 ):
     """Internal health check endpoint for monitoring"""
-    return {"status": "healthy", "timestamp": dt.datetime.utcnow().isoformat()}
+    return {"status": "healthy", "timestamp": dt.datetime.now(dt.timezone.utc)
+.isoformat()}

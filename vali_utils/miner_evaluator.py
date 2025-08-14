@@ -320,7 +320,8 @@ class MinerEvaluator:
         next_uid = self.miner_iterator.peek()
         hotkey = metagraph.hotkeys[next_uid]
         last_evaluated = self.storage.read_miner_last_updated(hotkey)
-        now = dt.datetime.utcnow()
+        now = dt.datetime.now(dt.timezone.utc)
+
         due_update = (
             last_evaluated is None
             or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD

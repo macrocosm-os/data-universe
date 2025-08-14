@@ -135,8 +135,10 @@ class Validator:
         self.is_running: bool = False
         self.thread: threading.Thread = None
         self.lock = threading.RLock()
-        self.last_eval_time = dt.datetime.utcnow()
-        self.last_weights_set_time = dt.datetime.utcnow()
+        self.last_eval_time = dt.datetime.now(dt.timezone.utc)
+
+        self.last_weights_set_time = dt.datetime.now(dt.timezone.utc)
+
         self.is_setup = False
 
         # Add counter for evaluation cycles since startup
@@ -182,7 +184,8 @@ class Validator:
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
-            bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
+            bt.logging.info(f"Updated dynamic lookup at {dt.datetime.now(dt.timezone.utc)
+}")
         except Exception as e:
             bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
             bt.logging.exception("Exception details:")
@@ -267,7 +270,7 @@ class Validator:
                 self._on_eval_batch_complete()
 
                 # Set the next batch start time.
-                next_batch_start_time = dt.datetime.utcnow() + dt.timedelta(
+                next_batch_start_time = dt.datetime.now(dt.timezone.utc) + dt.timedelta(
                     seconds=next_batch_delay_secs
                 )
 
@@ -287,7 +290,8 @@ class Validator:
                 # wait until the next evaluation loop.
                 wait_time = max(
                     0,
-                    (next_batch_start_time - dt.datetime.utcnow()).total_seconds(),
+                    (next_batch_start_time - dt.datetime.now(dt.timezone.utc)
+).total_seconds(),
                 )
                 if wait_time > 0:
                     bt.logging.info(
@@ -418,12 +422,14 @@ class Validator:
     def _on_eval_batch_complete(self):
         with self.lock:
             self.evaluation_cycles_since_startup += 1
-            self.last_eval_time = dt.datetime.utcnow()
+            self.last_eval_time = dt.datetime.now(dt.timezone.utc)
+
 
     def is_healthy(self) -> bool:
         """Returns true if the validator is healthy and is evaluating Miners."""
         with self.lock:
-            return dt.datetime.utcnow() - self.last_eval_time < dt.timedelta(minutes=35)
+            return dt.datetime.now(dt.timezone.utc)
+ - self.last_eval_time < dt.timedelta(minutes=35)
 
     def should_set_weights(self) -> bool:
         # Check if enough epoch blocks have elapsed since the last epoch.
@@ -445,7 +451,8 @@ class Validator:
                 return False
 
             # Normal 20-minute interval check for subsequent weight settings
-            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(minutes=20)
+            return dt.datetime.now(dt.timezone.utc)
+ - self.last_weights_set_time > dt.timedelta(minutes=20)
 
     def _start_api_monitoring(self):
         """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
@@ -575,7 +582,8 @@ class Validator:
         )
 
         with self.lock:
-            self.last_weights_set_time = dt.datetime.utcnow()
+            self.last_weights_set_time = dt.datetime.now(dt.timezone.utc)
+
 
         bt.logging.success("Finished setting weights.")
 
