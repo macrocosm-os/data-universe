@@ -2,20 +2,23 @@ import time
 from fastapi import FastAPI, Depends, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
+from prometheus_fastapi_instrumentator import Instrumentator
 import uvicorn
 from threading import Thread
 import bittensor as bt
 from typing import Optional
 from .routes import router, get_validator
 from vali_utils.api.auth.key_routes import router as key_router
-from vali_utils.api.auth.auth import APIKeyManager, key_manager, require_master_key
+from vali_utils.api.auth.auth import key_manager, require_master_key
 from vali_utils.api.utils import endpoint_error_handler
+from vali_utils.metrics import COMMON_HIST_DURATION_BUKCET, prometheus_collector_registry
 
+import prometheus_fastapi_instrumentator.metrics as prometheus_metrics
 
 class ValidatorAPI:
     """API server for validator on-demand queries"""
 
-    def __init__(self, validator, port: int = 8000):
+    def __init__(self, validator, port: int = 8000, expose_otel_metrics: bool = True):
         """
         Initialize API server
 
@@ -28,6 +31,7 @@ class ValidatorAPI:
         self.key_manager = key_manager
         self.app = self._create_app()
         self.server_thread: Optional[Thread] = None
+        self.expose_otel_metrics = expose_otel_metrics
 
     def _create_app(self) -> FastAPI:
         """Create and configure FastAPI application"""
@@ -35,9 +39,29 @@ class ValidatorAPI:
             title="Data Universe Validator API",
             description="API for on-demand data queries from the Data Universe network",
             version="1.0.0",
-            docs_url=None,    # Disable default docs routes
-            redoc_url=None,   # Disable default redoc route
+            docs_url=None,  # Disable default docs routes
+            redoc_url=None,  # Disable default redoc route
         )
+
+        @app.on_event("startup")
+        async def startup():
+            if self.expose_otel_metrics:
+                instrumentator = Instrumentator(registry=prometheus_collector_registry)
+                
+                instrumentator.add(
+                    prometheus_metrics.latency(buckets=COMMON_HIST_DURATION_BUKCET)
+                )
+
+                instrumentator.add(prometheus_metrics.requests())
+                instrumentator.add(prometheus_metrics.response_size())
+                instrumentator.add(prometheus_metrics.request_size())
+                instrumentator.add(prometheus_metrics.combined_size())
+                
+                instrumentator.instrument(
+                    app, metric_namespace="sn13", metric_subsystem="validator"
+                ).expose(
+                    app, endpoint="/metrics", include_in_schema=False, should_gzip=True
+                )
 
         # Add CORS middleware
         app.add_middleware(
@@ -52,16 +76,14 @@ class ValidatorAPI:
         @app.get("/docs", include_in_schema=False)
         async def get_docs(_: bool = Depends(require_master_key)):
             return get_swagger_ui_html(
-                openapi_url="/openapi.json",
-                title="API Documentation"
+                openapi_url="/openapi.json", title="API Documentation"
             )
 
         # Protected ReDoc docs endpoint using default styling
         @app.get("/redoc", include_in_schema=False)
         async def get_redoc(_: bool = Depends(require_master_key)):
             return get_redoc_html(
-                openapi_url="/openapi.json",
-                title="API Documentation"
+                openapi_url="/openapi.json", title="API Documentation"
             )
 
         # Protected OpenAPI JSON schema endpoint
@@ -71,6 +93,7 @@ class ValidatorAPI:
             try:
                 if not app.openapi_schema:
                     from fastapi.openapi.utils import get_openapi
+
                     app.openapi_schema = get_openapi(
                         title=app.title,
                         version=app.version,
@@ -85,7 +108,9 @@ class ValidatorAPI:
                 return app.openapi_schema
             except Exception as e:
                 bt.logging.error(f"Failed to generate OpenAPI schema: {str(e)}")
-                raise HTTPException(status_code=500, detail="Could not generate API documentation")
+                raise HTTPException(
+                    status_code=500, detail="Could not generate API documentation"
+                )
 
         # Rate limit headers middleware
         @app.middleware("http")
@@ -116,12 +141,7 @@ class ValidatorAPI:
         def run_server():
             try:
                 bt.logging.info(f"Starting API server on port {self.port}")
-                uvicorn.run(
-                    self.app,
-                    host="0.0.0.0",
-                    port=self.port,
-                    log_level="info"
-                )
+                uvicorn.run(self.app, host="0.0.0.0", port=self.port, log_level="info")
             except Exception as e:
                 bt.logging.error(f"API server error: {str(e)}")
 

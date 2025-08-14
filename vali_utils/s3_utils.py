@@ -420,7 +420,7 @@ class S3Validator:
                     sample_results.append(f"❌ {platform}: Scraper error - {str(e)}")
         
         success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
-        
+
         return {
             'entities_validated': total_validated,
             'entities_passed': total_passed,

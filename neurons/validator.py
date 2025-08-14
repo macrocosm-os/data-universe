@@ -38,20 +38,14 @@ import requests
 from dotenv import load_dotenv
 import bittensor as bt
 from typing import Tuple
-import json
 from common.organic_protocol import OrganicRequest
-from common.data import DataSource, DataLabel, DataEntity
 from common import constants
-from common.protocol import OnDemandRequest
 from common import utils
-from scraping.scraper import ScrapeConfig, ValidationResult
-from common.date_range import DateRange
-from scraping.provider import ScraperProvider
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.load_balancer.validator_registry import ValidatorRegistry
 from vali_utils.organic_query_processor import OrganicQueryProcessor
-import random
+
+from vali_utils import metrics
 
 load_dotenv()
 # Temporary solution to getting rid of annoying bittensor trace logs
@@ -154,6 +148,13 @@ class Validator:
                 bt.logging.warning("Continuing without wandb logging.")
                 self.config.wandb.off = True
 
+        metrics.VALIDATOR_INFO.info({
+            "hotkey": self.wallet.hotkey.ss58_address,
+            "uid": str(self.uid),
+            "netuid": str(self.config.netuid),
+            "version": self.get_version_tag(),
+        })
+
         # Load any state from previous runs.
         self.load_state()
 
@@ -250,9 +251,10 @@ class Validator:
 
         bt.logging.info(f"Validator starting at block: {self.block}.")
 
-        # This loop maintains the validator's operations until intentionally stopped.
         while not self.should_exit:
             try:
+                work_start = time.perf_counter()
+
                 bt.logging.debug(
                     f"Validator running on step({self.step}) block({self.block})."
                 )
@@ -266,11 +268,6 @@ class Validator:
                 )
                 self._on_eval_batch_complete()
 
-                # Set the next batch start time.
-                next_batch_start_time = dt.datetime.utcnow() + dt.timedelta(
-                    seconds=next_batch_delay_secs
-                )
-
                 # Maybe set weights.
                 if self.should_set_weights():
                     self.set_weights()
@@ -283,40 +280,31 @@ class Validator:
 
                 self.step += 1
 
-                # Now that we've finished a full evaluation loop, compute how long we should
-                # wait until the next evaluation loop.
-                wait_time = max(
-                    0,
-                    (next_batch_start_time - dt.datetime.utcnow()).total_seconds(),
-                )
+                metrics.MAIN_LOOP_ITERATIONS.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
+                metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
+                
+                metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(time.perf_counter() - work_start)
+
+                wait_time = max(0.0, float(next_batch_delay_secs))
                 if wait_time > 0:
                     bt.logging.info(
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
                     )
                     time.sleep(wait_time)
 
-                # Check if we should start a new wandb run.
+                # Rotate wandb run if needed (outside of work timing)
                 if not self.config.wandb.off:
-                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
-                        hours=12
-                    ):
-                        bt.logging.info(
-                            "Current wandb run is more than 12 hours old. Starting a new run."
-                        )
+                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=12):
+                        bt.logging.info("Current wandb run is more than 12 hours old. Starting a new run.")
                         self.wandb_run.finish()
                         self.new_wandb_run()
 
-
-            # If someone intentionally stops the validator, it'll safely terminate operations.
             except KeyboardInterrupt:
                 self.axon.stop()
-                
-                # Cleanup loggers
                 if self.wandb_run:
                     self.wandb_run.finish()
-
-            # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
+                metrics.MAIN_LOOP_ERRORS.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
                 bt.logging.error("Error during validation", str(err))
 
     def run_in_background_thread(self):
@@ -564,8 +552,11 @@ class Validator:
         console = Console()
         console.print(table)
 
+        metrics.SET_WEIGHTS_LAST_TS_ATTEMPTED.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
+
         # Set the weights on chain via our subtensor connection.
-        self.subtensor.set_weights(
+        t0 = time.perf_counter()
+        success, message = self.subtensor.set_weights(
             wallet=self.wallet,
             netuid=self.config.netuid,
             uids=processed_weight_uids,
@@ -573,6 +564,12 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
+        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).observe(time.perf_counter() - t0)
+
+        if success:
+            metrics.SET_WEIGHTS_LAST_TS_SUCCESSFUL.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
+
+
 
         with self.lock:
             self.last_weights_set_time = dt.datetime.utcnow()
