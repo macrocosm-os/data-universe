@@ -54,12 +54,19 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         Returns:
             List[EnhancedXContent]: List of parsed EnhancedXContent objects.
         """
+        # Check for empty or zero result datasets
         if dataset == [{"zero_result": True}] or not dataset:
+            bt.logging.info("Dataset is empty or contains zero_result flag")
             return []
 
         results: List[EnhancedXContent] = []
         for data in dataset:
             try:
+                # Skip empty or invalid data entries
+                if not data:
+                    bt.logging.debug("Skipping empty entry")
+                    continue
+                    
                 # Debug the structure of the data
                 if 'media' in data:
                     if isinstance(data['media'], list) and data['media']:
@@ -120,7 +127,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                             # Sort by first index
                             sorted_items = sorted(combined, key=lambda x: x['indices'][0])
                             sorted_tags = ["#" + item['text'] if item['type'] == 'hashtag' else "$" + item['text']
-                                           for item in sorted_items]
+                                        for item in sorted_items]
                         except (KeyError, IndexError, TypeError):
                             # If sorting fails, just combine the lists
                             sorted_tags = hashtags + cashtags
@@ -157,6 +164,11 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                             timestamp = dt.datetime.fromisoformat(data["createdAt"])
                         except ValueError:
                             bt.logging.debug(f"Failed to parse timestamp: {data['createdAt']}. Fallback: {timestamp}")
+
+                # Validate that we have essential data before creating the object
+                if not username and not tweet_id:
+                    bt.logging.debug("Skipping data entry with no essential fields (username, tweet_id)")
+                    continue
 
                 # Create the enhanced content object
                 enhanced_content = EnhancedXContent(
@@ -235,6 +247,9 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                     bt.logging.debug(f"Used fallback parsing for tweet: {url}")
                 except Exception as fallback_error:
                     bt.logging.error(f"Fallback parsing also failed: {str(fallback_error)}")
+                    continue
+        
+        bt.logging.info(f"Successfully parsed {len(results)} enhanced content objects")
         return results
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
