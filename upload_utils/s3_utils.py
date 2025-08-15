@@ -1,8 +1,26 @@
 import time
 import os
+import socket
 import requests
 import bittensor as bt
 from typing import Dict, Any, Optional
+from requests.adapters import HTTPAdapter
+from urllib3.util.retry import Retry
+from urllib3.util import connection
+from urllib3.poolmanager import PoolManager
+
+
+class TimeoutHTTPAdapter(HTTPAdapter):
+    """Custom HTTPAdapter with configurable read timeout"""
+    def __init__(self, timeout=60, *args, **kwargs):
+        self.timeout = timeout
+        super().__init__(*args, **kwargs)
+
+    def init_poolmanager(self, *args, **kwargs):
+        """Override to set custom timeout on connection pool"""
+        kwargs['timeout'] = self.timeout
+        kwargs['retries'] = False  # Let our retry strategy handle retries
+        return super().init_poolmanager(*args, **kwargs)
 
 
 class S3Auth:
@@ -10,9 +28,29 @@ class S3Auth:
 
     def __init__(self, s3_auth_url: str):
         self.s3_auth_url = s3_auth_url
+        # Create persistent session with connection pooling and retries
+        self.session = requests.Session()
+        
+        # Configure retry strategy
+        retry_strategy = Retry(
+            total=3,
+            status_forcelist=[429, 500, 502, 503, 504],
+            method_whitelist=["HEAD", "GET", "POST"],
+            backoff_factor=1
+        )
+        
+        # Configure custom HTTP adapter with 60-second read timeout
+        adapter = TimeoutHTTPAdapter(
+            timeout=60,  # 60-second read timeout at urllib3 level
+            pool_connections=10,
+            pool_maxsize=20,
+            max_retries=retry_strategy
+        )
+        
+        self.session.mount("http://", adapter)
+        self.session.mount("https://", adapter)
 
     def get_credentials(self,
-                        subtensor: bt.subtensor,
                         wallet: bt.wallet) -> Optional[Dict[str, Any]]:
         """Get S3 credentials using blockchain commitments and hotkey signature"""
         try:
@@ -34,7 +72,7 @@ class S3Auth:
                 "signature": signature_hex
             }
 
-            response = requests.post(
+            response = self.session.post(
                 f"{self.s3_auth_url.rstrip('/')}/get-folder-access",
                 json=payload,
                 timeout=30
@@ -70,7 +108,7 @@ class S3Auth:
 
             with open(file_path, 'rb') as f:
                 files = {'file': f}
-                response = requests.post(creds['url'], data=post_data, files=files)
+                response = requests.post(creds['url'], data=post_data, files=files, timeout=120)
 
             if response.status_code == 204:
                 bt.logging.info(f"✅ Upload success: {key}")
@@ -106,7 +144,7 @@ class S3Auth:
 
             with open(file_path, 'rb') as f:
                 files = {'file': f}
-                response = requests.post(creds['url'], data=post_data, files=files)
+                response = requests.post(creds['url'], data=post_data, files=files, timeout=120)
 
             if response.status_code == 204:
                 bt.logging.success(f"✅ S3 upload success: {full_s3_path}")
@@ -122,7 +160,7 @@ class S3Auth:
     def get_structure_info(self) -> Optional[Dict[str, Any]]:
         """Get information about the current folder structure"""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.s3_auth_url.rstrip('/')}/structure-info",
                 timeout=30
             )
@@ -140,9 +178,9 @@ class S3Auth:
     def test_connection(self) -> bool:
         """Test connection to S3 auth server"""
         try:
-            response = requests.get(
+            response = self.session.get(
                 f"{self.s3_auth_url.rstrip('/')}/healthcheck",
-                timeout=10
+                timeout=30
             )
 
             if response.status_code == 200:
@@ -156,3 +194,12 @@ class S3Auth:
         except Exception as e:
             bt.logging.error(f"❌ Failed to connect to S3 auth server: {str(e)}")
             return False
+    
+    def close(self):
+        """Clean up session resources"""
+        if hasattr(self, 'session'):
+            self.session.close()
+    
+    def __del__(self):
+        """Ensure session is closed on object destruction"""
+        self.close()

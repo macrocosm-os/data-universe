@@ -440,7 +440,6 @@ class S3PartitionedUploader:
             # Get credentials once for all jobs (no source-specific credentials needed)
             bt.logging.info("Getting S3 credentials for all job uploads")
             s3_creds = self.s3_auth.get_credentials(
-                subtensor=self.subtensor,
                 wallet=self.wallet,
             )
 
