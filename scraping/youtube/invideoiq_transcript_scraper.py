@@ -305,7 +305,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             run_input = {
                 "video_url": video_url,
-                "best_effort": True
+                "best_effort": True,
+                "get_yt_original_metadata": True
             }
 
             run_config = RunConfig(
@@ -345,7 +346,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
             run_input = {
                 "video_url": video_url,
                 "language": language,
-                "best_effort": True
+                "best_effort": True,
+                "get_yt_original_metadata": True
             }
 
             run_config = RunConfig(
