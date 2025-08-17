@@ -266,7 +266,7 @@ class EnhancedXContent(BaseModel):
         if username and not username.startswith("@"):
             username = f"@{username}"
             
-        text = content_dict.get("content", "")
+        text = content_dict.get("text", "")
         url = content_dict.get("uri", "")
         
         # Handle timestamp - could be in content_dict or data_entity
