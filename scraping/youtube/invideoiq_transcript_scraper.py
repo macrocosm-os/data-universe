@@ -128,10 +128,11 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
                         # Get view count from Apify actor response
                         view_count = transcript_data.get('view_count', 0)
-                        
+
                         # Filter low engagement videos (100+ views required)
                         if view_count < 100:
-                            bt.logging.info(f"Video {video_id} has only {view_count} views, skipping (minimum 100 required)")
+                            bt.logging.info(
+                                f"Video {video_id} has only {view_count} views, skipping (minimum 100 required)")
                             continue
 
                         # Get upload date from API
@@ -305,7 +306,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             run_input = {
                 "video_url": video_url,
-                "best_effort": True
+                "best_effort": True,
+                "get_yt_original_metadata": True
             }
 
             run_config = RunConfig(
@@ -345,7 +347,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
             run_input = {
                 "video_url": video_url,
                 "language": language,
-                "best_effort": True
+                "best_effort": True,
+                "get_yt_original_metadata": True
             }
 
             run_config = RunConfig(
@@ -502,7 +505,6 @@ class YouTubeChannelTranscriptScraper(Scraper):
             reason="Content validated successfully",
             content_size_bytes_validated=entity.content_size_bytes
         )
-
 
     def _extract_video_id_from_url(self, url: str) -> Optional[str]:
         """Extract video ID from YouTube URL."""
