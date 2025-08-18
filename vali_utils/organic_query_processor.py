@@ -7,6 +7,7 @@ import bittensor as bt
 from common.data import DataSource, DataLabel, DataEntity
 from common.protocol import OnDemandRequest
 from common.organic_protocol import OrganicRequest
+from common.constants import X_ON_DEMAND_CONTENT_EXPIRATION_DATE
 from common import constants, utils
 from scraping.provider import ScraperProvider
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
@@ -341,7 +342,7 @@ class OrganicQueryProcessor:
             bt.logging.info("Verification shows sufficient data available - applying penalties to underperforming miners")
             for uid in miner_data_counts:
                 miner_count = miner_data_counts[uid]
-                if miner_count < synapse.limit: 
+                if miner_count < synapse.limit and miner_count > 0: 
                     bt.logging.info(f"Applying volume verification penalty to miner {uid} ({miner_count} < {synapse.limit})")
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         else:
@@ -731,14 +732,21 @@ class OrganicQueryProcessor:
             user_dict = x_content_dict.get("user", {})
             post_username = user_dict.get("username", "").strip('@').lower()
             if not post_username or post_username not in requested_usernames:
-                bt.logging.debug(f"Username mismatch: {post_username} not in {requested_usernames}")
+                bt.logging.debug(f"Username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keyword validation
         if synapse.keywords:
-            post_text = x_content_dict.get("text", "").lower()
+            post_text = x_content_dict.get("text")
+            now = dt.datetime.now(dt.timezone.utc)
+            if now >= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
+                if not post_text:
+                    bt.logging.debug("'text' field not found, using 'content' as fallback. This fallback will expire Aug 22 2025.")
+                    post_text = x_content_dict.get("content", "")
+                
+            post_text = post_text.lower()
             if not post_text or not all(keyword.lower() in post_text for keyword in synapse.keywords):
-                bt.logging.debug(f"Not all keywords found in post {post_text}")
+                bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
                 return False
         
         # Time range validation
@@ -756,7 +764,7 @@ class OrganicQueryProcessor:
             requested_usernames = [u.lower() for u in synapse.usernames]
             post_username = reddit_content_dict.get("username")
             if not post_username or post_username.lower() not in requested_usernames:
-                bt.logging.debug(f"Reddit username mismatch: {post_username} not in {requested_usernames}")
+                bt.logging.debug(f"Reddit username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keywords validation (subreddit or content)
@@ -776,7 +784,7 @@ class OrganicQueryProcessor:
             keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
             
             if not (subreddit_match or keyword_in_content):
-                bt.logging.debug(f"Reddit keyword mismatch in subreddit '{post_community}' and content")
+                bt.logging.debug(f"Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")
                 return False
         
         # Time range validation using non-obfuscated datetime

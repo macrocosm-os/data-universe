@@ -4,6 +4,7 @@ from pydantic import BaseModel, Field
 import json
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
+from common.constants import X_ON_DEMAND_CONTENT_EXPIRATION_DATE
 from scraping import utils
 from scraping.x.model import XContent
 
@@ -266,7 +267,14 @@ class EnhancedXContent(BaseModel):
         if username and not username.startswith("@"):
             username = f"@{username}"
             
-        text = content_dict.get("text", "")
+        text = content_dict.get("text")
+        now = dt.datetime.now(dt.timezone.utc)
+        if now >= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
+            if not text:
+                # Using 'content' as fallback for compatibility until Aug 22 2025
+                text = content_dict.get("content", "")
+        if not text:
+            text = "" 
         url = content_dict.get("uri", "")
         
         # Handle timestamp - could be in content_dict or data_entity
