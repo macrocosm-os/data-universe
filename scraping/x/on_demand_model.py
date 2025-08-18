@@ -263,7 +263,7 @@ class EnhancedXContent(BaseModel):
         media_info = content_dict.get("media", [])
         
         # Map to EnhancedXContent fields
-        username = user_info.get("username", "")
+        username = user_info.get("username")
         if username and not username.startswith("@"):
             username = f"@{username}"
             
@@ -272,10 +272,10 @@ class EnhancedXContent(BaseModel):
         if now >= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
             if not text:
                 # Using 'content' as fallback for compatibility until Aug 22 2025
-                text = content_dict.get("content", "")
+                text = content_dict.get("content")
         if not text:
             text = "" 
-        url = content_dict.get("uri", "")
+        url = content_dict.get("uri")
         
         # Handle timestamp - could be in content_dict or data_entity
         timestamp = data_entity.datetime
@@ -287,7 +287,7 @@ class EnhancedXContent(BaseModel):
         media_urls = []
         media_types = []
         for media_item in media_info:
-            media_urls.append(media_item.get("url", ""))
+            media_urls.append(media_item.get("url"))
             media_types.append(media_item.get("type", "unknown"))
         
         return cls(
