@@ -28,16 +28,15 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         # Initialize the parent class
         super().__init__(runner=runner or ActorRunner())
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
+    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool], List[dict], List[int]]:
         """
-        Enhanced version that parses the full dataset into both standard XContent (for backward compatibility)
-        and EnhancedXContent objects.
+        Enhanced version that parses the dataset WITHOUT spam/engagement filtering.
 
         Returns:
-            Tuple[List[XContent], List[bool]]: (standard_parsed_content, is_retweets)
+            Tuple[List[XContent], List[bool], List[dict], List[int]]: (parsed_content, is_retweets, author_datas, view_counts)
         """
-        # Call the parent class method to get standard parsed content
-        standard_contents, is_retweets, author_datas, view_counts = super()._best_effort_parse_dataset(dataset)
+        # Call the parent class method WITHOUT engagement checks
+        standard_contents, is_retweets, author_datas, view_counts = super()._best_effort_parse_dataset(dataset, check_engagement=False)
 
         # Also parse into enhanced content and store it in a class attribute
         self.enhanced_contents = self._parse_enhanced_content(dataset)
@@ -236,6 +235,19 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
                 except Exception as fallback_error:
                     bt.logging.error(f"Fallback parsing also failed: {str(fallback_error)}")
         return results
+
+    def _validate_tweet_content(
+            self, actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None
+    ) -> ValidationResult:
+        """Enhanced validation that skips spam and engagement filtering."""
+        # Delegate directly to utils without spam/engagement checks
+        return utils.validate_tweet_content(
+            actual_tweet=actual_tweet,
+            entity=entity,
+            is_retweet=is_retweet,
+            author_data=author_data,
+            view_count=view_count
+        )
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """
