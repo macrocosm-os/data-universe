@@ -111,7 +111,7 @@ class ApiDojoTwitterScraper(Scraper):
                             content_size_bytes_validated=entity.content_size_bytes,
                         )
                 else:
-                    return utils.validate_tweet_content(
+                    return self._validate_tweet_content(
                         actual_tweet=actual_tweet,
                         entity=entity,
                         is_retweet=is_retweet,
@@ -215,7 +215,7 @@ class ApiDojoTwitterScraper(Scraper):
 
         return data_entities
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool], List[dict], List[int]]:
+    def _best_effort_parse_dataset(self, dataset: List[dict], check_engagement: bool = True) -> Tuple[List[XContent], List[bool], List[dict], List[int]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
         Any errors are logged and ignored."""
 
@@ -233,15 +233,15 @@ class ApiDojoTwitterScraper(Scraper):
                 if not all(field in data for field in ["text", "url", "createdAt"]):
                     continue
 
-                # Filter spam accounts using engagement metrics
-                if 'author' in data and utils.is_spam_account(data['author']):
-                    bt.logging.debug(f"Filtered spam account: {data.get('author', {}).get('userName', 'unknown')}")
-                    continue
-                
-                # Filter low engagement tweets
-                if utils.is_low_engagement_tweet(data):
-                    bt.logging.debug(f"Filtered low engagement tweet: {data.get('url', 'unknown')}")
-                    continue
+                # Filter spam accounts and low engagement tweets if check_engagement is True
+                if check_engagement:
+                    if 'author' in data and utils.is_spam_account(data['author']):
+                        bt.logging.debug(f"Filtered spam account: {data.get('author', {}).get('userName', 'unknown')}")
+                        continue
+                    
+                    if utils.is_low_engagement_tweet(data):
+                        bt.logging.debug(f"Filtered low engagement tweet: {data.get('url', 'unknown')}")
+                        continue
 
                 # Extract reply information (tuple of (user_id, username))
                 reply_info = self._extract_reply_info(data)
@@ -345,6 +345,38 @@ class ApiDojoTwitterScraper(Scraper):
                 media_urls.append(media_item)
         
         return media_urls
+
+    def _validate_tweet_content(
+            self, actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None
+    ) -> ValidationResult:
+        """Validates the tweet with spam and engagement filtering."""
+        # First check spam/engagement if data is available
+        if author_data is not None and view_count is not None:
+            # Check if account is spam (low followers/new account)
+            if utils.is_spam_account(author_data):
+                return ValidationResult(
+                    is_valid=False,
+                    reason="Tweet from spam account (low followers/new account).",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+            
+            # Check if tweet has low engagement
+            tweet_data = {'viewCount': view_count}
+            if utils.is_low_engagement_tweet(tweet_data):
+                return ValidationResult(
+                    is_valid=False,
+                    reason="Tweet has low engagement (insufficient views).",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+
+        # Delegate to the core validation logic in utils
+        return utils.validate_tweet_content(
+            actual_tweet=actual_tweet,
+            entity=entity,
+            is_retweet=is_retweet,
+            author_data=author_data,
+            view_count=view_count
+        )
 
 
 async def test_scrape():

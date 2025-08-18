@@ -7,6 +7,7 @@ import bittensor as bt
 from common.data import DataSource, DataLabel, DataEntity
 from common.protocol import OnDemandRequest
 from common.organic_protocol import OrganicRequest
+from common.constants import X_ON_DEMAND_CONTENT_EXPIRATION_DATE
 from common import constants, utils
 from scraping.provider import ScraperProvider
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
@@ -33,8 +34,11 @@ class OrganicQueryProcessor:
         self.NUM_MINERS_TO_QUERY = 5
         self.CROSS_VALIDATION_SAMPLE_SIZE = 10
         self.MIN_CONSENSUS = 0.3    # if consensus is <30% of request size, consensus penalties skipped
+        
+        # Volume verification constants
+        self.VOLUME_VERIFICATION_RATE = 0.1    # 10% chance to perform volume verification rescrape
+        self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
     
-
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
         """
         Main entry point for processing organic queries
@@ -57,22 +61,37 @@ class OrganicQueryProcessor:
             if early_response:
                 return early_response
             
-            # Step 4: Apply consensus-based volume penalties 
-            insufficient_miners = self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit)
+            # Step 4: Calculate consensus, check for volume verification, and apply volume-based penalties
+            consensus_count = self._calculate_volume_consensus(miner_data_counts)
+            volume_verification_response = await self._apply_volume_penalties(synapse, miner_data_counts, selected_miners, consensus_count)
+            if volume_verification_response:
+                return volume_verification_response
             
-            # Step 5: Perform cross-validation and get pooled data
-            validation_results, pooled_data = await self._perform_cross_validation(synapse, miner_responses)
+            # Step 5: Perform cross-validation 
+            validation_results = await self._perform_cross_validation(synapse, miner_responses)
             
             # Step 6: Calculate final scores with all penalties applied
-            miner_scores = self._apply_validation_penalties(miner_responses, validation_results)
+            miner_scores, failed_miners = self._apply_validation_penalties(miner_responses, validation_results)
             
-            # Step 7: Format response
+            # Step 7: Pool only valid responses (excludes failed miners)
+            pooled_data = self._pool_valid_responses(miner_responses, failed_miners)
+            
+            # Step 7.5: If no valid data pooled, perform rescrape fallback
+            if not pooled_data:
+                bt.logging.info("No valid data pooled from miners - performing rescrape fallback")
+                fallback_data = await self._perform_verification_rescrape(synapse)
+                if fallback_data:
+                    bt.logging.info(f"Rescrape fallback found {len(fallback_data)} items")
+                    pooled_data = fallback_data
+                else:
+                    bt.logging.info("Rescrape fallback found no data")
+            
+            # Step 8: Format response
             return self._create_success_response(
                 synapse, miner_responses, miner_scores, pooled_data, {
                     'selected_miners': selected_miners,
                     'non_responsive_uids': non_responsive_uids,
                     'empty_uids': empty_uids,
-                    'insufficient_miners': insufficient_miners,
                     'validation_results': validation_results
                 }
             )
@@ -223,22 +242,21 @@ class OrganicQueryProcessor:
                     bt.logging.info(f"Applying penalty to miner {uid} for returning empty results when data exists")
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         return non_responsive_uids, empty_uids, None
-    
 
-    def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int) -> List[int]:
+
+    def _calculate_volume_consensus(self, miner_data_counts: Dict[int, int]) -> Optional[float]:
         """
-        Apply volume-based penalties using consensus validation with dynamic penalty scaling.
-        Uses mult_factor to scale penalties based on degree of underperformance.
+        Calculate volume consensus from miner data counts.
+        Returns the higher of mean and median of non-zero responses, or None if insufficient data.
         """
         if not miner_data_counts or len(miner_data_counts) < 2:
-            return []
+            return None
         
         # Filter out miners with 0 posts for consensus calculation
         non_zero_counts = [count for count in miner_data_counts.values() if count > 0]
         
         if len(non_zero_counts) < 2:
-            bt.logging.info("Not enough miners with data for consensus - skipping volume penalties")
-            return []
+            return None
         
         # Calculate consensus metrics from miners who actually found data
         median_count = statistics.median(non_zero_counts)
@@ -246,6 +264,16 @@ class OrganicQueryProcessor:
         consensus_count = max(median_count, mean_count)
         
         bt.logging.info(f"Volume consensus: {consensus_count:.1f} posts (median: {median_count}, mean: {mean_count:.1f})")
+        return consensus_count
+
+
+    def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int, consensus_count: Optional[float]) -> List[int]:
+        """
+        Apply consensus volume penalties when verification is not triggered.
+        """
+        if consensus_count is None:
+            bt.logging.info("Not enough miners with data for consensus - skipping volume penalties")
+            return []
         
         # Only apply penalties if consensus shows meaningful data availability
         min_consensus_threshold = requested_limit * self.MIN_CONSENSUS  # At least 30% of request
@@ -274,9 +302,85 @@ class OrganicQueryProcessor:
         
         bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
         return penalized_miners
+
+
+    async def _apply_volume_penalties(self, 
+                                      synapse: OrganicRequest, 
+                                      miner_data_counts: Dict[int, int], 
+                                      selected_miners: List[int], 
+                                      consensus_count: Optional[float]) -> Optional[OrganicRequest]:
+        """
+        Check if volume consensus is below threshold and potentially perform verification rescrape.
+        Returns early response if verification is triggered, None otherwise.
+        """
+        if consensus_count is None:
+            bt.logging.info("No consensus available for volume verification check")
+            return None
+        
+        # Check if consensus is below threshold
+        threshold_count = synapse.limit * self.VOLUME_CONSENSUS_THRESHOLD
+        
+        if consensus_count >= threshold_count:
+            bt.logging.info(f"Volume consensus {consensus_count:.1f} meets threshold {threshold_count:.1f}")
+            return None
+        
+        bt.logging.info(f"Volume consensus {consensus_count:.1f} below threshold {threshold_count:.1f}")
+        
+        should_apply_concensus_penalty_instead_of_rescrape_verification = random.random() > self.VOLUME_VERIFICATION_RATE
+        if should_apply_concensus_penalty_instead_of_rescrape_verification:
+            bt.logging.info("Volume verification not triggered, applying volume consensus penalties...")
+            self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit, consensus_count)
+            return None
+        
+        bt.logging.info("Volume verification triggered - performing verification rescrape")
+        
+        # Perform verification rescrape
+        verification_data = await self._perform_verification_rescrape(synapse)
+        
+        if verification_data is None:
+            bt.logging.info("Volume verification failed - no data found")
+            return None
+        
+        verification_count = len(verification_data)
+        bt.logging.info(f"Volume verification found {verification_count} items")
+        
+        # Apply scaled penalties based on verification results
+        bt.logging.info(f"Applying scaled penalties based on verification count ({verification_count})")
+        
+        for uid, miner_count in miner_data_counts.items():
+            if miner_count > 0:
+                # Check for fake data padding if verification rescrape wasn't capped
+                if verification_count < synapse.limit and miner_count > verification_count:
+                        bt.logging.info(f"Miner {uid}: fake data padding detected - {miner_count} posts vs {verification_count} verified, applying full penalty")
+                        self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                        continue
+                
+                # Apply scaled penalties based on underperformance
+                underperformance_ratio = max(0, (verification_count - miner_count) / verification_count)
+                mult_factor = min(underperformance_ratio, 1.0)
+                
+                if mult_factor > 0.1:  # Only penalize underperformance of > 10%
+                    bt.logging.info(f"Miner {uid}: {miner_count} posts vs {verification_count} verified "
+                                   f"({underperformance_ratio:.1%} underperformance, {mult_factor:.2f} penalty)")
+                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
+        
+        # Return verification data as response
+        processed_data = self._process_response_data(synapse, verification_data)
+        synapse.status = "success"
+        synapse.data = processed_data[:synapse.limit]
+        synapse.meta = {
+            "volume_verification_triggered": True,
+            "verification_data_count": verification_count,
+            "volume_consensus": consensus_count,
+            "threshold_count": threshold_count,
+            "items_returned": len(processed_data),
+            "miners_queried": len(selected_miners)
+        }
+        
+        return synapse
     
 
-    async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Tuple[Dict[str, bool], List]:
+    async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Dict[str, bool]:
         """Perform cross-validation on pooled miner responses"""
         bt.logging.info("Starting cross-validation process...")
         
@@ -290,8 +394,9 @@ class OrganicQueryProcessor:
         validation_results = await self._validate_posts(synapse, posts_to_validate)
         
         bt.logging.info(f"Cross-validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
-        return validation_results, all_posts
+        return validation_results
     
+
     async def _perform_verification_rescrape(self, synapse: OrganicRequest) -> Optional[List]:
         """Perform verification rescrape using the same logic as miners"""
         try:
@@ -327,7 +432,7 @@ class OrganicQueryProcessor:
                 await scraper.scrape(verify_config)
                 enhanced_content = scraper.get_enhanced_content()
                 # Convert EnhancedXContent to DataEntities
-                verification_data = [EnhancedXContent.to_data_entity(content) for content in enhanced_content]
+                verification_data = [EnhancedXContent.to_enhanced_data_entity(content=content) for content in enhanced_content]
             elif synapse.source.upper() == 'REDDIT':
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
@@ -349,6 +454,7 @@ class OrganicQueryProcessor:
             bt.logging.error(f"Error during verification rescrape: {str(e)}")
             return None
     
+
     def _pool_responses(self, miner_responses: Dict[int, List]) -> Tuple[List, Dict[str, List[int]]]:
         """Pool all miner responses and track duplicates"""
         all_posts = []
@@ -370,17 +476,63 @@ class OrganicQueryProcessor:
         bt.logging.info(f"Found {len(all_posts)} unique posts with {sum(len(miners) - 1 for miners in post_to_miners.values())} duplicates")
         return all_posts, post_to_miners
     
+
     def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]]) -> List:
-        """Select posts for validation randomly from the unique pool"""
+        """Select posts for validation, prioritizing those with fewer miners (more suspicious)"""
         validation_sample_size = min(self.CROSS_VALIDATION_SAMPLE_SIZE, len(all_posts))
         
         if validation_sample_size == 0:
             return []
         
-        # Simple random sampling from all unique posts
-        posts_to_validate = random.sample(all_posts, validation_sample_size)
+        # Create list of (post, miner_count) tuples
+        post_miner_counts = []
+        for post in all_posts:
+            post_id = self._get_post_id(post)
+            miner_count = len(post_to_miners.get(post_id, []))
+            post_miner_counts.append((post, miner_count))
         
-        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation (random sampling)")
+        # Sort by ascending miner count - posts with fewer miners first
+        post_miner_counts.sort(key=lambda x: x[1])
+        
+        # Group posts by miner count for weighted sampling
+        posts_by_count = {}
+        for post, count in post_miner_counts:
+            if count not in posts_by_count:
+                posts_by_count[count] = []
+            posts_by_count[count].append(post)
+        
+        # Weighted selection: heavily favor posts with fewer miners (most suspicious)
+        posts_to_validate = []
+        
+        single_miner_posts = posts_by_count.get(1, [])
+        posts_to_validate.extend(single_miner_posts[:validation_sample_size])
+        
+        # and take from higher counts with decreasing probability
+        remaining_needed = validation_sample_size - len(posts_to_validate)
+        if remaining_needed > 0:
+            for count in sorted(posts_by_count.keys()):
+                if count == 1:
+                    continue  
+                
+                available_posts = posts_by_count[count]
+                take_count = min(remaining_needed, max(1, len(available_posts) // count))
+                
+                if available_posts:
+                    selected = random.sample(available_posts, min(take_count, len(available_posts)))
+                    posts_to_validate.extend(selected)
+                    remaining_needed -= len(selected)
+                    
+                if remaining_needed <= 0:
+                    break
+        
+        # Log the distribution
+        count_distribution = {}
+        for post in posts_to_validate:
+            post_id = self._get_post_id(post)
+            count = len(post_to_miners.get(post_id, []))
+            count_distribution[count] = count_distribution.get(count, 0) + 1
+        
+        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation with distribution: {count_distribution}")
         return posts_to_validate
 
 
@@ -542,7 +694,7 @@ class OrganicQueryProcessor:
                 if not self._validate_x_metadata_completeness(x_content=x_content):
                     bt.logging.error(f"Post {post_id} failed metadata completeness validation")
                     return False
-                entity_for_validation = EnhancedXContent.to_data_entity(x_content)
+                entity_for_validation = EnhancedXContent.to_data_entity(content=x_content)
             
             # Phase 3: Scraper validation (only if previous validation passes)
             scraper_result = await self._validate_with_scraper(synapse, entity_for_validation, post_id)
@@ -578,14 +730,21 @@ class OrganicQueryProcessor:
             user_dict = x_content_dict.get("user", {})
             post_username = user_dict.get("username", "").strip('@').lower()
             if not post_username or post_username not in requested_usernames:
-                bt.logging.debug(f"Username mismatch: {post_username} not in {requested_usernames}")
+                bt.logging.debug(f"Username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keyword validation
         if synapse.keywords:
-            post_text = x_content_dict.get("content", "").lower()
+            post_text = x_content_dict.get("text")
+            now = dt.datetime.now(dt.timezone.utc)
+            if now <= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
+                if not post_text:
+                    bt.logging.debug("'text' field not found, using 'content' as fallback. This fallback will expire Aug 25 2025.")
+                    post_text = x_content_dict.get("content", "")
+                
+            post_text = post_text.lower()
             if not post_text or not all(keyword.lower() in post_text for keyword in synapse.keywords):
-                bt.logging.debug(f"Not all keywords found in post {post_text}")
+                bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
                 return False
         
         # Time range validation
@@ -603,7 +762,7 @@ class OrganicQueryProcessor:
             requested_usernames = [u.lower() for u in synapse.usernames]
             post_username = reddit_content_dict.get("username")
             if not post_username or post_username.lower() not in requested_usernames:
-                bt.logging.debug(f"Reddit username mismatch: {post_username} not in {requested_usernames}")
+                bt.logging.debug(f"Reddit username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keywords validation (subreddit or content)
@@ -623,7 +782,7 @@ class OrganicQueryProcessor:
             keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
             
             if not (subreddit_match or keyword_in_content):
-                bt.logging.debug(f"Reddit keyword mismatch in subreddit '{post_community}' and content")
+                bt.logging.debug(f"Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")
                 return False
         
         # Time range validation using non-obfuscated datetime
@@ -695,13 +854,15 @@ class OrganicQueryProcessor:
         return None
     
 
-    def _apply_validation_penalties(self, miner_responses: Dict[int, List], validation_results: Dict[str, bool]) -> Dict[int, int]:
-        """Calculate final scores incorporating all penalties"""
+    def _apply_validation_penalties(self, miner_responses: Dict[int, List], validation_results: Dict[str, bool]) -> Tuple[Dict[int, int], List[int]]:
+        """Calculate final scores incorporating all penalties and return failed miners"""
         miner_scores = {}
+        failed_miners = []
         
         for uid in miner_responses.keys():
             if not miner_responses[uid]:
                 miner_scores[uid] = 0
+                failed_miners.append(uid)
                 continue
             
             # Apply validation penalty
@@ -719,10 +880,32 @@ class OrganicQueryProcessor:
             
             if miner_failed_validation:
                 miner_scores[uid] = 0
+                failed_miners.append(uid)
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         
         bt.logging.info(f"Final miner scores: {miner_scores}")
-        return miner_scores
+        bt.logging.info(f"Failed validation miners: {failed_miners}")
+        return miner_scores, failed_miners
+    
+
+    def _pool_valid_responses(self, miner_responses: Dict[int, List], failed_miners: List[int]) -> List:
+        """Pool only responses from miners who passed validation"""
+        failed_miner_set = set(failed_miners)
+        seen_posts = set()
+        pooled_data = []
+        
+        for uid, posts in miner_responses.items():
+            if uid in failed_miner_set or not posts:
+                continue
+                
+            for post in posts:
+                post_id = self._get_post_id(post)
+                if post_id not in seen_posts:
+                    seen_posts.add(post_id)
+                    pooled_data.append(post)
+        
+        bt.logging.info(f"Pooled {len(pooled_data)} unique posts from {len([uid for uid in miner_responses.keys() if uid not in failed_miner_set])} valid miners")
+        return pooled_data
     
 
     def _create_success_response(self, synapse: OrganicRequest, miner_responses: Dict[int, List], 
@@ -743,7 +926,6 @@ class OrganicQueryProcessor:
             "miners_responded": len(miner_responses),
             "non_responsive_miners": len(metadata['non_responsive_uids']),
             "empty_response_miners": len(metadata['empty_uids']),
-            "insufficient_post_miners": len(metadata['insufficient_miners']),
             "validation_success_rate": f"{sum(metadata['validation_results'].values())}/{len(metadata['validation_results'])}" if metadata['validation_results'] else "0/0",
             "items_returned": len(processed_data)
         }
@@ -802,6 +984,7 @@ class OrganicQueryProcessor:
         for item in data:
             if isinstance(item, DataEntity):
                 processed_data.append(self._create_entity_dictionary(data_entity=item))
+
             elif isinstance(item, Dict):
                 processed_data.append(item)
         

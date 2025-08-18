@@ -10,23 +10,23 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
 
-# Validation fields with their display names
+# Validation fields
 REQUIRED_FIELDS = [
-    ("username", "usernames"),
-    ("text", "texts"),
-    ("url", "urls"),
-    ("tweet_hashtags", "hashtags"),
+    "username",
+    "text",
+    "url",
+    "tweet_hashtags",
 ]
 
 OPTIONAL_FIELDS = [
-    ("user_id", "user_id"),
-    ("user_display_name", "user_display_name"),
-    ("user_verified", "user_verified"),
-    ("tweet_id", "tweet_id"),
-    ("is_reply", "is_reply"),
-    ("is_quote", "is_quote"),
-    ("conversation_id", "conversation_id"),
-    ("in_reply_to_user_id", "in_reply_to_user_id"),
+    "user_id",
+    "user_display_name",
+    "user_verified",
+    "tweet_id",
+    "is_reply",
+    "is_quote",
+    "conversation_id",
+    "in_reply_to_user_id",
 ]
 
 
@@ -129,7 +129,7 @@ def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, ent
         ValidationResult if validation fails, None if all validations pass
     """
     # Validate REQUIRED fields - these must never be None
-    for field_name, display_name in REQUIRED_FIELDS:
+    for field_name in REQUIRED_FIELDS:
         submitted_value = getattr(tweet_to_verify, field_name, None)
         actual_value = getattr(actual_tweet, field_name, None)
         
@@ -161,15 +161,15 @@ def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, ent
             is_valid = submitted_value == actual_value
             
         if not is_valid:
-            bt.logging.info(f"Required field {display_name} do not match: {submitted_value} != {actual_value}")
+            bt.logging.info(f"Required field {field_name} do not match: {submitted_value} != {actual_value}")
             return ValidationResult(
                 is_valid=False,
-                reason=f"Field: {display_name} do not match",
+                reason=f"Field: {field_name} do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
     
     # Validate OPTIONAL fields - skip if either is None
-    for field_name, display_name in OPTIONAL_FIELDS:
+    for field_name in OPTIONAL_FIELDS:
         submitted_value = getattr(tweet_to_verify, field_name, None)
         actual_value = getattr(actual_tweet, field_name, None)
         
@@ -181,10 +181,10 @@ def validate_tweet_fields(tweet_to_verify: XContent, actual_tweet: XContent, ent
         is_valid = submitted_value == actual_value
             
         if not is_valid:
-            bt.logging.info(f"Optional field {display_name} do not match: {submitted_value} != {actual_value}")
+            bt.logging.info(f"Optional field {field_name} do not match: {submitted_value} != {actual_value}")
             return ValidationResult(
                 is_valid=False,
-                reason=f"Field: {display_name} do not match",
+                reason=f"Field: {field_name} do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
     
@@ -395,25 +395,6 @@ def validate_tweet_content(
             reason="Retweets are no longer eligible after July 6, 2024.",
             content_size_bytes_validated=entity.content_size_bytes
         )
-
-    # Validate account quality if data is available
-    if author_data is not None and view_count is not None:
-        # Check if account is spam (low followers/new account)
-        if is_spam_account(author_data):
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet from spam account (low followers/new account).",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-        
-        # Check if tweet has low engagement
-        tweet_data = {'viewCount': view_count}
-        if is_low_engagement_tweet(tweet_data):
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet has low engagement (insufficient views).",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
 
     # Validate all basic fields using the unified function
     field_validation_result = validate_tweet_fields(tweet_to_verify, actual_tweet, entity)
