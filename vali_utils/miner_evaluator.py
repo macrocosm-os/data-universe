@@ -124,7 +124,7 @@ class MinerEvaluator:
                 ]
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='unavailable miner index').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='unavailable miner index').observe(time.perf_counter() - t_start)
             return
 
         ##########
@@ -178,7 +178,7 @@ class MinerEvaluator:
                 ]
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='invalid response').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='invalid response').observe(time.perf_counter() - t_start)
             return
 
         # Perform basic validation on the entities.
@@ -207,7 +207,7 @@ class MinerEvaluator:
                 ]
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='invalid data entity bucket').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='invalid data entity bucket').observe(time.perf_counter() - t_start)
             return
 
         # Perform uniqueness validation on the entity contents.
@@ -230,7 +230,7 @@ class MinerEvaluator:
                 evaluation_start_time=t_start
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='duplicate entities').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='duplicate entities').observe(time.perf_counter() - t_start)
             return
 
         # Basic validation and uniqueness passed. Now sample some entities for data correctness.
@@ -253,9 +253,9 @@ class MinerEvaluator:
             f"{hotkey}: Data validation on selected entities finished with results: {validation_results}"
         )
 
-        self.scorer.on_miner_evaluated(uid, index, validation_results, evaluation_start_time=t_start)
+        self.scorer.on_miner_evaluated(uid, index, validation_results)
 
-        metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='ok').observe(time.perf_counter() - t_start)
+        metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
             if s3_validation_result.is_valid:

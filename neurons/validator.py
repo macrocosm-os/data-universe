@@ -187,7 +187,7 @@ class Validator:
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
             bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
 
-            duration = time.perf_counter - t_start
+            duration = time.perf_counter() - t_start
 
             metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(duration)
             metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
