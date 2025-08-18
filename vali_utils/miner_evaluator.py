@@ -4,6 +4,7 @@ import asyncio
 import datetime
 import traceback
 import threading
+import time
 
 from common import constants
 from common.data_v2 import ScorableMinerIndex
@@ -27,7 +28,7 @@ from storage.validator.sqlite_memory_validator_storage import (
 from storage.validator.s3_validator_storage import S3ValidationStorage
 
 from vali_utils.miner_iterator import MinerIterator
-from vali_utils import utils as vali_utils
+from vali_utils import metrics, utils as vali_utils
 
 from typing import List, Optional, Tuple
 from vali_utils.validator_s3_access import ValidatorS3Access
@@ -94,6 +95,7 @@ class MinerEvaluator:
             4. Samples data from the data entity bucket and verifies the data is correct
             5. Passes the validation result to the scorer to update the miner's score.
         """
+        t_start = time.perf_counter()
 
         axon_info = None
         hotkey = None
@@ -119,8 +121,10 @@ class MinerEvaluator:
                         reason="No available miner index.",
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ],
+                ]
             )
+
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='unavailable miner index').observe(time.perf_counter() - t_start)
             return
 
         ##########
@@ -151,10 +155,11 @@ class MinerEvaluator:
                 ),
                 timeout=140,
             )
-
+        
         data_entity_bucket = vali_utils.get_single_successful_response(
             responses, GetDataEntityBucket
         )
+
         # Treat a failed response the same way we treat a failed validation.
         # If we didn't, the miner could just not respond to queries for data entity buckets it doesn't have.
         if data_entity_bucket is None:
@@ -170,8 +175,10 @@ class MinerEvaluator:
                         reason="Response failed or is invalid.",
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ],
+                ]
             )
+
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='invalid response').observe(time.perf_counter() - t_start)
             return
 
         # Perform basic validation on the entities.
@@ -197,8 +204,10 @@ class MinerEvaluator:
                         reason=reason,
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ],
+                ]
             )
+
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='invalid data entity bucket').observe(time.perf_counter() - t_start)
             return
 
         # Perform uniqueness validation on the entity contents.
@@ -218,7 +227,10 @@ class MinerEvaluator:
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
                 ],
+                evaluation_start_time=t_start
             )
+
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='duplicate entities').observe(time.perf_counter() - t_start)
             return
 
         # Basic validation and uniqueness passed. Now sample some entities for data correctness.
@@ -241,7 +253,9 @@ class MinerEvaluator:
             f"{hotkey}: Data validation on selected entities finished with results: {validation_results}"
         )
 
-        self.scorer.on_miner_evaluated(uid, index, validation_results)
+        self.scorer.on_miner_evaluated(uid, index, validation_results, evaluation_start_time=t_start)
+
+        metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey.ss58_address, status='ok').observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
             if s3_validation_result.is_valid:
@@ -333,6 +347,7 @@ class MinerEvaluator:
                 last_evaluated + constants.MIN_EVALUATION_PERIOD - now
             ).total_seconds()
 
+        t_start = time.perf_counter()
         # Run in batches of 15.
         miners_to_eval = 15
 
@@ -356,6 +371,10 @@ class MinerEvaluator:
             # Compute the timeout, so that all threads are waited for a total of 5 minutes.
             timeout = max(0, (end - datetime.datetime.now()).total_seconds())
             t.join(timeout=timeout)
+
+        duration = time.perf_counter() - t_start
+        metrics.MINER_EVALUATOR_EVAL_BATCH_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).observe(duration)
+
         bt.logging.trace(f"Finished waiting for {len(threads)} miner eval.")
 
         # Run the next evaluation batch immediately.

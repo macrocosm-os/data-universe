@@ -9,12 +9,17 @@ import bittensor as bt
 from typing import Optional
 from .routes import router, get_validator
 from vali_utils.api.auth.key_routes import router as key_router
-from vali_utils.api.auth.auth import key_manager, require_master_key, require_metrics_api_key
+from vali_utils.api.auth.auth import (
+    key_manager,
+    require_master_key,
+    require_metrics_api_key,
+)
 from vali_utils.api.utils import endpoint_error_handler
 from vali_utils.metrics import (
-    COMMON_HIST_DURATION_BUKCET,
+    COMMON_LIVE_REQUEST_HIST_DURATION_BUCKET,
     prometheus_collector_registry,
-    NAMESPACE, SUBSYSTEM
+    NAMESPACE,
+    SUBSYSTEM,
 )
 
 import prometheus_fastapi_instrumentator.metrics as prometheus_metrics
@@ -50,10 +55,18 @@ class ValidatorAPI:
             redoc_url=None,  # Disable default redoc route
         )
 
-        instrumentator = Instrumentator(registry=prometheus_collector_registry)
+        instrumentator = Instrumentator(
+            registry=prometheus_collector_registry,
+            excluded_handlers=[
+                "/healthcheck",
+                "/metrics",
+                "/docs",
+                "/openapi.json",
+            ],
+        )
 
         instrumentator.add(
-            prometheus_metrics.latency(buckets=COMMON_HIST_DURATION_BUKCET)
+            prometheus_metrics.latency(buckets=COMMON_LIVE_REQUEST_HIST_DURATION_BUCKET)
         )
 
         instrumentator.add(prometheus_metrics.requests())
