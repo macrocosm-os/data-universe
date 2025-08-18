@@ -16,6 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import copy
+import json
 import sys
 import torch
 import numpy as np
@@ -178,12 +179,18 @@ class Validator:
 
     def get_updated_lookup(self):
         try:
+            t_start = time.perf_counter()
             bt.logging.info("Retrieving the latest dynamic lookup...")
             model = sync_run_retrieval(self.config)
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
             bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
+
+            duration = time.perf_counter() - t_start
+
+            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(duration)
+            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
         except Exception as e:
             bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
             bt.logging.exception("Exception details:")
@@ -253,7 +260,7 @@ class Validator:
 
         while not self.should_exit:
             try:
-                work_start = time.perf_counter()
+                t_start = time.perf_counter()
 
                 bt.logging.debug(
                     f"Validator running on step({self.step}) block({self.block})."
@@ -280,9 +287,9 @@ class Validator:
 
                 self.step += 1
 
-                metrics.MAIN_LOOP_ITERATIONS.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
+                metrics.MAIN_LOOP_ITERATIONS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
                 metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
-                metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(time.perf_counter() - work_start)
+                metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(time.perf_counter() - t_start)
 
                 wait_time = max(0.0, float(next_batch_delay_secs))
                 if wait_time > 0:
@@ -303,7 +310,7 @@ class Validator:
                 if self.wandb_run:
                     self.wandb_run.finish()
             except Exception as err:
-                metrics.MAIN_LOOP_ERRORS.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
+                metrics.MAIN_LOOP_ERRORS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
                 bt.logging.error("Error during validation", str(err))
 
     def run_in_background_thread(self):
@@ -401,6 +408,40 @@ class Validator:
         with self.lock:
             assert netuid == self.config.netuid
             self.metagraph = copy.deepcopy(metagraph)
+
+        # Validator Health Checks
+        hotkey = self.wallet.hotkey.ss58_address
+
+        # Resolve current UID from hotkey (survives dereg/re-reg)
+        try:
+            uid = metagraph.hotkeys.index(hotkey)
+            registered = 1
+        except ValueError:
+            uid = None
+            registered = 0
+
+        metrics.BITTENSOR_VALIDATOR_REGISTERED.labels(hotkey=hotkey).set(registered)
+
+        # Set vtrust + block diff since last update only when registered; otherwise zero them
+        if registered:
+            try:
+                vtrust = float(metagraph.validator_trust[uid])
+            except Exception:
+                vtrust = 0.0
+
+            try:
+                head_block = int(getattr(metagraph, "block", 0))
+                last_update = int(metagraph.last_update[uid])
+                block_diff = max(0, head_block - last_update) if head_block and last_update else 0
+            except Exception:
+                block_diff = 0
+        else:
+            vtrust = 0.0
+            block_diff = 0
+
+        metrics.BITTENSOR_VALIDATOR_VTRUST.labels(hotkey=hotkey).set(vtrust)
+        metrics.BITTENSOR_VALIDATOR_BLOCK_DIFFERENCE.labels(hotkey=hotkey).set(block_diff)
+        metrics.METAGRAPH_LAST_UPDATE_TS.labels(hotkey=hotkey).set(int(time.time()))
 
     def _on_eval_batch_complete(self):
         with self.lock:
@@ -551,7 +592,6 @@ class Validator:
         console = Console()
         console.print(table)
 
-        metrics.SET_WEIGHTS_LAST_TS_ATTEMPTED.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
 
         # Set the weights on chain via our subtensor connection.
         t0 = time.perf_counter()
@@ -563,12 +603,10 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
-        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).observe(time.perf_counter() - t0)
 
-        if success:
-            metrics.SET_WEIGHTS_LAST_TS_SUCCESSFUL.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
-
-
+        metric_status = 'ok' if success else 'fail'
+        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).observe(time.perf_counter() - t0)
+        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(int(time.time()))
 
         with self.lock:
             self.last_weights_set_time = dt.datetime.utcnow()
@@ -602,7 +640,21 @@ class Validator:
             synapse.data = []
             return synapse
         
-        return await self.organic_processor.process_organic_query(synapse)
+        t_start = time.perf_counter() 
+        synapse_resp = await self.organic_processor.process_organic_query(synapse)
+
+        metrics.ORGANIC_QUERY_PROCESS_DURATION.labels(request_source=synapse.source, response_status=synapse_resp.status).observe(time.perf_counter() - t_start)
+
+        try:
+            json_str = json.dumps(synapse_resp.data)
+            size_bytes = len(json_str.encode('utf-8'))
+
+            metrics.ORGANIC_QUERY_RESPONSE_SIZE.labels(request_source=synapse.source, response_status=synapse_resp.status).observe(size_bytes)
+        except (TypeError, ValueError) as e:  # JSON serialization errors
+            bt.logging.debug("Failed to serialize synapse response data to JSON. Skipping metrics.ORGANIC_QUERY_RESPONSE_BYTES observation")
+
+        metrics.ORGANIC_QUERY_REQUESTS_TOTAL.labels(request_source=synapse.source, response_status=synapse_resp.status).inc()
+        return synapse_resp
 
     async def organic_blacklist(self, synapse: OrganicRequest) -> Tuple[bool, str]:
         """

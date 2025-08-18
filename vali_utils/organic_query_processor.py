@@ -34,7 +34,6 @@ class OrganicQueryProcessor:
         self.CROSS_VALIDATION_SAMPLE_SIZE = 10
         self.MIN_CONSENSUS = 0.3    # if consensus is <30% of request size, consensus penalties skipped
     
-
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
         """
         Main entry point for processing organic queries
@@ -802,6 +801,7 @@ class OrganicQueryProcessor:
         for item in data:
             if isinstance(item, DataEntity):
                 processed_data.append(self._create_entity_dictionary(data_entity=item))
+
             elif isinstance(item, Dict):
                 processed_data.append(item)
         
