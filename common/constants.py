@@ -40,6 +40,6 @@ NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # Dece
 REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # August 7, 2025 UTC (one month from now)
 
 # Date after which "content" will no longer be accepted as the X "text" field in OnDemand request field validation
-X_ON_DEMAND_CONTENT_EXPIRATION_DATE = dt.datetime(2025, 8, 22, tzinfo=dt.timezone.utc) # Friday August 22, 2025 UTC
+X_ON_DEMAND_CONTENT_EXPIRATION_DATE = dt.datetime(2025, 8, 25, tzinfo=dt.timezone.utc) # Monday August 25, 2025 UTC
 
 EVALUATION_ON_STARTUP = 15

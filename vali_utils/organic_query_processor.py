@@ -740,7 +740,7 @@ class OrganicQueryProcessor:
             now = dt.datetime.now(dt.timezone.utc)
             if now <= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
                 if not post_text:
-                    bt.logging.debug("'text' field not found, using 'content' as fallback. This fallback will expire Aug 22 2025.")
+                    bt.logging.debug("'text' field not found, using 'content' as fallback. This fallback will expire Aug 25 2025.")
                     post_text = x_content_dict.get("content", "")
                 
             post_text = post_text.lower()
