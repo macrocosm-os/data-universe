@@ -335,35 +335,25 @@ class OrganicQueryProcessor:
         verification_count = len(verification_data)
         bt.logging.info(f"Volume verification found {verification_count} items")
         
-        # Apply penalties based on verification results
-        if verification_count >= synapse.limit:
-            # if verification rescrape meets request limit, punish miners who underperformed
-            bt.logging.info("Verification shows sufficient data available - applying penalties to underperforming miners")
-            for uid in miner_data_counts:
-                miner_count = miner_data_counts[uid]
-                if miner_count < synapse.limit and miner_count > 0: 
-                    bt.logging.info(f"Applying volume verification penalty to miner {uid} ({miner_count} < {synapse.limit})")
-                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
-        else:
-            # if verification rescrape doesn't meet request limit, apply scaled penalties
-            bt.logging.info("Verification shows limited data - applying percentage-based penalties")
-            for uid, miner_count in miner_data_counts.items():
-                if miner_count > 0: 
-                    # Check for fake data padding: if miner returned more than verification found
-                    if miner_count > verification_count:
-                        bt.logging.info(f"Miner {uid}: fake data padding detected - {miner_count} posts vs {verification_count} verified, applying 1.0 penalty")
+        # Apply scaled penalties based on verification results
+        bt.logging.info(f"Applying scaled penalties based on verification count ({verification_count})")
+        
+        for uid, miner_count in miner_data_counts.items():
+            if miner_count > 0:
+                # Check for fake data padding if verification rescrape wasn't capped
+                if verification_count < synapse.limit and miner_count > verification_count:
+                        bt.logging.info(f"Miner {uid}: fake data padding detected - {miner_count} posts vs {verification_count} verified, applying full penalty")
                         self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
-                    else:
-                        # Calculate percentage difference: how far off was the miner from actual available data
-                        percentage_difference = abs(miner_count - verification_count) / max(verification_count, 1)
-                        
-                        # Convert to penalty multiplier: cap at 1.0, scale based on difference
-                        mult_factor = min(percentage_difference, 1.0)
-                        
-                        if mult_factor > 0.1: 
-                            bt.logging.info(f"Miner {uid}: {miner_count} posts vs {verification_count} verified "
-                                           f"({percentage_difference:.1%} difference, {mult_factor:.2f} penalty)")
-                            self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
+                        continue
+                
+                # Apply scaled penalties based on underperformance
+                underperformance_ratio = max(0, (verification_count - miner_count) / verification_count)
+                mult_factor = min(underperformance_ratio, 1.0)
+                
+                if mult_factor > 0.1:  # Only penalize underperformance of > 10%
+                    bt.logging.info(f"Miner {uid}: {miner_count} posts vs {verification_count} verified "
+                                   f"({underperformance_ratio:.1%} underperformance, {mult_factor:.2f} penalty)")
+                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
         
         # Return verification data as response
         processed_data = self._process_response_data(synapse, verification_data)
