@@ -77,6 +77,16 @@ class OrganicQueryProcessor:
             # Step 7: Pool only valid responses (excludes failed miners)
             pooled_data = self._pool_valid_responses(miner_responses, failed_miners)
             
+            # Step 7.5: If no valid data pooled, perform rescrape fallback
+            if not pooled_data:
+                bt.logging.info("No valid data pooled from miners - performing rescrape fallback")
+                fallback_data = await self._perform_verification_rescrape(synapse)
+                if fallback_data:
+                    bt.logging.info(f"Rescrape fallback found {len(fallback_data)} items")
+                    pooled_data = fallback_data
+                else:
+                    bt.logging.info("Rescrape fallback found no data")
+            
             # Step 8: Format response
             return self._create_success_response(
                 synapse, miner_responses, miner_scores, pooled_data, {
@@ -853,6 +863,7 @@ class OrganicQueryProcessor:
         for uid in miner_responses.keys():
             if not miner_responses[uid]:
                 miner_scores[uid] = 0
+                failed_miners.append(uid)
                 continue
             
             # Apply validation penalty
