@@ -122,7 +122,7 @@ ORGANIC_QUERY_PROCESS_DURATION = Histogram(
 )
 
 ORGANIC_QUERY_RESPONSE_SIZE = Histogram(
-    "organic_query_response_bytes",
+    "organic_query_response_size",
     "Data size in bytes (json dump) of Validator.process_organic_query synapse response",
     labelnames=["request_source", "response_status"],
     buckets=[0, 200, 400, 600, 800, 1000, 1200, 1500, 2000, 5000, 10000],
