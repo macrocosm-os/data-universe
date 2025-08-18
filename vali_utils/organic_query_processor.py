@@ -317,10 +317,9 @@ class OrganicQueryProcessor:
         
         bt.logging.info(f"Volume consensus {consensus_count:.1f} below threshold {threshold_count:.1f}")
         
-        # Randomly decide whether to perform verification (10% chance)
-        if random.random() > self.VOLUME_VERIFICATION_RATE:
+        should_apply_concensus_penalty_instead_of_rescrape_verification = random.random() > self.VOLUME_VERIFICATION_RATE
+        if should_apply_concensus_penalty_instead_of_rescrape_verification:
             bt.logging.info("Volume verification not triggered, applying volume consensus penalties...")
-            # Apply consensus penalties instead of verification penalties
             self._apply_consensus_volume_penalties(miner_data_counts, synapse.limit, consensus_count)
             return None
         
