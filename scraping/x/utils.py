@@ -396,25 +396,6 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes
         )
 
-    # Validate account quality if data is available
-    if author_data is not None and view_count is not None:
-        # Check if account is spam (low followers/new account)
-        if is_spam_account(author_data):
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet from spam account (low followers/new account).",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-        
-        # Check if tweet has low engagement
-        tweet_data = {'viewCount': view_count}
-        if is_low_engagement_tweet(tweet_data):
-            return ValidationResult(
-                is_valid=False,
-                reason="Tweet has low engagement (insufficient views).",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
-
     # Validate all basic fields using the unified function
     field_validation_result = validate_tweet_fields(tweet_to_verify, actual_tweet, entity)
     if field_validation_result is not None:
