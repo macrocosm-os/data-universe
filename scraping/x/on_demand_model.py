@@ -269,7 +269,7 @@ class EnhancedXContent(BaseModel):
             
         text = content_dict.get("text")
         now = dt.datetime.now(dt.timezone.utc)
-        if now >= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
+        if now <= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
             if not text:
                 # Using 'content' as fallback for compatibility until Aug 22 2025
                 text = content_dict.get("content")
