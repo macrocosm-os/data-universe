@@ -736,7 +736,7 @@ class OrganicQueryProcessor:
         
         # Keyword validation
         if synapse.keywords:
-            post_text = x_content_dict.get("content", "").lower()
+            post_text = x_content_dict.get("text", "").lower()
             if not post_text or not all(keyword.lower() in post_text for keyword in synapse.keywords):
                 bt.logging.debug(f"Not all keywords found in post {post_text}")
                 return False
