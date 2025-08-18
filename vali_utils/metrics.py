@@ -86,18 +86,10 @@ MAIN_LOOP_LAST_SUCCESS_TS = Gauge(
 )
 
 ## Weight setting
-SET_WEIGHTS_LAST_ATTEMPT_TS = Gauge(
-    "set_weights_last_attempt_ts",
-    "Unix timestamp of the last set_weights() attempt",
-    labelnames=["hotkey"],
-    **_params,
-    unit="seconds",
-)
-
-SET_WEIGHTS_LAST_SUCCESSFUL_TS = Gauge(
-    "set_weights_last_successful_ts",
-    "Unix timestamp of the last successful set_weights()",
-    labelnames=["hotkey"],
+SET_WEIGHTS_LAST_TS = Gauge(
+    "set_weights_last_ts",
+    "Unix timestamp of the last set_weights()",
+    labelnames=["hotkey", 'status'],
     **_params,
     unit="seconds",
 )
@@ -133,7 +125,7 @@ ORGANIC_QUERY_RESPONSE_SIZE = Histogram(
 ORGANIC_QUERY_REQUESTS_TOTAL = Counter(
     "organic_query_requests_total",
     "Total number of organic query requests",
-    labelnames=["request_source"],
+    labelnames=["request_source", "response_status"],
     **_params,
     unit="requests",
 )
@@ -207,29 +199,10 @@ ON_DEMAND_VALIDATOR_QUERY_DURATION = Histogram(
 )
 
 ## Miner Evaluator
-COMMON_EVALUATION_HIST_DURATION_BUCKET = (
-    x * 60
-    for x in (
-        1.0,
-        2.0,
-        3.0,
-        4.0,
-        5.0,
-        6.0,
-        7.0,
-        8.0,
-        9.0,
-        10.0,
-        11.0,
-        12.0,
-        13.0,
-        14.0,
-        15.0,
-        20.0,
-        30.0,
-        60.0,
-    )
+COMMON_EVALUATION_HIST_DURATION_BUCKET = tuple(
+    x * 60 for x in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,20,30,60)
 )
+
 MINER_EVALUATOR_EVAL_BATCH_DURATION = Histogram(
     "miner_evaluator_eval_batch_duration",
     "Total duration of the run_next_eval_batch function which evaluates a mini batch of miners in parallel - only when an update is due",

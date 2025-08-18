@@ -592,7 +592,6 @@ class Validator:
         console = Console()
         console.print(table)
 
-        metrics.SET_WEIGHTS_LAST_ATTEMPT_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
 
         # Set the weights on chain via our subtensor connection.
         t0 = time.perf_counter()
@@ -604,10 +603,10 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
-        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).observe(time.perf_counter() - t0)
 
-        if success:
-            metrics.SET_WEIGHTS_LAST_SUCCESSFUL_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
+        metric_status = 'ok' if success else 'fail'
+        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).observe(time.perf_counter() - t0)
+        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(int(time.time()))
 
         with self.lock:
             self.last_weights_set_time = dt.datetime.utcnow()
@@ -654,7 +653,7 @@ class Validator:
         except (TypeError, ValueError) as e:  # JSON serialization errors
             bt.logging.debug("Failed to serialize synapse response data to JSON. Skipping metrics.ORGANIC_QUERY_RESPONSE_BYTES observation")
 
-        metrics.ORGANIC_QUERY_REQUESTS_TOTAL.labels(request_source=synapse.source).inc()
+        metrics.ORGANIC_QUERY_REQUESTS_TOTAL.labels(request_source=synapse.source, response_status=synapse_resp.status).inc()
         return synapse_resp
 
     async def organic_blacklist(self, synapse: OrganicRequest) -> Tuple[bool, str]:
