@@ -418,7 +418,7 @@ class OrganicQueryProcessor:
         all_posts, post_to_miners = self._pool_responses(miner_responses)
         
         # Select posts for validation
-        posts_to_validate = self._select_validation_posts(all_posts, post_to_miners)
+        posts_to_validate = self._select_validation_posts(all_posts, post_to_miners, miner_responses)
         
         # Perform actual validation
         validation_results = await self._validate_posts(synapse, posts_to_validate)
@@ -507,8 +507,8 @@ class OrganicQueryProcessor:
         return all_posts, post_to_miners
     
 
-    def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]]) -> List:
-        """Select posts for validation, prioritizing those with fewer miners (more suspicious)"""
+    def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]], miner_responses: Dict[int, List]) -> List:
+        """Select posts for validation using weighted distribution with posts from 1 miner weighted heaviest"""
         validation_sample_size = min(self.CROSS_VALIDATION_SAMPLE_SIZE, len(all_posts))
         
         if validation_sample_size == 0:
@@ -521,39 +521,41 @@ class OrganicQueryProcessor:
             miner_count = len(post_to_miners.get(post_id, []))
             post_miner_counts.append((post, miner_count))
         
-        # Sort by ascending miner count - posts with fewer miners first
-        post_miner_counts.sort(key=lambda x: x[1])
-        
-        # Group posts by miner count for weighted sampling
+        # Group posts by miner count
         posts_by_count = {}
         for post, count in post_miner_counts:
             if count not in posts_by_count:
                 posts_by_count[count] = []
             posts_by_count[count].append(post)
         
-        # Weighted selection: heavily favor posts with fewer miners (most suspicious)
+        # Calculate total responding miners for max weight calculation
+        total_miners = len(miner_responses)
+        
+        # Create weighted pool for sampling - posts from 1 miner get highest weight,
+        # posts from all responding miners get lowest weight
+        weighted_posts = []
+        for count, posts in posts_by_count.items():
+            # Weight inversely proportional to miner count
+            weight = max(1, total_miners - count + 1)
+            
+            # Add each post with its weight
+            for post in posts:
+                weighted_posts.extend([post] * weight)
+        
+        # Sample from weighted pool without replacement
         posts_to_validate = []
+        remaining_posts = weighted_posts.copy()
         
-        single_miner_posts = posts_by_count.get(1, [])
-        posts_to_validate.extend(single_miner_posts[:validation_sample_size])
-        
-        # and take from higher counts with decreasing probability
-        remaining_needed = validation_sample_size - len(posts_to_validate)
-        if remaining_needed > 0:
-            for count in sorted(posts_by_count.keys()):
-                if count == 1:
-                    continue  
+        for _ in range(validation_sample_size):
+            if not remaining_posts:
+                break
                 
-                available_posts = posts_by_count[count]
-                take_count = min(remaining_needed, max(1, len(available_posts) // count))
-                
-                if available_posts:
-                    selected = random.sample(available_posts, min(take_count, len(available_posts)))
-                    posts_to_validate.extend(selected)
-                    remaining_needed -= len(selected)
-                    
-                if remaining_needed <= 0:
-                    break
+            # Randomly select one post
+            selected_post = random.choice(remaining_posts)
+            posts_to_validate.append(selected_post)
+            
+            # Remove all instances of this post from remaining pool to avoid duplicates
+            remaining_posts = [p for p in remaining_posts if self._get_post_id(p) != self._get_post_id(selected_post)]
         
         # Log the distribution
         count_distribution = {}
@@ -562,7 +564,7 @@ class OrganicQueryProcessor:
             count = len(post_to_miners.get(post_id, []))
             count_distribution[count] = count_distribution.get(count, 0) + 1
         
-        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation with distribution: {count_distribution}")
+        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation with weighted distribution: {count_distribution}")
         return posts_to_validate
 
 
