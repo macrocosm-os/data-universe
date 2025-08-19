@@ -138,8 +138,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
                         # Get upload date from API
                         upload_date = await self._get_upload_date_from_api(video_id)
                         if not upload_date:
-                            bt.logging.warning(f"No upload date for video {video_id}, using current time")
-                            upload_date = dt.datetime.now(dt.timezone.utc)
+                            bt.logging.warning(f"No upload date for video {video_id}, skipping to prevent timestamp validation bypass")
+                            continue
 
                         # Check date range
                         if not self._is_within_date_range(upload_date, scrape_config.date_range):
@@ -434,6 +434,38 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
                 bt.logging.info(
                     f"Validating video {content_to_validate.video_id} in original language: {original_language}")
+
+                # Validate upload date against YouTube API to prevent timeBucketId bypass
+                stored_upload_date = content_to_validate.upload_date
+                real_upload_date = await self._get_upload_date_from_api(content_to_validate.video_id)
+                
+                if not real_upload_date:
+                    results.append(ValidationResult(
+                        is_valid=False,
+                        reason="Cannot verify upload date from YouTube API - potential timestamp manipulation",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
+                
+                # STRICT: Both YouTube API and scraper use UTC - exact match required  
+                if stored_upload_date != real_upload_date:
+                    results.append(ValidationResult(
+                        is_valid=False,
+                        reason=f"Upload date mismatch: API shows {real_upload_date}, stored shows {stored_upload_date}. This indicates timeBucketId validation bypass attempt.",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
+                
+                # Verify time bucket consistency
+                stored_bucket_id = int(stored_upload_date.timestamp() // 3600)
+                real_bucket_id = int(real_upload_date.timestamp() // 3600)
+                if stored_bucket_id != real_bucket_id:
+                    results.append(ValidationResult(
+                        is_valid=False,
+                        reason=f"Time bucket mismatch: stored video claims bucket {stored_bucket_id}, but real upload is in bucket {real_bucket_id}. This indicates timeBucketId validation bypass attempt.",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
 
                 # Get current data for validation using the SAME language the miner used
                 transcript_data = await self._get_transcript_from_actor(content_to_validate.video_id, original_language)
