@@ -645,8 +645,8 @@ class YouTubeTranscriptScraper(Scraper):
         First tries googleapiclient, then falls back to httpx.
         """
         if not self.api_key:
-            bt.logging.warning("YouTube API key missing")
-            return self._get_fallback_video_metadata(video_id)
+            bt.logging.warning("YouTube API key missing - cannot validate upload dates")
+            return None
 
         # Try googleapiclient first
         if self.use_googleapi and self.youtube:
