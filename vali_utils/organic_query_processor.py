@@ -39,6 +39,7 @@ class OrganicQueryProcessor:
         self.VOLUME_VERIFICATION_RATE = 0.1    # 10% chance to perform volume verification rescrape
         self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
     
+
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
         """
         Main entry point for processing organic queries
@@ -77,16 +78,20 @@ class OrganicQueryProcessor:
             pooled_data = self._pool_valid_responses(miner_responses, failed_miners)
             
             # Step 7.5: If no valid data pooled, perform rescrape fallback
+            verification_data = None
             if not pooled_data:
                 bt.logging.info("No valid data pooled from miners - performing rescrape fallback")
-                fallback_data = await self._perform_verification_rescrape(synapse)
-                if fallback_data:
-                    bt.logging.info(f"Rescrape fallback found {len(fallback_data)} items")
-                    pooled_data = fallback_data
+                verification_data = await self._perform_verification_rescrape(synapse)
+                if verification_data:
+                    bt.logging.info(f"Rescrape fallback found {len(verification_data)} items")
+                    pooled_data = verification_data
                 else:
                     bt.logging.info("Rescrape fallback found no data")
             
-            # Step 8: Format response
+            # Step 8: Apply delayed penalties to empty miners (only if data was actually available)
+            self._apply_delayed_empty_penalties(empty_uids, pooled_data, verification_data)
+            
+            # Step 9: Format response
             return self._create_success_response(
                 synapse, miner_responses, miner_scores, pooled_data, {
                     'selected_miners': selected_miners,
@@ -238,9 +243,8 @@ class OrganicQueryProcessor:
                 })
                 return non_responsive_uids, empty_uids, empty_response
             
-        for uid in empty_uids:
-                    bt.logging.info(f"Applying penalty to miner {uid} for returning empty results when data exists")
-                    self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+        # Note: Empty miner penalties are delayed until the end of processing
+        # to avoid penalizing miners who correctly return 0 rows when no data exists
         return non_responsive_uids, empty_uids, None
 
 
@@ -302,6 +306,32 @@ class OrganicQueryProcessor:
         
         bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
         return penalized_miners
+
+    
+    def _apply_delayed_empty_penalties(self, empty_uids: List[int], pooled_data: List, verification_data: Optional[List]) -> None:
+        """
+        Apply penalties to empty miners only if data was actually available.
+        This prevents penalizing miners who correctly return 0 rows when no legitimate data exists.
+        
+        Args:
+            empty_uids: List of miner UIDs that returned empty responses
+            pooled_data: Final pooled data from valid miners  
+            verification_data: Data from verification rescrape (if performed)
+        """
+        if not empty_uids:
+            return
+            
+        has_valid_pooled_data = pooled_data and len(pooled_data) > 0
+        has_verification_data = verification_data and len(verification_data) > 0
+        
+        if has_valid_pooled_data or has_verification_data:
+            # Data for this request actually exists, so empty miners should be penalized
+            bt.logging.info(f"Applying delayed penalties to {len(empty_uids)} empty miners - data was available")
+            for uid in empty_uids:
+                bt.logging.info(f"Applying delayed penalty to empty miner {uid} - data was available")
+                self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+        else:
+            bt.logging.info(f"No penalties for {len(empty_uids)} empty miners - no data was actually available")
 
 
     async def _apply_volume_penalties(self, 
