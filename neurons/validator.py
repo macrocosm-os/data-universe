@@ -542,32 +542,59 @@ class Validator:
         """
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
+        
         bt.logging.info("Attempting to set weights.")
+    
+        # Snapshot metagraph under lock to avoid races with _on_metagraph_updated()
+        with self.lock:
+            mg = copy.deepcopy(self.metagraph)
 
+        # Read scorer outputs atomically relative to evaluator resizing
         scorer = self.evaluator.get_scorer()
-        scores = scorer.get_scores()
-        credibilities = scorer.get_credibilities()
+        _eval_lock = getattr(self.evaluator, "lock", None)
+        if _eval_lock:
+            _eval_lock.acquire()
+        try:
+            scores = scorer.get_scores()
+            credibilities = scorer.get_credibilities()
+        finally:
+            if _eval_lock:
+                _eval_lock.release()
+    
+        # Ensure vectors match the metagraph snapshot length (pad/truncate defensively)
+        n = len(mg.hotkeys)
+        if scores.numel() != n:
+            bt.logging.warning(f"Adjusting scores length {scores.numel()} -> {n} to match metagraph snapshot.")
+            if scores.numel() > n:
+                scores = scores[:n]
+            else:
+                scores = torch.cat([scores, scores.new_zeros(n - scores.numel())], dim=0)
+        if credibilities.numel() != n:
+            bt.logging.warning(f"Adjusting credibilities length {credibilities.numel()} -> {n} to match metagraph snapshot.")
+            if credibilities.numel() > n:
+                credibilities = credibilities[:n]
+            else:
+                credibilities = torch.cat([credibilities, credibilities.new_zeros(n - credibilities.numel())], dim=0)
 
-        # Check if scores contains any NaN values and log a warning if it does.
+        # Actually sanitize NaNs before normalize
         if torch.isnan(scores).any():
-            bt.logging.warning(
-                f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
-            )
-
+            bt.logging.warning("Scores contain NaN values. Replacing NaNs with 0.")
+            scores = torch.nan_to_num(scores, nan=0.0, posinf=None, neginf=None)
+    
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
         raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
-
-        # Process the raw weights to final_weights via subtensor limitations.
+    
+        # Use the SAME metagraph snapshot (mg) for both uids and processing
         (
             processed_weight_uids,
             processed_weights,
         ) = bt.utils.weight_utils.process_weights_for_netuid(
-            uids=torch.tensor(self.metagraph.uids, dtype=torch.int64).to("cpu"),
+            uids=torch.tensor(mg.uids, dtype=torch.int64).to("cpu"),
             weights=raw_weights.detach().cpu().numpy().astype(np.float32),
             netuid=self.config.netuid,
             subtensor=self.subtensor,
-            metagraph=self.metagraph,
+            metagraph=mg,
         )
 
         table = Table(title="All Weights")
@@ -591,8 +618,7 @@ class Validator:
             )
         console = Console()
         console.print(table)
-
-
+    
         # Set the weights on chain via our subtensor connection.
         t0 = time.perf_counter()
         success, message = self.subtensor.set_weights(
@@ -603,15 +629,25 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
-
+    
         metric_status = 'ok' if success else 'fail'
-        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).observe(time.perf_counter() - t0)
-        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(int(time.time()))
-
+        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(
+            hotkey=self.wallet.hotkey.ss58_address, status=metric_status
+        ).observe(time.perf_counter() - t0)
+        metrics.SET_WEIGHTS_LAST_TS.labels(
+            hotkey=self.wallet.hotkey.ss58_address, status=metric_status
+        ).set(int(time.time()))
+        
+        # only advance the timer when the commit actually succeeds
         with self.lock:
-            self.last_weights_set_time = dt.datetime.utcnow()
+            if success:
+                self.last_weights_set_time = dt.datetime.utcnow()
 
-        bt.logging.success("Finished setting weights.")
+        # Accurate success/failure logging
+        if success:
+            bt.logging.success("Finished setting weights.")
+        else:
+            bt.logging.error(f"set_weights failed: {message}")
 
     @property
     def block(self):
