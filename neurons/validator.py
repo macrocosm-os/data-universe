@@ -304,18 +304,30 @@ class Validator:
                     )
                     time.sleep(wait_time)
     
-                # Rotation with retry; wandb_run_start only moves on successful init - Now change from 12 to 8H
-                if not self.config.wandb.off:
-                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8):
-                        bt.logging.info("Current wandb run is more than 8 hours old. Starting a new run.")
-                        try:
-                            if self.wandb_run:
-                                # Either API is fine; keep consistent with your current usage
-                                self.wandb_run.finish()
-                            self.new_wandb_run()  # sets wandb_run_start only on success
-                        except Exception as e:
-                            bt.logging.error(f"W&B rotation failed: {str(e)}")
-    
+                # Rotation with retry.
+                if not self.config.wandb.off and (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8):
+                    old_run = self.wandb_run
+                    old_start = self.wandb_run_start  # preserve so retry next loop on failure
+                
+                    try:
+                        # Init new run first
+                        self.new_wandb_run()
+                        bt.logging.info("W&B: started new run successfully")
+                
+                        # Only after the new run starts, finish the old one
+                        if old_run:
+                            try:
+                                old_run.finish()
+                                bt.logging.info("W&B: finished previous run successfully")
+                            except Exception as finish_err:
+                                bt.logging.warning(f"W&B: failed to finish previous run cleanly: {finish_err}")
+                
+                    except Exception as e:
+                        # Keep the old run active and force an immediate retry next loop
+                        self.wandb_run = old_run
+                        self.wandb_run_start = old_start
+                        bt.logging.error(f"W&B rotation failed, keeping current run active: {e}")
+            
             except KeyboardInterrupt:
                 self.axon.stop()
                 if self.wandb_run:
