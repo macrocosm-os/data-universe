@@ -145,9 +145,10 @@ class Validator:
             try:
                 self.new_wandb_run()
             except Exception as e:
-                bt.logging.error(f"Failed to initialize wandb: {str(e)}")
-                bt.logging.warning("Continuing without wandb logging.")
-                self.config.wandb.off = True
+                bt.logging.exception("W&B init failed; will retry later.")
+                # Do NOT flip wandb.off here; just remember there is no active run.
+                self.wandb_run = None
+                self.wandb_run_start = None
 
         metrics.VALIDATOR_INFO.info({
             "hotkey": self.wallet.hotkey.ss58_address,
@@ -304,16 +305,24 @@ class Validator:
                     )
                     time.sleep(wait_time)
     
-                # Rotation with retry.
-                if not self.config.wandb.off and (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8):
+                if not self.config.wandb.off and self.wandb_run is None:
+                    try:
+                        self.new_wandb_run()
+                        bt.logging.info("W&B: started new run successfully")
+                    except Exception as e:
+                        bt.logging.error(f"W&B init retry failed: {e}")
+
+                # Rotation with retry (only when we actually have a start time)
+                if (not self.config.wandb.off) and (self.wandb_run_start is not None) and \
+                ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8)):
                     old_run = self.wandb_run
                     old_start = self.wandb_run_start  # preserve so retry next loop on failure
-                
+
                     try:
                         # Init new run first
                         self.new_wandb_run()
                         bt.logging.info("W&B: started new run successfully")
-                
+
                         # Only after the new run starts, finish the old one
                         if old_run:
                             try:
@@ -321,13 +330,13 @@ class Validator:
                                 bt.logging.info("W&B: finished previous run successfully")
                             except Exception as finish_err:
                                 bt.logging.warning(f"W&B: failed to finish previous run cleanly: {finish_err}")
-                
+
                     except Exception as e:
                         # Keep the old run active and force an immediate retry next loop
                         self.wandb_run = old_run
                         self.wandb_run_start = old_start
                         bt.logging.error(f"W&B rotation failed, keeping current run active: {e}")
-            
+
             except KeyboardInterrupt:
                 self.axon.stop()
                 if self.wandb_run:
