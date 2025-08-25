@@ -538,7 +538,7 @@ class Validator:
         thread.start()
         bt.logging.info("API monitoring started")
 
-     def set_weights(self):
+    def set_weights(self):
         """
         Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners.
         The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
