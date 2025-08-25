@@ -469,12 +469,12 @@ class Validator:
             if self.evaluation_cycles_since_startup < constants.EVALUATION_ON_STARTUP:
 
                 bt.logging.info(
-                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/15 evaluation cycles since startup")
+                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/{constants.EVALUATION_ON_STARTUP} evaluation cycles since startup")
                 return False
 
             # Normal 20-minute interval check for subsequent weight settings
             return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(minutes=20)
-
+            
     def _start_api_monitoring(self):
         """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
 
@@ -538,13 +538,13 @@ class Validator:
         thread.start()
         bt.logging.info("API monitoring started")
 
-    def set_weights(self):
+     def set_weights(self):
         """
-        Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners. The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
+        Sets the validator weights to the metagraph hotkeys based on the scores it has received from the miners.
+        The weights determine the trust and incentive level the validator assigns to miner nodes on the network.
         """
-        
         bt.logging.info("Attempting to set weights.")
-    
+
         # Snapshot metagraph under lock to avoid races with _on_metagraph_updated()
         with self.lock:
             mg = copy.deepcopy(self.metagraph)
@@ -560,7 +560,7 @@ class Validator:
         finally:
             if _eval_lock:
                 _eval_lock.release()
-    
+
         # Ensure vectors match the metagraph snapshot length (pad/truncate defensively)
         n = len(mg.hotkeys)
         if scores.numel() != n:
@@ -576,49 +576,59 @@ class Validator:
             else:
                 credibilities = torch.cat([credibilities, credibilities.new_zeros(n - credibilities.numel())], dim=0)
 
-        # Actually sanitize NaNs before normalize
-        if torch.isnan(scores).any():
-            bt.logging.warning("Scores contain NaN values. Replacing NaNs with 0.")
-            scores = torch.nan_to_num(scores, nan=0.0, posinf=None, neginf=None)
-    
-        # Calculate the average reward for each uid across non-zero values.
-        # Replace any NaN values with 0.
-        raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
-    
-        # Use the SAME metagraph snapshot (mg) for both uids and processing
-        (
-            processed_weight_uids,
-            processed_weights,
-        ) = bt.utils.weight_utils.process_weights_for_netuid(
-            uids=torch.tensor(mg.uids, dtype=torch.int64).to("cpu"),
-            weights=raw_weights.detach().cpu().numpy().astype(np.float32),
+        # Sanitize & normalize safely (no negatives, zero-sum fallback)
+        scores = scores.detach().to(torch.float32).clone()
+        scores = torch.nan_to_num(scores, nan=0.0, posinf=0.0, neginf=0.0)
+        safe = torch.relu(scores)  # prevent negative on-chain weights
+        total = float(safe.sum())
+        if total <= 0.0:
+            bt.logging.warning("All scores <= 0. Falling back to uniform weights.")
+            safe = torch.ones_like(safe)
+            total = float(safe.sum())
+        raw_weights = (safe / total).to(torch.float32)
+
+        # Torch --> process_weights_for_netuid + post-guard
+        processed_weight_uids, processed_weights = bt.utils.weight_utils.process_weights_for_netuid(
+            uids=torch.as_tensor(mg.uids, dtype=torch.long, device="cpu"),
+            weights=raw_weights.cpu(),  # torch.Tensor, not numpy
             netuid=self.config.netuid,
             subtensor=self.subtensor,
             metagraph=mg,
         )
+        processed_weights = torch.as_tensor(processed_weights, dtype=torch.float32)
+        processed_weights = torch.nan_to_num(processed_weights, nan=0.0, posinf=0.0, neginf=0.0)
+        processed_weights = torch.relu(processed_weights)
+        s = float(processed_weights.sum())
+        if (not torch.isfinite(processed_weights).all()) or s <= 0.0:
+            bt.logging.warning("Processed weights invalid; applying uniform fallback.")
+            processed_weights = torch.ones_like(processed_weights) / processed_weights.numel()
+        else:
+            processed_weights = processed_weights / s
 
+        # Accurate table rendering (no int-cast; handle 1D/2D credibility)
         table = Table(title="All Weights")
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("weight", style="magenta")
         table.add_column("score", style="magenta")
         table.add_column("credibility", style="magenta")
-        uids_and_weights = list(
-            zip(processed_weight_uids.tolist(), processed_weights.tolist())
-        )
+        uids_and_weights = list(zip(processed_weight_uids.tolist(), processed_weights.tolist()))
         # Sort by weights descending.
-        sorted_uids_and_weights = sorted(
-            uids_and_weights, key=lambda x: x[1], reverse=True
-        )
+        sorted_uids_and_weights = sorted(uids_and_weights, key=lambda x: x[1], reverse=True)
         for uid, weight in sorted_uids_and_weights:
+            score_val = float(scores[uid].item())
+            if credibilities.ndim == 2:
+                cred_val = float(credibilities[uid, 0].item())
+            else:
+                cred_val = float(credibilities[uid].item())
             table.add_row(
                 str(uid),
-                str(round(weight, 4)),
-                str(int(scores[uid].item())),
-                str(round(credibilities[uid].item(), 4)),
+                f"{float(weight):.4f}",
+                f"{score_val:.4f}",
+                f"{cred_val:.4f}",
             )
         console = Console()
         console.print(table)
-    
+
         # Set the weights on chain via our subtensor connection.
         t0 = time.perf_counter()
         success, message = self.subtensor.set_weights(
@@ -629,7 +639,7 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
-    
+
         metric_status = 'ok' if success else 'fail'
         metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(
             hotkey=self.wallet.hotkey.ss58_address, status=metric_status
@@ -637,7 +647,7 @@ class Validator:
         metrics.SET_WEIGHTS_LAST_TS.labels(
             hotkey=self.wallet.hotkey.ss58_address, status=metric_status
         ).set(int(time.time()))
-        
+
         # only advance the timer when the commit actually succeeds
         with self.lock:
             if success:
