@@ -236,7 +236,7 @@ class Validator:
             allow_val_change=True,
             anonymous="allow",
             reinit=True,  # That makes it look like rotation never happened.
-            ## resume=False,    # never resume an old run; force a new run ID  -->> Deprecated
+            resume="never", # force a brand-new run ID on each rotation
         )
     
         # Start time after successful init so rotation scheduling is correct
