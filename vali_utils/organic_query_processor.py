@@ -326,7 +326,6 @@ class OrganicQueryProcessor:
         
         if has_valid_pooled_data or has_verification_data:
             # Data for this request actually exists, so empty miners should be penalized
-            bt.logging.info(f"Applying delayed penalties to {len(empty_uids)} empty miners - data was available")
             for uid in empty_uids:
                 bt.logging.info(f"Applying delayed penalty to empty miner {uid} - data was available")
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
@@ -418,7 +417,7 @@ class OrganicQueryProcessor:
         all_posts, post_to_miners = self._pool_responses(miner_responses)
         
         # Select posts for validation
-        posts_to_validate = self._select_validation_posts(all_posts, post_to_miners)
+        posts_to_validate = self._select_validation_posts(all_posts, post_to_miners, miner_responses)
         
         # Perform actual validation
         validation_results = await self._validate_posts(synapse, posts_to_validate)
@@ -507,62 +506,94 @@ class OrganicQueryProcessor:
         return all_posts, post_to_miners
     
 
-    def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]]) -> List:
-        """Select posts for validation, prioritizing those with fewer miners (more suspicious)"""
+    def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]], miner_responses: Dict[int, List]) -> List:
+        """Select posts for validation: first ensure miner coverage, then use weighted distribution for remaining slots"""
         validation_sample_size = min(self.CROSS_VALIDATION_SAMPLE_SIZE, len(all_posts))
         
         if validation_sample_size == 0:
             return []
         
-        # Create list of (post, miner_count) tuples
-        post_miner_counts = []
-        for post in all_posts:
-            post_id = self._get_post_id(post)
-            miner_count = len(post_to_miners.get(post_id, []))
-            post_miner_counts.append((post, miner_count))
-        
-        # Sort by ascending miner count - posts with fewer miners first
-        post_miner_counts.sort(key=lambda x: x[1])
-        
-        # Group posts by miner count for weighted sampling
-        posts_by_count = {}
-        for post, count in post_miner_counts:
-            if count not in posts_by_count:
-                posts_by_count[count] = []
-            posts_by_count[count].append(post)
-        
-        # Weighted selection: heavily favor posts with fewer miners (most suspicious)
         posts_to_validate = []
+        selected_post_ids = set()
         
-        single_miner_posts = posts_by_count.get(1, [])
-        posts_to_validate.extend(single_miner_posts[:validation_sample_size])
+        # Miner coverage - randomly select one post from each miner with non-empty responses
+        miners_with_data = [uid for uid, responses in miner_responses.items() if responses]
+        coverage_slots = min(validation_sample_size, len(miners_with_data))
         
-        # and take from higher counts with decreasing probability
-        remaining_needed = validation_sample_size - len(posts_to_validate)
-        if remaining_needed > 0:
-            for count in sorted(posts_by_count.keys()):
-                if count == 1:
-                    continue  
-                
-                available_posts = posts_by_count[count]
-                take_count = min(remaining_needed, max(1, len(available_posts) // count))
-                
+        bt.logging.info(f"Allocating {coverage_slots} slots for miner coverage from {len(miners_with_data)} miners with data")
+        
+        for uid in miners_with_data[:coverage_slots]:
+            miner_posts = miner_responses[uid]
+            if miner_posts:
+                # Randomly select from this miner's posts that haven't been selected yet
+                available_posts = [p for p in miner_posts if self._get_post_id(p) not in selected_post_ids]
                 if available_posts:
-                    selected = random.sample(available_posts, min(take_count, len(available_posts)))
-                    posts_to_validate.extend(selected)
-                    remaining_needed -= len(selected)
-                    
-                if remaining_needed <= 0:
-                    break
+                    selected_post = random.choice(available_posts)
+                    posts_to_validate.append(selected_post)
+                    selected_post_ids.add(self._get_post_id(selected_post))
         
-        # Log the distribution
+        # Weighted selection for remaining slots targeting suspicious posts
+        remaining_slots = validation_sample_size - len(posts_to_validate)
+        
+        if remaining_slots > 0:
+            bt.logging.info(f"Using weighted selection for {remaining_slots} remaining slots")
+            
+            # Create list of (post, miner_count) tuples for remaining posts
+            remaining_posts = []
+            for post in all_posts:
+                post_id = self._get_post_id(post)
+                if post_id not in selected_post_ids:
+                    miner_count = len(post_to_miners.get(post_id, []))
+                    remaining_posts.append((post, miner_count))
+            
+            if remaining_posts:
+                # Group remaining posts by miner count
+                posts_by_count = {}
+                for post, count in remaining_posts:
+                    if count not in posts_by_count:
+                        posts_by_count[count] = []
+                    posts_by_count[count].append(post)
+                
+                total_miners = len(miner_responses)
+                
+                # Create weighted pool - only include posts not already selected
+                weighted_posts = []
+                for count, posts in posts_by_count.items():
+                    weight = max(1, total_miners - count + 1)
+                    for post in posts:
+                        post_id = self._get_post_id(post)
+                        if post_id not in selected_post_ids:
+                            weighted_posts.extend([post] * weight)
+                
+                # Sample from weighted pool without replacement
+                for _ in range(remaining_slots):
+                    if not weighted_posts:
+                        break
+                        
+                    selected_post = random.choice(weighted_posts)
+                    post_id = self._get_post_id(selected_post)
+                    
+                    posts_to_validate.append(selected_post)
+                    selected_post_ids.add(post_id)
+                    
+                    weighted_posts = [p for p in weighted_posts if self._get_post_id(p) != post_id]
+        
+        # Log the final distribution
         count_distribution = {}
-        for post in posts_to_validate:
+        coverage_distribution = {}
+        for i, post in enumerate(posts_to_validate):
             post_id = self._get_post_id(post)
             count = len(post_to_miners.get(post_id, []))
             count_distribution[count] = count_distribution.get(count, 0) + 1
+            
+            # Track which posts came from coverage vs weighted selection
+            if i < coverage_slots:
+                coverage_distribution[count] = coverage_distribution.get(count, 0) + 1
         
-        bt.logging.info(f"Selected {len(posts_to_validate)} posts for validation with distribution: {count_distribution}")
+        # Verify no duplicates in final selection
+        final_post_ids = [self._get_post_id(p) for p in posts_to_validate]
+        assert len(final_post_ids) == len(set(final_post_ids)), f"Duplicate posts in validation selection: {len(final_post_ids)} total, {len(set(final_post_ids))} unique"
+        
         return posts_to_validate
 
 
@@ -580,6 +611,7 @@ class OrganicQueryProcessor:
         post_ids = []
         
         for post in posts_to_validate:
+            bt.logging.info(f"Post for validation: {post}")
             post_id = self._get_post_id(post)
             post_ids.append(post_id)
             
