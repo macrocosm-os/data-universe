@@ -236,7 +236,7 @@ class Validator:
             },
             allow_val_change=True,
             anonymous="allow",
-            reinit="finish_previous",
+            reinit=True,
             resume="never", # force a brand-new run ID on each rotation
             settings=wandb.Settings(start_method="thread"),
         )
