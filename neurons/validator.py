@@ -215,12 +215,12 @@ class Validator:
         """Creates a new wandb run to save information to."""
         # Create a unique run id for this run.
         now = dt.datetime.now()
-        self.wandb_run_start = now
         run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
         name = "validator-" + str(self.uid) + "-" + run_id
         version_tag = self.get_version_tag()
         scraper_providers = self.get_scraper_providers()
-
+    
+        # Allow multiple runs in one process and only set start time after success
         self.wandb_run = wandb.init(
             name=name,
             project="data-universe-validators",
@@ -235,76 +235,87 @@ class Validator:
             },
             allow_val_change=True,
             anonymous="allow",
+            reinit=True,  # That makes it look like rotation never happened.
+            resume=False,    # never resume an old run; force a new run ID
         )
-
+    
+        # Start time after successful init so rotation scheduling is correct
+        self.wandb_run_start = now
+    
         bt.logging.debug(f"Started a new wandb run: {name}")
+
 
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
-
+    
         1. Evaluates miners
         2. Periodically writes the latest scores to the chain
         3. Saves state
         """
         assert self.is_setup, "Validator must be setup before running."
-
+    
         # Check that validator is registered on the network.
         utils.assert_registered(self.wallet, self.metagraph)
-
+    
         bt.logging.info(
             f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
         )
-
+    
         bt.logging.info(f"Validator starting at block: {self.block}.")
-
+    
         while not self.should_exit:
             try:
                 t_start = time.perf_counter()
-
+    
                 bt.logging.debug(
                     f"Validator running on step({self.step}) block({self.block})."
                 )
-
+    
                 # Ensure validator hotkey is still registered on the network.
                 utils.assert_registered(self.wallet, self.metagraph)
-
+    
                 # Evaluate the next batch of miners.
                 next_batch_delay_secs = self.loop.run_until_complete(
                     self.evaluator.run_next_eval_batch()
                 )
                 self._on_eval_batch_complete()
-
+    
                 # Maybe set weights.
                 if self.should_set_weights():
                     self.set_weights()
-
+    
                 # Always save state.
                 self.save_state()
-
+    
                 # Update to the latest desirability list after each evaluation.
                 self.get_updated_lookup()
-
+    
                 self.step += 1
-
+    
                 metrics.MAIN_LOOP_ITERATIONS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
                 metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
                 metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(time.perf_counter() - t_start)
-
+    
                 wait_time = max(0.0, float(next_batch_delay_secs))
                 if wait_time > 0:
                     bt.logging.info(
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
                     )
                     time.sleep(wait_time)
-
-                # Rotate wandb run if needed (outside of work timing)
+    
+                # Rotation with retry; wandb_run_start only moves on successful init - Now change from 12 to 8H
                 if not self.config.wandb.off:
-                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=12):
-                        bt.logging.info("Current wandb run is more than 12 hours old. Starting a new run.")
-                        self.wandb_run.finish()
-                        self.new_wandb_run()
-
+                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8):
+                        bt.logging.info("Current wandb run is more than 8 hours old. Starting a new run.")
+                        try:
+                            if self.wandb_run:
+                                # Either API is fine; keep consistent with your current usage
+                                self.wandb_run.finish()
+                            self.new_wandb_run()  # sets wandb_run_start only on success
+                        except Exception as e:
+                            bt.logging.error(f"W&B rotation failed: {str(e)}")
+    
             except KeyboardInterrupt:
                 self.axon.stop()
                 if self.wandb_run:
