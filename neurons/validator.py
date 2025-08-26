@@ -236,8 +236,9 @@ class Validator:
             },
             allow_val_change=True,
             anonymous="allow",
-            reinit=True,  # That makes it look like rotation never happened.
+            reinit="finish_previous",
             resume="never", # force a brand-new run ID on each rotation
+            settings=wandb.Settings(start_method="thread"),
         )
     
         # Start time after successful init so rotation scheduling is correct
@@ -315,27 +316,12 @@ class Validator:
                 # Rotation with retry (only when we actually have a start time)
                 if (not self.config.wandb.off) and (self.wandb_run_start is not None) and \
                 ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8)):
-                    old_run = self.wandb_run
-                    old_start = self.wandb_run_start  # preserve so retry next loop on failure
 
                     try:
-                        # Init new run first
                         self.new_wandb_run()
-                        bt.logging.info("W&B: started new run successfully")
-
-                        # Only after the new run starts, finish the old one
-                        if old_run:
-                            try:
-                                old_run.finish()
-                                bt.logging.info("W&B: finished previous run successfully")
-                            except Exception as finish_err:
-                                bt.logging.warning(f"W&B: failed to finish previous run cleanly: {finish_err}")
-
+                        bt.logging.info("W&B: rotated run successfully")
                     except Exception as e:
-                        # Keep the old run active and force an immediate retry next loop
-                        self.wandb_run = old_run
-                        self.wandb_run_start = old_start
-                        bt.logging.error(f"W&B rotation failed, keeping current run active: {e}")
+                        bt.logging.error(f"W&B rotation failed; keeping current run active: {e}")
 
             except KeyboardInterrupt:
                 self.axon.stop()
