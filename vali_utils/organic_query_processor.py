@@ -326,7 +326,6 @@ class OrganicQueryProcessor:
         
         if has_valid_pooled_data or has_verification_data:
             # Data for this request actually exists, so empty miners should be penalized
-            bt.logging.info(f"Applying delayed penalties to {len(empty_uids)} empty miners - data was available")
             for uid in empty_uids:
                 bt.logging.info(f"Applying delayed penalty to empty miner {uid} - data was available")
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
@@ -595,8 +594,6 @@ class OrganicQueryProcessor:
         final_post_ids = [self._get_post_id(p) for p in posts_to_validate]
         assert len(final_post_ids) == len(set(final_post_ids)), f"Duplicate posts in validation selection: {len(final_post_ids)} total, {len(set(final_post_ids))} unique"
         
-        bt.logging.info(f"Selected {len(posts_to_validate)} posts: {coverage_slots} for coverage {coverage_distribution}, "
-                       f"{len(posts_to_validate) - coverage_slots} weighted {count_distribution}")
         return posts_to_validate
 
 
@@ -614,6 +611,7 @@ class OrganicQueryProcessor:
         post_ids = []
         
         for post in posts_to_validate:
+            bt.logging.info(f"Post for validation: {post}")
             post_id = self._get_post_id(post)
             post_ids.append(post_id)
             
