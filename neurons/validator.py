@@ -621,15 +621,15 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
-
-        metric_status = 'ok' if success else 'fail'
-        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).observe(time.perf_counter() - t0)
-        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(int(time.time()))
-
+        
         with self.lock:
             self.last_weights_set_time = dt.datetime.utcnow()
 
         bt.logging.success("Finished setting weights.")
+
+        metric_status = 'ok' if success else 'fail'
+        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).observe(time.perf_counter() - t0)
+        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(int(time.time()))
 
     @property
     def block(self):
