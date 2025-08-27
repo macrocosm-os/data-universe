@@ -315,7 +315,7 @@ class Validator:
 
                 # Rotation with retry (only when we actually have a start time)
                 if (not self.config.wandb.off) and (self.wandb_run_start is not None) and \
-                ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8)):
+                ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=3)):
 
                     try:
                         self.new_wandb_run()
