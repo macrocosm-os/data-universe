@@ -226,8 +226,7 @@ class MinerEvaluator:
                         reason="Duplicate entities found.",
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ],
-                evaluation_start_time=t_start
+                ]
             )
 
             metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='duplicate entities').observe(time.perf_counter() - t_start)
