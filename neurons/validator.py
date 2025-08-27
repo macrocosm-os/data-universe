@@ -145,9 +145,10 @@ class Validator:
             try:
                 self.new_wandb_run()
             except Exception as e:
-                bt.logging.error(f"Failed to initialize wandb: {str(e)}")
-                bt.logging.warning("Continuing without wandb logging.")
-                self.config.wandb.off = True
+                bt.logging.exception("W&B init failed; will retry later.")
+                # Do NOT flip wandb.off here; just remember there is no active run.
+                self.wandb_run = None
+                self.wandb_run_start = None
 
         metrics.VALIDATOR_INFO.info({
             "hotkey": self.wallet.hotkey.ss58_address,
@@ -235,8 +236,9 @@ class Validator:
             },
             allow_val_change=True,
             anonymous="allow",
-            reinit=True,  # That makes it look like rotation never happened.
-            resume=False,    # never resume an old run; force a new run ID
+            reinit=True,
+            resume="never", # force a brand-new run ID on each rotation
+            settings=wandb.Settings(start_method="thread"),
         )
     
         # Start time after successful init so rotation scheduling is correct
@@ -304,18 +306,23 @@ class Validator:
                     )
                     time.sleep(wait_time)
     
-                # Rotation with retry; wandb_run_start only moves on successful init - Now change from 12 to 8H
-                if not self.config.wandb.off:
-                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=8):
-                        bt.logging.info("Current wandb run is more than 8 hours old. Starting a new run.")
-                        try:
-                            if self.wandb_run:
-                                # Either API is fine; keep consistent with your current usage
-                                self.wandb_run.finish()
-                            self.new_wandb_run()  # sets wandb_run_start only on success
-                        except Exception as e:
-                            bt.logging.error(f"W&B rotation failed: {str(e)}")
-    
+                if not self.config.wandb.off and self.wandb_run is None:
+                    try:
+                        self.new_wandb_run()
+                        bt.logging.info("W&B: started new run successfully")
+                    except Exception as e:
+                        bt.logging.error(f"W&B init retry failed: {e}")
+
+                # Rotation with retry (only when we actually have a start time)
+                if (not self.config.wandb.off) and (self.wandb_run_start is not None) and \
+                ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=3)):
+
+                    try:
+                        self.new_wandb_run()
+                        bt.logging.info("W&B: rotated run successfully")
+                    except Exception as e:
+                        bt.logging.error(f"W&B rotation failed; keeping current run active: {e}")
+
             except KeyboardInterrupt:
                 self.axon.stop()
                 if self.wandb_run:
