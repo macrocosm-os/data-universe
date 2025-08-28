@@ -5,6 +5,7 @@ import unicodedata
 from typing import Dict, List, Optional
 from pydantic.v1 import BaseModel, Field
 from common.data import DataEntity, DataLabel, DataSource
+from scraping import utils
 
 
 def normalize_channel_name(name: str, max_len: int = 50) -> str:
@@ -90,6 +91,7 @@ class YouTubeContent(BaseModel):
         label = DataLabel(value=label_value)
 
         entity_timestamp = content.upload_date
+        content.upload_date = utils.obfuscate_datetime_to_minute(entity_timestamp)
         content_bytes = content.json(exclude_none=True).encode("utf-8")
 
         return DataEntity(

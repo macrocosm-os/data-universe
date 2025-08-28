@@ -42,4 +42,7 @@ REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # 
 # Date after which "content" will no longer be accepted as the X "text" field in OnDemand request field validation
 X_ON_DEMAND_CONTENT_EXPIRATION_DATE = dt.datetime(2025, 8, 25, tzinfo=dt.timezone.utc) # Monday August 25, 2025 UTC
 
+# Date after which YouTube content timestamps must be obfuscated to the minute
+YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE = dt.datetime(2025, 9, 5, tzinfo=dt.timezone.utc) # September 5, 2025 UTC (one week from August 29, 2025)
+
 EVALUATION_ON_STARTUP = 15
