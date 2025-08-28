@@ -226,8 +226,7 @@ class MinerEvaluator:
                         reason="Duplicate entities found.",
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ],
-                evaluation_start_time=t_start
+                ]
             )
 
             metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='duplicate entities').observe(time.perf_counter() - t_start)
@@ -503,7 +502,8 @@ class MinerEvaluator:
                         )
             # Update the iterator. It will keep its current position if possible.
             self.miner_iterator.set_miner_uids(
-                utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit)
+                #utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit) # uses cached/stale self.metagraph --> iterator may miss new miners and keep removed ones.
+                utils.get_miner_uids(metagraph, self.vpermit_rao_limit) # use fresh metagraph --> iterator gets latest eligible UIDs immediately
             )
 
             # Check to see if the metagraph has changed size.

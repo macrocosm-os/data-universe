@@ -1,5 +1,11 @@
 import re
 from urllib.parse import urlparse, parse_qs
+import datetime as dt
+import bittensor as bt
+from scraping import utils
+from scraping.scraper import ValidationResult
+from common.data import DataEntity
+from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE
 
 
 def extract_video_id(url: str) -> str:
@@ -134,3 +140,70 @@ def transcripts_are_similar(transcript1, transcript2, threshold=0.8):
     text2 = " ".join([item.get('text', '') for item in transcript2])
 
     return texts_are_similar(text1, text2, threshold)
+
+
+def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntity) -> ValidationResult:
+    """
+    Validate YouTube timestamp with obfuscation logic, following X and Reddit pattern.
+    Only enforces obfuscation after YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE.
+    
+    Args:
+        stored_content: YouTubeContent submitted by miner
+        actual_content: Actual upload date from YouTube API
+        entity: DataEntity being validated
+        
+    Returns:
+        ValidationResult indicating if timestamp is valid
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+    
+    # Before the deadline: Allow both obfuscated and non-obfuscated timestamps
+    if now < YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE:
+        # Check if either exact match OR obfuscated match is valid
+        actual_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_content)
+        
+        if stored_content.upload_date == actual_content or stored_content.upload_date == actual_obfuscated_timestamp:
+            return ValidationResult(
+                is_valid=True,
+                reason="YouTube timestamp validation passed (before obfuscation deadline)",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        else:
+            bt.logging.info(
+                f"YouTube timestamps do not match: stored={stored_content.upload_date}, actual={actual_content}, actual_obfuscated={actual_obfuscated_timestamp}"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="YouTube timestamps do not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    # After the deadline: Strict obfuscation required (same as X and Reddit)
+    actual_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_content)
+    
+    if stored_content.upload_date != actual_obfuscated_timestamp:
+        # Check if this is specifically because the entity was not obfuscated.
+        if stored_content.upload_date == actual_content:
+            bt.logging.info(
+                f"Provided YouTube content datetime was not obfuscated to the minute as required: {stored_content.upload_date} != {actual_obfuscated_timestamp}"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="Provided YouTube content datetime was not obfuscated to the minute as required",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        else:
+            bt.logging.info(
+                f"YouTube timestamps do not match: stored={stored_content.upload_date}, actual_obfuscated={actual_obfuscated_timestamp}"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason="YouTube timestamps do not match",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+    
+    return ValidationResult(
+        is_valid=True,
+        reason="YouTube timestamp validation passed",
+        content_size_bytes_validated=entity.content_size_bytes,
+    )
