@@ -407,7 +407,7 @@ class MinerEvaluator:
                         'miner_uid': uid,
                         'miner_hotkey': safe_hotkey,
                         'bucket_id': str(bucket.id),
-                        'bucket_source': bucket.id.source.value,
+                        'bucket_source': str(bucket.id.source),
                         'bucket_label': label,
                         'time_bucket_id': time_bucket_id,
                         'entity_id': i + 1,
