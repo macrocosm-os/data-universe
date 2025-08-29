@@ -5,6 +5,15 @@ import datetime
 import traceback
 import threading
 import time
+import csv
+
+# Optional CSV upload dependencies - graceful degradation if not available
+try:
+    import boto3
+    from botocore.exceptions import NoCredentialsError, ClientError
+    HAS_BOTO3 = True
+except ImportError:
+    HAS_BOTO3 = False
 
 from common import constants
 from common.data_v2 import ScorableMinerIndex
@@ -71,6 +80,10 @@ class MinerEvaluator:
         self.storage = SqliteMemoryValidatorStorage()
         self.s3_storage = S3ValidationStorage(self.config.s3_results_path)
         self.s3_reader = s3_reader
+        
+        # Initialize CSV upload client (optional feature - won't break evaluation if fails)
+        self.csv_s3_client = None
+        self._init_csv_upload_client()
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
@@ -188,6 +201,12 @@ class MinerEvaluator:
         )
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
+        
+        # Export data to CSV (non-blocking, won't affect evaluation)
+        try:
+            self._handle_csv_export(hotkey, uid, chosen_data_entity_bucket, data_entities)
+        except Exception as e:
+            bt.logging.debug(f"{hotkey}: CSV export failed but continuing evaluation: {e}")
         (valid, reason) = vali_utils.are_entities_valid(
             data_entities, chosen_data_entity_bucket
         )
@@ -315,6 +334,178 @@ class MinerEvaluator:
             self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
 
         return s3_validation_result
+    
+    def _init_csv_upload_client(self) -> None:
+        """Initialize CSV upload client with comprehensive error handling."""
+        try:
+            if not HAS_BOTO3:
+                bt.logging.debug("CSV upload disabled: boto3 not available")
+                return
+            
+            # Check for required environment variables
+            spaces_key = os.getenv('DO_SPACES_KEY')
+            spaces_secret = os.getenv('DO_SPACES_SECRET')
+            
+            if not spaces_key or not spaces_secret:
+                bt.logging.debug("CSV upload disabled: DO Spaces credentials not found")
+                return
+            
+            self.csv_s3_client = boto3.client(
+                's3',
+                endpoint_url='https://nyc3.digitaloceanspaces.com',
+                aws_access_key_id=spaces_key,
+                aws_secret_access_key=spaces_secret,
+                region_name='nyc3'
+            )
+            bt.logging.info("CSV upload client initialized successfully")
+            
+        except Exception as e:
+            bt.logging.warning(f"CSV upload client initialization failed (non-critical): {e}")
+            self.csv_s3_client = None
+    
+    def _save_bucket_data_to_csv(self, hotkey: str, uid: int, bucket: DataEntityBucket, data_entities: List[DataEntity]) -> Optional[str]:
+        """Save bucket data to CSV with full error handling. Returns filename or None."""
+        try:
+            if not data_entities:
+                bt.logging.debug(f"{hotkey}: No data entities to save to CSV")
+                return None
+            
+            # Create CSV directory if it doesn't exist
+            csv_dir = "csv_exports"
+            try:
+                os.makedirs(csv_dir, exist_ok=True)
+            except Exception as e:
+                bt.logging.warning(f"{hotkey}: Failed to create CSV directory, using current dir: {e}")
+                csv_dir = "."
+            
+            # Generate safe filename with directory, label, and time bucket
+            timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
+            safe_hotkey = hotkey.replace('/', '_').replace(':', '_')[:8]  # First 8 chars only
+            
+            # Extract and clean label for filename
+            label = getattr(bucket, 'label', None) or "NULL"
+            safe_label = label.replace('/', '_').replace(':', '_').replace('?', '').replace('*', '').replace('<', '').replace('>', '').replace('|', '').replace('"', '')[:20]  # Clean and limit length
+            
+            # Extract time bucket ID
+            time_bucket_id = getattr(bucket.id, 'time_bucket', 'UNKNOWN')
+            
+            filename = os.path.join(csv_dir, f"eval_{uid}_{safe_hotkey}_{safe_label}_tb{time_bucket_id}_{timestamp}.csv")
+            
+            # Prepare data for CSV
+            csv_data = []
+            for i, entity in enumerate(data_entities):
+                try:
+                    content = ""
+                    if entity.content:
+                        if isinstance(entity.content, bytes):
+                            content = entity.content.decode('utf-8', errors='ignore')  # Full content
+                        else:
+                            content = str(entity.content)  # Full content
+                    
+                    csv_data.append({
+                        'evaluation_timestamp': timestamp,
+                        'miner_uid': uid,
+                        'miner_hotkey': safe_hotkey,
+                        'bucket_id': str(bucket.id),
+                        'bucket_source': bucket.id.source.value,
+                        'bucket_label': label,
+                        'time_bucket_id': time_bucket_id,
+                        'entity_id': i + 1,
+                        'uri': entity.uri,
+                        'content_size_bytes': entity.content_size_bytes,
+                        'content': content,
+                        'entity_datetime': getattr(entity, 'datetime', '')
+                    })
+                except Exception as e:
+                    bt.logging.debug(f"{hotkey}: Error processing entity {i}: {e}")
+                    continue
+            
+            if not csv_data:
+                bt.logging.debug(f"{hotkey}: No valid data to save to CSV")
+                return None
+            
+            # Write CSV file
+            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
+                fieldnames = ['evaluation_timestamp', 'miner_uid', 'miner_hotkey', 'bucket_id', 
+                             'bucket_source', 'bucket_label', 'time_bucket_id', 'entity_id', 'uri', 
+                             'content_size_bytes', 'content', 'entity_datetime']
+                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
+                writer.writeheader()
+                writer.writerows(csv_data)
+            
+            bt.logging.debug(f"{hotkey}: Saved {len(csv_data)} entities to {filename}")
+            return filename
+            
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: CSV save failed (non-critical): {e}")
+            return None
+    
+    def _upload_csv_to_spaces(self, filename: str, hotkey: str) -> bool:
+        """Upload CSV to DO Spaces with full error handling. Returns success status."""
+        try:
+            if not self.csv_s3_client:
+                bt.logging.debug(f"{hotkey}: CSV upload skipped - client not available")
+                return False
+            
+            if not os.path.exists(filename):
+                bt.logging.warning(f"{hotkey}: CSV file {filename} not found for upload")
+                return False
+            
+            # Upload to DO Spaces
+            s3_key = f"validator_evaluations/{os.path.basename(filename)}"
+            
+            self.csv_s3_client.upload_file(
+                Filename=filename,
+                Bucket='data-universe-storage',
+                Key=s3_key,
+                ExtraArgs={'ACL': 'private'}
+            )
+            
+            bt.logging.info(f"{hotkey}: CSV uploaded successfully to {s3_key}")
+            return True
+            
+        except NoCredentialsError:
+            bt.logging.warning(f"{hotkey}: CSV upload failed - invalid credentials")
+            return False
+        except ClientError as e:
+            bt.logging.warning(f"{hotkey}: CSV upload failed - client error: {e}")
+            return False
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: CSV upload failed (non-critical): {e}")
+            return False
+    
+    def _cleanup_csv_file(self, filename: str, hotkey: str) -> None:
+        """Safely delete CSV file with error handling."""
+        try:
+            if filename and os.path.exists(filename):
+                os.remove(filename)
+                bt.logging.debug(f"{hotkey}: CSV file {filename} cleaned up")
+        except Exception as e:
+            bt.logging.warning(f"{hotkey}: CSV cleanup failed (non-critical): {e}")
+    
+    def _handle_csv_export(self, hotkey: str, uid: int, bucket: DataEntityBucket, data_entities: List[DataEntity]) -> None:
+        """Handle complete CSV export process with comprehensive error handling."""
+        csv_filename = None
+        try:
+            # Save to CSV
+            csv_filename = self._save_bucket_data_to_csv(hotkey, uid, bucket, data_entities)
+            if not csv_filename:
+                return
+            
+            # Upload to DO Spaces
+            upload_success = self._upload_csv_to_spaces(csv_filename, hotkey)
+            
+            # Clean up local file only if upload succeeded
+            if upload_success:
+                self._cleanup_csv_file(csv_filename, hotkey)
+            else:
+                bt.logging.debug(f"{hotkey}: Keeping local CSV file due to upload failure")
+                
+        except Exception as e:
+            bt.logging.error(f"{hotkey}: CSV export process failed (non-critical): {e}")
+            # Always try to clean up if something went wrong
+            if csv_filename:
+                self._cleanup_csv_file(csv_filename, hotkey)
 
 
     async def run_next_eval_batch(self) -> int:
