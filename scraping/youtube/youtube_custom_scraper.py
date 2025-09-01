@@ -575,7 +575,12 @@ class YouTubeTranscriptScraper(Scraper):
         )
 
     def _verify_metadata(self, api_metadata: Dict[str, Any], content_to_validate: YouTubeContent) -> bool:
-        """Verify that title and channel name match."""
+        """Verify that video ID, title and channel name match."""
+
+        # Video ID check (should be exact match)
+        api_video_id = api_metadata.get('id', '')
+        if api_video_id and api_video_id != content_to_validate.video_id:
+            return False
 
         # Title check
         if not self._texts_are_similar(api_metadata.get('title', ''), content_to_validate.title, threshold=0.8):

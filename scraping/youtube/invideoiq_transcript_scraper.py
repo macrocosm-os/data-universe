@@ -508,6 +508,15 @@ class YouTubeChannelTranscriptScraper(Scraper):
                                 entity: DataEntity) -> ValidationResult:
         """Validate that stored content matches actual data."""
 
+        # Validate video ID (should be exact match)
+        actual_video_id = actual_data.get('video_id', '')
+        if actual_video_id and actual_video_id != stored_content.video_id:
+            return ValidationResult(
+                is_valid=False,
+                reason="Video ID mismatch",
+                content_size_bytes_validated=entity.content_size_bytes
+            )
+
         # Validate title (allow minor differences)
         if not self._texts_are_similar(actual_data.get('title', ''), stored_content.title, threshold=0.8):
             return ValidationResult(
