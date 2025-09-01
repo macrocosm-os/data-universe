@@ -6,14 +6,11 @@ import traceback
 import threading
 import time
 import csv
-
-# Optional CSV upload dependencies - graceful degradation if not available
-try:
-    import boto3
-    from botocore.exceptions import NoCredentialsError, ClientError
-    HAS_BOTO3 = True
-except ImportError:
-    HAS_BOTO3 = False
+import boto3
+from botocore.exceptions import NoCredentialsError, ClientError
+import pandas as pd
+import pyarrow as pa
+import pyarrow.parquet as pq
 
 from common import constants
 from common.data_v2 import ScorableMinerIndex
@@ -81,9 +78,9 @@ class MinerEvaluator:
         self.s3_storage = S3ValidationStorage(self.config.s3_results_path)
         self.s3_reader = s3_reader
         
-        # Initialize CSV upload client (optional feature - won't break evaluation if fails)
-        self.csv_s3_client = None
-        self._init_csv_upload_client()
+        # Initialize Parquet upload client (optional feature - won't break evaluation if fails)
+        self.parquet_s3_client = None
+        self._init_parquet_upload_client()
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
@@ -202,11 +199,11 @@ class MinerEvaluator:
 
         data_entities: List[DataEntity] = data_entity_bucket.data_entities
         
-        # Export data to CSV (non-blocking, won't affect evaluation)
+        # Export data to Parquet (non-blocking, won't affect evaluation)
         try:
-            self._handle_csv_export(hotkey, uid, chosen_data_entity_bucket, data_entities)
+            self._handle_parquet_export(hotkey, uid, chosen_data_entity_bucket, data_entities)
         except Exception as e:
-            bt.logging.debug(f"{hotkey}: CSV export failed but continuing evaluation: {e}")
+            bt.logging.debug(f"{hotkey}: Parquet export failed but continuing evaluation: {e}")
         (valid, reason) = vali_utils.are_entities_valid(
             data_entities, chosen_data_entity_bucket
         )
@@ -335,48 +332,44 @@ class MinerEvaluator:
 
         return s3_validation_result
     
-    def _init_csv_upload_client(self) -> None:
-        """Initialize CSV upload client with comprehensive error handling."""
+    def _init_parquet_upload_client(self) -> None:
+        """Initialize Parquet upload client with comprehensive error handling."""
         try:
-            if not HAS_BOTO3:
-                bt.logging.debug("CSV upload disabled: boto3 not available")
-                return
-            
             # Check for required environment variables
             spaces_key = os.getenv('DO_SPACES_KEY')
             spaces_secret = os.getenv('DO_SPACES_SECRET')
             
             if not spaces_key or not spaces_secret:
-                bt.logging.debug("CSV upload disabled: DO Spaces credentials not found")
+                bt.logging.debug("Parquet upload disabled: DO Spaces credentials not found")
                 return
             
-            self.csv_s3_client = boto3.client(
+            self.parquet_s3_client = boto3.client(
                 's3',
                 endpoint_url='https://nyc3.digitaloceanspaces.com',
                 aws_access_key_id=spaces_key,
                 aws_secret_access_key=spaces_secret,
                 region_name='nyc3'
             )
-            bt.logging.info("CSV upload client initialized successfully")
+            bt.logging.info("Parquet upload client initialized successfully")
             
         except Exception as e:
-            bt.logging.warning(f"CSV upload client initialization failed (non-critical): {e}")
-            self.csv_s3_client = None
+            bt.logging.warning(f"Parquet upload client initialization failed (non-critical): {e}")
+            self.parquet_s3_client = None
     
-    def _save_bucket_data_to_csv(self, hotkey: str, uid: int, bucket: DataEntityBucket, data_entities: List[DataEntity]) -> Optional[str]:
-        """Save bucket data to CSV with full error handling. Returns filename or None."""
+    def _save_bucket_data_to_parquet(self, hotkey: str, uid: int, bucket: DataEntityBucket, data_entities: List[DataEntity]) -> Optional[str]:
+        """Save bucket data to Parquet with full error handling. Returns filename or None."""
         try:
             if not data_entities:
-                bt.logging.debug(f"{hotkey}: No data entities to save to CSV")
+                bt.logging.debug(f"{hotkey}: No data entities to save to Parquet")
                 return None
             
-            # Create CSV directory if it doesn't exist
-            csv_dir = "csv_exports"
+            # Create Parquet directory if it doesn't exist
+            parquet_dir = "parquet_exports"
             try:
-                os.makedirs(csv_dir, exist_ok=True)
+                os.makedirs(parquet_dir, exist_ok=True)
             except Exception as e:
-                bt.logging.warning(f"{hotkey}: Failed to create CSV directory, using current dir: {e}")
-                csv_dir = "."
+                bt.logging.warning(f"{hotkey}: Failed to create Parquet directory, using current dir: {e}")
+                parquet_dir = "."
             
             # Generate safe filename with directory, label, and time bucket
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -389,10 +382,10 @@ class MinerEvaluator:
             # Extract time bucket ID
             time_bucket_id = getattr(bucket.id, 'time_bucket', 'UNKNOWN')
             
-            filename = os.path.join(csv_dir, f"eval_{uid}_{safe_hotkey}_{safe_label}_tb{time_bucket_id}_{timestamp}.csv")
+            filename = os.path.join(parquet_dir, f"eval_{uid}_{safe_hotkey}_{safe_label}_tb{time_bucket_id}_{timestamp}.parquet")
             
-            # Prepare data for CSV
-            csv_data = []
+            # Prepare data for DataFrame
+            data_rows = []
             for i, entity in enumerate(data_entities):
                 try:
                     content = ""
@@ -402,7 +395,7 @@ class MinerEvaluator:
                         else:
                             content = str(entity.content)  # Full content
                     
-                    csv_data.append({
+                    data_rows.append({
                         'evaluation_timestamp': timestamp,
                         'miner_uid': uid,
                         'miner_hotkey': safe_hotkey,
@@ -420,92 +413,87 @@ class MinerEvaluator:
                     bt.logging.debug(f"{hotkey}: Error processing entity {i}: {e}")
                     continue
             
-            if not csv_data:
-                bt.logging.debug(f"{hotkey}: No valid data to save to CSV")
+            if not data_rows:
+                bt.logging.debug(f"{hotkey}: No valid data to save to Parquet")
                 return None
             
-            # Write CSV file
-            with open(filename, 'w', newline='', encoding='utf-8') as csvfile:
-                fieldnames = ['evaluation_timestamp', 'miner_uid', 'miner_hotkey', 'bucket_id', 
-                             'bucket_source', 'bucket_label', 'time_bucket_id', 'entity_id', 'uri', 
-                             'content_size_bytes', 'content', 'entity_datetime']
-                writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
-                writer.writeheader()
-                writer.writerows(csv_data)
+            # Create DataFrame and save as Parquet
+            df = pd.DataFrame(data_rows)
+            df.to_parquet(filename, compression='snappy', engine='pyarrow')
             
-            bt.logging.debug(f"{hotkey}: Saved {len(csv_data)} entities to {filename}")
+            bt.logging.debug(f"{hotkey}: Saved {len(data_rows)} entities to {filename}")
             return filename
             
         except Exception as e:
-            bt.logging.error(f"{hotkey}: CSV save failed (non-critical): {e}")
+            bt.logging.error(f"{hotkey}: Parquet save failed (non-critical): {e}")
             return None
     
-    def _upload_csv_to_spaces(self, filename: str, hotkey: str) -> bool:
-        """Upload CSV to DO Spaces with full error handling. Returns success status."""
+    def _upload_parquet_to_spaces(self, filename: str, hotkey: str) -> bool:
+        """Upload Parquet to DO Spaces with full error handling. Returns success status."""
         try:
-            if not self.csv_s3_client:
-                bt.logging.debug(f"{hotkey}: CSV upload skipped - client not available")
+            if not self.parquet_s3_client:
+                bt.logging.debug(f"{hotkey}: Parquet upload skipped - client not available")
                 return False
             
             if not os.path.exists(filename):
-                bt.logging.warning(f"{hotkey}: CSV file {filename} not found for upload")
+                bt.logging.warning(f"{hotkey}: Parquet file {filename} not found for upload")
                 return False
             
             # Upload to DO Spaces
             s3_key = f"validator_evaluations/{os.path.basename(filename)}"
             
-            self.csv_s3_client.upload_file(
+            self.parquet_s3_client.upload_file(
                 Filename=filename,
                 Bucket='data-universe-storage',
                 Key=s3_key,
                 ExtraArgs={'ACL': 'private'}
             )
             
-            bt.logging.info(f"{hotkey}: CSV uploaded successfully to {s3_key}")
+            bt.logging.info(f"{hotkey}: Parquet uploaded successfully to {s3_key}")
             return True
             
         except NoCredentialsError:
-            bt.logging.warning(f"{hotkey}: CSV upload failed - invalid credentials")
+            bt.logging.warning(f"{hotkey}: Parquet upload failed - invalid credentials")
             return False
         except ClientError as e:
-            bt.logging.warning(f"{hotkey}: CSV upload failed - client error: {e}")
+            bt.logging.warning(f"{hotkey}: Parquet upload failed - client error: {e}")
             return False
         except Exception as e:
-            bt.logging.error(f"{hotkey}: CSV upload failed (non-critical): {e}")
+            bt.logging.error(f"{hotkey}: Parquet upload failed (non-critical): {e}")
             return False
     
-    def _cleanup_csv_file(self, filename: str, hotkey: str) -> None:
-        """Safely delete CSV file with error handling."""
+    def _cleanup_parquet_file(self, filename: str, hotkey: str) -> None:
+        """Safely delete Parquet file with error handling."""
         try:
             if filename and os.path.exists(filename):
                 os.remove(filename)
-                bt.logging.debug(f"{hotkey}: CSV file {filename} cleaned up")
+                bt.logging.debug(f"{hotkey}: Parquet file {filename} cleaned up")
         except Exception as e:
-            bt.logging.warning(f"{hotkey}: CSV cleanup failed (non-critical): {e}")
+            bt.logging.warning(f"{hotkey}: Parquet cleanup failed (non-critical): {e}")
     
-    def _handle_csv_export(self, hotkey: str, uid: int, bucket: DataEntityBucket, data_entities: List[DataEntity]) -> None:
-        """Handle complete CSV export process with comprehensive error handling."""
-        csv_filename = None
+    def _handle_parquet_export(self, hotkey: str, uid: int, bucket: DataEntityBucket, data_entities: List[DataEntity]) -> None:
+        """Handle complete Parquet export process with comprehensive error handling."""
+        parquet_filename = None
         try:
-            # Save to CSV
-            csv_filename = self._save_bucket_data_to_csv(hotkey, uid, bucket, data_entities)
-            if not csv_filename:
+            # Save to Parquet
+            parquet_filename = self._save_bucket_data_to_parquet(hotkey, uid, bucket, data_entities)
+            if not parquet_filename:
                 return
             
             # Upload to DO Spaces
-            upload_success = self._upload_csv_to_spaces(csv_filename, hotkey)
+            upload_success = self._upload_parquet_to_spaces(parquet_filename, hotkey)
             
             # Clean up local file only if upload succeeded
             if upload_success:
-                self._cleanup_csv_file(csv_filename, hotkey)
+                self._cleanup_parquet_file(parquet_filename, hotkey)
             else:
-                bt.logging.debug(f"{hotkey}: Keeping local CSV file due to upload failure")
+                bt.logging.debug(f"{hotkey}: Keeping local Parquet file due to upload failure")
                 
         except Exception as e:
-            bt.logging.error(f"{hotkey}: CSV export process failed (non-critical): {e}")
+            bt.logging.error(f"{hotkey}: Parquet export process failed (non-critical): {e}")
             # Always try to clean up if something went wrong
-            if csv_filename:
-                self._cleanup_csv_file(csv_filename, hotkey)
+            if parquet_filename:
+                self._cleanup_parquet_file(parquet_filename, hotkey)
 
 
     async def run_next_eval_batch(self) -> int:
