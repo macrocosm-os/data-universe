@@ -16,6 +16,7 @@ from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
+from scraping.youtube import utils as youtube_utils
 import isodate
 from dotenv import load_dotenv
 import logging
@@ -425,13 +426,23 @@ class YouTubeTranscriptScraper(Scraper):
                         transcript_valid = self._verify_transcript(transcript_data, content_to_validate.transcript)
 
                         if transcript_valid:
-                            results.append(
-                                ValidationResult(
-                                    is_valid=True,
-                                    reason="Video validated successfully",
-                                    content_size_bytes_validated=entity.content_size_bytes
-                                )
+                            # Create actual YouTube content for DataEntity validation
+                            actual_youtube_content = YouTubeContent(
+                                video_id=content_to_validate.video_id,
+                                title=video_metadata['snippet']['title'],
+                                channel_name=video_metadata['snippet']['channelTitle'],
+                                upload_date=dt.datetime.fromisoformat(
+                                    video_metadata['snippet']['publishedAt'].replace('Z', '+00:00')
+                                ),
+                                transcript=transcript_data,
+                                url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
+                                duration_seconds=content_to_validate.duration_seconds,
+                                language=content_to_validate.language
                             )
+                            
+                            # Validate DataEntity fields (including channel label) like X and Reddit do
+                            entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
+                            results.append(entity_validation_result)
                         else:
                             results.append(
                                 ValidationResult(
@@ -445,13 +456,23 @@ class YouTubeTranscriptScraper(Scraper):
                     except (TranscriptsDisabled, NoTranscriptFound):
                         # If content has empty transcript, this is valid
                         if not content_to_validate.transcript:
-                            results.append(
-                                ValidationResult(
-                                    is_valid=True,
-                                    reason="Correctly identified video without transcript",
-                                    content_size_bytes_validated=entity.content_size_bytes
-                                )
+                            # Create actual YouTube content for DataEntity validation
+                            actual_youtube_content = YouTubeContent(
+                                video_id=content_to_validate.video_id,
+                                title=video_metadata['snippet']['title'],
+                                channel_name=video_metadata['snippet']['channelTitle'],
+                                upload_date=dt.datetime.fromisoformat(
+                                    video_metadata['snippet']['publishedAt'].replace('Z', '+00:00')
+                                ),
+                                transcript=[],  # Empty transcript
+                                url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
+                                duration_seconds=content_to_validate.duration_seconds,
+                                language=content_to_validate.language
                             )
+                            
+                            # Validate DataEntity fields (including channel label) like X and Reddit do
+                            entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
+                            results.append(entity_validation_result)
                         else:
                             results.append(
                                 ValidationResult(
@@ -554,7 +575,12 @@ class YouTubeTranscriptScraper(Scraper):
         )
 
     def _verify_metadata(self, api_metadata: Dict[str, Any], content_to_validate: YouTubeContent) -> bool:
-        """Verify that title and channel name match."""
+        """Verify that video ID, title and channel name match."""
+
+        # Video ID check (should be exact match)
+        api_video_id = api_metadata.get('id', '')
+        if api_video_id and api_video_id != content_to_validate.video_id:
+            return False
 
         # Title check
         if not self._texts_are_similar(api_metadata.get('title', ''), content_to_validate.title, threshold=0.8):
