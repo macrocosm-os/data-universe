@@ -379,8 +379,13 @@ class MinerEvaluator:
             label = getattr(bucket, 'label', None) or "NULL"
             safe_label = label.replace('/', '_').replace(':', '_').replace('?', '').replace('*', '').replace('<', '').replace('>', '').replace('|', '').replace('"', '')[:20]  # Clean and limit length
             
-            # Extract time bucket ID
-            time_bucket_id = getattr(bucket.id, 'time_bucket', 'UNKNOWN')
+            # Extract time bucket ID (convert to string/int for Parquet compatibility)
+            time_bucket_obj = getattr(bucket.id, 'time_bucket', None)
+            if time_bucket_obj is not None:
+                # Convert TimeBucket object to string or get its ID
+                time_bucket_id = str(time_bucket_obj)
+            else:
+                time_bucket_id = 'UNKNOWN'
             
             filename = os.path.join(parquet_dir, f"eval_{uid}_{safe_hotkey}_{safe_label}_tb{time_bucket_id}_{timestamp}.parquet")
             
@@ -395,19 +400,26 @@ class MinerEvaluator:
                         else:
                             content = str(entity.content)  # Full content
                     
+                    # Ensure all values are Parquet-compatible
+                    entity_datetime = getattr(entity, 'datetime', None)
+                    if entity_datetime is not None:
+                        entity_datetime_str = str(entity_datetime)
+                    else:
+                        entity_datetime_str = ''
+                    
                     data_rows.append({
                         'evaluation_timestamp': timestamp,
-                        'miner_uid': uid,
-                        'miner_hotkey': safe_hotkey,
+                        'miner_uid': int(uid),
+                        'miner_hotkey': str(safe_hotkey),
                         'bucket_id': str(bucket.id),
                         'bucket_source': str(bucket.id.source),
-                        'bucket_label': label,
-                        'time_bucket_id': time_bucket_id,
-                        'entity_id': i + 1,
-                        'uri': entity.uri,
-                        'content_size_bytes': entity.content_size_bytes,
-                        'content': content,
-                        'entity_datetime': getattr(entity, 'datetime', '')
+                        'bucket_label': str(label),
+                        'time_bucket_id': str(time_bucket_id),
+                        'entity_id': int(i + 1),
+                        'uri': str(entity.uri) if entity.uri else '',
+                        'content_size_bytes': int(entity.content_size_bytes) if entity.content_size_bytes else 0,
+                        'content': str(content) if content else '',
+                        'entity_datetime': entity_datetime_str
                     })
                 except Exception as e:
                     bt.logging.debug(f"{hotkey}: Error processing entity {i}: {e}")
