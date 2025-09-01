@@ -16,6 +16,7 @@ from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
+from scraping.youtube import utils as youtube_utils
 import isodate
 from dotenv import load_dotenv
 import logging
@@ -440,7 +441,6 @@ class YouTubeTranscriptScraper(Scraper):
                             )
                             
                             # Validate DataEntity fields (including channel label) like X and Reddit do
-                            from . import utils as youtube_utils
                             entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
                             results.append(entity_validation_result)
                         else:
@@ -471,7 +471,6 @@ class YouTubeTranscriptScraper(Scraper):
                             )
                             
                             # Validate DataEntity fields (including channel label) like X and Reddit do
-                            from . import utils as youtube_utils
                             entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
                             results.append(entity_validation_result)
                         else:
