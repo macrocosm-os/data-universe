@@ -475,9 +475,24 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     ))
                     continue
 
-                # Validate content
-                validation_result = self._validate_content_match(transcript_data, content_to_validate, entity)
-                results.append(validation_result)
+                # Validate content match first
+                content_validation_result = self._validate_content_match(transcript_data, content_to_validate, entity)
+                if not content_validation_result.is_valid:
+                    results.append(content_validation_result)
+                    continue
+                
+                # Create actual YouTube content for DataEntity validation
+                actual_youtube_content = self._create_youtube_content(
+                    content_to_validate.video_id, 
+                    original_language, 
+                    real_upload_date,
+                    transcript_data, 
+                    transcript_data.get('channel', '')
+                )
+                
+                # Validate DataEntity fields (including channel label) like X and Reddit do
+                entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
+                results.append(entity_validation_result)
 
             except Exception as e:
                 bt.logging.error(f"Validation error: {str(e)}")

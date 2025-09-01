@@ -425,13 +425,24 @@ class YouTubeTranscriptScraper(Scraper):
                         transcript_valid = self._verify_transcript(transcript_data, content_to_validate.transcript)
 
                         if transcript_valid:
-                            results.append(
-                                ValidationResult(
-                                    is_valid=True,
-                                    reason="Video validated successfully",
-                                    content_size_bytes_validated=entity.content_size_bytes
-                                )
+                            # Create actual YouTube content for DataEntity validation
+                            actual_youtube_content = YouTubeContent(
+                                video_id=content_to_validate.video_id,
+                                title=video_metadata['snippet']['title'],
+                                channel_name=video_metadata['snippet']['channelTitle'],
+                                upload_date=dt.datetime.fromisoformat(
+                                    video_metadata['snippet']['publishedAt'].replace('Z', '+00:00')
+                                ),
+                                transcript=transcript_data,
+                                url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
+                                duration_seconds=content_to_validate.duration_seconds,
+                                language=content_to_validate.language
                             )
+                            
+                            # Validate DataEntity fields (including channel label) like X and Reddit do
+                            from . import utils as youtube_utils
+                            entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
+                            results.append(entity_validation_result)
                         else:
                             results.append(
                                 ValidationResult(
@@ -445,13 +456,24 @@ class YouTubeTranscriptScraper(Scraper):
                     except (TranscriptsDisabled, NoTranscriptFound):
                         # If content has empty transcript, this is valid
                         if not content_to_validate.transcript:
-                            results.append(
-                                ValidationResult(
-                                    is_valid=True,
-                                    reason="Correctly identified video without transcript",
-                                    content_size_bytes_validated=entity.content_size_bytes
-                                )
+                            # Create actual YouTube content for DataEntity validation
+                            actual_youtube_content = YouTubeContent(
+                                video_id=content_to_validate.video_id,
+                                title=video_metadata['snippet']['title'],
+                                channel_name=video_metadata['snippet']['channelTitle'],
+                                upload_date=dt.datetime.fromisoformat(
+                                    video_metadata['snippet']['publishedAt'].replace('Z', '+00:00')
+                                ),
+                                transcript=[],  # Empty transcript
+                                url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
+                                duration_seconds=content_to_validate.duration_seconds,
+                                language=content_to_validate.language
                             )
+                            
+                            # Validate DataEntity fields (including channel label) like X and Reddit do
+                            from . import utils as youtube_utils
+                            entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
+                            results.append(entity_validation_result)
                         else:
                             results.append(
                                 ValidationResult(
