@@ -150,6 +150,7 @@ class OrganicQueryProcessor:
             source=DataSource[synapse.source.upper()],
             usernames=synapse.usernames,
             keywords=synapse.keywords,
+            keyword_mode=synapse.keyword_mode,
             start_date=synapse.start_date,
             end_date=synapse.end_date,
             limit=synapse.limit,
@@ -805,9 +806,17 @@ class OrganicQueryProcessor:
                     post_text = x_content_dict.get("content", "")
                 
             post_text = post_text.lower()
-            if not post_text or not all(keyword.lower() in post_text for keyword in synapse.keywords):
-                bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
-                return False
+
+            # Apply keyword matching based on keyword_mode
+            keyword_mode = synapse.keyword_mode
+            if keyword_mode == 'all':
+                if not all(keyword.lower() in post_text for keyword in synapse.keywords):
+                    bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
+                    return False
+            else:  # keyword_mode == 'any'
+                if not any(keyword.lower() in post_text for keyword in synapse.keywords):
+                    bt.logging.debug(f"None of the keywords ({synapse.keywords}) found in post: {post_text}")
+                    return False
         
         # Time range validation
         if not self._validate_time_range(synapse, x_entity.datetime):
@@ -841,7 +850,12 @@ class OrganicQueryProcessor:
             title_text = reddit_content_dict.get("title") or ""
             content_text = (body_text + ' ' + title_text).lower().strip()
             
-            keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
+            # Apply keyword matching based on keyword_mode
+            keyword_mode = synapse.keyword_mode
+            if keyword_mode == 'all':
+                keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
+            else:  # keyword_mode == 'any'  
+                keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
             
             if not (subreddit_match or keyword_in_content):
                 bt.logging.debug(f"Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")
