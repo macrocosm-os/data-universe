@@ -659,6 +659,7 @@ class Validator:
             return synapse
         
         t_start = time.perf_counter() 
+        self.organic_processor.update_metagraph(self.evaluator.metagraph)
         synapse_resp = await self.organic_processor.process_organic_query(synapse)
 
         metrics.ORGANIC_QUERY_PROCESS_DURATION.labels(request_source=synapse.source, response_status=synapse_resp.status).observe(time.perf_counter() - t_start)
