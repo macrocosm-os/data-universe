@@ -40,6 +40,12 @@ class OrganicQueryProcessor:
         self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
     
 
+    def update_metagraph(self, metagraph = bt.metagraph):
+        """Updates metagraph for the Organic Query Processor."""
+        bt.logging.info("Updating metagraph for OrganicQueryProcessor.")
+        self.metagraph = metagraph
+
+
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
         """
         Main entry point for processing organic queries
