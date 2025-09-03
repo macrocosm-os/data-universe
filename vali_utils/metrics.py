@@ -130,6 +130,14 @@ ORGANIC_QUERY_REQUESTS_TOTAL = Counter(
     unit="requests",
 )
 
+ORGANIC_MINER_FAILURES = Counter(
+    "organic_miner_failures",
+    "Total number of organic query requests",
+    labelnames=["miner_uid", "failure_type"],
+    **_params,
+    unit="failures",
+)
+
 
 ## Dynamic Desirability
 DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS = Gauge(
