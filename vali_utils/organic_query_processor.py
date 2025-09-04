@@ -12,6 +12,7 @@ from common import constants, utils
 from scraping.provider import ScraperProvider
 from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from scraping.x.on_demand_model import EnhancedXContent
+from scraping.reddit.model import RedditContent
 from scraping.youtube.model import YouTubeContent
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
@@ -182,14 +183,76 @@ class OrganicQueryProcessor:
                         data = getattr(response, 'data', [])
                         data_count = len(data) if data else 0
                         
-                        miner_responses[uid] = data
-                        miner_data_counts[uid] = data_count
-                        
-                        bt.logging.info(f"Miner {uid} ({hotkey}) returned {data_count} items")
+                        # Early format validation - test one random item if data exists
+                        if data_count > 0:
+                            if self._validate_miner_data_format(synapse, data, uid):
+                                miner_responses[uid] = data
+                                miner_data_counts[uid] = data_count
+                                bt.logging.info(f"Miner {uid} ({hotkey}) returned {data_count} valid items")
+                            else:
+                                # Format validation failed - treat as empty response
+                                miner_responses[uid] = []
+                                miner_data_counts[uid] = 0
+                                bt.logging.warning(f"Miner {uid} ({hotkey}) failed format validation - treating as empty")
+                        else:
+                            miner_responses[uid] = data
+                            miner_data_counts[uid] = data_count
+                            bt.logging.info(f"Miner {uid} ({hotkey}) returned {data_count} items")
                     else:
                         bt.logging.error(f"Miner {uid} ({hotkey}) failed to respond properly")
         
         return miner_responses, miner_data_counts
+    
+
+    def _validate_miner_data_format(self, synapse: OrganicRequest, data: List, miner_uid: int) -> bool:
+        """
+        Validate miner data format by testing conversion to appropriate content model.
+        Selects one random item and attempts conversion based on source type.
+        
+        Args:
+            synapse: The organic request with source info
+            data: List of data items from the miner 
+            miner_uid: UID of the miner for logging
+            
+        Returns:
+            bool: True if format is valid, False otherwise
+        """
+        if not data:
+            return True  # Empty is valid
+            
+        try:
+            # Select one random item for testing
+            test_item = random.choice(data)
+            source = synapse.source.upper()
+            
+            # Validate basic DataEntity structure
+            if not isinstance(test_item, DataEntity):
+                bt.logging.debug(f"Miner {miner_uid}: Item is not a DataEntity")
+                return False
+                
+            if not test_item.uri or not test_item.content:
+                bt.logging.debug(f"Miner {miner_uid}: Missing required fields (uri, content)")
+                return False
+            
+            # Test conversion to appropriate content model based on source
+            if source == 'X':
+                enhanced_content = EnhancedXContent.from_data_entity(test_item)
+                bt.logging.trace(f"Miner {miner_uid}: Successfully converted to EnhancedXContent")
+                
+            elif source == 'REDDIT':
+                # Parse the content JSON to validate structure
+                reddit_content = RedditContent.from_data_entity(test_item)
+                bt.logging.trace(f"Miner {miner_uid}: Successfully converted to RedditContent")
+                
+            else:   # source == 'YOUTUBE'
+                youtube_content = YouTubeContent.from_data_entity(test_item)
+                bt.logging.trace(f"Miner {miner_uid}: Successfully converted to YouTubeContent")
+                
+            return True
+            
+        except Exception as e:
+            bt.logging.info(f"Miner {miner_uid} format validation failed: {str(e)}")
+            return False
     
 
     async def _apply_basic_penalties(self, 
