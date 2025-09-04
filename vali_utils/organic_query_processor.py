@@ -473,7 +473,8 @@ class OrganicQueryProcessor:
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
                                                                    keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
                                                                    start_datetime=start_date,
-                                                                   end_datetime=end_date)
+                                                                   end_datetime=end_date,
+                                                                   limit=synapse.limit)
             elif synapse.source.upper() == 'YOUTUBE':
                 yt_label = DataLabel(value=YouTubeContent.create_channel_label(synapse.usernames[0]))
                 verify_config = ScrapeConfig(
