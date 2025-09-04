@@ -459,7 +459,12 @@ class OrganicQueryProcessor:
             
             # Perform scraping based on source
             if synapse.source.upper() == 'X':
-                await scraper.scrape(verify_config)
+                await scraper.on_demand_scrape(usernames=synapse.usernames,
+                                               keywords=synapse.keywords,
+                                               keyword_mode=synapse.keyword_mode,
+                                               start_datetime=start_date,
+                                               end_datetime=end_date,
+                                               limit=synapse.limit)
                 enhanced_content = scraper.get_enhanced_content()
                 # Convert EnhancedXContent to DataEntities
                 verification_data = [EnhancedXContent.to_enhanced_data_entity(content=content) for content in enhanced_content]
@@ -467,8 +472,10 @@ class OrganicQueryProcessor:
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
                                                                    keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
+                                                                   keyword_mode=synapse.keyword_mode,
                                                                    start_datetime=start_date,
-                                                                   end_datetime=end_date)
+                                                                   end_datetime=end_date,
+                                                                   limit=synapse.limit)
             elif synapse.source.upper() == 'YOUTUBE':
                 yt_label = DataLabel(value=YouTubeContent.create_channel_label(synapse.usernames[0]))
                 verify_config = ScrapeConfig(
