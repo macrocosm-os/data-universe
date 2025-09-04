@@ -43,7 +43,7 @@ class QueryRequest(StrictBaseModel):
         description="Maximum number of items to return"
     )
     keyword_mode: KeywordMode = Field(
-        default="any",
+        default="all",
         description="Keyword matching mode: 'any' (if any keyword is present) or 'all' (all keywords must be present)"
     )
 
@@ -84,13 +84,6 @@ class QueryRequest(StrictBaseModel):
                 raise ValueError("YouTube requests cannot have keywords")
         
         return v
-
-    @field_validator('keyword_mode')
-    @classmethod
-    def validate_keyword_mode(cls, v: str) -> str:
-        if v.lower() not in ['any', 'all']:
-            raise ValueError("keyword_mode must be either 'any' or 'all'")
-        return v.lower()
 
 
 class QueryResponse(StrictBaseModel):

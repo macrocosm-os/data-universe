@@ -118,7 +118,7 @@ class OnDemandRequest(BaseProtocol):
     )
 
     keyword_mode: KeywordMode = Field(
-        default="any",
+        default="all",
         description="Keyword matching mode: 'any' or 'all'"
     )
 

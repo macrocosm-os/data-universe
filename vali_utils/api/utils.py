@@ -40,7 +40,7 @@ async def query_validator(
     source: str,
     keywords: list = [],
     usernames: list = [],
-    keyword_mode: KeywordMode = "any",
+    keyword_mode: KeywordMode = "all",
     start_date: str = None,
     end_date: str = None,
     limit: int = 1000

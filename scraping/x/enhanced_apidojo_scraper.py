@@ -353,7 +353,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         self,
         usernames: List[str] = None,
         keywords: List[str] = None,
-        keyword_mode: KeywordMode = "any",
+        keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
         limit: int = 100
