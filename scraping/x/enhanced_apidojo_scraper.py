@@ -430,10 +430,8 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         # Run the Actor and retrieve the scraped data
         try:
             dataset: List[dict] = await self.runner.run(run_config, run_input)
-        except Exception:
-            bt.logging.error(
-                f"Failed to scrape tweets using query {query}: {traceback.format_exc()}"
-            )
+        except Exception as e:
+            bt.logging.exception(f"Failed to scrape tweets using query {query}: {str(e)}")
             return []
 
         # Parse the results using enhanced methods
