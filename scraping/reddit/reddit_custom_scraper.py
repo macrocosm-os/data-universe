@@ -22,6 +22,7 @@ from scraping.reddit.utils import (
 from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from common.protocol import KeywordMode
 from scraping.reddit.model import RedditContent, RedditDataType
 from typing import List
 from dotenv import load_dotenv
@@ -242,7 +243,7 @@ class RedditCustomScraper(Scraper):
         usernames: List[str] = None,
         subreddit: str = "all",
         keywords: List[str] = None,
-        keyword_mode: str = "any",
+        keyword_mode: KeywordMode = "any",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
         limit: int = 100
@@ -362,7 +363,7 @@ class RedditCustomScraper(Scraper):
         self,
         content: RedditContent,
         keywords: List[str] = None,
-        keyword_mode: str = "any",
+        keyword_mode: KeywordMode = "any",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None
     ) -> bool:

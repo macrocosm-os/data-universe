@@ -3,6 +3,7 @@ import random
 from fastapi import HTTPException
 from functools import wraps
 from common.organic_protocol import OrganicRequest
+from common.protocol import KeywordMode
 
 def select_validation_samples(data, sample_size: int = 1):
     """Select random samples from the data for validation"""
@@ -39,7 +40,7 @@ async def query_validator(
     source: str,
     keywords: list = [],
     usernames: list = [],
-    keyword_mode: str = "any",
+    keyword_mode: KeywordMode = "any",
     start_date: str = None,
     end_date: str = None,
     limit: int = 1000

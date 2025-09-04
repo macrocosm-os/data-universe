@@ -5,6 +5,7 @@ import bittensor as bt
 from typing import List, Tuple, Optional, Dict, Any
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
+from common.protocol import KeywordMode
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
@@ -352,7 +353,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         self,
         usernames: List[str] = None,
         keywords: List[str] = None,
-        keyword_mode: str = "any",
+        keyword_mode: KeywordMode = "any",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
         limit: int = 100

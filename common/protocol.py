@@ -6,7 +6,10 @@ from common.data import (
     DataEntity,
     DataEntityBucketId,
 )
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Literal
+
+
+KeywordMode = Literal["any", "all"]
 
 
 class BaseProtocol(bt.Synapse):
@@ -114,7 +117,7 @@ class OnDemandRequest(BaseProtocol):
         max_length=5
     )
 
-    keyword_mode: str = Field(
+    keyword_mode: KeywordMode = Field(
         default="any",
         description="Keyword matching mode: 'any' or 'all'"
     )
