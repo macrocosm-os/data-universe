@@ -29,22 +29,22 @@ class EnhancedXContent(BaseModel):
         description="A list of hashtags associated with the tweet, in order they appear in the tweet.",
     )
 
-    # Enhanced fields - "user"
-    user_id: Optional[str] = None
-    user_display_name: Optional[str] = None
-    user_verified: Optional[bool] = None
-    user_followers_count: Optional[int] = None
-    user_following_count: Optional[int] = None
+    # Enhanced fields - "user" 
+    user_id: str
+    user_display_name: str
+    user_verified: bool
+    user_followers_count: int
+    user_following_count: int
 
-    # Tweet metadata - "tweet"
-    tweet_id: Optional[str] = None
-    like_count: Optional[int] = None
-    retweet_count: Optional[int] = None
-    reply_count: Optional[int] = None
-    quote_count: Optional[int] = None
-    is_retweet: Optional[bool] = None
-    is_reply: Optional[bool] = None
-    is_quote: Optional[bool] = None
+    # Tweet metadata - "tweet" 
+    tweet_id: str
+    like_count: int
+    retweet_count: int
+    reply_count: int
+    quote_count: int
+    is_retweet: bool
+    is_reply: bool
+    is_quote: bool
 
     # Media content - "media"
     media_urls: List[str] = Field(default_factory=list)
@@ -257,10 +257,10 @@ class EnhancedXContent(BaseModel):
         content_str = data_entity.content.decode("utf-8")  
         content_dict = json.loads(content_str)
         
-        # Extract data from the new API structure
-        user_info = content_dict.get("user", {})
-        tweet_info = content_dict.get("tweet", {})
-        media_info = content_dict.get("media", [])
+        # Extract data from required nested structure - will throw KeyError if missing
+        user_info = content_dict["user"]
+        tweet_info = content_dict["tweet"]
+        media_info = content_dict.get("media", [])  
         
         # Map to EnhancedXContent fields
         username = user_info.get("username")
@@ -296,19 +296,19 @@ class EnhancedXContent(BaseModel):
             url=url,
             timestamp=timestamp,
             tweet_hashtags=hashtags,
-            user_id=user_info.get("id"),
-            user_display_name=user_info.get("display_name"),
-            user_verified=user_info.get("verified"),
-            user_followers_count=user_info.get("followers_count"),
-            user_following_count=user_info.get("following_count"),
-            tweet_id=tweet_info.get("id"),
-            like_count=tweet_info.get("like_count"),
-            retweet_count=tweet_info.get("retweet_count"),
-            reply_count=tweet_info.get("reply_count"),
-            quote_count=tweet_info.get("quote_count"),
-            is_retweet=tweet_info.get("is_retweet"),
-            is_reply=tweet_info.get("is_reply"),
-            is_quote=tweet_info.get("is_quote"),
+            user_id=user_info["id"],
+            user_display_name=user_info["display_name"],
+            user_verified=user_info["verified"],
+            user_followers_count=user_info["followers_count"],
+            user_following_count=user_info["following_count"],
+            tweet_id=tweet_info["id"],
+            like_count=tweet_info["like_count"],
+            retweet_count=tweet_info["retweet_count"],
+            reply_count=tweet_info["reply_count"],
+            quote_count=tweet_info["quote_count"],
+            is_retweet=tweet_info["is_retweet"],
+            is_reply=tweet_info["is_reply"],
+            is_quote=tweet_info["is_quote"],
             media_urls=media_urls,
             media_types=media_types,
             conversation_id=tweet_info.get("conversation_id"),

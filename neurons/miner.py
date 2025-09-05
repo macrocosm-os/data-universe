@@ -590,7 +590,8 @@ class Miner:
                                                       subreddit=synapse.keywords[0] if synapse.keywords else None,
                                                       keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
                                                       start_datetime=start_dt,
-                                                      end_datetime=end_dt)
+                                                      end_datetime=end_dt,
+                                                      limit=synapse.limit)
                 synapse.data = data[:synapse.limit] if synapse.limit else data
             elif synapse.source == DataSource.YOUTUBE:
                 from scraping.provider import ScraperProvider
