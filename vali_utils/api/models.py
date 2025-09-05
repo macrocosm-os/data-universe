@@ -2,6 +2,7 @@ from pydantic import BaseModel, Field, field_validator
 from typing import List, Optional, Dict, Any
 import datetime as dt
 from common.data import DataSource, StrictBaseModel
+from common.protocol import KeywordMode
 
 
 class DesirabilityRequest(BaseModel):
@@ -40,6 +41,10 @@ class QueryRequest(StrictBaseModel):
         ge=1,
         le=1000,
         description="Maximum number of items to return"
+    )
+    keyword_mode: KeywordMode = Field(
+        default="all",
+        description="Keyword matching mode: 'any' (if any keyword is present) or 'all' (all keywords must be present)"
     )
 
     @field_validator('source')
