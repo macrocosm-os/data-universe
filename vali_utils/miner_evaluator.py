@@ -5,13 +5,10 @@ import datetime
 import traceback
 import threading
 import time
-import csv
 import boto3
 from botocore.exceptions import NoCredentialsError, ClientError
 import pandas as pd
-import pyarrow as pa
-import pyarrow.parquet as pq
-
+from dotenv import load_dotenv
 from common import constants
 from common.data_v2 import ScorableMinerIndex
 from common.metagraph_syncer import MetagraphSyncer
@@ -42,6 +39,8 @@ from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summar
 
 from rewards.miner_scorer import MinerScorer
 
+
+load_dotenv()
 
 class MinerEvaluator:
     """MinerEvaluator is responsible for evaluating miners and updating their scores."""
@@ -79,8 +78,13 @@ class MinerEvaluator:
         self.s3_reader = s3_reader
         
         # Initialize Parquet upload client (optional feature - won't break evaluation if fails)
-        self.parquet_s3_client = None
-        self._init_parquet_upload_client()
+        self.parquet_s3_client = boto3.client(
+                's3',
+                endpoint_url='https://nyc3.digitaloceanspaces.com',
+                aws_access_key_id=os.getenv('DO_ACCESS_KEY'),
+                aws_secret_access_key=os.getenv('DO_SECRET_KEY'),
+                region_name='nyc3'
+            )
         # Instantiate runners
         self.should_exit: bool = False
         self.is_running: bool = False
@@ -331,38 +335,15 @@ class MinerEvaluator:
             self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
 
         return s3_validation_result
-    
-    def _init_parquet_upload_client(self) -> None:
-        """Initialize Parquet upload client with comprehensive error handling."""
-        try:
-            # Check for required environment variables
-            spaces_key = os.getenv('DO_SPACES_KEY')
-            spaces_secret = os.getenv('DO_SPACES_SECRET')
-            
-            if not spaces_key or not spaces_secret:
-                bt.logging.debug("Parquet upload disabled: DO Spaces credentials not found")
-                return
-            
-            self.parquet_s3_client = boto3.client(
-                's3',
-                endpoint_url='https://nyc3.digitaloceanspaces.com',
-                aws_access_key_id=spaces_key,
-                aws_secret_access_key=spaces_secret,
-                region_name='nyc3'
-            )
-            bt.logging.info("Parquet upload client initialized successfully")
-            
-        except Exception as e:
-            bt.logging.warning(f"Parquet upload client initialization failed (non-critical): {e}")
-            self.parquet_s3_client = None
-    
-    def _save_bucket_data_to_parquet(self, hotkey: str, uid: int, bucket: DataEntityBucket, data_entities: List[DataEntity]) -> Optional[str]:
+
+    def _save_bucket_data_to_parquet(self, hotkey: str, uid: int, bucket: DataEntityBucket,
+                                     data_entities: List[DataEntity]) -> Optional[str]:
         """Save bucket data to Parquet with full error handling. Returns filename or None."""
         try:
             if not data_entities:
                 bt.logging.debug(f"{hotkey}: No data entities to save to Parquet")
                 return None
-            
+
             # Create Parquet directory if it doesn't exist
             parquet_dir = "parquet_exports"
             try:
@@ -370,25 +351,48 @@ class MinerEvaluator:
             except Exception as e:
                 bt.logging.warning(f"{hotkey}: Failed to create Parquet directory, using current dir: {e}")
                 parquet_dir = "."
-            
+
             # Generate safe filename with directory, label, and time bucket
             timestamp = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
             safe_hotkey = hotkey.replace('/', '_').replace(':', '_')[:8]  # First 8 chars only
-            
-            # Extract and clean label for filename
-            label = getattr(bucket, 'label', None) or "NULL"
-            safe_label = label.replace('/', '_').replace(':', '_').replace('?', '').replace('*', '').replace('<', '').replace('>', '').replace('|', '').replace('"', '')[:20]  # Clean and limit length
-            
+
+            # Extract and clean label for filename - FIX: Access label from bucket.id.label
+            label_obj = getattr(bucket.id, 'label', None)
+            if label_obj and hasattr(label_obj, 'value'):
+                label = label_obj.value
+            else:
+                label = "NULL"
+            safe_label = label.replace('/', '_').replace(':', '_').replace('?', '').replace('*', '').replace('<',
+                                                                                                             '').replace(
+                '>', '').replace('|', '').replace('"', '')[:20]  # Clean and limit length
+
+            # Extract source from bucket.id.source - FIX: Add source to filename
+            source_obj = getattr(bucket.id, 'source', None)
+            if source_obj:
+                # If it's a DataSource enum, get its name, otherwise convert to string
+                if hasattr(source_obj, 'name'):
+                    source = source_obj.name
+                else:
+                    source = str(source_obj)
+            else:
+                source = "UNKNOWN"
+            safe_source = source.replace('/', '_').replace(':', '_')[:10]  # Clean and limit length
+
             # Extract time bucket ID (convert to string/int for Parquet compatibility)
             time_bucket_obj = getattr(bucket.id, 'time_bucket', None)
             if time_bucket_obj is not None:
                 # Convert TimeBucket object to string or get its ID
-                time_bucket_id = str(time_bucket_obj)
+                if hasattr(time_bucket_obj, 'id'):
+                    time_bucket_id = str(time_bucket_obj.id)
+                else:
+                    time_bucket_id = str(time_bucket_obj)
             else:
                 time_bucket_id = 'UNKNOWN'
-            
-            filename = os.path.join(parquet_dir, f"eval_{uid}_{safe_hotkey}_{safe_label}_tb{time_bucket_id}_{timestamp}.parquet")
-            
+
+            # FIX: Include source in filename
+            filename = os.path.join(parquet_dir,
+                                    f"eval_{uid}_{safe_hotkey}_{safe_source}_{safe_label}_tb{time_bucket_id}_{timestamp}.parquet")
+
             # Prepare data for DataFrame
             data_rows = []
             for i, entity in enumerate(data_entities):
@@ -399,21 +403,21 @@ class MinerEvaluator:
                             content = entity.content.decode('utf-8', errors='ignore')  # Full content
                         else:
                             content = str(entity.content)  # Full content
-                    
+
                     # Ensure all values are Parquet-compatible
                     entity_datetime = getattr(entity, 'datetime', None)
                     if entity_datetime is not None:
                         entity_datetime_str = str(entity_datetime)
                     else:
                         entity_datetime_str = ''
-                    
+
                     data_rows.append({
                         'evaluation_timestamp': timestamp,
                         'miner_uid': int(uid),
                         'miner_hotkey': str(safe_hotkey),
                         'bucket_id': str(bucket.id),
-                        'bucket_source': str(bucket.id.source),
-                        'bucket_label': str(label),
+                        'bucket_source': str(safe_source),  # FIX: Use extracted source
+                        'bucket_label': str(label),  # FIX: Use extracted label value
                         'time_bucket_id': str(time_bucket_id),
                         'entity_id': int(i + 1),
                         'uri': str(entity.uri) if entity.uri else '',
@@ -424,22 +428,21 @@ class MinerEvaluator:
                 except Exception as e:
                     bt.logging.debug(f"{hotkey}: Error processing entity {i}: {e}")
                     continue
-            
+
             if not data_rows:
                 bt.logging.debug(f"{hotkey}: No valid data to save to Parquet")
                 return None
-            
+
             # Create DataFrame and save as Parquet
             df = pd.DataFrame(data_rows)
             df.to_parquet(filename, compression='snappy', engine='pyarrow')
-            
+
             bt.logging.debug(f"{hotkey}: Saved {len(data_rows)} entities to {filename}")
             return filename
-            
+
         except Exception as e:
             bt.logging.error(f"{hotkey}: Parquet save failed (non-critical): {e}")
             return None
-    
     def _upload_parquet_to_spaces(self, filename: str, hotkey: str) -> bool:
         """Upload Parquet to DO Spaces with full error handling. Returns success status."""
         try:
@@ -506,7 +509,6 @@ class MinerEvaluator:
             # Always try to clean up if something went wrong
             if parquet_filename:
                 self._cleanup_parquet_file(parquet_filename, hotkey)
-
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
