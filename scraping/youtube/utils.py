@@ -6,6 +6,8 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from common.data import DataEntity
 from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE
+from .model import YouTubeContent
+from .model import normalize_channel_name
 
 
 def extract_video_id(url: str) -> str:
@@ -205,5 +207,45 @@ def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntit
     return ValidationResult(
         is_valid=True,
         reason="YouTube timestamp validation passed",
+        content_size_bytes_validated=entity.content_size_bytes,
+    )
+
+
+def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: DataEntity) -> ValidationResult:
+    """
+    Validate DataEntity fields against the actual YouTube content.
+    Replicates the pattern from X and Reddit validation using DataEntity.are_non_content_fields_equal().
+    
+    Args:
+        actual_content: YouTubeContent with actual data from YouTube API
+        entity: DataEntity submitted by miner
+        
+    Returns:
+        ValidationResult indicating if DataEntity fields are valid
+    """
+    # Create DataEntity from actual content for comparison
+    actual_entity = YouTubeContent.to_data_entity(content=actual_content)
+    
+    # Validate content size (prevent claiming more bytes than actual)
+    byte_difference_allowed = 0
+    
+    if (entity.content_size_bytes - actual_entity.content_size_bytes) > byte_difference_allowed:
+        return ValidationResult(
+            is_valid=False,
+            reason="The claimed bytes must not exceed the actual YouTube content size.",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Use the same DataEntity field equality check as X and Reddit
+    if not DataEntity.are_non_content_fields_equal(actual_entity, entity):
+        return ValidationResult(
+            is_valid=False,
+            reason="The DataEntity fields are incorrect based on the YouTube content.",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    return ValidationResult(
+        is_valid=True,
+        reason="Good job, you honest miner!",
         content_size_bytes_validated=entity.content_size_bytes,
     )
