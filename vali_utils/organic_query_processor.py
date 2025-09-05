@@ -183,7 +183,7 @@ class OrganicQueryProcessor:
                         data = getattr(response, 'data', [])
                         data_count = len(data) if data else 0
                         
-                        # Early format validation - test one random item if data exists
+                        # Early format validation
                         if data_count > 0:
                             if self._validate_miner_data_format(synapse, data, uid):
                                 miner_responses[uid] = data
@@ -207,7 +207,7 @@ class OrganicQueryProcessor:
     def _validate_miner_data_format(self, synapse: OrganicRequest, data: List, miner_uid: int) -> bool:
         """
         Validate miner data format by testing conversion to appropriate content model.
-        Selects one random item and attempts conversion based on source type.
+        Validates all items in the response to ensure consistent format.
         
         Args:
             synapse: The organic request with source info
@@ -215,44 +215,41 @@ class OrganicQueryProcessor:
             miner_uid: UID of the miner for logging
             
         Returns:
-            bool: True if format is valid, False otherwise
+            bool: True if all items have valid format, False otherwise
         """
         if not data:
             return True  # Empty is valid
             
-        try:
-            # Select one random item for testing
-            test_item = random.choice(data)
-            source = synapse.source.upper()
-            
-            # Validate basic DataEntity structure
-            if not isinstance(test_item, DataEntity):
-                bt.logging.debug(f"Miner {miner_uid}: Item is not a DataEntity")
+        source = synapse.source.upper()
+
+        for i, item in enumerate(data):
+            try:
+                # Validate basic DataEntity structure
+                if not isinstance(item, DataEntity):
+                    bt.logging.debug(f"Miner {miner_uid}: Item {i} is not a DataEntity")
+                    return False
+                    
+                if not item.uri or not item.content:
+                    bt.logging.debug(f"Miner {miner_uid}: Item {i} missing required fields (uri, content)")
+                    return False
+                
+                # Test conversion to appropriate content model based on source
+                if source == 'X':
+                    enhanced_content = EnhancedXContent.from_data_entity(item)
+                    
+                elif source == 'REDDIT':
+                    # Parse the content JSON to validate structure
+                    reddit_content = RedditContent.from_data_entity(item)
+                    
+                else:   # source == 'YOUTUBE'
+                    youtube_content = YouTubeContent.from_data_entity(item)
+                    
+            except Exception as e:
+                bt.logging.info(f"Miner {miner_uid} format validation failed on item {i}: {str(e)}")
                 return False
-                
-            if not test_item.uri or not test_item.content:
-                bt.logging.debug(f"Miner {miner_uid}: Missing required fields (uri, content)")
-                return False
-            
-            # Test conversion to appropriate content model based on source
-            if source == 'X':
-                enhanced_content = EnhancedXContent.from_data_entity(test_item)
-                bt.logging.trace(f"Miner {miner_uid}: Successfully converted to EnhancedXContent")
-                
-            elif source == 'REDDIT':
-                # Parse the content JSON to validate structure
-                reddit_content = RedditContent.from_data_entity(test_item)
-                bt.logging.trace(f"Miner {miner_uid}: Successfully converted to RedditContent")
-                
-            else:   # source == 'YOUTUBE'
-                youtube_content = YouTubeContent.from_data_entity(test_item)
-                bt.logging.trace(f"Miner {miner_uid}: Successfully converted to YouTubeContent")
-                
-            return True
-            
-        except Exception as e:
-            bt.logging.info(f"Miner {miner_uid} format validation failed: {str(e)}")
-            return False
+        
+        bt.logging.trace(f"Miner {miner_uid}: Successfully validated all {len(data)} items")
+        return True
     
 
     async def _apply_basic_penalties(self, 
