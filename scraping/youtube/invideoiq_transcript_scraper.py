@@ -131,7 +131,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
                         view_count = transcript_data.get('view_count', 0)
 
                         # Filter low engagement videos (100+ views required)
-                        if view_count < 100:
+                        if int(view_count) < 100:
                             bt.logging.info(
                                 f"Video {video_id} has only {view_count} views, skipping (minimum 100 required)")
                             continue
@@ -467,7 +467,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
                 # Validate view count during validation
                 view_count = transcript_data.get('view_count', 0)
-                if view_count < 100:
+                if int(view_count) < 100:
                     results.append(ValidationResult(
                         is_valid=False,
                         reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
