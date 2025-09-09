@@ -207,7 +207,7 @@ class OrganicQueryProcessor:
     def _validate_miner_data_format(self, synapse: OrganicRequest, data: List, miner_uid: int) -> bool:
         """
         Validate miner data format by testing conversion to appropriate content model.
-        Validates all items in the response to ensure consistent format.
+        Validates all items in the response and checks for duplicates within the response.
         
         Args:
             synapse: The organic request with source info
@@ -215,12 +215,13 @@ class OrganicQueryProcessor:
             miner_uid: UID of the miner for logging
             
         Returns:
-            bool: True if all items have valid format, False otherwise
+            bool: True if all items have valid format and no duplicates, False otherwise
         """
         if not data:
             return True  # Empty is valid
             
         source = synapse.source.upper()
+        seen_post_ids = set()
 
         for i, item in enumerate(data):
             try:
@@ -232,6 +233,13 @@ class OrganicQueryProcessor:
                 if not item.uri or not item.content:
                     bt.logging.debug(f"Miner {miner_uid}: Item {i} missing required fields (uri, content)")
                     return False
+                
+                # Check for duplicates within this miner's response
+                post_id = self._get_post_id(item)
+                if post_id in seen_post_ids:
+                    bt.logging.info(f"Miner {miner_uid} has duplicate posts in response (item {i}): {post_id}")
+                    return False
+                seen_post_ids.add(post_id)
                 
                 # Test conversion to appropriate content model based on source
                 if source == 'X':
@@ -248,7 +256,7 @@ class OrganicQueryProcessor:
                 bt.logging.info(f"Miner {miner_uid} format validation failed on item {i}: {str(e)}")
                 return False
         
-        bt.logging.trace(f"Miner {miner_uid}: Successfully validated all {len(data)} items")
+        bt.logging.trace(f"Miner {miner_uid}: Successfully validated all {len(data)} items for formatting and duplicates.")
         return True
     
 
