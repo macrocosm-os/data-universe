@@ -5,6 +5,7 @@ import bittensor as bt
 from typing import List, Dict, Any, Optional
 import datetime as dt
 import httpx
+import os
 
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
@@ -12,6 +13,7 @@ from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
 from scraping.youtube import utils as youtube_utils
 from scraping.apify import ActorRunner, RunConfig, ActorRunError
+from apify_client import ApifyClient
 
 
 class YouTubeChannelTranscriptScraper(Scraper):
@@ -344,7 +346,9 @@ class YouTubeChannelTranscriptScraper(Scraper):
         """Get transcript data using the Apify actor with specific language."""
         try:
             video_url = f"https://www.youtube.com/watch?v={video_id}"
-
+            
+            apify_api_key=os.getenv("APIFY_API_TOKEN")
+            client = ApifyClient(apify_api_key)
             run_input = {
                 "video_url": video_url,
                 "language": language,
@@ -361,9 +365,23 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             dataset = await self.runner.run(run_config, run_input)
 
-            if not dataset or len(dataset) == 0:
-                return None
+            if not dataset or len(dataset) == 0 or not dataset[0].get("transcript", ""): 
+                bt.logging.debug(f"Getting transcript for video {video_id} language {language} failed. Now trying with residential proxy")
 
+                max_retry = 2
+                run_input["use_residential_proxy_for_yt"] = True
+
+                for try_cnt in range(max_retry):
+                    await asyncio.sleep(5)
+                    run = client.actor("invideoiq/video-transcript-scraper").call(run_input=run_input)
+                    bt.logging.info("💾 Check your data here: https://console.apify.com/storage/key-value-stores/" + run["defaultKeyValueStoreId"])
+                    output_data = client.key_value_store(run["defaultKeyValueStoreId"]).get_record('OUTPUT')['value']
+                    if not output_data or not output_data.get("transcript", ""):
+                        if try_cnt == max_retry - 1:
+                            return None
+                        continue
+                    return output_data
+            
             return dataset[0]
 
         except Exception as e:
@@ -738,6 +756,20 @@ async def test_validation():
     bt.logging.info("VALIDATION TEST COMPLETED")
     return results
 
+async def test_get_transcript():
+    # a small(< 9MB output) non-en video
+    # video_id = 'LfCYDBOdaN4'
+    # language = 'th'
+
+    # a long(> 9MB output) non-en video
+    video_id = 'x5dArZ6MaKk'
+    language = 'th'
+    
+    scraper = YouTubeChannelTranscriptScraper()
+    transcript_data = await scraper._get_transcript_from_actor(video_id, language)
+    print(f"transcript_data: {transcript_data}")
+    result = True if transcript_data else False
+    return result   
 
 async def main():
     """Main test function."""
@@ -746,9 +778,10 @@ async def main():
     print("1. Test channel scraping")
     print("2. Test validation")
     print("3. Test full pipeline")
-    print("4. Exit")
+    print("4. Test get transcript")
+    print("5. Exit")
 
-    choice = input("\nEnter your choice (1-4): ")
+    choice = input("\nEnter your choice (1-5): ")
 
     if choice == "1":
         await test_channel_scrape()
@@ -759,6 +792,10 @@ async def main():
         await test_channel_scrape()
         await test_validation()
     elif choice == "4":
+        bt.logging.info("Running get transcript test...")
+        await test_get_transcript()
+        return        
+    elif choice == "5":
         print("Exiting.")
         return
     else:
