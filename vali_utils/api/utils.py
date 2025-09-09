@@ -3,6 +3,7 @@ import random
 from fastapi import HTTPException
 from functools import wraps
 from common.organic_protocol import OrganicRequest
+from common.protocol import KeywordMode
 
 def select_validation_samples(data, sample_size: int = 1):
     """Select random samples from the data for validation"""
@@ -39,6 +40,7 @@ async def query_validator(
     source: str,
     keywords: list = [],
     usernames: list = [],
+    keyword_mode: KeywordMode = "all",
     start_datetime: str = None,
     end_datetime: str = None,
     limit: int = 1000
@@ -54,6 +56,7 @@ async def query_validator(
         source: Data source (X or REDDIT)
         keywords: List of keywords to search for
         usernames: List of usernames to search for
+        keyword_mode: Keyword matching mode ('any' or 'all')
         start_datetime: ISO-formatted start date
         end_datetime: ISO-formatted end date
         limit: Maximum number of results to return
@@ -79,6 +82,7 @@ async def query_validator(
         source=source.upper(),
         usernames=usernames,
         keywords=keywords,
+        keyword_mode=keyword_mode,
         start_datetime=start_datetime,
         end_datetime=end_datetime,
         limit=limit

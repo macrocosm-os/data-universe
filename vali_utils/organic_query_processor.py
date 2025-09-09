@@ -157,6 +157,7 @@ class OrganicQueryProcessor:
             source=DataSource[synapse.source.upper()],
             usernames=synapse.usernames,
             keywords=synapse.keywords,
+            keyword_mode=synapse.keyword_mode,
             start_datetime=synapse.start_datetime,
             end_datetime=synapse.end_datetime,
             limit=synapse.limit,
@@ -207,7 +208,7 @@ class OrganicQueryProcessor:
     def _validate_miner_data_format(self, synapse: OrganicRequest, data: List, miner_uid: int) -> bool:
         """
         Validate miner data format by testing conversion to appropriate content model.
-        Validates all items in the response to ensure consistent format.
+        Validates all items in the response and checks for duplicates within the response.
         
         Args:
             synapse: The organic request with source info
@@ -215,12 +216,13 @@ class OrganicQueryProcessor:
             miner_uid: UID of the miner for logging
             
         Returns:
-            bool: True if all items have valid format, False otherwise
+            bool: True if all items have valid format and no duplicates, False otherwise
         """
         if not data:
             return True  # Empty is valid
             
         source = synapse.source.upper()
+        seen_post_ids = set()
 
         for i, item in enumerate(data):
             try:
@@ -232,6 +234,13 @@ class OrganicQueryProcessor:
                 if not item.uri or not item.content:
                     bt.logging.debug(f"Miner {miner_uid}: Item {i} missing required fields (uri, content)")
                     return False
+                
+                # Check for duplicates within this miner's response
+                post_id = self._get_post_id(item)
+                if post_id in seen_post_ids:
+                    bt.logging.info(f"Miner {miner_uid} has duplicate posts in response (item {i}): {post_id}")
+                    return False
+                seen_post_ids.add(post_id)
                 
                 # Test conversion to appropriate content model based on source
                 if source == 'X':
@@ -248,7 +257,7 @@ class OrganicQueryProcessor:
                 bt.logging.info(f"Miner {miner_uid} format validation failed on item {i}: {str(e)}")
                 return False
         
-        bt.logging.trace(f"Miner {miner_uid}: Successfully validated all {len(data)} items")
+        bt.logging.trace(f"Miner {miner_uid}: Successfully validated all {len(data)} items for formatting and duplicates.")
         return True
     
 
@@ -524,7 +533,12 @@ class OrganicQueryProcessor:
             
             # Perform scraping based on source
             if synapse.source.upper() == 'X':
-                await scraper.scrape(verify_config)
+                await scraper.on_demand_scrape(usernames=synapse.usernames,
+                                               keywords=synapse.keywords,
+                                               keyword_mode=synapse.keyword_mode,
+                                               start_datetime=start_date,
+                                               end_datetime=end_date,
+                                               limit=synapse.limit)
                 enhanced_content = scraper.get_enhanced_content()
                 # Convert EnhancedXContent to DataEntities
                 verification_data = [EnhancedXContent.to_enhanced_data_entity(content=content) for content in enhanced_content]
@@ -532,6 +546,7 @@ class OrganicQueryProcessor:
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
                                                                    keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
+                                                                   keyword_mode=synapse.keyword_mode,
                                                                    start_datetime=start_date,
                                                                    end_datetime=end_date,
                                                                    limit=synapse.limit)
@@ -872,9 +887,17 @@ class OrganicQueryProcessor:
                     post_text = x_content_dict.get("content", "")
                 
             post_text = post_text.lower()
-            if not post_text or not all(keyword.lower() in post_text for keyword in synapse.keywords):
-                bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
-                return False
+
+            # Apply keyword matching based on keyword_mode
+            keyword_mode = synapse.keyword_mode
+            if keyword_mode == 'all':
+                if not all(keyword.lower() in post_text for keyword in synapse.keywords):
+                    bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
+                    return False
+            else:  # keyword_mode == 'any'
+                if not any(keyword.lower() in post_text for keyword in synapse.keywords):
+                    bt.logging.debug(f"None of the keywords ({synapse.keywords}) found in post: {post_text}")
+                    return False
         
         # Time range validation
         if not self._validate_time_range(synapse, x_entity.datetime):
@@ -908,7 +931,12 @@ class OrganicQueryProcessor:
             title_text = reddit_content_dict.get("title") or ""
             content_text = (body_text + ' ' + title_text).lower().strip()
             
-            keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
+            # Apply keyword matching based on keyword_mode
+            keyword_mode = synapse.keyword_mode
+            if keyword_mode == 'all':
+                keyword_in_content = all(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
+            else:  # keyword_mode == 'any'  
+                keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
             
             if not (subreddit_match or keyword_in_content):
                 bt.logging.debug(f"Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")

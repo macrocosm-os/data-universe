@@ -1,6 +1,7 @@
 import bittensor as bt
 from typing import List, Dict, Any, Optional
 from common.data import DataSource
+from common.protocol import KeywordMode
 
 
 class OrganicRequest(bt.Synapse):
@@ -10,6 +11,7 @@ class OrganicRequest(bt.Synapse):
     source: str
     usernames: List[str] = []
     keywords: List[str] = []
+    keyword_mode: KeywordMode = "all"
     start_datetime: Optional[str] = None
     end_datetime: Optional[str] = None
     limit: int = 100

@@ -6,7 +6,10 @@ from common.data import (
     DataEntity,
     DataEntityBucketId,
 )
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Literal
+
+
+KeywordMode = Literal["any", "all"]
 
 
 class BaseProtocol(bt.Synapse):
@@ -112,6 +115,11 @@ class OnDemandRequest(BaseProtocol):
         default_factory=list,
         description="Keywords/hashtags to search for",
         max_length=5
+    )
+
+    keyword_mode: KeywordMode = Field(
+        default="all",
+        description="Keyword matching mode: 'any' or 'all'"
     )
 
     start_datetime: Optional[str] = Field(
