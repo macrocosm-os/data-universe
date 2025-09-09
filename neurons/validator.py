@@ -252,29 +252,62 @@ class Validator:
         bt.logging.debug(f"Started a new wandb run: {name}")
 
     def run_memory_monitor(self):
-        import gc
+        import gc, collections, random
+        import datetime as dt
         try:
-            from pympler import muppy, summary
-        except:
+            from pympler import muppy, summary, asizeof
+        except ImportError:
             bt.logging.warning("[memory monitor] Failed to import pympler while starting memory monitor")
             return
 
         dump_file = "validator_memory_objects.txt"
-        object_dump_limit = 5000
+        object_dump_limit = 1000
+        TOP_N_OBJECTS = 1000           # how many heavy objects to list
+        MAX_OBJECTS_SIZED = 100000   # cap expensive sizing work
+        RANDOM_SAMPLE_FRACTION = 0.2 # further reduce work if > cap
 
-        n_seconds_between_dumps = 60
-        n_seconds_till_last_dump = 0
-        while not self.should_exit:
-            time.sleep(1.0) # sleep frequently to avoid join() taking too long
-            n_seconds_till_last_dump += 1
+        def safe_size(o):
+            try:
+                return asizeof.asizeof(o)
+            except Exception:
+                try:
+                    return asizeof.flatsize(o)
+                except Exception:
+                    return 0
 
-            if n_seconds_till_last_dump < n_seconds_between_dumps:
+        def safe_preview(o, maxlen=100):
+            try:
+                s = repr(o)
+                return (s if len(s) <= maxlen else s[:maxlen-3] + "...")
+            except Exception:
+                return "<repr failed>"
+
+        DENYLIST_MODULE_PREFIXES = ("wandb", "torch")
+
+        sized = []
+        for o in objs_for_sizing:
+            try:
+                mod = type(o).__module__ or ""
+            except Exception:
+                mod = ""
+            # skip problematic modules
+            if any(mod.startswith(p) for p in DENYLIST_MODULE_PREFIXES):
                 continue
 
+            s = safe_size(o)
+            if s > 0:
+                sized.append((s, f"{type(o).__module__}.{type(o).__name__}", o))
+
+        n_seconds_between_dumps = 10
+        n_seconds_till_last_dump = 0
+        while not self.should_exit:
+            time.sleep(1.0)
+            n_seconds_till_last_dump += 1
+            if n_seconds_till_last_dump < n_seconds_between_dumps:
+                continue
             n_seconds_till_last_dump = 0
 
             bt.logging.debug("[memory monitor] gc.collect()")
-
             gc.collect()
 
             bt.logging.debug("[memory monitor] muppy.get_objects()")
@@ -284,12 +317,68 @@ class Validator:
             sum_objs = summary.summarize(all_objs)
 
             bt.logging.debug(f"[memory monitor] writing {dump_file}")
-            # Overwrite the file each iteration
             with open(dump_file, "w") as f:
                 f.write(f"--- Live summary (top {object_dump_limit}) -- {dt.datetime.now(dt.timezone.utc).strftime('%d/%m/%Y, %H:%M:%S')} ---\n")
-                summary.print_(sum_objs, limit=object_dump_limit, file=f)
+                for line in summary.format_(sum_objs, limit=object_dump_limit):
+                    f.write(line + "\n")
 
-            bt.logging.debug(f'[memory monitor] wrote {dump_file}')
+                # ==============================
+                # Top objects by retained size (safe)
+                # ==============================
+                f.write("\n\n--- Top objects by retained size (safe) ---\n")
+
+                # Avoid O(N) deep sizing on millions of objects
+                objs_for_sizing = all_objs
+                if len(objs_for_sizing) > MAX_OBJECTS_SIZED:
+                    # sample deterministically-ish without reordering everything
+                    k = int(len(objs_for_sizing) * RANDOM_SAMPLE_FRACTION)
+                    k = max(k, MAX_OBJECTS_SIZED)
+                    # random.sample can be expensive; slice + stride is cheaper
+                    stride = max(1, len(objs_for_sizing) // k)
+                    objs_for_sizing = objs_for_sizing[::stride]
+
+                sized = []
+                for o in objs_for_sizing:
+                    # Skip known troublesome modules (wandb Summary, etc.)
+                    try:
+                        mod = type(o).__module__ or ""
+                    except Exception:
+                        mod = ""
+                    if mod.startswith("wandb"):
+                        continue
+
+                    s = safe_size(o)
+                    if s > 0:
+                        sized.append((s, f"{type(o).__module__}.{type(o).__name__}", o))
+
+                sized.sort(key=lambda x: x[0], reverse=True)
+                for sz, tname, o in sized[:TOP_N_OBJECTS]:
+                    f.write(f"{sz/1024/1024:8.2f} MB | {tname} | {safe_preview(o)}\n")
+
+                # ==============================
+                # By-module breakdown (safe, shallow)
+                # ==============================
+                f.write("\n\n--- Memory usage by module (top 100, shallow) ---\n")
+                mod_counts = collections.Counter()
+                mod_size = collections.Counter()
+                for o in all_objs:
+                    try:
+                        mod = type(o).__module__ or "<none>"
+                    except Exception:
+                        mod = "<error>"
+                    mod_counts[mod] += 1
+                    # flatsize() is fast and side-effect free
+                    try:
+                        mod_size[mod] += asizeof.flatsize(o)
+                    except Exception:
+                        pass
+
+                rows = [(mod, mod_counts[mod], mod_size[mod]) for mod in mod_counts]
+                rows.sort(key=lambda x: x[2], reverse=True)
+                for mod, count, sz in rows[:100]:
+                    f.write(f"{sz/1024/1024:8.2f} MB | {count:10d} objs | {mod}\n")
+
+            bt.logging.debug(f"[memory monitor] wrote {dump_file}")
 
     def run(self):
         """
