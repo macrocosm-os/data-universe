@@ -38,7 +38,7 @@ import warnings
 import requests
 from dotenv import load_dotenv
 import bittensor as bt
-from typing import Tuple
+from typing import Optional, Tuple
 from common.organic_protocol import OrganicRequest
 from common import constants
 from common import utils
@@ -80,6 +80,7 @@ class Validator:
         uid: int,
         config=None,
         subtensor: bt.subtensor = None,
+        enable_memory_monitor: bool = False
     ):
         """
 
@@ -89,6 +90,7 @@ class Validator:
             uid (int): The uid of the validator.
             config (_type_, optional): _description_. Defaults to None.
             subtensor (bt.subtensor, optional): _description_. Defaults to None.
+            enable_memory_monitor (bool): If set to true, a second background thread will start that will use pympler to monitor memory snapshots (useful to find memory leaks)
         """
         self.metagraph_syncer = metagraph_syncer
         self.evaluator = evaluator
@@ -133,6 +135,9 @@ class Validator:
         self.last_eval_time = dt.datetime.utcnow()
         self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
+
+        self.enable_memory_monitor = enable_memory_monitor
+        self.memory_monitor_thread: Optional[threading.Thread] = None
 
         # Add counter for evaluation cycles since startup
         self.evaluation_cycles_since_startup = 0
@@ -246,6 +251,45 @@ class Validator:
     
         bt.logging.debug(f"Started a new wandb run: {name}")
 
+    def run_memory_monitor(self):
+        import gc
+        try:
+            from pympler import muppy, summary
+        except:
+            bt.logging.warning("[memory monitor] Failed to import pympler while starting memory monitor")
+            return
+
+        dump_file = "validator_memory_objects.txt"
+        object_dump_limit = 5000
+
+        n_seconds_between_dumps = 60
+        n_seconds_till_last_dump = 0
+        while not self.should_exit:
+            time.sleep(1.0) # sleep frequently to avoid join() taking too long
+            n_seconds_till_last_dump += 1
+
+            if n_seconds_till_last_dump < n_seconds_between_dumps:
+                continue
+
+            n_seconds_till_last_dump = 0
+
+            bt.logging.debug("[memory monitor] gc.collect()")
+
+            gc.collect()
+
+            bt.logging.debug("[memory monitor] muppy.get_objects()")
+            all_objs = muppy.get_objects()
+
+            bt.logging.debug("[memory monitor] summary")
+            sum_objs = summary.summarize(all_objs)
+
+            bt.logging.debug(f"[memory monitor] writing {dump_file}")
+            # Overwrite the file each iteration
+            with open(dump_file, "w", encoding="utf-8") as f:
+                f.write(f"--- Live summary (top {object_dump_limit}) -- {dt.datetime.now(dt.timezone.utc).strftime('%d/%m/%Y, %H:%M:%S')} ---\n")
+                summary.print_(sum_objs, limit=object_dump_limit, file=f)
+
+            bt.logging.debug(f'[memory monitor] wrote {dump_file}')
 
     def run(self):
         """
@@ -348,6 +392,11 @@ class Validator:
             self.is_running = True
             bt.logging.debug("Started.")
 
+            if self.enable_memory_monitor:
+                self.memory_monitor_thread = threading.Thread(target=self.run_memory_monitor, daemon=True)
+                self.memory_monitor_thread.start()
+                bt.logging.debug("Started memory monitor thread")
+
     def stop_run_thread(self):
         """
         Stops the validator's operations that are running in the background thread.
@@ -356,6 +405,10 @@ class Validator:
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
+
+            if self.memory_monitor_thread is not None:
+                self.memory_monitor_thread.join(5)
+
             self.is_running = False
             bt.logging.debug("Stopped.")
 
@@ -731,6 +784,7 @@ def main():
         uid=uid,
         config=config,
         subtensor=subtensor,
+        enable_memory_monitor=os.environ.get('ENABLE_MEMORY_MONITOR') == '1'
     ) as validator:
         while True:
             if not validator.is_healthy():
