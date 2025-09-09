@@ -23,6 +23,7 @@ import numpy as np
 import asyncio
 import threading
 import time
+import tracemalloc
 import os
 import wandb
 import subprocess
@@ -250,56 +251,21 @@ class Validator:
         self.wandb_run_start = now
     
         bt.logging.debug(f"Started a new wandb run: {name}")
-
+    
     def run_memory_monitor(self):
-        import gc, collections, random
+        import gc, collections, os, time
         import datetime as dt
-        try:
-            from pympler import muppy, summary, asizeof
-        except ImportError:
-            bt.logging.warning("[memory monitor] Failed to import pympler while starting memory monitor")
-            return
 
         dump_file = "validator_memory_objects.txt"
-        object_dump_limit = 1000
-        TOP_N_OBJECTS = 1000           # how many heavy objects to list
-        MAX_OBJECTS_SIZED = 100000   # cap expensive sizing work
-        RANDOM_SAMPLE_FRACTION = 0.2 # further reduce work if > cap
-
-        def safe_size(o):
-            try:
-                return asizeof.asizeof(o)
-            except Exception:
-                try:
-                    return asizeof.flatsize(o)
-                except Exception:
-                    return 0
-
-        def safe_preview(o, maxlen=100):
-            try:
-                s = repr(o)
-                return (s if len(s) <= maxlen else s[:maxlen-3] + "...")
-            except Exception:
-                return "<repr failed>"
-
-        DENYLIST_MODULE_PREFIXES = ("wandb", "torch")
-
-        sized = []
-        for o in objs_for_sizing:
-            try:
-                mod = type(o).__module__ or ""
-            except Exception:
-                mod = ""
-            # skip problematic modules
-            if any(mod.startswith(p) for p in DENYLIST_MODULE_PREFIXES):
-                continue
-
-            s = safe_size(o)
-            if s > 0:
-                sized.append((s, f"{type(o).__module__}.{type(o).__name__}", o))
+        TOP_N = 200               # top N allocation sites to display (tracebacks/files)
+        FILE_LIMIT = 100          # top N files by size
+        DELTA_LIMIT = 100         # top N growth sites vs previous tick
 
         n_seconds_between_dumps = 10
         n_seconds_till_last_dump = 0
+
+        prev_snapshot = None  # for delta comparisons
+
         while not self.should_exit:
             time.sleep(1.0)
             n_seconds_till_last_dump += 1
@@ -307,78 +273,64 @@ class Validator:
                 continue
             n_seconds_till_last_dump = 0
 
-            bt.logging.debug("[memory monitor] gc.collect()")
+            try:
+                bt.logging.debug("[memory monitor] gc.collect()")
+            except Exception:
+                pass
+
             gc.collect()
 
-            bt.logging.debug("[memory monitor] muppy.get_objects()")
-            all_objs = muppy.get_objects()
+            snap = tracemalloc.take_snapshot()
 
-            bt.logging.debug("[memory monitor] summary")
-            sum_objs = summary.summarize(all_objs)
+            with open(dump_file, "w", encoding="utf-8") as f:
+                now = dt.datetime.now(dt.timezone.utc).strftime('%d/%m/%Y, %H:%M:%S')
+                f.write(f"=== Memory Monitor — {now} UTC ===\n")
 
-            bt.logging.debug(f"[memory monitor] writing {dump_file}")
-            with open(dump_file, "w") as f:
-                f.write(f"--- Live summary (top {object_dump_limit}) -- {dt.datetime.now(dt.timezone.utc).strftime('%d/%m/%Y, %H:%M:%S')} ---\n")
-                for line in summary.format_(sum_objs, limit=object_dump_limit):
-                    f.write(line + "\n")
+                f.write("\n\n--- Top allocations by traceback (tracemalloc) ---\n")
+                stats_tb = snap.statistics('traceback')
+                total_bytes = sum(stat.size for stat in stats_tb)
+                total_blocks = sum(stat.count for stat in stats_tb)
+                f.write(f"Total tracked: {total_bytes/1024/1024:,.2f} MB across {total_blocks:,} blocks\n")
 
-                # ==============================
-                # Top objects by retained size (safe)
-                # ==============================
-                f.write("\n\n--- Top objects by retained size (safe) ---\n")
+                for i, stat in enumerate(stats_tb[:TOP_N], 1):
+                    size_mb = stat.size / 1024 / 1024
+                    f.write(f"{i:4d}. {size_mb:8.2f} MB | {stat.count:7d} blocks\n")
+                    # Print the most relevant few frames (last frames are usually app code)
+                    frames = stat.traceback.format()
+                    for frame in frames[-5:]:
+                        f.write(f"      {frame}\n")
 
-                # Avoid O(N) deep sizing on millions of objects
-                objs_for_sizing = all_objs
-                if len(objs_for_sizing) > MAX_OBJECTS_SIZED:
-                    # sample deterministically-ish without reordering everything
-                    k = int(len(objs_for_sizing) * RANDOM_SAMPLE_FRACTION)
-                    k = max(k, MAX_OBJECTS_SIZED)
-                    # random.sample can be expensive; slice + stride is cheaper
-                    stride = max(1, len(objs_for_sizing) // k)
-                    objs_for_sizing = objs_for_sizing[::stride]
 
-                sized = []
-                for o in objs_for_sizing:
-                    # Skip known troublesome modules (wandb Summary, etc.)
-                    try:
-                        mod = type(o).__module__ or ""
-                    except Exception:
-                        mod = ""
-                    if mod.startswith("wandb"):
-                        continue
+                f.write(f"\n\n--- Memory usage by file/module (top {FILE_LIMIT}, tracemalloc) ---\n")
+                stats_file = snap.statistics('filename')
+                for stat in stats_file[:FILE_LIMIT]:
+                    size_mb = stat.size / 1024 / 1024
+                    # Prefer the frame filename if present
+                    filename = stat.traceback[0].filename if stat.traceback else "<unknown>"
+                    f.write(f"{size_mb:8.2f} MB | {stat.count:7d} blocks | {filename}\n")
 
-                    s = safe_size(o)
-                    if s > 0:
-                        sized.append((s, f"{type(o).__module__}.{type(o).__name__}", o))
+                if prev_snapshot is not None:
+                    f.write("\n\n--- Growth since last tick (top "
+                            f"{DELTA_LIMIT}, tracemalloc) ---\n")
+                    
+                    top_stats = snap.compare_to(prev_snapshot, 'traceback')
+                    grew = [st for st in top_stats if st.size_diff > 0]
+                    for i, stat in enumerate(grew[:DELTA_LIMIT], 1):
+                        size_mb = stat.size_diff / 1024 / 1024
+                        f.write(f"{i:4d}. +{size_mb:8.2f} MB | +{stat.count_diff:7d} blocks\n")
+                        frames = stat.traceback.format()
+                        for frame in frames[-5:]:
+                            f.write(f"      {frame}\n")
+                else:
+                    f.write("\n\n--- Growth since last tick ---\n(first snapshot; deltas start next cycle)\n")
 
-                sized.sort(key=lambda x: x[0], reverse=True)
-                for sz, tname, o in sized[:TOP_N_OBJECTS]:
-                    f.write(f"{sz/1024/1024:8.2f} MB | {tname} | {safe_preview(o)}\n")
+            try:
+                bt.logging.debug(f"[memory monitor] wrote {dump_file}")
+            except Exception:
+                pass
 
-                # ==============================
-                # By-module breakdown (safe, shallow)
-                # ==============================
-                f.write("\n\n--- Memory usage by module (top 100, shallow) ---\n")
-                mod_counts = collections.Counter()
-                mod_size = collections.Counter()
-                for o in all_objs:
-                    try:
-                        mod = type(o).__module__ or "<none>"
-                    except Exception:
-                        mod = "<error>"
-                    mod_counts[mod] += 1
-                    # flatsize() is fast and side-effect free
-                    try:
-                        mod_size[mod] += asizeof.flatsize(o)
-                    except Exception:
-                        pass
+            prev_snapshot = snap
 
-                rows = [(mod, mod_counts[mod], mod_size[mod]) for mod in mod_counts]
-                rows.sort(key=lambda x: x[2], reverse=True)
-                for mod, count, sz in rows[:100]:
-                    f.write(f"{sz/1024/1024:8.2f} MB | {count:10d} objs | {mod}\n")
-
-            bt.logging.debug(f"[memory monitor] wrote {dump_file}")
 
     def run(self):
         """
@@ -472,6 +424,9 @@ class Validator:
 
         # Setup the Validator.
         self.setup()
+
+        if self.enable_memory_monitor and not tracemalloc.is_tracing():
+            tracemalloc.start(25)
 
         if not self.is_running:
             bt.logging.debug("Starting validator in background thread.")
