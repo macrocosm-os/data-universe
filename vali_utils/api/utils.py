@@ -39,8 +39,8 @@ async def query_validator(
     source: str,
     keywords: list = [],
     usernames: list = [],
-    start_date: str = None,
-    end_date: str = None,
+    start_datetime: str = None,
+    end_datetime: str = None,
     limit: int = 1000
 ):
     """
@@ -54,8 +54,8 @@ async def query_validator(
         source: Data source (X or REDDIT)
         keywords: List of keywords to search for
         usernames: List of usernames to search for
-        start_date: ISO-formatted start date
-        end_date: ISO-formatted end date
+        start_datetime: ISO-formatted start date
+        end_datetime: ISO-formatted end date
         limit: Maximum number of results to return
         
     Returns:
@@ -79,8 +79,8 @@ async def query_validator(
         source=source.upper(),
         usernames=usernames,
         keywords=keywords,
-        start_date=start_date,
-        end_date=end_date,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
         limit=limit
     )
     
