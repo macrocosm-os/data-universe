@@ -10,7 +10,7 @@ from common.organic_protocol import OrganicRequest
 from common.constants import X_ON_DEMAND_CONTENT_EXPIRATION_DATE
 from common import constants, utils
 from scraping.provider import ScraperProvider
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.x.on_demand_model import EnhancedXContent
 from scraping.reddit.model import RedditContent
 from scraping.youtube.model import YouTubeContent
@@ -497,7 +497,7 @@ class OrganicQueryProcessor:
         try:
             # Initialize scraper based on source
             if synapse.source.upper() == 'X':
-                scraper = EnhancedApiDojoTwitterScraper()
+                scraper = ApiDojoTwitterScraper()
             else:
                 scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(DataSource[synapse.source.upper()])
                 scraper = ScraperProvider().get(scraper_id) if scraper_id else None
@@ -973,7 +973,7 @@ class OrganicQueryProcessor:
         """Get appropriate scraper for the data source"""
         try:
             if source.upper() == 'X':
-                return EnhancedApiDojoTwitterScraper()
+                return ApiDojoTwitterScraper()
             else:
                 scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(DataSource[source.upper()])
                 if scraper_id:
