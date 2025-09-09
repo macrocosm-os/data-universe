@@ -157,8 +157,8 @@ class OrganicQueryProcessor:
             source=DataSource[synapse.source.upper()],
             usernames=synapse.usernames,
             keywords=synapse.keywords,
-            start_date=synapse.start_date,
-            end_date=synapse.end_date,
+            start_datetime=synapse.start_datetime,
+            end_datetime=synapse.end_datetime,
             limit=synapse.limit,
             version=constants.PROTOCOL_VERSION
         )
@@ -513,8 +513,8 @@ class OrganicQueryProcessor:
             if synapse.usernames:
                 labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in synapse.usernames])
             
-            start_date = utils.parse_iso_date(synapse.start_date) if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
-            end_date = utils.parse_iso_date(synapse.end_date) if synapse.end_date else dt.datetime.now(dt.timezone.utc)
+            start_date = utils.parse_iso_date(synapse.start_datetime) if synapse.start_datetime else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+            end_date = utils.parse_iso_date(synapse.end_datetime) if synapse.end_datetime else dt.datetime.now(dt.timezone.utc)
             
             verify_config = ScrapeConfig(
                 entity_limit=synapse.limit,  
@@ -720,16 +720,16 @@ class OrganicQueryProcessor:
             bool: True if timestamp is within range, False otherwise
         """
         try:
-            if synapse.start_date:
-                start_dt = utils.parse_iso_date(synapse.start_date)
+            if synapse.start_datetime:
+                start_dt = utils.parse_iso_date(synapse.start_datetime)
                 if post_timestamp < start_dt:
-                    bt.logging.debug(f"Post timestamp {post_timestamp} is before start date {start_dt}")
+                    bt.logging.debug(f"Post timestamp {post_timestamp} is before start datetime {start_dt}")
                     return False
                     
-            if synapse.end_date:
-                end_dt = utils.parse_iso_date(synapse.end_date)
+            if synapse.end_datetime:
+                end_dt = utils.parse_iso_date(synapse.end_datetime)
                 if post_timestamp > end_dt:
-                    bt.logging.debug(f"Post timestamp {post_timestamp} is after end date {end_dt}")
+                    bt.logging.debug(f"Post timestamp {post_timestamp} is after end datetime {end_dt}")
                     return False
                     
             return True

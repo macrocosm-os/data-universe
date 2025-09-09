@@ -522,10 +522,10 @@ class Miner:
                 return synapse
 
             # Create date range with utility function
-            start_dt = (utils.parse_iso_date(synapse.start_date)
-                        if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
-            end_dt = (utils.parse_iso_date(synapse.end_date)
-                    if synapse.end_date else dt.datetime.now(dt.timezone.utc))
+            start_dt = (utils.parse_iso_date(synapse.start_datetime)
+                        if synapse.start_datetime else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
+            end_dt = (utils.parse_iso_date(synapse.end_datetime)
+                    if synapse.end_datetime else dt.datetime.now(dt.timezone.utc))
 
             # Fallback to default dates if parsing failed
             if start_dt is None:

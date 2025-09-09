@@ -114,14 +114,14 @@ class OnDemandRequest(BaseProtocol):
         max_length=5
     )
 
-    start_date: Optional[str] = Field(
+    start_datetime: Optional[str] = Field(
         default=None,
-        description="Start date (ISO format)"
+        description="Start datetime (ISO format, e.g., '2025-09-09T14:30:00Z' or '2025-09-09')"
     )
 
-    end_date: Optional[str] = Field(
+    end_datetime: Optional[str] = Field(
         default=None,
-        description="End date (ISO format)"
+        description="End datetime (ISO format, e.g., '2025-09-09T17:00:00Z' or '2025-09-09')"
     )
 
     limit: int = Field(

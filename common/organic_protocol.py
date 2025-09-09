@@ -10,8 +10,8 @@ class OrganicRequest(bt.Synapse):
     source: str
     usernames: List[str] = []
     keywords: List[str] = []
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
+    start_datetime: Optional[str] = None
+    end_datetime: Optional[str] = None
     limit: int = 100
 
     # Output fields
