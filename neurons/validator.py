@@ -285,7 +285,7 @@ class Validator:
 
             bt.logging.debug(f"[memory monitor] writing {dump_file}")
             # Overwrite the file each iteration
-            with open(dump_file, "w", encoding="utf-8") as f:
+            with open(dump_file, "w") as f:
                 f.write(f"--- Live summary (top {object_dump_limit}) -- {dt.datetime.now(dt.timezone.utc).strftime('%d/%m/%Y, %H:%M:%S')} ---\n")
                 summary.print_(sum_objs, limit=object_dump_limit, file=f)
 
