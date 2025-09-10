@@ -22,6 +22,7 @@ from scraping.reddit.utils import (
 from common.date_range import DateRange
 from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from common.protocol import KeywordMode
 from scraping.reddit.model import RedditContent, RedditDataType
 from typing import List
 from dotenv import load_dotenv
@@ -240,8 +241,9 @@ class RedditCustomScraper(Scraper):
     async def on_demand_scrape(
         self,
         usernames: List[str] = None,
-        subreddit: str = None,
+        subreddit: str = "all",
         keywords: List[str] = None,
+        keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
         limit: int = 100
@@ -252,7 +254,8 @@ class RedditCustomScraper(Scraper):
         Args:
             usernames: List of target usernames - content from any of these users will be included (OR logic)
             subreddit: Target specific subreddit (without r/ prefix)
-            keywords: List of keywords that must ALL be present in the content
+            keywords: List of keywords to search for
+            keyword_mode: "any" (OR logic) or "all" (AND logic) for keyword matching
             start_datetime: Earliest datetime for content (UTC)
             end_datetime: Latest datetime for content (UTC)
             limit: Maximum number of items to return (applies per username if usernames provided)
@@ -261,14 +264,14 @@ class RedditCustomScraper(Scraper):
             List of DataEntity objects matching the criteria
         """
         
-        # Return empty list if all parameters are None
-        if all(param is None for param in [usernames, subreddit, keywords, start_datetime, end_datetime]):
-            bt.logging.trace("All parameters are None, returning empty list")
+        # Return empty list if all key search parameters are None
+        if all(param is None for param in [usernames, keywords, start_datetime, end_datetime]) and subreddit == "all":
+            bt.logging.trace("All search parameters are None, returning empty list")
             return []
         
         bt.logging.trace(
             f"On-demand scrape with usernames={usernames}, subreddit={subreddit}, "
-            f"keywords={keywords}, start={start_datetime}, end={end_datetime}"
+            f"keywords={keywords}, keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
         )
         
         contents = []
@@ -291,26 +294,29 @@ class RedditCustomScraper(Scraper):
                             # Get user's posts (submissions)
                             async for submission in user.submissions.new(limit=limit):
                                 content = self._best_effort_parse_submission(submission)
-                                if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
                                     contents.append(content)
                             
                             # Get user's comments
                             async for comment in user.comments.new(limit=limit):
                                 content = self._best_effort_parse_comment(comment)
-                                if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
                                     contents.append(content)
                         except Exception as e:
                             bt.logging.warning(f"Failed to scrape user '{username}': {e}")
                             continue
                 
                 # Case 2: Search by subreddit (with optional keywords)
-                elif subreddit:
+                else:
                     subreddit_name = subreddit.removeprefix("r/") if subreddit.startswith('r/') else subreddit
                     sub = await reddit.subreddit(subreddit_name)
                     
                     # If we have keywords, use Reddit's search functionality
                     if keywords:
-                        search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
+                        if keyword_mode == "all":
+                            search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
+                        else:  # keyword_mode == "any"
+                            search_query = ' OR '.join(f'"{keyword}"' for keyword in keywords)
                         search_results = sub.search(search_query, sort='new', limit=limit)
                         
                         async for item in search_results:
@@ -319,37 +325,14 @@ class RedditCustomScraper(Scraper):
                             else: 
                                 content = self._best_effort_parse_comment(item)
                             
-                            if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                            if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
                                 contents.append(content)
                     else:
-                        # No keywords, just get recent posts from subreddit
+                        # No keywords, just get recent posts
                         async for submission in sub.new(limit=limit):
                             content = self._best_effort_parse_submission(submission)
-                            if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
+                            if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
                                 contents.append(content)
-                
-                # Case 3: Search by keywords across all of Reddit
-                elif keywords:
-                    search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
-                    all_subreddit = await reddit.subreddit('all')
-                    search_results = all_subreddit.search(search_query, sort='new', limit=limit)
-                    
-                    async for item in search_results:
-                        if hasattr(item, 'title'):  
-                            content = self._best_effort_parse_submission(item)
-                        else:  
-                            content = self._best_effort_parse_comment(item)
-                        
-                        if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
-                            contents.append(content)
-                
-                # Case 4: Just date range filtering (get recent content from r/all)
-                else:
-                    sub = await reddit.subreddit('all')
-                    async for submission in sub.new(limit=limit):
-                        content = self._best_effort_parse_submission(submission)
-                        if content and self._matches_criteria(content, keywords, start_datetime, end_datetime):
-                            contents.append(content)
         
         except Exception as e:
             bt.logging.error(f"Failed to perform on-demand scrape: {e}")
@@ -380,6 +363,7 @@ class RedditCustomScraper(Scraper):
         self,
         content: RedditContent,
         keywords: List[str] = None,
+        keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None
     ) -> bool:
@@ -388,7 +372,8 @@ class RedditCustomScraper(Scraper):
         
         Args:
             content: RedditContent object to check
-            keywords: List of keywords that must ALL be present
+            keywords: List of keywords to search for
+            keyword_mode: "any" (OR logic) or "all" (AND logic) for keyword matching
             start_datetime: Earliest datetime for content
             end_datetime: Latest datetime for content
         
@@ -410,7 +395,7 @@ class RedditCustomScraper(Scraper):
             if content.created_at > end_datetime:
                 return False
         
-        # Check keywords - all must be present in title + body (case insensitive)
+        # Check keywords based on keyword_mode
         if keywords:
             # Combine title and body for searching
             searchable_text = ""
@@ -419,9 +404,13 @@ class RedditCustomScraper(Scraper):
             if content.body:
                 searchable_text += content.body.lower()
             
-            # All keywords must be present
-            for keyword in keywords:
-                if keyword.lower() not in searchable_text:
+            if keyword_mode == "all":
+                # All keywords must be present (AND logic)
+                if not all(keyword.lower() in searchable_text for keyword in keywords):
+                    return False
+            else:  # keyword_mode == "any"
+                # At least one keyword must be present (OR logic)
+                if not any(keyword.lower() in searchable_text for keyword in keywords):
                     return False
         
         return True
@@ -748,6 +737,28 @@ async def test_on_demand_scrape():
         limit=3
     )
     print(f"   Result: {len(entities)} entities from invalid usernames (expected: 0 or very few)")
+    
+    # Test 11: keyword_mode "any" vs "all"
+    print("\n11. Testing keyword_mode 'any' vs 'all'...")
+    
+    # Test with "any" mode (should find more results)
+    entities_any = await scraper.on_demand_scrape(
+        subreddit="r/python",
+        keywords=["django", "flask"],
+        keyword_mode="any",
+        limit=3
+    )
+    print(f"   'any' mode: {len(entities_any)} entities with 'django' OR 'flask'")
+    
+    # Test with "all" mode (should find fewer or same results)  
+    entities_all = await scraper.on_demand_scrape(
+        subreddit="r/python", 
+        keywords=["django", "flask"],
+        keyword_mode="all",
+        limit=3
+    )
+    print(f"   'all' mode: {len(entities_all)} entities with 'django' AND 'flask'")
+    print(f"   Expected: 'any' >= 'all' ({len(entities_any)} >= {len(entities_all)})")
     
     print("\n" + "=" * 60)
     print("ON-DEMAND SCRAPE TESTS COMPLETED")
