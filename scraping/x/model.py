@@ -1,6 +1,6 @@
 import datetime as dt
-import json
 from typing import Dict, List, Optional
+
 # Use v1 for these models to keep serialization consistent.
 # Pydantic v2 doesn't include spaces in its serialization.
 from pydantic.v1 import BaseModel, Field
@@ -49,6 +49,29 @@ class XContent(BaseModel):
     # Additional metadata
     conversation_id: Optional[str] = None
     in_reply_to_user_id: Optional[str] = None
+
+    # ===== NEW FIELDS =====
+    # Static tweet metadata
+    language: Optional[str] = None
+    in_reply_to_username: Optional[str] = None
+    quoted_tweet_id: Optional[str] = None
+
+    # Dynamic engagement metrics
+    like_count: Optional[int] = None
+    retweet_count: Optional[int] = None
+    reply_count: Optional[int] = None
+    quote_count: Optional[int] = None
+    view_count: Optional[int] = None
+    bookmark_count: Optional[int] = None
+
+    # User profile data
+    user_blue_verified: Optional[bool] = None
+    user_description: Optional[str] = None
+    user_location: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    cover_picture_url: Optional[str] = None
+    user_followers_count: Optional[int] = None
+    user_following_count: Optional[int] = None
 
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:

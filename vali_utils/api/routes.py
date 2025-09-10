@@ -15,12 +15,6 @@ from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, L
     DesirabilityRequest
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler, query_validator
-from scraping.scraper import ScrapeConfig
-from common.date_range import DateRange
-from scraping.provider import ScraperProvider
-from scraping.scraper import ValidationResult
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
-from vali_utils.miner_evaluator import MinerEvaluator
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
