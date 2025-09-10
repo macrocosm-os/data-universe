@@ -23,6 +23,7 @@ import numpy as np
 import asyncio
 import threading
 import time
+import tracemalloc
 import os
 import wandb
 import subprocess
@@ -38,7 +39,7 @@ import warnings
 import requests
 from dotenv import load_dotenv
 import bittensor as bt
-from typing import Tuple
+from typing import Optional, Tuple
 from common.organic_protocol import OrganicRequest
 from common import constants
 from common import utils
@@ -80,6 +81,7 @@ class Validator:
         uid: int,
         config=None,
         subtensor: bt.subtensor = None,
+        enable_memory_monitor: bool = False
     ):
         """
 
@@ -89,6 +91,7 @@ class Validator:
             uid (int): The uid of the validator.
             config (_type_, optional): _description_. Defaults to None.
             subtensor (bt.subtensor, optional): _description_. Defaults to None.
+            enable_memory_monitor (bool): If set to true, a second background thread will start that will use pympler to monitor memory snapshots (useful to find memory leaks)
         """
         self.metagraph_syncer = metagraph_syncer
         self.evaluator = evaluator
@@ -133,6 +136,9 @@ class Validator:
         self.last_eval_time = dt.datetime.utcnow()
         self.last_weights_set_time = dt.datetime.utcnow()
         self.is_setup = False
+
+        self.enable_memory_monitor = enable_memory_monitor
+        self.memory_monitor_thread: Optional[threading.Thread] = None
 
         # Add counter for evaluation cycles since startup
         self.evaluation_cycles_since_startup = 0
@@ -245,6 +251,85 @@ class Validator:
         self.wandb_run_start = now
     
         bt.logging.debug(f"Started a new wandb run: {name}")
+    
+    def run_memory_monitor(self):
+        import gc, collections, os, time
+        import datetime as dt
+
+        dump_file = "validator_memory_objects.txt"
+        TOP_N = 200               # top N allocation sites to display (tracebacks/files)
+        FILE_LIMIT = 100          # top N files by size
+        DELTA_LIMIT = 100         # top N growth sites vs previous tick
+
+        n_seconds_between_dumps = 10
+        n_seconds_till_last_dump = 0
+
+        prev_snapshot = None  # for delta comparisons
+
+        while not self.should_exit:
+            time.sleep(1.0)
+            n_seconds_till_last_dump += 1
+            if n_seconds_till_last_dump < n_seconds_between_dumps:
+                continue
+            n_seconds_till_last_dump = 0
+
+            try:
+                bt.logging.debug("[memory monitor] gc.collect()")
+            except Exception:
+                pass
+
+            gc.collect()
+
+            snap = tracemalloc.take_snapshot()
+
+            with open(dump_file, "w", encoding="utf-8") as f:
+                now = dt.datetime.now(dt.timezone.utc).strftime('%d/%m/%Y, %H:%M:%S')
+                f.write(f"=== Memory Monitor — {now} UTC ===\n")
+
+                f.write("\n\n--- Top allocations by traceback (tracemalloc) ---\n")
+                stats_tb = snap.statistics('traceback')
+                total_bytes = sum(stat.size for stat in stats_tb)
+                total_blocks = sum(stat.count for stat in stats_tb)
+                f.write(f"Total tracked: {total_bytes/1024/1024:,.2f} MB across {total_blocks:,} blocks\n")
+
+                for i, stat in enumerate(stats_tb[:TOP_N], 1):
+                    size_mb = stat.size / 1024 / 1024
+                    f.write(f"{i:4d}. {size_mb:8.2f} MB | {stat.count:7d} blocks\n")
+                    # Print the most relevant few frames (last frames are usually app code)
+                    frames = stat.traceback.format()
+                    for frame in frames[-5:]:
+                        f.write(f"      {frame}\n")
+
+
+                f.write(f"\n\n--- Memory usage by file/module (top {FILE_LIMIT}, tracemalloc) ---\n")
+                stats_file = snap.statistics('filename')
+                for stat in stats_file[:FILE_LIMIT]:
+                    size_mb = stat.size / 1024 / 1024
+                    # Prefer the frame filename if present
+                    filename = stat.traceback[0].filename if stat.traceback else "<unknown>"
+                    f.write(f"{size_mb:8.2f} MB | {stat.count:7d} blocks | {filename}\n")
+
+                if prev_snapshot is not None:
+                    f.write("\n\n--- Growth since last tick (top "
+                            f"{DELTA_LIMIT}, tracemalloc) ---\n")
+                    
+                    top_stats = snap.compare_to(prev_snapshot, 'traceback')
+                    grew = [st for st in top_stats if st.size_diff > 0]
+                    for i, stat in enumerate(grew[:DELTA_LIMIT], 1):
+                        size_mb = stat.size_diff / 1024 / 1024
+                        f.write(f"{i:4d}. +{size_mb:8.2f} MB | +{stat.count_diff:7d} blocks\n")
+                        frames = stat.traceback.format()
+                        for frame in frames[-5:]:
+                            f.write(f"      {frame}\n")
+                else:
+                    f.write("\n\n--- Growth since last tick ---\n(first snapshot; deltas start next cycle)\n")
+
+            try:
+                bt.logging.debug(f"[memory monitor] wrote {dump_file}")
+            except Exception:
+                pass
+
+            prev_snapshot = snap
 
 
     def run(self):
@@ -340,6 +425,9 @@ class Validator:
         # Setup the Validator.
         self.setup()
 
+        if self.enable_memory_monitor and not tracemalloc.is_tracing():
+            tracemalloc.start(25)
+
         if not self.is_running:
             bt.logging.debug("Starting validator in background thread.")
             self.should_exit = False
@@ -347,6 +435,11 @@ class Validator:
             self.thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
+
+            if self.enable_memory_monitor:
+                self.memory_monitor_thread = threading.Thread(target=self.run_memory_monitor, daemon=True)
+                self.memory_monitor_thread.start()
+                bt.logging.debug("Started memory monitor thread")
 
     def stop_run_thread(self):
         """
@@ -356,6 +449,10 @@ class Validator:
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
+
+            if self.memory_monitor_thread is not None:
+                self.memory_monitor_thread.join(5)
+
             self.is_running = False
             bt.logging.debug("Stopped.")
 
@@ -731,6 +828,7 @@ def main():
         uid=uid,
         config=config,
         subtensor=subtensor,
+        enable_memory_monitor=os.environ.get('ENABLE_MEMORY_MONITOR') == '1'
     ) as validator:
         while True:
             if not validator.is_healthy():
