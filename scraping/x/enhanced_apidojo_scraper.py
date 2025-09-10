@@ -253,7 +253,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         return results
 
     def _validate_tweet_content(
-            self, actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None
+            self, actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None, allow_low_engagement: bool = False
     ) -> ValidationResult:
         """Enhanced validation that skips spam and engagement filtering."""
         # Delegate directly to utils without spam/engagement checks
