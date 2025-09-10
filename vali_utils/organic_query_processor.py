@@ -1185,8 +1185,13 @@ class OrganicQueryProcessor:
                 bt.logging.warning(f"No scraper available for {synapse.source}")
                 return False
 
-            # Call scraper validation
-            results = await scraper.validate([data_entity])
+            # Call scraper validation with source-specific parameters
+            if synapse.source.upper() == "X":
+                # For X source, allow low engagement tweets in organic validation
+                results = await scraper.validate([data_entity], allow_low_engagement=True)
+            else:
+                # For other sources, use standard validation
+                results = await scraper.validate([data_entity])
             if results and len(results) > 0:
                 result = results[0]
                 is_valid = (

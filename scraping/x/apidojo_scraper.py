@@ -30,7 +30,7 @@ class ApiDojoTwitterScraper(Scraper):
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
 
-    async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
+    async def validate(self, entities: List[DataEntity], allow_low_engagement: bool = False) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
 
         async def validate_entity(entity) -> ValidationResult:
@@ -118,6 +118,7 @@ class ApiDojoTwitterScraper(Scraper):
                         is_retweet=is_retweet,
                         author_data=actual_author_data,
                         view_count=actual_view_count,
+                        allow_low_engagement=allow_low_engagement,
                     )
 
         if not entities:
@@ -425,10 +426,11 @@ class ApiDojoTwitterScraper(Scraper):
         is_retweet: bool,
         author_data: dict = None,
         view_count: int = None,
+        allow_low_engagement: bool = False,
     ) -> ValidationResult:
         """Validates the tweet with spam and engagement filtering."""
-        # First check spam/engagement if data is available
-        if author_data is not None and view_count is not None:
+        # First check spam/engagement if data is available and filtering is enabled
+        if author_data is not None and view_count is not None and not allow_low_engagement:
             # Check if account is spam (low followers/new account)
             if utils.is_spam_account(author_data):
                 return ValidationResult(
@@ -437,7 +439,7 @@ class ApiDojoTwitterScraper(Scraper):
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
 
-            # Check if tweet has low engagement # todo remove it for on_demand
+            # Check if tweet has low engagement
             tweet_data = {"viewCount": view_count}
             if utils.is_low_engagement_tweet(tweet_data):
                 return ValidationResult(
