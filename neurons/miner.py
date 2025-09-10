@@ -47,6 +47,7 @@ from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, ScraperId
 
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
+from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 import json
 
 # Enable logging to the miner TODO move it to some different location
@@ -484,43 +485,6 @@ class Miner:
         bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
-            # Get appropriate scraper from provider
-            scraper_id = None
-            if synapse.source == DataSource.X:
-                scraper_id = ScraperId.X_APIDOJO
-                # For X, combine keywords and usernames with appropriate label formatting
-                labels = []
-                if synapse.keywords:
-                    labels.extend([DataLabel(value=k) for k in synapse.keywords])
-                if synapse.usernames:
-                    # Ensure usernames have @ prefix
-                    labels.extend([DataLabel(value=f"@{u.strip('@')}" if not u.startswith('@') else u) for u in
-                                synapse.usernames])
-
-            elif synapse.source == DataSource.REDDIT:
-                scraper_id = ScraperId.REDDIT_CUSTOM
-                # For Reddit, ensure subreddit has r/ prefix
-                if synapse.keywords and len(synapse.keywords) > 0:
-                    subreddit = synapse.keywords[0]
-                    if not subreddit.startswith('r/'):
-                        subreddit = f"r/{subreddit}"
-                    labels = [DataLabel(value=subreddit)]
-                else:
-                    labels = []
-
-            elif synapse.source == DataSource.YOUTUBE:
-                scraper_id = ScraperId.YOUTUBE_APIFY_TRANSCRIPT
-                # For YouTube, only channel identifiers are supported ('usernames')
-                labels = []
-                if synapse.usernames:
-                    from scraping.youtube.model import YouTubeContent
-                    labels.extend([DataLabel(value=YouTubeContent.create_channel_label(u)) for u in synapse.usernames])
-
-            if not scraper_id:
-                bt.logging.error(f"No scraper ID for source {synapse.source}")
-                synapse.data = []
-                return synapse
-
             # Create date range with utility function
             start_dt = (utils.parse_iso_date(synapse.start_date)
                         if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
@@ -533,18 +497,7 @@ class Miner:
             if end_dt is None:
                 end_dt = dt.datetime.now(dt.timezone.utc)
 
-            # Log the labels being used
-            bt.logging.info(f"Searching with labels: {[l.value for l in labels]}")
             bt.logging.info(f"Date range: {start_dt} to {end_dt}")
-
-            config = ScrapeConfig(
-                entity_limit=synapse.limit,
-                date_range=DateRange(
-                    start=start_dt,
-                    end=end_dt
-                ),
-                labels=labels,
-            )
 
             # For X source, use the on_demand_scrape method
             if synapse.source == DataSource.X:
@@ -561,36 +514,42 @@ class Miner:
                 )
                 synapse.data = data_entities
             elif synapse.source == DataSource.REDDIT:
-                from scraping.provider import ScraperProvider
-
                 # Create a new scraper provider and get the appropriate scraper
-                provider = ScraperProvider()
-                scraper = provider.get(scraper_id)
+                scraper = RedditCustomScraper()
 
                 if not scraper:
-                    bt.logging.error(f"No scraper available for ID {scraper_id}")
+                    bt.logging.error(f"No scraper available for ID: {ScraperId.REDDIT_CUSTOM}")
                     synapse.data = []
                     return synapse
 
                 data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                       subreddit=synapse.keywords[0] if synapse.keywords else None,
                                                       keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
+                                                      keyword_mode=synapse.keyword_mode,
                                                       start_datetime=start_dt,
                                                       end_datetime=end_dt,
                                                       limit=synapse.limit)
                 synapse.data = data[:synapse.limit] if synapse.limit else data
-            elif synapse.source == DataSource.YOUTUBE:
-                from scraping.provider import ScraperProvider
 
+            elif synapse.source == DataSource.YOUTUBE:
                 # Create a new scraper provider and get the YouTube scraper
                 provider = ScraperProvider()
-                scraper = provider.get(scraper_id)
+                scraper = provider.get(ScraperId.YOUTUBE_APIFY_TRANSCRIPT)
 
                 if not scraper:
-                    bt.logging.error(f"No scraper available for ID {scraper_id}")
+                    bt.logging.error(f"No scraper available for ID {ScraperId.YOUTUBE_APIFY_TRANSCRIPT}")
                     synapse.data = []
                     return synapse
 
+                # For YouTube, only channel identifiers are supported ('usernames')
+                labels = []
+                if synapse.usernames:
+                    from scraping.youtube.model import YouTubeContent
+                    labels.extend([DataLabel(value=YouTubeContent.create_channel_label(u)) for u in synapse.usernames])
+
+                config = ScrapeConfig(entity_limit=synapse.limit,
+                                      date_range=DateRange(start=start_dt, end=end_dt),
+                                      labels=labels)
                 # Use the scraper's regular scrape method with the ScrapeConfig
                 data_entities = await scraper.scrape(config)
                 synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities

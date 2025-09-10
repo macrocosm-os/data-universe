@@ -66,6 +66,7 @@ async def query_data(
             source=request.source.upper(),
             usernames=request.usernames or [],
             keywords=request.keywords or [],
+            keyword_mode=request.keyword_mode,
             start_date=request.start_date,
             end_date=request.end_date,
             limit=request.limit or 100 # default request is 100 items
@@ -105,6 +106,7 @@ async def query_data(
                 source=request.source,
                 keywords=request.keywords or [],
                 usernames=request.usernames or [],
+                keyword_mode=request.keyword_mode,
                 start_date=request.start_date,
                 end_date=request.end_date,
                 limit=request.limit or 100
