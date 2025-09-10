@@ -1,5 +1,6 @@
 import datetime as dt
 from typing import Dict, List, Optional
+
 # Use v1 for these models to keep serialization consistent.
 # Pydantic v2 doesn't include spaces in its serialization.
 from pydantic.v1 import BaseModel, Field
