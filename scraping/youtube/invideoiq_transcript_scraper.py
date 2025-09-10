@@ -5,13 +5,17 @@ import bittensor as bt
 from typing import List, Dict, Any, Optional
 import datetime as dt
 import httpx
-
+import os
+from dotenv import load_dotenv
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
 from scraping.youtube import utils as youtube_utils
 from scraping.apify import ActorRunner, RunConfig, ActorRunError
+from apify_client import ApifyClient
+
+load_dotenv()
 
 
 class YouTubeChannelTranscriptScraper(Scraper):
@@ -40,7 +44,6 @@ class YouTubeChannelTranscriptScraper(Scraper):
         self.runner = runner or ActorRunner()
 
         # Minimal YouTube API setup for upload dates and video discovery
-        import os
         self.youtube_api_key = os.getenv("YOUTUBE_API_KEY")
         if not self.youtube_api_key:
             bt.logging.warning(
@@ -139,7 +142,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
                         # Get upload date from API
                         upload_date = await self._get_upload_date_from_api(video_id)
                         if not upload_date:
-                            bt.logging.warning(f"No upload date for video {video_id}, skipping to prevent timestamp validation bypass")
+                            bt.logging.warning(
+                                f"No upload date for video {video_id}, skipping to prevent timestamp validation bypass")
                             continue
 
                         # Check date range
@@ -345,6 +349,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
         try:
             video_url = f"https://www.youtube.com/watch?v={video_id}"
 
+            apify_api_key = os.getenv("APIFY_API_TOKEN")
+            client = ApifyClient(apify_api_key)
             run_input = {
                 "video_url": video_url,
                 "language": language,
@@ -361,8 +367,24 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             dataset = await self.runner.run(run_config, run_input)
 
-            if not dataset or len(dataset) == 0:
-                return None
+            if not dataset or len(dataset) == 0 or not dataset[0].get("transcript", ""):
+                bt.logging.debug(
+                    f"Getting transcript for video {video_id} language {language} failed. Now trying with residential proxy")
+
+                max_retry = 2
+                run_input["use_residential_proxy_for_yt"] = True
+
+                for try_cnt in range(max_retry):
+                    await asyncio.sleep(5)
+                    run = client.actor("invideoiq/video-transcript-scraper").call(run_input=run_input)
+                    bt.logging.info("💾 Check your data here: https://console.apify.com/storage/key-value-stores/" + run[
+                        "defaultKeyValueStoreId"])
+                    output_data = client.key_value_store(run["defaultKeyValueStoreId"]).get_record('OUTPUT')['value']
+                    if not output_data or not output_data.get("transcript", ""):
+                        if try_cnt == max_retry - 1:
+                            return None
+                        continue
+                    return output_data
 
             return dataset[0]
 
@@ -438,7 +460,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
                 # Validate upload date against YouTube API to prevent timeBucketId bypass
                 real_upload_date = await self._get_upload_date_from_api(content_to_validate.video_id)
-                
+
                 if not real_upload_date:
                     results.append(ValidationResult(
                         is_valid=False,
@@ -446,7 +468,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
                         content_size_bytes_validated=entity.content_size_bytes
                     ))
                     continue
-                
+
                 # Use proper timestamp validation with obfuscation (like X and Reddit)
                 timestamp_validation = youtube_utils.validate_youtube_timestamp(
                     content_to_validate, real_upload_date, entity
@@ -454,7 +476,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 if not timestamp_validation.is_valid:
                     results.append(timestamp_validation)
                     continue
-                
+
                 # Get current data for validation using the SAME language the miner used
                 transcript_data = await self._get_transcript_from_actor(content_to_validate.video_id, original_language)
                 if not transcript_data:
@@ -480,18 +502,19 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 if not content_validation_result.is_valid:
                     results.append(content_validation_result)
                     continue
-                
+
                 # Create actual YouTube content for DataEntity validation
                 actual_youtube_content = self._create_youtube_content(
-                    content_to_validate.video_id, 
-                    original_language, 
+                    content_to_validate.video_id,
+                    original_language,
                     real_upload_date,
-                    transcript_data, 
+                    transcript_data,
                     transcript_data.get('channel', '')
                 )
-                
+
                 # Validate DataEntity fields (including channel label) like X and Reddit do
-                entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content, entity)
+                entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content,
+                                                                                             entity)
                 results.append(entity_validation_result)
 
             except Exception as e:
@@ -739,6 +762,22 @@ async def test_validation():
     return results
 
 
+async def test_get_transcript():
+    # a small(< 9MB output) non-en video
+    # video_id = 'LfCYDBOdaN4'
+    # language = 'th'
+
+    # a long(> 9MB output) non-en video
+    video_id = 'x5dArZ6MaKk'
+    language = 'th'
+
+    scraper = YouTubeChannelTranscriptScraper()
+    transcript_data = await scraper._get_transcript_from_actor(video_id, language)
+    print(f"transcript_data: {transcript_data}")
+    result = True if transcript_data else False
+    return result
+
+
 async def main():
     """Main test function."""
     print("\nFinal YouTube Channel-Based Transcript Scraper")
@@ -746,9 +785,10 @@ async def main():
     print("1. Test channel scraping")
     print("2. Test validation")
     print("3. Test full pipeline")
-    print("4. Exit")
+    print("4. Test get transcript")
+    print("5. Exit")
 
-    choice = input("\nEnter your choice (1-4): ")
+    choice = input("\nEnter your choice (1-5): ")
 
     if choice == "1":
         await test_channel_scrape()
@@ -759,6 +799,10 @@ async def main():
         await test_channel_scrape()
         await test_validation()
     elif choice == "4":
+        bt.logging.info("Running get transcript test...")
+        await test_get_transcript()
+        return
+    elif choice == "5":
         print("Exiting.")
         return
     else:
