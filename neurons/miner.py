@@ -553,6 +553,7 @@ class Miner:
                 data_entities = await scraper.on_demand_scrape(
                     usernames=synapse.usernames,
                     keywords=synapse.keywords,
+                    keyword_mode=synapse.keyword_mode,  # Use the synapse keyword_mode
                     start_date=start_dt,
                     end_date=end_dt,
                     limit=synapse.limit,

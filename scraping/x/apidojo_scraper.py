@@ -436,7 +436,7 @@ class ApiDojoTwitterScraper(Scraper):
                     content_size_bytes_validated=entity.content_size_bytes,
                 )
 
-            # Check if tweet has low engagement
+            # Check if tweet has low engagement # todo remove it for on_demand
             tweet_data = {"viewCount": view_count}
             if utils.is_low_engagement_tweet(tweet_data):
                 return ValidationResult(
@@ -458,17 +458,19 @@ class ApiDojoTwitterScraper(Scraper):
         self,
         usernames: List[str] = None,
         keywords: List[str] = None,
+        keyword_mode: str = "all",
         start_date: dt.datetime = None,
         end_date: dt.datetime = None,
         limit: int = 150,
         allow_low_engagement: bool = True,
     ) -> List[DataEntity]:
         """
-        OnDemand scraping method for API requests with flexible filtering.
+        OnDemand scraping method for API requests with flexible filtering and AND/OR logic.
 
         Args:
-            usernames: List of usernames to scrape (with or without @)
+            usernames: List of usernames to scrape (with or without @, OR logic between them)
             keywords: List of keywords to search for
+            keyword_mode: "any" (OR logic) or "all" (AND logic) for keyword matching
             start_date: Start date for scraping
             end_date: End date for scraping
             limit: Maximum number of tweets to return
@@ -477,40 +479,88 @@ class ApiDojoTwitterScraper(Scraper):
         Returns:
             List of DataEntity objects
         """
+        # Return empty list if all key search parameters are None
+        if all(param is None for param in [usernames, keywords, start_date, end_date]):
+            bt.logging.trace("All search parameters are None, returning empty list")
+            return []
+
         # Set default date range if not provided
         if not start_date:
             start_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
         if not end_date:
             end_date = dt.datetime.now(dt.timezone.utc)
 
-        # Create labels from usernames and keywords
-        labels = []
+        # Construct the query string directly without ScrapeConfig
+        date_format = "%Y-%m-%d_%H:%M:%S_UTC"
+        query_parts = []
+
+        # Add date range
+        query_parts.append(
+            f"since:{start_date.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
+        )
+        query_parts.append(
+            f"until:{end_date.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
+        )
+
+        # Add usernames with OR logic between them
         if usernames:
-            for username in usernames:
-                # Ensure username has @ prefix for label
-                if not username.startswith("@"):
-                    username = f"@{username}"
-                labels.append(DataLabel(value=username))
+            username_queries = [f"from:{username.removeprefix('@')}" for username in usernames]
+            query_parts.append(f"({' OR '.join(username_queries)})")
 
+        # Add keywords with specified logic (AND or OR)
         if keywords:
-            for keyword in keywords:
-                labels.append(DataLabel(value=keyword))
+            quoted_keywords = [f'"{keyword}"' for keyword in keywords]
+            if keyword_mode == "all":
+                query_parts.append(f"({' AND '.join(quoted_keywords)})")
+            else:  # keyword_mode == "any"
+                query_parts.append(f"({' OR '.join(quoted_keywords)})")
 
-        # If no labels provided, use a broad search
-        if not labels:
-            labels = [DataLabel(value="twitter")]  # Broad search term
+        # If no specific criteria provided, add default search term
+        if not query_parts or (not usernames and not keywords):
+            query_parts.append("e")  # Most common letter in English
 
-        # Create scrape config
-        scrape_config = ScrapeConfig(
-            entity_limit=limit,
-            date_range=DateRange(start=start_date, end=end_date),
-            labels=labels,
+        query = " ".join(query_parts)
+
+        # Construct the input to the runner
+        run_input = {
+            **ApiDojoTwitterScraper.BASE_RUN_INPUT,
+            "searchTerms": [query],
+            "maxTweets": limit,
+        }
+
+        run_config = RunConfig(
+            actor_id=ApiDojoTwitterScraper.ACTOR_ID,
+            debug_info=f"On-demand scrape {query}",
+            max_data_entities=limit,
+            timeout_secs=ApiDojoTwitterScraper.SCRAPE_TIMEOUT_SECS,
         )
 
-        # Scrape with low engagement filtering disabled by default for OnDemand
-        return await self.scrape(
-            scrape_config, allow_low_engagement=allow_low_engagement
+        bt.logging.success(f"Performing on-demand Twitter scrape for: {query}")
+
+        # Run the Actor and retrieve the scraped data
+        try:
+            dataset: List[dict] = await self.runner.run(run_config, run_input)
+        except Exception as e:
+            bt.logging.error(f"Failed to scrape tweets using query {query}: {str(e)}")
+            return []
+
+        # Return the parsed results, optionally disabling engagement filtering
+        check_engagement = (
+            not allow_low_engagement
+        )  # Disable filtering if allow_low_engagement=True
+        x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(
+            dataset, check_engagement=check_engagement
         )
+
+        bt.logging.success(
+            f"Completed on-demand scrape for {query}. Scraped {len(x_contents)} items."
+        )
+
+        data_entities = []
+        for x_content in x_contents:
+            data_entities.append(XContent.to_data_entity(content=x_content))
+
+        return data_entities
 
 
 async def test_scrape():

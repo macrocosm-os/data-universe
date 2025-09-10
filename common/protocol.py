@@ -114,6 +114,11 @@ class OnDemandRequest(BaseProtocol):
         max_length=5
     )
 
+    keyword_mode: str = Field(
+        default="any",
+        description="Keyword matching mode: 'any' (OR logic) or 'all' (AND logic)"
+    )
+
     start_date: Optional[str] = Field(
         default=None,
         description="Start date (ISO format)"

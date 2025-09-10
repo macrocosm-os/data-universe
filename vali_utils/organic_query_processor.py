@@ -665,6 +665,7 @@ class OrganicQueryProcessor:
                 verification_data = await scraper.on_demand_scrape(
                     usernames=synapse.usernames,
                     keywords=synapse.keywords,
+                    keyword_mode=synapse.keyword_mode,  # Use synapse keyword_mode
                     start_date=start_date,
                     end_date=end_date,
                     limit=synapse.limit,
