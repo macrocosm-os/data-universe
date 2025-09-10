@@ -11,7 +11,7 @@ from common.constants import X_ON_DEMAND_CONTENT_EXPIRATION_DATE
 from common import constants, utils
 from scraping.provider import ScraperProvider
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
-from scraping.x.on_demand_model import EnhancedXContent
+from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from scraping.youtube.model import YouTubeContent
 from scraping.scraper import ScrapeConfig
@@ -235,7 +235,7 @@ class OrganicQueryProcessor:
                 
                 # Test conversion to appropriate content model based on source
                 if source == 'X':
-                    enhanced_content = EnhancedXContent.from_data_entity(item)
+                    enhanced_content = XContent.from_data_entity(item)
                     
                 elif source == 'REDDIT':
                     # Parse the content JSON to validate structure
@@ -515,19 +515,18 @@ class OrganicQueryProcessor:
             
             start_date = utils.parse_iso_date(synapse.start_date) if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
             end_date = utils.parse_iso_date(synapse.end_date) if synapse.end_date else dt.datetime.now(dt.timezone.utc)
-            
-            verify_config = ScrapeConfig(
-                entity_limit=synapse.limit,  
-                date_range=DateRange(start=start_date, end=end_date),
-                labels=labels,
-            )
-            
+
             # Perform scraping based on source
             if synapse.source.upper() == 'X':
-                await scraper.scrape(verify_config)
-                enhanced_content = scraper.get_enhanced_content()
-                # Convert EnhancedXContent to DataEntities
-                verification_data = [EnhancedXContent.to_enhanced_data_entity(content=content) for content in enhanced_content]
+                # Use on_demand_scrape for OnDemand requests with flexible filtering
+                verification_data = await scraper.on_demand_scrape(
+                    usernames=synapse.usernames,
+                    keywords=synapse.keywords,
+                    start_date=start_date,
+                    end_date=end_date,
+                    limit=synapse.limit,
+                    allow_low_engagement=True  # Allow low engagement for OnDemand API
+                )
             elif synapse.source.upper() == 'REDDIT':
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
@@ -739,12 +738,12 @@ class OrganicQueryProcessor:
             return False
     
 
-    def _validate_x_metadata_completeness(self, x_content: EnhancedXContent) -> bool:
+    def _validate_x_metadata_completeness(self, x_content: XContent) -> bool:
         """
         Validate that X content has all required tweet metadata fields present.
         
         Args:
-            x_content: The EnhancedXContent object to validate
+            x_content: The XContent object to validate
             
         Returns:
             bool: True if all required metadata is present, False otherwise
@@ -819,11 +818,11 @@ class OrganicQueryProcessor:
             
             # Phase 2: Metadata completeness validation (X only)
             if synapse.source.upper() == 'X':
-                x_content = EnhancedXContent.from_data_entity(entity)
+                x_content = XContent.from_data_entity(entity)
                 if not self._validate_x_metadata_completeness(x_content=x_content):
                     bt.logging.error(f"Post {post_id} failed metadata completeness validation")
                     return False
-                entity_for_validation = EnhancedXContent.to_data_entity(content=x_content)
+                entity_for_validation = XContent.to_data_entity(content=x_content)
             
             # Phase 3: Scraper validation (only if previous validation passes)
             scraper_result = await self._validate_with_scraper(synapse, entity_for_validation, post_id)

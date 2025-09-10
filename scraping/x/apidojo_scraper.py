@@ -135,8 +135,13 @@ class ApiDojoTwitterScraper(Scraper):
 
         return results
 
-    async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
-        """Scrapes a batch of Tweets according to the scrape config."""
+    async def scrape(self, scrape_config: ScrapeConfig, allow_low_engagement: bool = False) -> List[DataEntity]:
+        """Scrapes a batch of Tweets according to the scrape config.
+        
+        Args:
+            scrape_config: Configuration for scraping
+            allow_low_engagement: If True, disables spam/engagement filtering (for OnDemand API)
+        """
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
 
@@ -202,8 +207,9 @@ class ApiDojoTwitterScraper(Scraper):
             )
             return []
 
-        # Return the parsed results, ignoring data that can't be parsed.
-        x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(dataset)
+        # Return the parsed results, optionally disabling engagement filtering
+        check_engagement = not allow_low_engagement  # Disable filtering if allow_low_engagement=True
+        x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(dataset, check_engagement=check_engagement)
 
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
@@ -260,6 +266,12 @@ class ApiDojoTwitterScraper(Scraper):
                 author_datas.append(data.get('author', {}))
                 view_counts.append(data.get('viewCount', 0))
                 
+                # Extract engagement metrics
+                engagement_metrics = self._extract_engagement_metrics(data)
+                
+                # Extract additional user profile data
+                user_profile_data = self._extract_user_profile_data(data)
+                
                 results.append(
                     XContent(
                         username=data['author']['userName'],
@@ -281,6 +293,26 @@ class ApiDojoTwitterScraper(Scraper):
                         # Additional metadata
                         conversation_id=data.get('conversationId'),
                         in_reply_to_user_id=reply_info[0],
+                        # ===== NEW FIELDS =====
+                        # Static tweet metadata
+                        language=data.get('lang'),
+                        in_reply_to_username=reply_info[1],
+                        quoted_tweet_id=data.get('quotedStatusId'),
+                        # Dynamic engagement metrics
+                        like_count=engagement_metrics['like_count'],
+                        retweet_count=engagement_metrics['retweet_count'],
+                        reply_count=engagement_metrics['reply_count'],
+                        quote_count=engagement_metrics['quote_count'],
+                        view_count=engagement_metrics['view_count'],
+                        bookmark_count=engagement_metrics['bookmark_count'],
+                        # User profile data
+                        user_blue_verified=user_profile_data['user_blue_verified'],
+                        user_description=user_profile_data['user_description'],
+                        user_location=user_profile_data['user_location'],
+                        profile_image_url=user_profile_data['profile_image_url'],
+                        cover_picture_url=user_profile_data['cover_picture_url'],
+                        user_followers_count=user_profile_data['user_followers_count'],
+                        user_following_count=user_profile_data['user_following_count'],
                     )
                 )
             except Exception:
@@ -346,6 +378,30 @@ class ApiDojoTwitterScraper(Scraper):
         
         return media_urls
 
+    def _extract_engagement_metrics(self, data: dict) -> dict:
+        """Extract engagement metrics from tweet data"""
+        return {
+            'like_count': data.get('likeCount'),
+            'retweet_count': data.get('retweetCount'),
+            'reply_count': data.get('replyCount'),
+            'quote_count': data.get('quoteCount'),
+            'view_count': data.get('viewCount'),
+            'bookmark_count': data.get('bookmarkCount'),
+        }
+
+    def _extract_user_profile_data(self, data: dict) -> dict:
+        """Extract user profile data from tweet author information"""
+        author = data.get('author', {})
+        return {
+            'user_blue_verified': author.get('isBlueVerified'),
+            'user_description': author.get('description'),
+            'user_location': author.get('location'),
+            'profile_image_url': author.get('profilePicture'),
+            'cover_picture_url': author.get('coverPicture'),
+            'user_followers_count': author.get('followers'),
+            'user_following_count': author.get('following'),
+        }
+
     def _validate_tweet_content(
             self, actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None
     ) -> ValidationResult:
@@ -377,6 +433,56 @@ class ApiDojoTwitterScraper(Scraper):
             author_data=author_data,
             view_count=view_count
         )
+
+    async def on_demand_scrape(self, usernames: List[str] = None, keywords: List[str] = None, 
+                              start_date: dt.datetime = None, end_date: dt.datetime = None,
+                              limit: int = 150, allow_low_engagement: bool = True) -> List[DataEntity]:
+        """
+        OnDemand scraping method for API requests with flexible filtering.
+        
+        Args:
+            usernames: List of usernames to scrape (with or without @)
+            keywords: List of keywords to search for
+            start_date: Start date for scraping
+            end_date: End date for scraping  
+            limit: Maximum number of tweets to return
+            allow_low_engagement: If True, includes low engagement posts (default for OnDemand)
+            
+        Returns:
+            List of DataEntity objects
+        """
+        # Set default date range if not provided
+        if not start_date:
+            start_date = dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+        if not end_date:
+            end_date = dt.datetime.now(dt.timezone.utc)
+            
+        # Create labels from usernames and keywords
+        labels = []
+        if usernames:
+            for username in usernames:
+                # Ensure username has @ prefix for label
+                if not username.startswith('@'):
+                    username = f"@{username}"
+                labels.append(DataLabel(value=username))
+                
+        if keywords:
+            for keyword in keywords:
+                labels.append(DataLabel(value=keyword))
+                
+        # If no labels provided, use a broad search
+        if not labels:
+            labels = [DataLabel(value="twitter")]  # Broad search term
+            
+        # Create scrape config
+        scrape_config = ScrapeConfig(
+            entity_limit=limit,
+            date_range=DateRange(start=start_date, end=end_date),
+            labels=labels
+        )
+        
+        # Scrape with low engagement filtering disabled by default for OnDemand
+        return await self.scrape(scrape_config, allow_low_engagement=allow_low_engagement)
 
 
 async def test_scrape():
@@ -561,9 +667,37 @@ async def test_multi_thread_validate():
     for t in threads:
         t.join(120)
 
+async def test_on_demand_scraping():
+    """Test OnDemand scraping functionality with filtering options."""
+    print("🧪 Testing OnDemand scraping...")
+    
+    scraper = ApiDojoTwitterScraper()
+    
+    # Test 1: OnDemand with low engagement allowed (default)
+    print("Testing with low engagement allowed...")
+    entities_with_low = await scraper.on_demand_scrape(
+        keywords=["bitcoin"],
+        limit=5,
+        allow_low_engagement=False
+    )
+    
+    # Test 2: OnDemand with low engagement filtered
+    print("Testing with low engagement filtered...")  
+    entities_filtered = await scraper.on_demand_scrape(
+        keywords=["bitcoin"],
+        limit=5,
+        allow_low_engagement=False
+    )
+    
+    print(f"✅ With low engagement: {len(entities_with_low)} tweets")
+    print(f"✅ Filtered engagement: {len(entities_filtered)} tweets")
+    print(f"✅ OnDemand API ready with filtering control!")
+
 
 if __name__ == "__main__":
     bt.logging.set_trace(True)
-    asyncio.run(test_multi_thread_validate())
-    asyncio.run(test_scrape())
-    asyncio.run(test_validate())
+    #asyncio.run(test_new_fields_validation())
+    asyncio.run(test_on_demand_scraping())
+    # asyncio.run(test_multi_thread_validate())
+    # asyncio.run(test_scrape())
+    # asyncio.run(test_validate())

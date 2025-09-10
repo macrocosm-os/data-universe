@@ -27,6 +27,28 @@ OPTIONAL_FIELDS = [
     "is_quote",
     "conversation_id",
     "in_reply_to_user_id",
+    # ===== NEW STATIC FIELDS =====
+    "language",
+    "in_reply_to_username",
+    "quoted_tweet_id",
+    # ===== NEW USER PROFILE FIELDS =====
+    "user_blue_verified",
+    "user_description",
+    "user_location",
+    "profile_image_url",
+    "cover_picture_url",
+    "user_followers_count",
+    "user_following_count",
+]
+
+# Dynamic fields that require special validation (like Reddit score/comment count)
+DYNAMIC_FIELDS = [
+    "like_count",
+    "retweet_count",
+    "reply_count",
+    "quote_count",
+    "view_count",
+    "bookmark_count",
 ]
 
 
@@ -425,5 +447,213 @@ def validate_tweet_content(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
+    # Validate dynamic engagement metrics (following Reddit pattern)
+    engagement_validation_result = validate_engagement_metrics(tweet_to_verify, actual_tweet, entity)
+    if engagement_validation_result is not None:
+        return engagement_validation_result
+
     # Final DataEntity validation
     return validate_data_entity_fields(actual_tweet, entity)
+
+
+def validate_engagement_metrics(submitted_tweet: XContent, actual_tweet: XContent, entity: DataEntity) -> Optional[ValidationResult]:
+    """
+    Validate dynamic engagement metrics with time-based tolerance and anti-cheating mechanisms.
+    Backward compatible - only validates fields that miners provide.
+    
+    Args:
+        submitted_tweet: Tweet submitted by miner
+        actual_tweet: Actual tweet from API
+        entity: DataEntity being validated
+        
+    Returns:
+        ValidationResult if validation fails, None if all validations pass
+    """
+    # Calculate tweet age for validation logic
+    now = dt.datetime.now(dt.timezone.utc)
+    tweet_age = now - submitted_tweet.timestamp
+    
+    # Dynamic engagement fields to validate
+    dynamic_fields = [
+        "like_count", "retweet_count", "reply_count", "quote_count", "view_count", "bookmark_count"
+    ]
+    
+    for field_name in dynamic_fields:
+        submitted_value = getattr(submitted_tweet, field_name, None)
+        actual_value = getattr(actual_tweet, field_name, None)
+        
+        # Skip validation if miner didn't provide field (backward compatibility)
+        if submitted_value is None:
+            continue
+            
+        # Validate individual engagement metric
+        field_validation_result = _validate_engagement_field(
+            field_name, submitted_value, actual_value, tweet_age, entity
+        )
+        if field_validation_result is not None:
+            return field_validation_result
+    
+    return None
+
+
+def _validate_engagement_field(
+    field_name: str, submitted_value: int, actual_value: int, tweet_age: dt.timedelta, entity: DataEntity
+) -> Optional[ValidationResult]:
+    """
+    Validate a single engagement field with tolerance and anti-cheating.
+
+    
+    Args:
+        field_name: Name of the engagement field
+        submitted_value: Value submitted by miner
+        actual_value: Actual value from API  
+        tweet_age: Age of the tweet
+        entity: DataEntity being validated
+        
+    Returns:
+        ValidationResult if validation fails, None if validation passes
+    """
+    # Basic sanity checks
+    if submitted_value < 0:
+        bt.logging.info(f"Invalid negative {field_name}: {submitted_value}")
+        return ValidationResult(
+            is_valid=False,
+            reason=f"Invalid negative {field_name}: {submitted_value}",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Anti-cheating: Maximum reasonable values based on tweet age and research data
+    max_reasonable_value = _calculate_max_reasonable_engagement(field_name, tweet_age)
+    if submitted_value > max_reasonable_value:
+        bt.logging.info(f"Submitted {field_name} {submitted_value} exceeds reasonable maximum {max_reasonable_value} for tweet age {tweet_age}")
+        return ValidationResult(
+            is_valid=False,
+            reason=f"{field_name} {submitted_value} is unreasonably high for tweet of this age",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    # Calculate age-based tolerance
+    tolerance = _calculate_engagement_tolerance(field_name, actual_value or 0, tweet_age)
+    
+    # Engagement metrics can only increase or stay the same (Twitter doesn't remove likes typically)
+    # Allow very small decreases for edge cases (deleted retweets, etc.)
+    max_allowed_value = (actual_value or 0) + tolerance
+    min_allowed_value = max(0, (actual_value or 0) - min(tolerance // 10, 3))  # Very strict on decreases
+    
+    # Validate engagement is within reasonable bounds - binary pass/fail
+    if not (min_allowed_value <= submitted_value <= max_allowed_value):
+        bt.logging.info(
+            f"{field_name} validation failed: submitted={submitted_value}, "
+            f"actual={actual_value}, allowed range=[{min_allowed_value}, {max_allowed_value}]"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason=f"{field_name} {submitted_value} is outside acceptable range [{min_allowed_value}, {max_allowed_value}]",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+    
+    return None
+
+
+def _calculate_engagement_tolerance(field_name: str, base_value: int, tweet_age: dt.timedelta) -> int:
+    """
+    Calculate sophisticated tolerance for engagement metric changes based on Twitter research data.
+    Research shows: median engagement is 0, but viral tweets can get 1K-100K+ engagement.
+    
+    Args:
+        field_name: Name of the engagement field
+        base_value: Current value of the engagement metric
+        tweet_age: Age of the tweet
+        
+    Returns:
+        Engagement tolerance (absolute number)
+    """
+    # Age-based tolerance - newer tweets have higher engagement velocity
+    if tweet_age < dt.timedelta(hours=1):
+        # Very fresh: high engagement velocity (tweets can go viral quickly)
+        age_tolerance_percent = 1.0  # 100% tolerance for very fresh tweets
+        min_tolerance = 20
+    elif tweet_age < dt.timedelta(hours=6):
+        # Recent: moderate engagement velocity
+        age_tolerance_percent = 0.75  # 75% tolerance
+        min_tolerance = 15
+    elif tweet_age < dt.timedelta(days=1):
+        # Day-old: slowing down but still active
+        age_tolerance_percent = 0.50  # 50% tolerance
+        min_tolerance = 10
+    elif tweet_age < dt.timedelta(days=7):
+        # Week-old: much slower growth
+        age_tolerance_percent = 0.30  # 30% tolerance
+        min_tolerance = 5
+    else:
+        # Old: very slow growth
+        age_tolerance_percent = 0.20  # 20% tolerance
+        min_tolerance = 3
+    
+    # Field-specific multipliers based on research (views are most volatile)
+    field_multipliers = {
+        'like_count': 1.0,      # Baseline - most common engagement
+        'retweet_count': 1.3,   # Higher tolerance - can spike with shareability
+        'reply_count': 1.5,     # High tolerance - can spike with controversy
+        'quote_count': 1.4,     # Moderate-high tolerance - quote tweets perform well
+        'view_count': 3.0,      # Highest tolerance - most volatile, views-to-likes ~10-100:1
+        'bookmark_count': 0.8,  # Lower tolerance - more private/stable action
+    }
+    
+    multiplier = field_multipliers.get(field_name, 1.0)
+    
+    # Calculate final tolerance
+    base_tolerance = max(int(base_value * age_tolerance_percent), min_tolerance)
+    final_tolerance = int(base_tolerance * multiplier)
+    
+    return final_tolerance
+
+
+def _calculate_max_reasonable_engagement(field_name: str, tweet_age: dt.timedelta) -> int:
+    """
+    Calculate maximum reasonable engagement values based on Twitter research data.
+    Research shows: viral threshold ~1K-2K likes, mega-viral can reach 100K-3M+ likes.
+    
+    Args:
+        field_name: Name of the engagement field
+        tweet_age: Age of the tweet
+        
+    Returns:
+        Maximum reasonable engagement value for this metric
+    """
+    # Base rates per hour for different engagement types (based on research)
+    base_hourly_rates = {
+        'like_count': 10000,     # Max 10K likes per hour (viral tweets can spike quickly)
+        'retweet_count': 3000,   # Max 3K retweets per hour
+        'reply_count': 1000,     # Max 1K replies per hour
+        'quote_count': 800,      # Max 800 quotes per hour
+        'view_count': 100000,    # Max 100K views per hour (research shows ~2K impressions avg)
+        'bookmark_count': 2000,  # Max 2K bookmarks per hour
+    }
+    
+    # Absolute maximums for mega-viral content (based on record holders from research)
+    absolute_maximums = {
+        'like_count': 5000000,    # 5M likes max (research shows 3.3M+ record)
+        'retweet_count': 4000000, # 4M retweets max (research shows 3.8M+ record)
+        'reply_count': 500000,    # 500K replies max
+        'quote_count': 200000,    # 200K quotes max
+        'view_count': 500000000,  # 500M views max (research shows billions of daily views)
+        'bookmark_count': 1000000, # 1M bookmarks max
+    }
+    
+    base_hourly_rate = base_hourly_rates.get(field_name, 5000)
+    max_absolute = absolute_maximums.get(field_name, 1000000)
+    
+    # Calculate time-based maximum
+    age_hours = max(tweet_age.total_seconds() / 3600, 0.1)  # Minimum 0.1 hours
+    time_based_max = int(base_hourly_rate * age_hours)
+    
+    # Apply diminishing returns for older content (engagement peaks then stabilizes)
+    if age_hours > 24:
+        # After 24 hours, growth slows significantly
+        time_based_max = int(time_based_max * 0.6)
+    elif age_hours > 168:  # 1 week
+        # After 1 week, very little growth
+        time_based_max = int(time_based_max * 0.3)
+    
+    return min(time_based_max, max_absolute)
