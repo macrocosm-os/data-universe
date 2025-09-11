@@ -73,8 +73,8 @@ async def query_data(
             usernames=request.usernames or [],
             keywords=request.keywords or [],
             keyword_mode=request.keyword_mode,
-            start_date=request.start_date,
-            end_date=request.end_date,
+            start_datetime=request.start_datetime,
+            end_datetime=request.end_datetime,
             limit=request.limit or 100 # default request is 100 items
         )
     except Exception as e:
@@ -113,8 +113,8 @@ async def query_data(
                 keywords=request.keywords or [],
                 usernames=request.usernames or [],
                 keyword_mode=request.keyword_mode,
-                start_date=request.start_date,
-                end_date=request.end_date,
+                start_datetime=request.start_datetime,
+                end_datetime=request.end_datetime,
                 limit=request.limit or 100
             )
             duration = time.perf_counter() - t_start

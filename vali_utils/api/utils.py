@@ -41,8 +41,8 @@ async def query_validator(
     keywords: list = [],
     usernames: list = [],
     keyword_mode: KeywordMode = "all",
-    start_date: str = None,
-    end_date: str = None,
+    start_datetime: str = None,
+    end_datetime: str = None,
     limit: int = 1000
 ):
     """
@@ -57,8 +57,8 @@ async def query_validator(
         keywords: List of keywords to search for
         usernames: List of usernames to search for
         keyword_mode: Keyword matching mode ('any' or 'all')
-        start_date: ISO-formatted start date
-        end_date: ISO-formatted end date
+        start_datetime: ISO-formatted start date
+        end_datetime: ISO-formatted end date
         limit: Maximum number of results to return
         
     Returns:
@@ -83,8 +83,8 @@ async def query_validator(
         usernames=usernames,
         keywords=keywords,
         keyword_mode=keyword_mode,
-        start_date=start_date,
-        end_date=end_date,
+        start_datetime=start_datetime,
+        end_datetime=end_datetime,
         limit=limit
     )
     

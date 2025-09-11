@@ -19,8 +19,8 @@ class TestOnDemandProtocol(unittest.TestCase):
             test_request = OnDemandRequest(
                 source=DataSource.X,
                 keywords=["#TAO"],
-                start_date=(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat(),
-                end_date=dt.datetime.now(dt.timezone.utc).isoformat(),
+                start_datetime=(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat(),
+                end_datetime=dt.datetime.now(dt.timezone.utc).isoformat(),
                 limit=5
             )
 
@@ -31,8 +31,8 @@ class TestOnDemandProtocol(unittest.TestCase):
             scrape_config = ScrapeConfig(
                 entity_limit=test_request.limit,
                 date_range=DateRange(
-                    start=dt.datetime.fromisoformat(test_request.start_date),
-                    end=dt.datetime.fromisoformat(test_request.end_date)
+                    start=dt.datetime.fromisoformat(test_request.start_datetime),
+                    end=dt.datetime.fromisoformat(test_request.end_datetime)
                 ),
                 labels=[DataLabel(value=k) for k in test_request.keywords]
             )
