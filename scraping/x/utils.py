@@ -1,6 +1,7 @@
-import datetime as dt
 import re
+import math
 import traceback
+import datetime as dt
 import bittensor as bt
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
@@ -37,8 +38,6 @@ OPTIONAL_FIELDS = [
     "user_location",
     "profile_image_url",
     "cover_picture_url",
-    "user_followers_count",
-    "user_following_count",
 ]
 
 # Dynamic fields that require special validation (like Reddit score/comment count)
@@ -49,6 +48,9 @@ DYNAMIC_FIELDS = [
     "quote_count",
     "view_count",
     "bookmark_count",
+    # User profile metrics that change frequently
+    "user_followers_count",
+    "user_following_count",
 ]
 
 
@@ -522,15 +524,8 @@ def validate_engagement_metrics(
     now = dt.datetime.now(dt.timezone.utc)
     tweet_age = now - submitted_tweet.timestamp
 
-    # Dynamic engagement fields to validate
-    dynamic_fields = [
-        "like_count",
-        "retweet_count",
-        "reply_count",
-        "quote_count",
-        "view_count",
-        "bookmark_count",
-    ]
+    # Dynamic engagement fields to validate - use the DYNAMIC_FIELDS constant
+    dynamic_fields = DYNAMIC_FIELDS
 
     for field_name in dynamic_fields:
         submitted_value = getattr(submitted_tweet, field_name, None)
@@ -580,6 +575,13 @@ def _validate_engagement_field(
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
+    # Use percentage-based validation for follower counts since we have exact current values
+    if field_name in ["user_followers_count", "user_following_count"]:
+        return _validate_follower_count_percentage(
+            field_name, submitted_value, actual_value, tweet_age, entity
+        )
+
+    # For regular engagement metrics, use the original logic
     # Anti-cheating: Maximum reasonable values based on tweet age and research data
     max_reasonable_value = _calculate_max_reasonable_engagement(field_name, tweet_age)
     if submitted_value > max_reasonable_value:
@@ -613,6 +615,90 @@ def _validate_engagement_field(
         return ValidationResult(
             is_valid=False,
             reason=f"{field_name} {submitted_value} is outside acceptable range [{min_allowed_value}, {max_allowed_value}]",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    return None
+
+
+def _validate_follower_count_percentage(
+    field_name: str,
+    submitted_value: int,
+    actual_value: int,
+    tweet_age: dt.timedelta,
+    entity: DataEntity,
+) -> Optional[ValidationResult]:
+    """
+    Validate follower counts using smart percentage-based tolerance with age scaling.
+    Uses logarithmic scaling - smaller accounts have higher percentage tolerance.
+    Older scraped tweets get more tolerance to handle viral growth scenarios.
+
+    Args:
+        field_name: Name of the follower field
+        submitted_value: Value submitted by miner
+        actual_value: Actual current value from API
+        tweet_age: Age of the scraped tweet (affects tolerance)
+        entity: DataEntity being validated
+
+    Returns:
+        ValidationResult if validation fails, None if validation passes
+    """
+    # If we don't have an actual value, we can't validate percentage-wise
+    if actual_value is None or actual_value <= 0:
+        return None
+
+    # Smart tolerance calculation using logarithmic decay
+    # Formula: max_percentage = base_percentage / log10(max(actual_value, 10))
+    # This gives smaller accounts higher percentage tolerance naturally
+
+    base_percentage = 200.0  # Starting percentage for very small accounts
+    log_factor = math.log10(max(actual_value, 10))  # Prevent log(0)
+    max_percentage = min(base_percentage / log_factor, 50.0)  # Cap at 50%
+
+    # Age-based multiplier to handle viral growth scenarios
+    # Older scraped data gets more tolerance since accounts can grow significantly
+    age_hours = max(tweet_age.total_seconds() / 3600, 0.1)  # Minimum 0.1 hours
+
+    if age_hours < 24:
+        # Fresh data (< 1 day): standard tolerance
+        age_multiplier = 1.0
+    elif age_hours < 168:  # < 1 week
+        # Recent data: moderate increase in tolerance
+        age_multiplier = 1.5
+    elif age_hours < 720:  # < 1 month
+        # Older data: higher tolerance for viral growth
+        age_multiplier = 2.5
+    else:
+        # Very old data: maximum tolerance
+        age_multiplier = 4.0
+
+    # Apply age multiplier to percentage tolerance
+    max_percentage = min(
+        max_percentage * age_multiplier, 500.0
+    )  # Cap at 500% (5x growth)
+
+    # Minimum absolute tolerance scales with account size (square root for gentle scaling)
+    min_absolute = max(int(math.sqrt(actual_value) * 10), 50)
+
+    # Calculate tolerance
+    percentage_tolerance = int(actual_value * max_percentage / 100)
+    final_tolerance = max(percentage_tolerance, min_absolute)
+
+    # Follower counts can go up or down
+    max_allowed = actual_value + final_tolerance
+    min_allowed = max(0, actual_value - final_tolerance)
+
+    # Validate range
+    if not (min_allowed <= submitted_value <= max_allowed):
+        diff_percentage = abs(submitted_value - actual_value) / actual_value * 100
+        bt.logging.info(
+            f"{field_name} validation failed: submitted={submitted_value}, "
+            f"actual={actual_value}, diff={diff_percentage:.1f}%, "
+            f"max_allowed={max_percentage:.1f}%, tolerance=±{final_tolerance}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason=f"{field_name} {submitted_value} differs too much from current value {actual_value} ({diff_percentage:.1f}% > {max_percentage:.1f}%)",
             content_size_bytes_validated=entity.content_size_bytes,
         )
 
@@ -664,6 +750,9 @@ def _calculate_engagement_tolerance(
         "quote_count": 1.4,  # Moderate-high tolerance - quote tweets perform well
         "view_count": 3.0,  # Highest tolerance - most volatile, views-to-likes ~10-100:1
         "bookmark_count": 0.8,  # Lower tolerance - more private/stable action
+        # User profile metrics - change more slowly but can fluctuate
+        "user_followers_count": 2.0,  # High tolerance - can spike with viral content
+        "user_following_count": 1.5,  # Moderate tolerance - users follow/unfollow
     }
 
     multiplier = field_multipliers.get(field_name, 1.0)
