@@ -28,7 +28,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
     """
 
     # Apify actor ID for the video transcript scraper
-    ACTOR_ID = "new_noob/youtube-transcript-fetcher"
+    ACTOR_ID = "crawlmaster/youtube-transcript-fetcher"
 
     # Maximum number of validation attempts
     MAX_VALIDATION_ATTEMPTS = 2
