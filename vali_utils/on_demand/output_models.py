@@ -14,25 +14,25 @@ from common.data import DataEntity, DataSource
 class UserInfo(BaseModel):
     """User information for X posts."""
     display_name: str
-    followers_count: float
+    followers_count: int
     verified: bool
     id: str
-    following_count: float
+    following_count: int
     username: str
 
 
 class TweetInfo(BaseModel):
     """Tweet metadata for X posts."""
-    quote_count: float
+    quote_count: int
     id: str
-    retweet_count: float
-    like_count: float
+    retweet_count: int
+    like_count: int
     is_reply: bool
     hashtags: List[str]
     conversation_id: str
     is_quote: bool
     in_reply_to: Optional[dict] = None
-    reply_count: float
+    reply_count: int
     is_retweet: bool
 
 
@@ -46,7 +46,7 @@ class TranscriptSegment(BaseModel):
     """Transcript segment for YouTube videos."""
     text: str
     start: float
-    duration: float
+    end: float
 
 
 class XOrganicOutput(BaseModel):
@@ -57,7 +57,7 @@ class XOrganicOutput(BaseModel):
     uri: str
     source: str
     tweet: TweetInfo
-    content_size_bytes: float
+    content_size_bytes: int
     user: UserInfo
     label: Optional[str] = None
     
@@ -70,25 +70,25 @@ class XOrganicOutput(BaseModel):
         
         # Create nested user and tweet structures
         user_info = UserInfo(
-            display_name=x_content.user_display_name or "",
-            followers_count=float(x_content.user_followers_count or 0),
+            display_name=x_content.user_display_name,
+            followers_count=int(x_content.user_followers_count),
             verified=x_content.user_verified or False,
-            id=x_content.user_id or "",
-            following_count=float(x_content.user_following_count or 0),
-            username=x_content.username or ""
+            id=x_content.user_id,
+            following_count=int(x_content.user_following_count),
+            username=x_content.username
         )
         
         tweet_info = TweetInfo(
-            quote_count=float(x_content.quote_count or 0),
-            id=x_content.tweet_id or "",
-            retweet_count=float(x_content.retweet_count or 0),
-            like_count=float(x_content.like_count or 0),
-            is_reply=x_content.is_reply or False,
+            quote_count=int(x_content.quote_count),
+            id=x_content.tweet_id,
+            retweet_count=int(x_content.retweet_count),
+            like_count=int(x_content.like_count),
+            is_reply=x_content.is_reply,
             hashtags=x_content.tweet_hashtags or [],
-            conversation_id=x_content.conversation_id or "",
-            is_quote=x_content.is_quote or False,
+            conversation_id=x_content.conversation_id,
+            is_quote=x_content.is_quote,
             in_reply_to={"user_id": x_content.in_reply_to_user_id} if x_content.in_reply_to_user_id else None,
-            reply_count=float(x_content.reply_count or 0),
+            reply_count=int(x_content.reply_count),
             is_retweet=getattr(x_content, 'is_retweet', False)
         )
         
@@ -98,7 +98,7 @@ class XOrganicOutput(BaseModel):
             uri=data_entity.uri or "",
             source="X",
             tweet=tweet_info,
-            content_size_bytes=float(data_entity.content_size_bytes or 0),
+            content_size_bytes=int(data_entity.content_size_bytes or 0),
             user=user_info,
             label=data_entity.label.value if data_entity.label else None
         )
@@ -134,21 +134,21 @@ class RedditOrganicOutput(BaseModel):
         
         return cls(
             uri=data_entity.uri or "",
-            datetime=data_entity.datetime.isoformat() if data_entity.datetime else "",
-            source="Reddit",
+            datetime=data_entity.datetime.isoformat(),
+            source="REDDIT",
             label=data_entity.label.value if data_entity.label else None,
-            content_size_bytes=data_entity.content_size_bytes or 0,
-            id=getattr(reddit_content, 'post_id', '') or "",
-            url=data_entity.uri or "",
-            username=reddit_content.username or "",
-            communityName=reddit_content.communityName or "",
-            body=reddit_content.body or "",
-            createdAt=data_entity.datetime.isoformat() if data_entity.datetime else "",
-            dataType=getattr(reddit_content, 'data_type', '') or "post",
+            content_size_bytes=data_entity.content_size_bytes,
+            id=reddit_content.id,
+            url=reddit_content.url,
+            username=reddit_content.username,
+            communityName=reddit_content.community,
+            body=reddit_content.body,
+            createdAt=reddit_content.created_at.isoformat(),
+            dataType=reddit_content.data_type,
             title=reddit_content.title,
-            parentId=getattr(reddit_content, 'parent_id', None),
-            media=getattr(reddit_content, 'media_urls', None),
-            is_nsfw=getattr(reddit_content, 'is_nsfw', False)
+            parentId=reddit_content.parent_id,
+            media=reddit_content.media,
+            is_nsfw=reddit_content.is_nsfw,
         )
 
 
@@ -177,20 +177,31 @@ class YouTubeOrganicOutput(BaseModel):
         
         youtube_content = YouTubeContent.from_data_entity(data_entity)
         
+        # Convert transcript data to TranscriptSegment objects
+        transcript_segments = []
+        if youtube_content.transcript:
+            for segment_dict in youtube_content.transcript:
+                if isinstance(segment_dict, dict) and 'text' in segment_dict:
+                    transcript_segments.append(TranscriptSegment(
+                        text=segment_dict.get('text'),
+                        start=float(segment_dict.get('start')),
+                        end=float(segment_dict.get('end'))
+                    ))
+        
         return cls(
             uri=data_entity.uri or "",
-            datetime=data_entity.datetime.isoformat() if data_entity.datetime else "",
-            source="YouTube",
+            datetime=data_entity.datetime.isoformat(),
+            source="YOUTUBE",
             label=data_entity.label.value if data_entity.label else None,
-            content_size_bytes=data_entity.content_size_bytes or 0,
-            video_id=getattr(youtube_content, 'video_id', '') or "",
-            title=youtube_content.title or "",
-            channel_name=youtube_content.channel_name or "",
-            upload_date=data_entity.datetime.isoformat() if data_entity.datetime else "",
-            transcript=getattr(youtube_content, 'transcript', []) or [],
-            url=data_entity.uri or "",
-            duration_seconds=getattr(youtube_content, 'duration_seconds', 0) or 0,
-            language=getattr(youtube_content, 'language', '') or ""
+            content_size_bytes=data_entity.content_size_bytes,
+            video_id=youtube_content.video_id,
+            title=youtube_content.title,
+            channel_name=youtube_content.channel_name,
+            upload_date=youtube_content.upload_date.isoformat(),
+            transcript=transcript_segments,
+            url=youtube_content.url,
+            duration_seconds=youtube_content.duration_seconds,
+            language=youtube_content.language,
         )
 
 
