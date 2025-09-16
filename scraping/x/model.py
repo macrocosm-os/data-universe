@@ -100,30 +100,41 @@ class XContent(BaseModel):
         )
 
     @classmethod
+    def is_nested_format(cls, data_entity: DataEntity) -> bool:
+        """Check if a DataEntity contains legacy nested format content."""
+        try:
+            content_str = data_entity.content.decode("utf-8")
+            content_dict = json.loads(content_str)
+            return "user" in content_dict or "tweet" in content_dict
+        except (UnicodeDecodeError, json.JSONDecodeError):
+            return False
+    
+    @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
         """Converts a DataEntity to an XContent with backward compatibility for nested format."""
         content_str = data_entity.content.decode("utf-8")
-        content_dict = json.loads(content_str)
         
         # Check if this is the legacy nested format and we're still in compatibility period
-        if ("user" in content_dict or "tweet" in content_dict) and dt.datetime.now(dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
+        if cls.is_nested_format(data_entity) and dt.datetime.now(dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
             # Handle legacy nested format
-            return cls._from_enhanced_nested_format(content_dict)
+            return cls._from_enhanced_nested_format(data_entity)
         else:
-            # Handle current flat format
             return XContent.parse_raw(content_str)
     
     @classmethod
-    def _from_enhanced_nested_format(cls, content_dict: dict) -> "XContent":
+    def _from_enhanced_nested_format(cls, data_entity: "DataEntity") -> "XContent":
         """Convert from legacy EnhancedXContent nested format to unified XContent format."""
-        # Extract base fields
+        # Parse the content from the data entity
+        content_str = data_entity.content.decode("utf-8")
+        content_dict = json.loads(content_str)
+        
         base_fields = {
-            "username": content_dict.get("username", ""),
-            "text": content_dict.get("text", ""),
-            "url": content_dict.get("url", ""),
-            "timestamp": dt.datetime.fromisoformat(content_dict["timestamp"].replace('Z', '+00:00')) if content_dict.get("timestamp") else dt.datetime.now(dt.timezone.utc),
+            "username": content_dict.get("username"),
+            "text": content_dict.get("text"),
+            "url": content_dict.get("url") or data_entity.uri,
+            "timestamp": data_entity.datetime,  # Use precise timestamp from DataEntity (to_data_entity will obfuscate for content)
             "tweet_hashtags": content_dict.get("tweet_hashtags", []),
-            "media": content_dict.get("media")
+            "media": cls._extract_media_urls(content_dict.get("media"))
         }
         
         # Extract user fields from nested user object
@@ -165,3 +176,21 @@ class XContent(BaseModel):
                 base_fields[field] = content_dict[field]
         
         return cls(**base_fields)
+    
+    @classmethod
+    def _extract_media_urls(cls, media_data) -> Optional[List[str]]:
+        """Extract media URLs from nested format media data."""
+        if not media_data:
+            return None
+            
+        media_urls = []
+        if isinstance(media_data, list):
+            for item in media_data:
+                if isinstance(item, dict) and "url" in item:
+                    # Extract URL from {"url": "...", "type": "..."} format
+                    media_urls.append(item["url"])
+                elif isinstance(item, str):
+                    # Already a URL string
+                    media_urls.append(item)
+        
+        return media_urls if media_urls else None

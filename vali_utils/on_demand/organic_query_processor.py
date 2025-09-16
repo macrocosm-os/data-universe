@@ -7,6 +7,7 @@ import bittensor as bt
 from common.data import DataSource, DataLabel, DataEntity
 from common.protocol import OnDemandRequest
 from common.organic_protocol import OrganicRequest
+from common.constants import X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
 from common import constants, utils
 from scraping.provider import ScraperProvider
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
@@ -245,6 +246,8 @@ class OrganicQueryProcessor:
                 # Test conversion to appropriate content model based on source
                 if source == 'X':
                     x_content = XContent.from_data_entity(item)
+                    if XContent.is_nested_format(item) and dt.datetime.now(tz=dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
+                        item = XContent.to_data_entity(x_content)
                     
                 elif source == 'REDDIT':
                     # Parse the content JSON to validate structure
