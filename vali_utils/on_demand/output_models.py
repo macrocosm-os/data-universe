@@ -209,11 +209,11 @@ def create_organic_output_dict(data_entity: DataEntity) -> Dict:
     """
     source = DataSource(data_entity.source).name
     
-    if source == "X":
+    if source.upper() == "X":
         return XOrganicOutput.from_data_entity(data_entity).dict()
-    elif source == "Reddit":
+    elif source.upper() == "REDDIT":
         return RedditOrganicOutput.from_data_entity(data_entity).dict()
-    elif source == "YouTube":
+    elif source.upper() == "YOUTUBE":
         return YouTubeOrganicOutput.from_data_entity(data_entity).dict()
     else:
         raise ValueError(f"Unknown source: {source}")
