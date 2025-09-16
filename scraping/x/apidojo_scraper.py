@@ -84,8 +84,9 @@ class ApiDojoTwitterScraper(Scraper):
                         )
 
                 # Parse the response
+                check_engagement = not allow_low_engagement
                 tweets, is_retweets, author_datas, view_counts = (
-                    self._best_effort_parse_dataset(dataset)
+                    self._best_effort_parse_dataset(dataset=dataset, check_engagement=check_engagement)
                 )
 
                 actual_tweet = None
@@ -217,7 +218,7 @@ class ApiDojoTwitterScraper(Scraper):
             not allow_low_engagement
         )  # Disable filtering if allow_low_engagement=True
         x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(
-            dataset, check_engagement=check_engagement
+            dataset=dataset, check_engagement=check_engagement
         )
 
         bt.logging.success(
@@ -317,7 +318,7 @@ class ApiDojoTwitterScraper(Scraper):
             return []
 
         # Parse the results using enhanced methods - ALLOW LOW ENGAGEMENT POSTS
-        x_contents, _, _, _ = self._best_effort_parse_dataset(dataset, check_engagement=False)
+        x_contents, _, _, _ = self._best_effort_parse_dataset(dataset=dataset, check_engagement=False)
 
         bt.logging.success(
             f"Completed on-demand scrape for {query}. Scraped {len(x_contents)} items."
