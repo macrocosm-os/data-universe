@@ -18,6 +18,7 @@ from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 import datetime as dt
 from vali_utils.miner_evaluator import MinerEvaluator
+from vali_utils.on_demand import utils as on_demand_utils
 from vali_utils.on_demand.output_models import create_organic_output_dict
 
 
@@ -246,7 +247,7 @@ class OrganicQueryProcessor:
                 # Test conversion to appropriate content model based on source
                 if source == 'X':
                     x_content = XContent.from_data_entity(item)
-                    if XContent.is_nested_format(item) and dt.datetime.now(tz=dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
+                    if on_demand_utils.is_nested_format(item) and dt.datetime.now(tz=dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
                         item = XContent.to_data_entity(x_content)
                     
                 elif source == 'REDDIT':
