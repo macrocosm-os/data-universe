@@ -46,7 +46,7 @@ from common.protocol import OnDemandRequest
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, ScraperId
 
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 import json
 
@@ -499,38 +499,19 @@ class Miner:
 
             bt.logging.info(f"Date range: {start_dt} to {end_dt}")
 
-            # For X source, use the enhanced scraper directly
+            # For X source, use the standard scraper with on_demand_scrape
             if synapse.source == DataSource.X:
-                # Initialize the enhanced scraper directly instead of using the provider
-                enhanced_scraper = EnhancedApiDojoTwitterScraper()
-                await enhanced_scraper.on_demand_scrape(usernames=synapse.usernames,
-                                                        keywords=synapse.keywords,
-                                                        keyword_mode=synapse.keyword_mode,
-                                                        start_datetime=start_dt,
-                                                        end_datetime=end_dt,
-                                                        limit=synapse.limit)
+                # Initialize the standard scraper (now includes low-engagement posts)
+                scraper = ApiDojoTwitterScraper()
+                data_entities = await scraper.on_demand_scrape(usernames=synapse.usernames,
+                                                               keywords=synapse.keywords,
+                                                               keyword_mode=synapse.keyword_mode,
+                                                               start_datetime=start_dt,
+                                                               end_datetime=end_dt,
+                                                               limit=synapse.limit)
 
-                # Get enhanced content
-                enhanced_content = enhanced_scraper.get_enhanced_content()
-
-                # Convert EnhancedXContent to DataEntity to maintain protocol compatibility
-                enhanced_data_entities = []
-                for content in enhanced_content:
-                    # Convert to DataEntity but store full rich content in serialized form
-                    api_response = content.to_api_response()
-                    data_entity = DataEntity(
-                        uri=content.url,
-                        datetime=content.timestamp,
-                        source=DataSource.X,
-                        label=DataLabel(value=content.tweet_hashtags[0].lower()) if content.tweet_hashtags else None,
-                        # Store the full enhanced content as serialized JSON in the content field
-                        content=json.dumps(api_response).encode('utf-8'),
-                        content_size_bytes=len(json.dumps(api_response))
-                    )
-                    enhanced_data_entities.append(data_entity)
-
-                # Update response with enhanced data entities
-                synapse.data = enhanced_data_entities[:synapse.limit] if synapse.limit else enhanced_data_entities
+                # Update response with data entities (already includes all enhanced fields)
+                synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
 
             elif synapse.source == DataSource.REDDIT:
                 # Create a new scraper provider and get the appropriate scraper
