@@ -19,7 +19,6 @@ from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity

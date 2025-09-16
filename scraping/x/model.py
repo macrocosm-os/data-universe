@@ -1,11 +1,13 @@
 import datetime as dt
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Any
+import json
 
 # Use v1 for these models to keep serialization consistent.
 # Pydantic v2 doesn't include spaces in its serialization.
 from pydantic.v1 import BaseModel, Field
 
 from common import constants
+from common.constants import X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
 from common.data import DataEntity, DataLabel, DataSource
 from scraping import utils
 
@@ -99,6 +101,67 @@ class XContent(BaseModel):
 
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
-        """Converts a DataEntity to an XContent."""
+        """Converts a DataEntity to an XContent with backward compatibility for nested format."""
         content_str = data_entity.content.decode("utf-8")
-        return XContent.parse_raw(content_str)
+        content_dict = json.loads(content_str)
+        
+        # Check if this is the legacy nested format and we're still in compatibility period
+        if ("user" in content_dict or "tweet" in content_dict) and dt.datetime.now(dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
+            # Handle legacy nested format
+            return cls._from_enhanced_nested_format(content_dict)
+        else:
+            # Handle current flat format
+            return XContent.parse_raw(content_str)
+    
+    @classmethod
+    def _from_enhanced_nested_format(cls, content_dict: dict) -> "XContent":
+        """Convert from legacy EnhancedXContent nested format to unified XContent format."""
+        # Extract base fields
+        base_fields = {
+            "username": content_dict.get("username", ""),
+            "text": content_dict.get("text", ""),
+            "url": content_dict.get("url", ""),
+            "timestamp": dt.datetime.fromisoformat(content_dict["timestamp"].replace('Z', '+00:00')) if content_dict.get("timestamp") else dt.datetime.now(dt.timezone.utc),
+            "tweet_hashtags": content_dict.get("tweet_hashtags", []),
+            "media": content_dict.get("media")
+        }
+        
+        # Extract user fields from nested user object
+        user_dict = content_dict.get("user", {})
+        if user_dict:
+            base_fields.update({
+                "user_id": user_dict.get("id"),
+                "user_display_name": user_dict.get("display_name"),
+                "user_verified": user_dict.get("verified"),
+                "user_followers_count": user_dict.get("followers_count"),
+                "user_following_count": user_dict.get("following_count"),
+                "username": user_dict.get("username", base_fields["username"])
+            })
+        
+        # Extract tweet fields from nested tweet object
+        tweet_dict = content_dict.get("tweet", {})
+        if tweet_dict:
+            base_fields.update({
+                "tweet_id": tweet_dict.get("id"),
+                "is_reply": tweet_dict.get("is_reply"),
+                "is_quote": tweet_dict.get("is_quote"),
+                "conversation_id": tweet_dict.get("conversation_id"),
+                "like_count": tweet_dict.get("like_count"),
+                "retweet_count": tweet_dict.get("retweet_count"),
+                "reply_count": tweet_dict.get("reply_count"),
+                "quote_count": tweet_dict.get("quote_count")
+            })
+            
+            # Handle in_reply_to nested object
+            in_reply_to = tweet_dict.get("in_reply_to")
+            if in_reply_to and isinstance(in_reply_to, dict):
+                base_fields["in_reply_to_user_id"] = in_reply_to.get("user_id")
+        
+        # Handle direct top-level fields that might exist in legacy format
+        for field in ["tweet_id", "user_id", "like_count", "retweet_count", "reply_count", "quote_count", 
+                     "is_reply", "is_quote", "conversation_id", "user_display_name", "user_verified",
+                     "user_followers_count", "user_following_count"]:
+            if field in content_dict and base_fields.get(field) is None:
+                base_fields[field] = content_dict[field]
+        
+        return cls(**base_fields)
