@@ -264,8 +264,7 @@ class ApiDojoTwitterScraper(Scraper):
                         )
                         continue
 
-                # Extract reply information (tuple of (user_id, username))
-                reply_info = self._extract_reply_info(data)
+                # Extract reply user ID directly from Apify data
 
                 # Extract user information
                 user_info = self._extract_user_info(data)
@@ -307,12 +306,12 @@ class ApiDojoTwitterScraper(Scraper):
                         is_quote=data.get("isQuote", None),
                         # Additional metadata
                         conversation_id=data.get("conversationId"),
-                        in_reply_to_user_id=reply_info[0],
+                        in_reply_to_user_id=data.get("inReplyToUserId"),
                         # ===== NEW FIELDS =====
                         # Static tweet metadata
                         language=data.get("lang"),
-                        in_reply_to_username=reply_info[1],
-                        quoted_tweet_id=data.get("quotedStatusId"),
+                        in_reply_to_username=data.get("inReplyToUsername"),
+                        quoted_tweet_id=data.get("quoteId"),
                         # Dynamic engagement metrics
                         like_count=engagement_metrics["like_count"],
                         retweet_count=engagement_metrics["retweet_count"],
@@ -336,19 +335,6 @@ class ApiDojoTwitterScraper(Scraper):
                 )
 
         return results, is_retweets, author_datas, view_counts
-
-    def _extract_reply_info(self, data: dict) -> Tuple[Optional[str], Optional[str]]:
-        """Extract reply information, returning (user_id, username) or (None, None)"""
-        if not data.get("isReply", False):
-            return None, None
-
-        user_id = data.get("inReplyToUserId")
-        username = None
-
-        if "inReplyToUser" in data and isinstance(data["inReplyToUser"], dict):
-            username = data["inReplyToUser"].get("userName")
-
-        return user_id, username
 
     def _extract_user_info(self, data: dict) -> dict:
         """Extract user information from tweet"""
