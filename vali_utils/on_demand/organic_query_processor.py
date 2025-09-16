@@ -7,21 +7,23 @@ import bittensor as bt
 from common.data import DataSource, DataLabel, DataEntity
 from common.protocol import OnDemandRequest
 from common.organic_protocol import OrganicRequest
-from common.constants import X_ON_DEMAND_CONTENT_EXPIRATION_DATE
+from common.constants import X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
 from common import constants, utils
 from scraping.provider import ScraperProvider
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
-from scraping.x.on_demand_model import EnhancedXContent
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
+from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from scraping.youtube.model import YouTubeContent
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 import datetime as dt
 from vali_utils.miner_evaluator import MinerEvaluator
+from vali_utils.on_demand import utils as on_demand_utils
+from vali_utils.on_demand.output_models import create_organic_output_dict
 
 
 class OrganicQueryProcessor:
-    """Handles organic query processing, cross-validation, and miner evaluation"""
+    """Handles organic query processing, validation, and miner evaluation"""
     
     def __init__(self, 
                  wallet: bt.wallet,
@@ -33,7 +35,7 @@ class OrganicQueryProcessor:
         
         # constants
         self.NUM_MINERS_TO_QUERY = 5
-        self.CROSS_VALIDATION_SAMPLE_SIZE = 10
+        self.PER_MINER_VALIDATION_SAMPLE_SIZE = 2
         self.MIN_CONSENSUS = 0.3    # if consensus is <30% of request size, consensus penalties skipped
         
         # Volume verification constants
@@ -75,8 +77,8 @@ class OrganicQueryProcessor:
             if volume_verification_response:
                 return volume_verification_response
             
-            # Step 5: Perform cross-validation 
-            validation_results = await self._perform_cross_validation(synapse, miner_responses)
+            # Step 5: Perform validation 
+            validation_results = await self._perform_validation(synapse, miner_responses)
             
             # Step 6: Calculate final scores with all penalties applied
             miner_scores, failed_miners = self._apply_validation_penalties(miner_responses, validation_results)
@@ -244,7 +246,9 @@ class OrganicQueryProcessor:
                 
                 # Test conversion to appropriate content model based on source
                 if source == 'X':
-                    enhanced_content = EnhancedXContent.from_data_entity(item)
+                    x_content = XContent.from_data_entity(item)
+                    if on_demand_utils.is_nested_format(item) and dt.datetime.now(tz=dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
+                        item = XContent.to_data_entity(x_content)
                     
                 elif source == 'REDDIT':
                     # Parse the content JSON to validate structure
@@ -291,7 +295,7 @@ class OrganicQueryProcessor:
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
                 
                 # Return verification data as response
-                processed_data = self._process_response_data(synapse, verification_data)
+                processed_data = [self._create_entity_dictionary(item) for item in verification_data]
                 synapse.status = "success"
                 synapse.data = processed_data[:synapse.limit]
                 synapse.meta = {
@@ -469,7 +473,7 @@ class OrganicQueryProcessor:
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
         
         # Return verification data as response
-        processed_data = self._process_response_data(synapse, verification_data)
+        processed_data = [self._create_entity_dictionary(item) for item in verification_data]
         synapse.status = "success"
         synapse.data = processed_data[:synapse.limit]
         synapse.meta = {
@@ -484,20 +488,46 @@ class OrganicQueryProcessor:
         return synapse
     
 
-    async def _perform_cross_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Dict[str, bool]:
-        """Perform cross-validation on pooled miner responses"""
-        bt.logging.info("Starting cross-validation process...")
+    async def _perform_validation(self, synapse: OrganicRequest, miner_responses: Dict[int, List]) -> Dict[str, bool]:
+        """Perform OnDemand validation: selecting random posts per miner with non-empty responses"""
+        validation_results = {}
+        validation_tasks = []
+        post_ids = []
         
-        # Pool all responses
-        all_posts, post_to_miners = self._pool_responses(miner_responses)
+        # For each miner with non-empty responses, select up to 2 random posts
+        for uid, posts in miner_responses.items():
+            if not posts:
+                continue
+                
+            # Select up to {2} random posts from this miner
+            num_to_validate = min(self.PER_MINER_VALIDATION_SAMPLE_SIZE, len(posts))
+            selected_posts = random.sample(posts, num_to_validate)
+            
+            bt.logging.info(f"Validating {num_to_validate} posts from miner {uid}")
+            
+            for post in selected_posts:
+                post_id = self._get_post_id(post)
+                post_ids.append(post_id)
+                
+                # Create async task for validation
+                task = self._validate_entity(synapse=synapse, entity=post, post_id=post_id)
+                validation_tasks.append(task)
         
-        # Select posts for validation
-        posts_to_validate = self._select_validation_posts(all_posts, post_to_miners, miner_responses)
+        # Run all validations concurrently
+        if validation_tasks:
+            validation_task_results = await asyncio.gather(*validation_tasks, return_exceptions=True)
+            
+            # Process results
+            for i, post_id in enumerate(post_ids):
+                result = validation_task_results[i]
+                
+                if isinstance(result, Exception):
+                    bt.logging.error(f"Validation error for {post_id}: {str(result)}")
+                    validation_results[post_id] = False
+                else:
+                    validation_results[post_id] = result
         
-        # Perform actual validation
-        validation_results = await self._validate_posts(synapse, posts_to_validate)
-        
-        bt.logging.info(f"Cross-validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
+        bt.logging.info(f"Simplified validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
         return validation_results
     
 
@@ -506,7 +536,7 @@ class OrganicQueryProcessor:
         try:
             # Initialize scraper based on source
             if synapse.source.upper() == 'X':
-                scraper = EnhancedApiDojoTwitterScraper()
+                scraper = ApiDojoTwitterScraper()
             else:
                 scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(DataSource[synapse.source.upper()])
                 scraper = ScraperProvider().get(scraper_id) if scraper_id else None
@@ -533,15 +563,12 @@ class OrganicQueryProcessor:
             
             # Perform scraping based on source
             if synapse.source.upper() == 'X':
-                await scraper.on_demand_scrape(usernames=synapse.usernames,
-                                               keywords=synapse.keywords,
-                                               keyword_mode=synapse.keyword_mode,
-                                               start_datetime=start_date,
-                                               end_datetime=end_date,
-                                               limit=synapse.limit)
-                enhanced_content = scraper.get_enhanced_content()
-                # Convert EnhancedXContent to DataEntities
-                verification_data = [EnhancedXContent.to_enhanced_data_entity(content=content) for content in enhanced_content]
+                verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
+                                                                   keywords=synapse.keywords,
+                                                                   keyword_mode=synapse.keyword_mode,
+                                                                   start_datetime=start_date,
+                                                                   end_datetime=end_date,
+                                                                   limit=synapse.limit)
             elif synapse.source.upper() == 'REDDIT':
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    subreddit=synapse.keywords[0] if synapse.keywords else None,
@@ -564,163 +591,6 @@ class OrganicQueryProcessor:
         except Exception as e:
             bt.logging.error(f"Error during verification rescrape: {str(e)}")
             return None
-    
-
-    def _pool_responses(self, miner_responses: Dict[int, List]) -> Tuple[List, Dict[str, List[int]]]:
-        """Pool all miner responses and track duplicates"""
-        all_posts = []
-        post_to_miners = {}
-        
-        for uid, posts in miner_responses.items():
-            if not posts:
-                continue
-            
-            for post in posts:
-                post_id = self._get_post_id(post)
-                
-                if post_id not in post_to_miners:
-                    post_to_miners[post_id] = []
-                    all_posts.append(post)
-                
-                post_to_miners[post_id].append(uid)
-        
-        bt.logging.info(f"Found {len(all_posts)} unique posts with {sum(len(miners) - 1 for miners in post_to_miners.values())} duplicates")
-        return all_posts, post_to_miners
-    
-
-    def _select_validation_posts(self, all_posts: List, post_to_miners: Dict[str, List[int]], miner_responses: Dict[int, List]) -> List:
-        """Select posts for validation: first ensure miner coverage, then use weighted distribution for remaining slots"""
-        validation_sample_size = min(self.CROSS_VALIDATION_SAMPLE_SIZE, len(all_posts))
-        
-        if validation_sample_size == 0:
-            return []
-        
-        posts_to_validate = []
-        selected_post_ids = set()
-        
-        # Miner coverage - randomly select one post from each miner with non-empty responses
-        miners_with_data = [uid for uid, responses in miner_responses.items() if responses]
-        coverage_slots = min(validation_sample_size, len(miners_with_data))
-        
-        bt.logging.info(f"Allocating {coverage_slots} slots for miner coverage from {len(miners_with_data)} miners with data")
-        
-        for uid in miners_with_data[:coverage_slots]:
-            miner_posts = miner_responses[uid]
-            if miner_posts:
-                # Randomly select from this miner's posts that haven't been selected yet
-                available_posts = [p for p in miner_posts if self._get_post_id(p) not in selected_post_ids]
-                if available_posts:
-                    selected_post = random.choice(available_posts)
-                    posts_to_validate.append(selected_post)
-                    selected_post_ids.add(self._get_post_id(selected_post))
-        
-        # Weighted selection for remaining slots targeting suspicious posts
-        remaining_slots = validation_sample_size - len(posts_to_validate)
-        
-        if remaining_slots > 0:
-            bt.logging.info(f"Using weighted selection for {remaining_slots} remaining slots")
-            
-            # Create list of (post, miner_count) tuples for remaining posts
-            remaining_posts = []
-            for post in all_posts:
-                post_id = self._get_post_id(post)
-                if post_id not in selected_post_ids:
-                    miner_count = len(post_to_miners.get(post_id, []))
-                    remaining_posts.append((post, miner_count))
-            
-            if remaining_posts:
-                # Group remaining posts by miner count
-                posts_by_count = {}
-                for post, count in remaining_posts:
-                    if count not in posts_by_count:
-                        posts_by_count[count] = []
-                    posts_by_count[count].append(post)
-                
-                total_miners = len(miner_responses)
-                
-                # Create weighted pool - only include posts not already selected
-                weighted_posts = []
-                for count, posts in posts_by_count.items():
-                    weight = max(1, total_miners - count + 1)
-                    for post in posts:
-                        post_id = self._get_post_id(post)
-                        if post_id not in selected_post_ids:
-                            weighted_posts.extend([post] * weight)
-                
-                # Sample from weighted pool without replacement
-                for _ in range(remaining_slots):
-                    if not weighted_posts:
-                        break
-                        
-                    selected_post = random.choice(weighted_posts)
-                    post_id = self._get_post_id(selected_post)
-                    
-                    posts_to_validate.append(selected_post)
-                    selected_post_ids.add(post_id)
-                    
-                    weighted_posts = [p for p in weighted_posts if self._get_post_id(p) != post_id]
-        
-        # Log the final distribution
-        count_distribution = {}
-        coverage_distribution = {}
-        for i, post in enumerate(posts_to_validate):
-            post_id = self._get_post_id(post)
-            count = len(post_to_miners.get(post_id, []))
-            count_distribution[count] = count_distribution.get(count, 0) + 1
-            
-            # Track which posts came from coverage vs weighted selection
-            if i < coverage_slots:
-                coverage_distribution[count] = coverage_distribution.get(count, 0) + 1
-        
-        # Verify no duplicates in final selection
-        final_post_ids = [self._get_post_id(p) for p in posts_to_validate]
-        assert len(final_post_ids) == len(set(final_post_ids)), f"Duplicate posts in validation selection: {len(final_post_ids)} total, {len(set(final_post_ids))} unique"
-        
-        return posts_to_validate
-
-
-    async def _validate_posts(self, synapse: OrganicRequest, posts_to_validate: List[DataEntity]) -> Dict[str, bool]:
-        """
-        Performs request field matching, enhanced field validation, and content validation on posts. 
-        """
-        validation_results = {}
-        
-        if not posts_to_validate:
-            return validation_results
-        
-        # Create validation tasks for concurrent execution
-        validation_tasks = []
-        post_ids = []
-        
-        for post in posts_to_validate:
-            bt.logging.info(f"Post for validation: {post}")
-            post_id = self._get_post_id(post)
-            post_ids.append(post_id)
-            
-            # Create async task for validation
-            task = self._validate_entity(synapse=synapse, entity=post, post_id=post_id)
-            validation_tasks.append(task)
-        
-        # Run all validations concurrently
-        if validation_tasks:
-            validation_task_results = await asyncio.gather(*validation_tasks, return_exceptions=True)
-            
-            # Process results
-            task_index = 0
-            for i, post_id in enumerate(post_ids):
-                if post_id in validation_results:
-                    continue  # Already failed conversion
-                    
-                result = validation_task_results[task_index]
-                task_index += 1
-                
-                if isinstance(result, Exception):
-                    bt.logging.error(f"Validation error for {post_id}: {str(result)}")
-                    validation_results[post_id] = False
-                else:
-                    validation_results[post_id] = result
-        
-        return validation_results
     
 
     def _validate_time_range(self, synapse: OrganicRequest, post_timestamp: dt.datetime) -> bool:
@@ -754,60 +624,100 @@ class OrganicQueryProcessor:
             return False
     
 
-    def _validate_x_metadata_completeness(self, x_content: EnhancedXContent) -> bool:
+    def _validate_x_metadata_completeness(self, x_content: XContent) -> bool:
         """
-        Validate that X content has all required tweet metadata fields present.
+        Validate that X content has all required metadata fields for output models.
+        Validates fields required by UserInfo, TweetInfo, and XOrganicOutput.
         
         Args:
-            x_content: The EnhancedXContent object to validate
+            x_content: The XContent object to validate
             
         Returns:
             bool: True if all required metadata is present, False otherwise
         """
         try:
-            # All tweet metadata fields are required for organic responses
-            required_fields = [
-                ('tweet_id', 'Tweet ID'),
-                ('like_count', 'Like count'),
-                ('retweet_count', 'Retweet count'),
-                ('reply_count', 'Reply count'),
-                ('quote_count', 'Quote count'),
-                ('is_retweet', 'Is retweet flag'),
-                ('is_reply', 'Is reply flag'),
-                ('is_quote', 'Is quote flag')
-            ]
-            
             missing_fields = []
             
-            # Check all required fields
-            for field_name, display_name in required_fields:
+            # XOrganicOutput required fields (except label which is optional)
+            base_required_fields = [
+                'text',
+                'url',
+            ]
+            
+            # UserInfo required fields 
+            user_required_fields = [
+                'user_display_name',
+                'user_followers_count',
+                'user_verified',
+                'user_id',
+                'user_following_count',
+                'username',
+            ]
+            
+            # TweetInfo required fields (except in_reply_to which is optional)
+            tweet_required_fields = [
+                'quote_count',
+                'tweet_id',
+                'retweet_count',
+                'like_count',
+                'is_reply',
+                'tweet_hashtags',
+                'conversation_id',
+                'is_quote',
+                'reply_count',
+            ]
+            
+            # Check all required field categories
+            all_required_fields = base_required_fields + user_required_fields + tweet_required_fields
+            
+            for field_name in all_required_fields:
                 field_value = getattr(x_content, field_name, None)
                 if field_value is None:
-                    missing_fields.append(display_name)
+                    missing_fields.append(field_name)
             
             # Fail validation if any required fields are missing
             if missing_fields:
                 bt.logging.info(f"Tweet {x_content.url} missing required metadata: {missing_fields}")
                 return False
             
-            # ensure numeric fields are actually numeric
-            numeric_fields = ['like_count', 'retweet_count', 'reply_count', 'quote_count']
+            # Validate field types
+            
+            # Numeric fields must be numeric
+            numeric_fields = ['like_count', 'retweet_count', 'reply_count', 'quote_count', 
+                             'user_followers_count', 'user_following_count']
             for field_name in numeric_fields:
                 field_value = getattr(x_content, field_name, None)
                 if field_value is not None and not isinstance(field_value, (int, float)):
                     try:
-                        # Try to convert to int
-                        int(field_value)
+                        # Try to convert to numeric
+                        float(field_value)
                     except (ValueError, TypeError):
                         bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not numeric)")
                         return False
             
-            # ensure boolean fields are actually boolean
-            boolean_fields = ['is_retweet', 'is_reply', 'is_quote']
+            # Boolean fields must be boolean
+            boolean_fields = ['is_reply', 'is_quote', 'user_verified']
             for field_name in boolean_fields:
                 field_value = getattr(x_content, field_name, None)
                 if field_value is not None and not isinstance(field_value, bool):
                     bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not boolean)")
+                    return False
+            
+            # String fields must be strings
+            string_fields = ['text', 'url', 'user_display_name', 'user_id', 'username', 
+                           'tweet_id', 'conversation_id']
+            for field_name in string_fields:
+                field_value = getattr(x_content, field_name, None)
+                if field_value is not None and not isinstance(field_value, str):
+                    bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not string)")
+                    return False
+            
+            # List fields must be lists
+            list_fields = ['tweet_hashtags']
+            for field_name in list_fields:
+                field_value = getattr(x_content, field_name, None)
+                if field_value is not None and not isinstance(field_value, list):
+                    bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not list)")
                     return False
             
             return True
@@ -834,11 +744,11 @@ class OrganicQueryProcessor:
             
             # Phase 2: Metadata completeness validation (X only)
             if synapse.source.upper() == 'X':
-                x_content = EnhancedXContent.from_data_entity(entity)
+                x_content = XContent.from_data_entity(entity)
                 if not self._validate_x_metadata_completeness(x_content=x_content):
                     bt.logging.error(f"Post {post_id} failed metadata completeness validation")
                     return False
-                entity_for_validation = EnhancedXContent.to_data_entity(content=x_content)
+                entity_for_validation = XContent.to_data_entity(content=x_content)
             
             # Phase 3: Scraper validation (only if previous validation passes)
             scraper_result = await self._validate_with_scraper(synapse, entity_for_validation, post_id)
@@ -868,24 +778,27 @@ class OrganicQueryProcessor:
     def _validate_x_request_fields(self, synapse: OrganicRequest, x_entity: DataEntity) -> bool:
         """X request field validation with the X DataEntity"""
         x_content_dict = json.loads(x_entity.content.decode('utf-8'))
-        # Username validation
+        
+        # Username validation - handle both nested and flat formats
         if synapse.usernames:
             requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
-            user_dict = x_content_dict.get("user", {})
-            post_username = user_dict.get("username", "").strip('@').lower()
+            
+            # Check if this is nested format (backward compatibility)
+            if 'user' in x_content_dict:
+                # Nested format
+                user_dict = x_content_dict.get("user", {})
+                post_username = user_dict.get("username", "").strip('@').lower()
+            else:
+                # Flat format (current)
+                post_username = x_content_dict.get("username", "").strip('@').lower()
+                
             if not post_username or post_username not in requested_usernames:
                 bt.logging.debug(f"Username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
-        # Keyword validation
+        # Keyword validation - text is at top level in both formats
         if synapse.keywords:
-            post_text = x_content_dict.get("text")
-            now = dt.datetime.now(dt.timezone.utc)
-            if now <= X_ON_DEMAND_CONTENT_EXPIRATION_DATE:
-                if not post_text:
-                    bt.logging.debug("'text' field not found, using 'content' as fallback. This fallback will expire Aug 25 2025.")
-                    post_text = x_content_dict.get("content", "")
-                
+            post_text = x_content_dict.get("text", "")
             post_text = post_text.lower()
 
             # Apply keyword matching based on keyword_mode
@@ -981,7 +894,10 @@ class OrganicQueryProcessor:
                 return False
             
             # Call scraper validation
-            results = await scraper.validate([data_entity])
+            if synapse.source.upper() == "X": 
+                results = await scraper.validate(entities=[data_entity], allow_low_engagement=True)
+            else:
+                results = await scraper.validate([data_entity])
             if results and len(results) > 0:
                 result = results[0]
                 is_valid = result.is_valid if hasattr(result, 'is_valid') else bool(result)
@@ -1001,7 +917,7 @@ class OrganicQueryProcessor:
         """Get appropriate scraper for the data source"""
         try:
             if source.upper() == 'X':
-                return EnhancedApiDojoTwitterScraper()
+                return ApiDojoTwitterScraper()
             else:
                 scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(DataSource[source.upper()])
                 if scraper_id:
@@ -1074,7 +990,7 @@ class OrganicQueryProcessor:
             return self._create_empty_response(synapse, metadata)
         
         # Process pooled data from all miners (already deduplicated)
-        processed_data = self._process_response_data(synapse, pooled_data)
+        processed_data = [self._create_entity_dictionary(item) for item in pooled_data]
         
         synapse.status = "success"
         synapse.data = processed_data[:synapse.limit]
@@ -1111,42 +1027,21 @@ class OrganicQueryProcessor:
     
 
     def _create_entity_dictionary(self, data_entity: DataEntity) -> Dict:
-        """Create entity dictionary with nested structure instead of flattened"""
-        entity_dict = {}
-
-        # Top-level entity fields
-        entity_dict["uri"] = data_entity.uri
-        entity_dict["datetime"] = data_entity.datetime
-        entity_dict["source"] = DataSource(data_entity.source).name
-        entity_dict["label"] = data_entity.label.value if data_entity.label else None
-        entity_dict["content_size_bytes"] = data_entity.content_size_bytes
-
+        """Create entity dictionary using source-specific Pydantic output models"""
         try:
-            content_dict = json.loads(data_entity.content.decode("utf-8"))
-            # Response content based off of the Data Source's given fields
-            for item in content_dict:
-                entity_dict[item] = content_dict.get(item)
-
+            return create_organic_output_dict(data_entity)
         except Exception as e:
-            bt.logging.error(f"Error decoding content from DataEntity. Content: {data_entity.content}")
-            entity_dict["content"] = data_entity.content
+            bt.logging.error(f"Error creating output dictionary: {str(e)}")
+            # Fallback to basic dictionary
+            return {
+                "uri": data_entity.uri,
+                "datetime": data_entity.datetime.isoformat() if data_entity.datetime else None,
+                "source": DataSource(data_entity.source).name,
+                "label": data_entity.label.value if data_entity.label else None,
+                "content_size_bytes": data_entity.content_size_bytes,
+                "error": "Failed to create structured output"
+            }
 
-        return entity_dict
-
-
-    def _process_response_data(self, synapse: OrganicRequest, data: List) -> List[Dict]:
-        """Process raw response data into standardized format"""
-        processed_data = []
-        
-        for item in data:
-            if isinstance(item, DataEntity):
-                processed_data.append(self._create_entity_dictionary(data_entity=item))
-
-            elif isinstance(item, Dict):
-                processed_data.append(item)
-        
-        return processed_data
-    
 
     def _get_post_id(self, post) -> str:
         """Generate consistent post identifier"""
