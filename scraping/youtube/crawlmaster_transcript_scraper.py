@@ -1,33 +1,28 @@
 import asyncio
-import traceback
-import re
-import bittensor as bt
-from typing import List, Dict, Any, Optional
 import datetime as dt
+import re
+from typing import List, Dict, Any, Optional
+
+import bittensor as bt
 import httpx
-import os
 from dotenv import load_dotenv
-from torch.fx.experimental.unification.multipledispatch.dispatcher import source
 
 from common.data import DataEntity, DataLabel, DataSource
-from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
-from scraping.youtube.model import YouTubeContent
-from scraping.youtube import utils as youtube_utils
 from scraping.apify import ActorRunner, RunConfig, ActorRunError
-from apify_client import ApifyClient
-from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
-from pydantic import BaseModel, Field, PositiveInt, ConfigDict
+from scraping.scraper import Scraper, ValidationResult
+from scraping.youtube import utils as youtube_utils
+from scraping.youtube.model import YouTubeContent
+
 
 load_dotenv()
 
 
 class YouTubeChannelTranscriptScraper(Scraper):
     """
-    Scraper for YouTube video transcripts.
+    Scraper for YouTube video transcripts from single video or channel.
     """
 
-    # Apify actor ID for the video transcript scraper
+    # Apify actor ID for the video transcript scraper (for single video)
     ACTOR_ID = "crawlmaster/youtube-transcript-fetcher"
 
     # Maximum number of validation attempts
@@ -46,36 +41,59 @@ class YouTubeChannelTranscriptScraper(Scraper):
         # HTTP client for YouTube API calls
         self._http_timeout = httpx.Timeout(10.0)
 
-        bt.logging.info("YouTube Video Transcript Scraper initialized")
+        bt.logging.info("YouTube Video/Channel Transcript Scraper initialized")
 
-    async def scrape(self, url: str, lang: str = "en") -> List[DataEntity]:
+    async def scrape(
+        self,
+        youtube_url: Optional[str] = None,
+        channel_url: Optional[str] = None,
+        language: str = "en",
+        max_videos: int = 3,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[DataEntity]:
         """
-        Scrape transcript from a single YouTube video URL.
-        Input config expected to have 'youtube_url' as identifier and 'language'.
-        Returns a list of DataEntity objects (typically one for single video).
+        Scrape transcript from a single YouTube video URL or multiple videos from a channel URL.
+        Provide either youtube_url or channel_url (mutually exclusive).
+        For video: uses youtube_url and language.
+        For channel: uses channel_url, max_videos, start_date, end_date.
+        Returns a list of DataEntity objects.
         """
+        if youtube_url and channel_url:
+            bt.logging.error("Provide only one of youtube_url or channel_url.")
+            return []
+        if not youtube_url and not channel_url:
+            bt.logging.error("Must provide either youtube_url or channel_url.")
+            return []
 
+        if youtube_url:
+            # Handle single video (original logic)
+            return await self._scrape_single_video(youtube_url, language)
+        else:
+            # Handle channel
+            return await self._scrape_channel(channel_url, max_videos, start_date, end_date)
+
+    async def _scrape_single_video(self, youtube_url: str, language: str) -> List[DataEntity]:
+        """Internal method to scrape a single video."""
         # Extract video_id from URL
-        video_id = self._extract_video_id_from_url(url)
+        video_id = self._extract_video_id_from_url(youtube_url)
         if not video_id:
-            bt.logging.error(f"Invalid YouTube URL: {url}")
+            bt.logging.error(f"Invalid YouTube URL: {youtube_url}")
             return []
 
         try:
             # Get meta data using actor
-            meta_data = await self._get_meta_from_actor(video_id, lang)
-            # print(meta_data)
+            meta_data = await self._get_meta_from_actor(video_id, language)
             if not meta_data:
                 bt.logging.error(f"No data returned for video {video_id}")
                 return []
 
             # Get upload date from meta
-            upload_date = meta_data.get('upload_date')
-
-            if not upload_date:
+            published_at = meta_data.get('upload_date')
+            if not published_at:
                 bt.logging.error(f"No published_at for video {video_id}")
                 return []
-            upload_date = dt.datetime.fromisoformat(upload_date)
+            upload_date = dt.datetime.fromisoformat(published_at)
 
             results = []
             content = YouTubeContent(
@@ -97,6 +115,74 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
         except Exception as e:
             bt.logging.error(f"Error scraping video {video_id}: {str(e)}")
+            return []
+
+    async def _scrape_channel(
+            self,
+            channel_url: str,
+            max_videos: int,
+            start_date: Optional[str],
+            end_date: Optional[str],
+    ) -> List[DataEntity]:
+        """Internal method to scrape videos from a channel using Apify actor."""
+        try:
+            bt.logging.info(
+                f"Scraping channel {channel_url} with max_videos={max_videos}, start_date={start_date}, end_date={end_date}")
+
+            # Run Apify actor for channel
+            run_config = RunConfig(
+                actor_id=self.ACTOR_ID,
+                debug_info=f"Scrape channel {channel_url}",
+                timeout_secs=self.APIFY_TIMEOUT_SECS
+            )
+            run_input = {
+                "channel": channel_url,
+                "max_videos": max_videos,
+            }
+            if start_date is not None:
+                run_input["start_date"] = start_date
+            if end_date is not None:
+                run_input["end_date"] = end_date
+
+            result = await self.runner.run(run_config, run_input)
+
+            # Assume result is list of video dicts
+            if not result or not isinstance(result, list):
+                bt.logging.warning(f"No videos found for channel {channel_url}")
+                return []
+
+            results = []
+            for meta_data in result:
+                # Get upload date
+                published_at = meta_data.get('upload_date')
+                if not published_at:
+                    bt.logging.warning(f"Skipping video {meta_data.get('video_id')} - no published_at")
+                    continue
+                upload_date = dt.datetime.fromisoformat(published_at)
+
+                content = YouTubeContent(
+                    video_id=meta_data.get('video_id'),
+                    title=meta_data.get('title', ''),
+                    channel_name=meta_data.get('channel_name', ''),
+                    upload_date=upload_date,
+                    transcript=meta_data.get('transcript', ''),
+                    url=f"https://www.youtube.com/watch?v={meta_data.get('video_id')}",
+                    duration_seconds=int(meta_data.get('duration_seconds', 0)),
+                    language=meta_data.get('language', self.DEFAULT_LANGUAGE),  # Use default language for channel videos
+                )
+                from scraping.youtube.youtube_custom_scraper import YouTubeTranscriptScraper
+                scraper = YouTubeTranscriptScraper()
+                compressed_content = scraper._compress_transcript(content)
+                entity = YouTubeContent.to_data_entity(compressed_content)
+                results.append(entity)
+
+            return results
+
+        except ActorRunError as e:
+            bt.logging.error(f"Actor run error for channel {channel_url}: {str(e)}")
+            return []
+        except Exception as e:
+            bt.logging.error(f"Error scraping channel {channel_url}: {str(e)}")
             return []
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
@@ -136,16 +222,16 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     continue
 
                 # Get real upload date from actor response
-                upload_date = meta_data.get('upload_date')
-                if not upload_date:
+                published_at = meta_data.get('upload_date')
+                if not published_at:
                     results.append(ValidationResult(
                         is_valid=False,
-                        reason="Cannot verify upload_date from actor - potential timestamp manipulation",
+                        reason="Cannot verify published_at from actor - potential timestamp manipulation",
                         content_size_bytes_validated=entity.content_size_bytes
                     ))
                     continue
 
-                real_upload_date = dt.datetime.fromisoformat(upload_date)
+                real_upload_date = dt.datetime.fromisoformat(published_at)
 
                 # Use proper timestamp validation with obfuscation (like X and Reddit)
                 timestamp_validation = youtube_utils.validate_youtube_timestamp(
@@ -271,7 +357,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
         return intersection / union if union > 0 else 0.0
 
     async def _get_meta_from_actor(self, video_id: str, language: str) -> Any:
-        """Run Apify actor to get metadata and transcript for a video."""
+        """Run Apify actor to get metadata and transcript for a single video."""
         youtube_url = f"https://www.youtube.com/watch?v={video_id}"
         run_config = RunConfig(
             actor_id=self.ACTOR_ID,
@@ -290,13 +376,28 @@ class YouTubeChannelTranscriptScraper(Scraper):
             bt.logging.error(f"Actor run error for video {video_id}: {str(e)}")
             return None
 
-
-async def test_scrape():
+async def test_scrape_video():
     # Initialize the scraper
     scraper = YouTubeChannelTranscriptScraper()
 
     # Call scrape function
-    entities = await scraper.scrape(url='https://www.youtube.com/watch?v=KburKbaccQg', lang='en')
+    entities = await scraper.scrape(youtube_url='https://www.youtube.com/watch?v=KburKbaccQg')
+
+    # Print the result (list of DataEntity)
+    if entities:
+        for entity in entities:
+            print(f"Scraped DataEntity: {entity}")
+        return entities
+    else:
+        print("No data scraped.")
+    return []
+
+async def test_scrape_channel():
+    # Initialize the scraper
+    scraper = YouTubeChannelTranscriptScraper()
+
+    # Call scrape function
+    entities = await scraper.scrape(channel_url='https://www.youtube.com/@TAOTemplar', max_videos=5, start_date='2025-08-01', end_date='2025-08-31')
 
     # Print the result (list of DataEntity)
     if entities:
@@ -308,9 +409,7 @@ async def test_scrape():
     return []
 
 
-# # Run the async main function
-# if __name__ == "__main__":
-#     asyncio.run(main())
+
 async def test_validation():
     """Test validation functionality."""
     bt.logging.info("=" * 60)
@@ -318,15 +417,16 @@ async def test_validation():
     bt.logging.info("=" * 60)
 
     bt.logging.info("First, scraping some entities to validate...")
-    entities = await test_scrape()
+    entities = await test_scrape_channel()
+    single_video = await test_scrape_video()
     true_entities = [
         DataEntity(uri='https://www.youtube.com/watch?v=gRR8xhurbeQ',
-                  datetime=dt.datetime(2025, 9, 15, 10, 6, 46, tzinfo=dt.timezone.utc),
-                  source=DataSource.YOUTUBE,
-                  label=DataLabel(value='#ytc_c_bitcoinhyper'),
-                  content=b'{"video_id": "gRR8xhurbeQ", "title": "BITCOIN: $300M Liquidations Coming Soon! (warning) - BTC Price Prediction Today", "channel_name": "BitcoinHyper", "upload_date": "2025-09-15T10:06:00+00:00", "transcript": [{"text": "Yo, welcome everyone. Bitcoin is really trying to liquidate as much people as possible and if we do get another pump, $300 million will get completely wrecked and liquidated. Let me write show you. Only couple of hours ago, Bitcoin got a first push towards side to take the liquidity exactly below the recent low. So what does that exactly mean for all people that entered a long position? probably they are setting their stop loss exactly below the recent low and before we can actually get a bigger push towards the upside we need to wreck them we need to stop them out and only after they wrecked Bitcoin has gotten a beautiful push towards the upside and literally the exact same thing happened exactly above the recent high right here take the liquidity right there and of course after everyone is racked do get a bigger rotation back towards downside and it really proves my point. Liquidity in the market is everything. Before we are getting a significant pump and also a significant dump, we need to wreck the most amount of people in the shortest amount of time. And yes, if you right now pay attention to the past 24-hour liquidations, it really does look like over 444 million of longs and shorts have gotten wrecked, have gotten liquidated. But pay right now attention to exactly what other people have been doing in the market in the past couple of hours. Bitcoin definitely has gotten a push down. The CVD indicator also got quite a major push towards side while the open interest indicator is seeing a push towards the upside. So what does that exactly mean? People entered heavily into their short or sell positions exactly at this specific area. And now logically thinking, if we want to wreck them, of course, ideally right now, we should get another major push towards the upside, which is then going to be some kind of a short squeeze. And right now, pay attention to the liquidations on the twoe time frame. Yes, bigger liquidations on Bitcoin are going to be approximately at $117,000 US area where yes, almost $300 million is going to get completely wrecked and completely completely liquidated even right now if we do pay attention to our liquidation heat map right here. Yes, the biggest liquidations are still going to be literally exactly above the recent highs right here. That is right now why ideally in the next couple of hours I would still like to get another major push toward the upside which is then going to mean we are going to again wrecked the most amount of people in the shortest amount of time. That is right now why I do remain in my long position on Bitcoin in a long position on XRP and also in a long position on SUI. And later in the video, I\'m going to share with you exactly what is probably going to be my next trade. And maybe surprisingly for you, it is not going to be a long position, but actually a short position.", "start": 0.0, "duration": 158.4}, {"text": "However, I do want to share with you a trading setup for another long position on Bitcoin where we are literally trading as right now. But nevertheless, before we do talk about that, I would really appreciate for you to smash up the like button because 1,000 likes are really possible. And also, thank you for subscribing to the channel. Let me right now share with you why we are getting a rejection back towards the downside in the first place. Yes, we know we have taken the liquidity exactly above the recent high. But the reality is what if we zoom out a little bit and right now go with our anchored VWAP anchor it exactly at this previous alltime high. It looks like Bitcoin for the past couple of days has simply been trading exactly at some kind of a local area of resistance. Not only that, when we go with our channel, remember the SNE channel I mentioned already couple of days ago. You can right now see we hit the top of our SNE channel. We hit the anchored VWAP and exactly from this specific area, we are right now seeing a very small push toward the downside. Of course, once again, most importantly, we are taking as much liquidity as possible. Not only above the recent highs right here, but of course also exactly below the recent lows. But let me right now also share with you exactly at what area is Bitcoin trading as of right now. Because yes, with this specific push towards upside, we took the liquidity exactly below the recent low. But also right now what has been happening for the past couple of hours with this entire push down. Not only we took the liquidity below this specific recent low but also we are right now trading exactly at this specific low 114.75 US area. So what we are right now going to do all we have to do is to go again with our channel connecting our highs expanding this one towards downside and we can right now say Bitcoin for the past couple of days simply has been trading in some kind of a horizontal range. Usually once we get a rotation back towards the upside we can then be expecting a rotation back towards downside of our range another rotation back up another rotation back towards downside. And there is actually a very simple theory, a very simple strategy we can right now apply in our horizontal range and it\'s going to be trade the range until it actually breaks. We are being more bullish exactly at the bottom of the range. We are being more bearish exactly at the top of the range. And what we can right now also do right here measuring the entire range with our volume. This right here is going to be something very important because the reality is we are right now below the very important value area low, the most important volume level right now of the entire range right here. So right now Bitcoin really needs to get a push towards the upside reclaiming the value area low.", "start": 158.4, "duration": 158.4}, {"text": "And in that case, for sure, we can then look for another rotation back towards the upside, ideally towards the top of our horizontal range, towards the area of $117,000. Fortunately for us, yes, we are right now already taking the liquidity exactly below the recent low. But of course, we need to right wait for some kind of a sign of strength for Bitcoin to then finally reclaim the value area low. And let\'s see after that if we are going to be able to get another push toward the upside. Now the reality is with the entire push down right here on the 1 hour time frame. Unfortunately the bullish market structure is right now broken. What exactly do I have in mind? Pay right now attention to the previous higher highs and also higher lows forming on the 1 hour time frame. We\'re going to push towards the upside. Higher low. Higher high. Higher low. Another higher high. Another higher low and another higher high with the entire push down. Unfortunately, we took out not only one low right here, but also the second low, which could right now mean market structure, bullish market structure on the 1 hour time frame is right now broken. So, this right here is actually going to be some kind of a bearish Bitcoin indication. That is why I\'m as right now telling to you ideally in the next couple of hours, we want to reclaim our value area low as soon as possible. If Bitcoin is actually going to be able to do that for sure, I am looking then for a rotation back towards the upside towards our much higher and much better price target which then definitely is going to be another major liquidity level and of course also another major golden Fibonacci ratio at approximately 117 and 118,000 US area and only after we are going to hit this specific price target ideally then we are looking for a bigger retracement back towards side. Let\'s see right now what Bitcoin is going to do. Let\'s see if we are going to be able to get a s of strength above the value area low. Because if the value area low right here is not going to be reclaimed for sure, we can already expect lower targets. And to be honest, my next lower target on Bitcoin is going to be approximately $113,000 area. Now, additionally, what if we right now go with Bitcoin monthly returns? Yes, a lot of people say to me, bro, September usually it is a bearish month, but at least as of right now, clearly we are still being in a very nice positive of approximately, let\'s just say 8%. I would say like that, yes, potentially a rejection in September can actually happen. Why so? Because many different indicators on the daily time frame are being slightly more bearish. And more about the indicators slight. So right now my ideal scenario on Bitcoin is still going to be very simple. Knowing that many people have already entered a brand new short position, I would really like to see some kind of a push toward the upside for us to liquidate them. Why so?", "start": 316.8, "duration": 158.4}, {"text": "Because again bigger liquidations are going to be exactly above the recent high and only after we do get potentially of course another push towards the upside right here. We liquidate them. We hit our major price target. Let\'s see if then we are going to get a bigger retracement, a bigger correction towards the downside on the Bitcoin chart itself. So yes, again at the bottom of the range already at the area where we are as right now, we can be looking for a long position of Bitcoin adding to our position if the value area low right here is actually going to get reclaimed. If it\'s not going to be reclaimed right here, definitely a bearish Bitcoin indication and only in that case we can be looking for another push towards downside on the Bitcoin chart itself. Again remember at the areas of support we are more bullish looking for a long position. At the area of resistance we are more bearish looking for a short position. And that is right also why if you want to trade with us take an advantage of the free $8,000 bonus without KYC and without VPN with the second link down below because only after you register you\'re already going to get 10 USDT completely for free. Then deposit on your account because you\'re going to get a 20% deposit bonus. Of course, the more you\'re going to trade, the bigger bonuses you\'re going to get. This specific campaign is right now still valid for the next couple of days, but nevertheless, take advantage of your free bonuses using the cycle link down below. No KYC, and no VPN. Right now, let me share with you some bearish indications we are right now seeing on many different indicators, including RSI, MAGD, and money flow. What we are right now going to do, let\'s go with all of those indicators on the daily time frame where we are right now going to notice Bitcoin. Yes, for the past couple of days still has been forming some kind of a lower high. On the RSI, we are seeing a higher high on the money flow indicator. We are right now already getting a confirmed hidden bearish divergence and the exact same thing is also right now happening on the money flow indicator. Those indications on the daily time frame are bearish indications for Bitcoin itself. Not only that, remember what we said yesterday on the daily time frame on the Akler stoastic CG oscillator, we are right now seeing a double top pattern. So all of those indications combined, yes, I am looking to be honest for some kind of a rejection of Bitcoin, but ideally I would still like to get another push up first and only then a bigger retracement back towards downside. Are we going to get a bounce at this specific area? I do not know. But of course, the reality is we do not even have to guess. Let\'s see if Bitcoin is going to be able to reclaim the value area low. If not, yes, a bigger push down can right now already happen on Bitcoin. And again, our first important price target is going to be $113,000 area. Why is this specific level such an important price target?", "start": 475.20000000000005, "duration": 158.4}, {"text": "Simply because if we zoom out on the 4hourly measuring the entire upper price action with volume, you\'re going to notice value area low on Bitcoin is going to come in exactly below the recent lows. That is why if we already get a push down, this specific price target is going to be the first major area of support you should right now definitely be aware of. Now, if you do ask me, bro, would I fire a short position at the area where Bitcoin is right now? To be honest, not really because again my major price target still has not been hit. Again, I am following my plan. I am not going to blindly enter a short position. And additionally, at the moment, if you look like that, we are still trading at the bottom of quite a significant horizontal range. And also knowing bigger liquidations are still going to be exactly above the recent highs. So, let\'s see if in the next couple of hours, first of all, Bitcoin is able to reclaim the value area low. If so, let\'s look for another push towards the upside and only then at this specific area of resistance, let\'s look for another short position on the Bitcoin chart itself. That is right now why if you want to trade with us, take an advantage of the free bonus using the site link down below. After you register, you\'re already going to get 10 USDT, but then also deposit because you are going to get a 20% deposit bonus. Also, right now, thank you for smashing up the like button.", "start": 633.6, "duration": 158.4}], "url": "https://www.youtube.com/watch?v=gRR8xhurbeQ", "duration_seconds": 792, "language": "en"}',
-                  content_size_bytes=13641
-                  )
+                   datetime=dt.datetime(2025, 9, 15, 10, 6, 46, tzinfo=dt.timezone.utc),
+                   source=DataSource.YOUTUBE,
+                   label=DataLabel(value='#ytc_c_bitcoinhyper'),
+                   content=b'{"video_id": "gRR8xhurbeQ", "title": "BITCOIN: $300M Liquidations Coming Soon! (warning) - BTC Price Prediction Today", "channel_name": "BitcoinHyper", "upload_date": "2025-09-15T10:06:00+00:00", "transcript": [{"text": "Yo, welcome everyone. Bitcoin is really trying to liquidate as much people as possible and if we do get another pump, $300 million will get completely wrecked and liquidated. Let me write show you. Only couple of hours ago, Bitcoin got a first push towards side to take the liquidity exactly below the recent low. So what does that exactly mean for all people that entered a long position? probably they are setting their stop loss exactly below the recent low and before we can actually get a bigger push towards the upside we need to wreck them we need to stop them out and only after they wrecked Bitcoin has gotten a beautiful push towards the upside and literally the exact same thing happened exactly above the recent high right here take the liquidity right there and of course after everyone is racked do get a bigger rotation back towards downside and it really proves my point. Liquidity in the market is everything. Before we are getting a significant pump and also a significant dump, we need to wreck the most amount of people in the shortest amount of time. And yes, if you right now pay attention to the past 24-hour liquidations, it really does look like over 444 million of longs and shorts have gotten wrecked, have gotten liquidated. But pay right now attention to exactly what other people have been doing in the market in the past couple of hours. Bitcoin definitely has gotten a push down. The CVD indicator also got quite a major push towards side while the open interest indicator is seeing a push towards the upside. So what does that exactly mean? People entered heavily into their short or sell positions exactly at this specific area. And now logically thinking, if we want to wreck them, of course, ideally right now, we should get another major push towards the upside, which is then going to be some kind of a short squeeze. And right now, pay attention to the liquidations on the twoe time frame. Yes, bigger liquidations on Bitcoin are going to be approximately at $117,000 US area where yes, almost $300 million is going to get completely wrecked and completely completely liquidated even right now if we do pay attention to our liquidation heat map right here. Yes, the biggest liquidations are still going to be literally exactly above the recent highs right here. That is right now why ideally in the next couple of hours I would still like to get another major push toward the upside which is then going to mean we are going to again wrecked the most amount of people in the shortest amount of time. That is right now why I do remain in my long position on Bitcoin in a long position on XRP and also in a long position on SUI. And later in the video, I\'m going to share with you exactly what is probably going to be my next trade. And maybe surprisingly for you, it is not going to be a long position, but actually a short position.", "start": 0.0, "duration": 158.4}, {"text": "However, I do want to share with you a trading setup for another long position on Bitcoin where we are literally trading as right now. But nevertheless, before we do talk about that, I would really appreciate for you to smash up the like button because 1,000 likes are really possible. And also, thank you for subscribing to the channel. Let me right now share with you why we are getting a rejection back towards the downside in the first place. Yes, we know we have taken the liquidity exactly above the recent high. But the reality is what if we zoom out a little bit and right now go with our anchored VWAP anchor it exactly at this previous alltime high. It looks like Bitcoin for the past couple of days has simply been trading exactly at some kind of a local area of resistance. Not only that, when we go with our channel, remember the SNE channel I mentioned already couple of days ago. You can right now see we hit the top of our SNE channel. We hit the anchored VWAP and exactly from this specific area, we are right now seeing a very small push toward the downside. Of course, once again, most importantly, we are taking as much liquidity as possible. Not only above the recent highs right here, but of course also exactly below the recent lows. But let me right now also share with you exactly at what area is Bitcoin trading as of right now. Because yes, with this specific push towards upside, we took the liquidity exactly below the recent low. But also right now what has been happening for the past couple of hours with this entire push down. Not only we took the liquidity below this specific recent low but also we are right now trading exactly at this specific low 114.75 US area. So what we are right now going to do all we have to do is to go again with our channel connecting our highs expanding this one towards downside and we can right now say Bitcoin for the past couple of days simply has been trading in some kind of a horizontal range. Usually once we get a rotation back towards the upside we can then be expecting a rotation back towards downside of our range another rotation back up another rotation back towards downside. And there is actually a very simple theory, a very simple strategy we can right now apply in our horizontal range and it\'s going to be trade the range until it actually breaks. We are being more bullish exactly at the bottom of the range. We are being more bearish exactly at the top of the range. And what we can right now also do right here measuring the entire range with our volume. This right here is going to be something very important because the reality is we are right now below the very important value area low, the most important volume level right now of the entire range right here. So right now Bitcoin really needs to get a push towards the upside reclaiming the value area low.", "start": 158.4, "duration": 158.4}, {"text": "And in that case, for sure, we can then look for another rotation back towards the upside, ideally towards the top of our horizontal range, towards the area of $117,000. Fortunately for us, yes, we are right now already taking the liquidity exactly below the recent low. But of course, we need to right wait for some kind of a sign of strength for Bitcoin to then finally reclaim the value area low. And let\'s see after that if we are going to be able to get another push toward the upside. Now the reality is with the entire push down right here on the 1 hour time frame. Unfortunately the bullish market structure is right now broken. What exactly do I have in mind? Pay right now attention to the previous higher highs and also higher lows forming on the 1 hour time frame. We\'re going to push towards the upside. Higher low. Higher high. Higher low. Another higher high. Another higher low and another higher high with the entire push down. Unfortunately, we took out not only one low right here, but also the second low, which could right now mean market structure, bullish market structure on the 1 hour time frame is right now broken. So, this right here is actually going to be some kind of a bearish Bitcoin indication. That is why I\'m as right now telling to you ideally in the next couple of hours, we want to reclaim our value area low as soon as possible. If Bitcoin is actually going to be able to do that for sure, I am looking then for a rotation back towards the upside towards our much higher and much better price target which then definitely is going to be another major liquidity level and of course also another major golden Fibonacci ratio at approximately 117 and 118,000 US area and only after we are going to hit this specific price target ideally then we are looking for a bigger retracement back towards side. Let\'s see right now what Bitcoin is going to do. Let\'s see if we are going to be able to get a s of strength above the value area low. Because if the value area low right here is not going to be reclaimed for sure, we can already expect lower targets. And to be honest, my next lower target on Bitcoin is going to be approximately $113,000 area. Now, additionally, what if we right now go with Bitcoin monthly returns? Yes, a lot of people say to me, bro, September usually it is a bearish month, but at least as of right now, clearly we are still being in a very nice positive of approximately, let\'s just say 8%. I would say like that, yes, potentially a rejection in September can actually happen. Why so? Because many different indicators on the daily time frame are being slightly more bearish. And more about the indicators slight. So right now my ideal scenario on Bitcoin is still going to be very simple. Knowing that many people have already entered a brand new short position, I would really like to see some kind of a push toward the upside for us to liquidate them. Why so?", "start": 316.8, "duration": 158.4}, {"text": "Because again bigger liquidations are going to be exactly above the recent high and only after we do get potentially of course another push towards the upside right here. We liquidate them. We hit our major price target. Let\'s see if then we are going to get a bigger retracement, a bigger correction towards the downside on the Bitcoin chart itself. So yes, again at the bottom of the range already at the area where we are as right now, we can be looking for a long position of Bitcoin adding to our position if the value area low right here is actually going to get reclaimed. If it\'s not going to be reclaimed right here, definitely a bearish Bitcoin indication and only in that case we can be looking for another push towards downside on the Bitcoin chart itself. Again remember at the areas of support we are more bullish looking for a long position. At the area of resistance we are more bearish looking for a short position. And that is right also why if you want to trade with us take an advantage of the free $8,000 bonus without KYC and without VPN with the second link down below because only after you register you\'re already going to get 10 USDT completely for free. Then deposit on your account because you\'re going to get a 20% deposit bonus. Of course, the more you\'re going to trade, the bigger bonuses you\'re going to get. This specific campaign is right now still valid for the next couple of days, but nevertheless, take advantage of your free bonuses using the cycle link down below. No KYC, and no VPN. Right now, let me share with you some bearish indications we are right now seeing on many different indicators, including RSI, MAGD, and money flow. What we are right now going to do, let\'s go with all of those indicators on the daily time frame where we are right now going to notice Bitcoin. Yes, for the past couple of days still has been forming some kind of a lower high. On the RSI, we are seeing a higher high on the money flow indicator. We are right now already getting a confirmed hidden bearish divergence and the exact same thing is also right now happening on the money flow indicator. Those indications on the daily time frame are bearish indications for Bitcoin itself. Not only that, remember what we said yesterday on the daily time frame on the Akler stoastic CG oscillator, we are right now seeing a double top pattern. So all of those indications combined, yes, I am looking to be honest for some kind of a rejection of Bitcoin, but ideally I would still like to get another push up first and only then a bigger retracement back towards downside. Are we going to get a bounce at this specific area? I do not know. But of course, the reality is we do not even have to guess. Let\'s see if Bitcoin is going to be able to reclaim the value area low. If not, yes, a bigger push down can right now already happen on Bitcoin. And again, our first important price target is going to be $113,000 area. Why is this specific level such an important price target?", "start": 475.20000000000005, "duration": 158.4}, {"text": "Simply because if we zoom out on the 4hourly measuring the entire upper price action with volume, you\'re going to notice value area low on Bitcoin is going to come in exactly below the recent lows. That is why if we already get a push down, this specific price target is going to be the first major area of support you should right now definitely be aware of. Now, if you do ask me, bro, would I fire a short position at the area where Bitcoin is right now? To be honest, not really because again my major price target still has not been hit. Again, I am following my plan. I am not going to blindly enter a short position. And additionally, at the moment, if you look like that, we are still trading at the bottom of quite a significant horizontal range. And also knowing bigger liquidations are still going to be exactly above the recent highs. So, let\'s see if in the next couple of hours, first of all, Bitcoin is able to reclaim the value area low. If so, let\'s look for another push towards the upside and only then at this specific area of resistance, let\'s look for another short position on the Bitcoin chart itself. That is right now why if you want to trade with us, take an advantage of the free bonus using the site link down below. After you register, you\'re already going to get 10 USDT, but then also deposit because you are going to get a 20% deposit bonus. Also, right now, thank you for smashing up the like button.", "start": 633.6, "duration": 158.4}], "url": "https://www.youtube.com/watch?v=gRR8xhurbeQ", "duration_seconds": 792, "language": "en"}',
+                   content_size_bytes=13641
+                   )
 
     ]
     false_entities = [
@@ -361,6 +461,7 @@ async def test_validation():
     ]
     entities.extend(false_entities)
     entities.extend(true_entities)
+    entities.extend(single_video)
     if not entities:
         bt.logging.error("❌ No entities scraped - cannot proceed with validation test")
         return
@@ -414,4 +515,6 @@ async def test_validation():
     return results
 
 
+# asyncio.run(test_scrape_video())
+# asyncio.run(test_scrape_channel())
 asyncio.run(test_validation())

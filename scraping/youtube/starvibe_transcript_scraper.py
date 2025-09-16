@@ -13,15 +13,16 @@ from scraping.scraper import Scraper, ValidationResult
 from scraping.youtube import utils as youtube_utils
 from scraping.youtube.model import YouTubeContent
 
+
 load_dotenv()
 
 
 class YouTubeChannelTranscriptScraper(Scraper):
     """
-    Scraper for YouTube video transcripts.
+    Scraper for YouTube video transcripts from single video or channel.
     """
 
-    # Apify actor ID for the video transcript scraper
+    # Apify actor ID for the video transcript scraper (for single video)
     ACTOR_ID = "starvibe/youtube-video-transcript"
 
     # Maximum number of validation attempts
@@ -40,15 +41,40 @@ class YouTubeChannelTranscriptScraper(Scraper):
         # HTTP client for YouTube API calls
         self._http_timeout = httpx.Timeout(10.0)
 
-        bt.logging.info("YouTube Video Transcript Scraper initialized")
+        bt.logging.info("YouTube Video/Channel Transcript Scraper initialized")
 
-    async def scrape(self, youtube_url: str, language: str = "en") -> List[DataEntity]:
+    async def scrape(
+        self,
+        youtube_url: Optional[str] = None,
+        channel_url: Optional[str] = None,
+        language: str = "en",
+        max_videos: int = 3,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[DataEntity]:
         """
-        Scrape transcript from a single YouTube video URL.
-        Input config expected to have 'youtube_url' as identifier and 'language'.
-        Returns a list of DataEntity objects (typically one for single video).
+        Scrape transcript from a single YouTube video URL or multiple videos from a channel URL.
+        Provide either youtube_url or channel_url (mutually exclusive).
+        For video: uses youtube_url and language.
+        For channel: uses channel_url, max_videos, start_date, end_date.
+        Returns a list of DataEntity objects.
         """
+        if youtube_url and channel_url:
+            bt.logging.error("Provide only one of youtube_url or channel_url.")
+            return []
+        if not youtube_url and not channel_url:
+            bt.logging.error("Must provide either youtube_url or channel_url.")
+            return []
 
+        if youtube_url:
+            # Handle single video (original logic)
+            return await self._scrape_single_video(youtube_url, language)
+        else:
+            # Handle channel
+            return await self._scrape_channel(channel_url, max_videos, start_date, end_date)
+
+    async def _scrape_single_video(self, youtube_url: str, language: str) -> List[DataEntity]:
+        """Internal method to scrape a single video."""
         # Extract video_id from URL
         video_id = self._extract_video_id_from_url(youtube_url)
         if not video_id:
@@ -58,14 +84,12 @@ class YouTubeChannelTranscriptScraper(Scraper):
         try:
             # Get meta data using actor
             meta_data = await self._get_meta_from_actor(video_id, language)
-            # print(meta_data)
             if not meta_data:
                 bt.logging.error(f"No data returned for video {video_id}")
                 return []
 
             # Get upload date from meta
             published_at = meta_data.get('published_at')
-
             if not published_at:
                 bt.logging.error(f"No published_at for video {video_id}")
                 return []
@@ -91,6 +115,74 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
         except Exception as e:
             bt.logging.error(f"Error scraping video {video_id}: {str(e)}")
+            return []
+
+    async def _scrape_channel(
+            self,
+            channel_url: str,
+            max_videos: int,
+            start_date: Optional[str],
+            end_date: Optional[str],
+    ) -> List[DataEntity]:
+        """Internal method to scrape videos from a channel using Apify actor."""
+        try:
+            bt.logging.info(
+                f"Scraping channel {channel_url} with max_videos={max_videos}, start_date={start_date}, end_date={end_date}")
+
+            # Run Apify actor for channel
+            run_config = RunConfig(
+                actor_id=self.ACTOR_ID,
+                debug_info=f"Scrape channel {channel_url}",
+                timeout_secs=self.APIFY_TIMEOUT_SECS
+            )
+            run_input = {
+                "channel_url": channel_url,
+                "max_videos": max_videos,
+            }
+            if start_date is not None:
+                run_input["start_date"] = start_date
+            if end_date is not None:
+                run_input["end_date"] = end_date
+
+            result = await self.runner.run(run_config, run_input)
+
+            # Assume result is list of video dicts
+            if not result or not isinstance(result, list):
+                bt.logging.warning(f"No videos found for channel {channel_url}")
+                return []
+
+            results = []
+            for meta_data in result:
+                # Get upload date
+                published_at = meta_data.get('published_at')
+                if not published_at:
+                    bt.logging.warning(f"Skipping video {meta_data.get('video_id')} - no published_at")
+                    continue
+                upload_date = dt.datetime.fromisoformat(published_at.replace('Z', '+00:00'))
+
+                content = YouTubeContent(
+                    video_id=meta_data.get('video_id'),
+                    title=meta_data.get('title', ''),
+                    channel_name=meta_data.get('channel_name', ''),
+                    upload_date=upload_date,
+                    transcript=meta_data.get('transcript', ''),
+                    url=f"https://www.youtube.com/watch?v={meta_data.get('video_id')}",
+                    duration_seconds=int(meta_data.get('duration_seconds', 0)),
+                    language=meta_data.get('language', self.DEFAULT_LANGUAGE)
+                )
+                from scraping.youtube.youtube_custom_scraper import YouTubeTranscriptScraper
+                scraper = YouTubeTranscriptScraper()
+                compressed_content = scraper._compress_transcript(content)
+                entity = YouTubeContent.to_data_entity(compressed_content)
+                results.append(entity)
+
+            return results
+
+        except ActorRunError as e:
+            bt.logging.error(f"Actor run error for channel {channel_url}: {str(e)}")
+            return []
+        except Exception as e:
+            bt.logging.error(f"Error scraping channel {channel_url}: {str(e)}")
             return []
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
@@ -265,7 +357,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
         return intersection / union if union > 0 else 0.0
 
     async def _get_meta_from_actor(self, video_id: str, language: str) -> Any:
-        """Run Apify actor to get metadata and transcript for a video."""
+        """Run Apify actor to get metadata and transcript for a single video."""
         youtube_url = f"https://www.youtube.com/watch?v={video_id}"
         run_config = RunConfig(
             actor_id=self.ACTOR_ID,
@@ -284,8 +376,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
             bt.logging.error(f"Actor run error for video {video_id}: {str(e)}")
             return None
 
-
-async def test_scrape():
+async def test_scrape_video():
     # Initialize the scraper
     scraper = YouTubeChannelTranscriptScraper()
 
@@ -301,10 +392,24 @@ async def test_scrape():
         print("No data scraped.")
     return []
 
+async def test_scrape_channel():
+    # Initialize the scraper
+    scraper = YouTubeChannelTranscriptScraper()
 
-# # Run the async main function
-# if __name__ == "__main__":
-#     asyncio.run(main())
+    # Call scrape function
+    entities = await scraper.scrape(channel_url='https://www.youtube.com/@TAOTemplar', max_videos=5, start_date='2025-08-01', end_date='2025-08-31')
+
+    # Print the result (list of DataEntity)
+    if entities:
+        for entity in entities:
+            print(f"Scraped DataEntity: {entity}")
+        return entities
+    else:
+        print("No data scraped.")
+    return []
+
+
+
 async def test_validation():
     """Test validation functionality."""
     bt.logging.info("=" * 60)
@@ -312,7 +417,8 @@ async def test_validation():
     bt.logging.info("=" * 60)
 
     bt.logging.info("First, scraping some entities to validate...")
-    entities = await test_scrape()
+    entities = await test_scrape_channel()
+    single_video = await test_scrape_video()
     true_entities = [
         DataEntity(uri='https://www.youtube.com/watch?v=gRR8xhurbeQ',
                    datetime=dt.datetime(2025, 9, 15, 10, 6, 46, tzinfo=dt.timezone.utc),
@@ -355,6 +461,7 @@ async def test_validation():
     ]
     entities.extend(false_entities)
     entities.extend(true_entities)
+    entities.extend(single_video)
     if not entities:
         bt.logging.error("❌ No entities scraped - cannot proceed with validation test")
         return
@@ -408,4 +515,6 @@ async def test_validation():
     return results
 
 
+# asyncio.run(test_scrape_video())
+# asyncio.run(test_scrape_channel())
 asyncio.run(test_validation())
