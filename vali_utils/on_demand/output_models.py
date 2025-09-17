@@ -13,27 +13,35 @@ from common.data import DataEntity, DataSource
 
 class UserInfo(BaseModel):
     """User information for X posts."""
-    display_name: str
-    followers_count: int
-    verified: bool
-    id: str
-    following_count: int
     username: str
+    user_id: str
+    user_display_name: str
+    user_verified: bool
+    user_blue_verified: Optional[bool] = None
+    user_description: Optional[str] = None
+    user_location: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    cover_picture_url: Optional[str] = None
+    user_followers_count: int
+    user_following_count: int
 
 
 class TweetInfo(BaseModel):
     """Tweet metadata for X posts."""
-    quote_count: int
-    id: str
-    retweet_count: int
-    like_count: int
+    like_count: Optional[int] = None
+    retweet_count: Optional[int] = None
+    reply_count: Optional[int] = None
+    quote_count: Optional[int] = None
+    view_count: Optional[int] = None
+    bookmark_count: Optional[int] = None
+    language: Optional[str] = None
+    in_reply_to_username: Optional[str] = None
+    quoted_tweet_id: Optional[str] = None
+    conversation_id: Optional[str] = None
+    in_reply_to_user_id: Optional[str] = None
+    tweet_id: str
     is_reply: bool
-    hashtags: List[str]
-    conversation_id: str
     is_quote: bool
-    in_reply_to: Optional[dict] = None
-    reply_count: int
-    is_retweet: bool
 
 
 class MediaItem(BaseModel):
@@ -70,26 +78,34 @@ class XOrganicOutput(BaseModel):
         
         # Create nested user and tweet structures
         user_info = UserInfo(
-            display_name=x_content.user_display_name,
-            followers_count=int(x_content.user_followers_count),
-            verified=x_content.user_verified or False,
-            id=x_content.user_id,
-            following_count=int(x_content.user_following_count),
-            username=x_content.username
+            username=x_content.username,
+            user_id=x_content.user_id or "",
+            user_display_name=x_content.user_display_name or "",
+            user_verified=x_content.user_verified or False,
+            user_blue_verified=x_content.user_blue_verified,
+            user_description=x_content.user_description,
+            user_location=x_content.user_location,
+            profile_image_url=x_content.profile_image_url,
+            cover_picture_url=x_content.cover_picture_url,
+            user_followers_count=int(x_content.user_followers_count or 0),
+            user_following_count=int(x_content.user_following_count or 0)
         )
         
         tweet_info = TweetInfo(
-            quote_count=int(x_content.quote_count),
-            id=x_content.tweet_id,
-            retweet_count=int(x_content.retweet_count),
-            like_count=int(x_content.like_count),
-            is_reply=x_content.is_reply,
-            hashtags=x_content.tweet_hashtags or [],
+            like_count=x_content.like_count,
+            retweet_count=x_content.retweet_count,
+            reply_count=x_content.reply_count,
+            quote_count=x_content.quote_count,
+            view_count=x_content.view_count,
+            bookmark_count=x_content.bookmark_count,
+            language=x_content.language,
+            in_reply_to_username=x_content.in_reply_to_username,
+            quoted_tweet_id=x_content.quoted_tweet_id,
             conversation_id=x_content.conversation_id,
-            is_quote=x_content.is_quote,
-            in_reply_to={"user_id": x_content.in_reply_to_user_id} if x_content.in_reply_to_user_id else None,
-            reply_count=int(x_content.reply_count),
-            is_retweet=getattr(x_content, 'is_retweet', False)
+            in_reply_to_user_id=x_content.in_reply_to_user_id,
+            tweet_id=x_content.tweet_id or "",
+            is_reply=x_content.is_reply or False,
+            is_quote=x_content.is_quote or False
         )
         
         return cls(
@@ -221,10 +237,10 @@ def create_organic_output_dict(data_entity: DataEntity) -> Dict:
     source = DataSource(data_entity.source).name
     
     if source.upper() == "X":
-        return XOrganicOutput.from_data_entity(data_entity).dict()
+        return XOrganicOutput.from_data_entity(data_entity).model_dump()
     elif source.upper() == "REDDIT":
-        return RedditOrganicOutput.from_data_entity(data_entity).dict()
+        return RedditOrganicOutput.from_data_entity(data_entity).model_dump()
     elif source.upper() == "YOUTUBE":
-        return YouTubeOrganicOutput.from_data_entity(data_entity).dict()
+        return YouTubeOrganicOutput.from_data_entity(data_entity).model_dump()
     else:
         raise ValueError(f"Unknown source: {source}")
