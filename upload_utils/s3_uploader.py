@@ -320,7 +320,6 @@ class S3PartitionedUploader:
                     'uri': df['uri'],
                     'datetime': df['datetime'],
                     'label': df['label'],
-                    'model_config': df['decoded_content'].apply(lambda x: x.get('model_config')),
                     'username': df['decoded_content'].apply(lambda x: x.get('username')),
                     'text': df['decoded_content'].apply(lambda x: x.get('text')),
                     'tweet_hashtags': df['decoded_content'].apply(lambda x: x.get('tweet_hashtags', [])),
