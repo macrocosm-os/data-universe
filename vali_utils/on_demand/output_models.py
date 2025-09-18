@@ -289,11 +289,7 @@ def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, Li
     try:
         from scraping.x.model import XContent
         x_content = XContent.from_data_entity(data_entity)
-        
         missing_fields = []
-        
-        # Check XOrganicOutput required fields
-        # text, datetime, uri, source, content_size_bytes are always available from DataEntity
         
         # Check UserInfo required fields
         user_required_fields = [
@@ -336,11 +332,7 @@ def _validate_reddit_metadata_completeness(data_entity: DataEntity) -> tuple[boo
     try:
         from scraping.reddit.model import RedditContent
         reddit_content = RedditContent.from_data_entity(data_entity)
-        
         missing_fields = []
-        
-        # Check RedditOrganicOutput required fields
-        # uri, datetime, source, content_size_bytes are always available from DataEntity
         
         required_fields = [
             ('id', reddit_content.id),
@@ -376,12 +368,8 @@ def _validate_youtube_metadata_completeness(data_entity: DataEntity) -> tuple[bo
     try:
         from scraping.youtube.model import YouTubeContent
         youtube_content = YouTubeContent.from_data_entity(data_entity)
-        
         missing_fields = []
-        
-        # Check YouTubeOrganicOutput required fields
-        # uri, datetime, source, content_size_bytes are always available from DataEntity
-        
+
         required_fields = [
             ('video_id', youtube_content.video_id),
             ('title', youtube_content.title),
