@@ -28,7 +28,6 @@ def validate_web_content_with_rescrape(
 ) -> ValidationResult:
     """
     Validate web content by comparing miner submission with validator re-scraped content.
-    Similar to SN22 validation approach.
     """
     
     # Basic field validation
@@ -96,7 +95,6 @@ def validate_content_with_random_sampling(
 ) -> float:
     """
     Validate content by randomly sampling portions and checking similarity.
-    Similar to SN22's approach of random validation checks.
     """
     if not miner_content or not validator_content:
         return 0.0
@@ -137,24 +135,24 @@ def calculate_text_similarity(text1: str, text2: str) -> float:
     """Calculate similarity between two text strings using word overlap."""
     if not text1 or not text2:
         return 0.0
-    
+
     # Normalize and tokenize
     words1 = set(text1.lower().split())
     words2 = set(text2.lower().split())
-    
+
     if not words1 or not words2:
         return 0.0
-    
+
     # Calculate Jaccard similarity (intersection over union)
     intersection = len(words1.intersection(words2))
     union = len(words1.union(words2))
-    
+
     return intersection / union if union > 0 else 0.0
 
 
 def validate_random_url_subset(entities: List[DataEntity], sample_ratio: float = 0.3) -> List[DataEntity]:
     """
-    Randomly select a subset of entities for validation, similar to SN22 approach.
+    Randomly select a subset of entities for validation.
     """
     if not entities:
         return []
