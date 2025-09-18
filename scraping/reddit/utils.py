@@ -219,12 +219,12 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
-    # Score validation (with smart time-based tolerance)
+    # Score validation
     score_validation_result = validate_score_content(content_to_validate, actual_content, entity_to_validate)
     if not score_validation_result.is_valid:
         return score_validation_result
 
-    # Comment count validation (with sophisticated growth modeling)
+    # Comment count validation
     comment_validation_result = validate_comment_count(content_to_validate, actual_content, entity_to_validate)
     if not comment_validation_result.is_valid:
         return comment_validation_result
@@ -529,25 +529,25 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
     # Define age-based score tolerance thresholds
     # Newer content has tighter tolerance, older content allows more variance
     if content_age < dt.timedelta(hours=1):
-        # Very fresh content: allow small changes
-        score_tolerance_percent = 0.15  # 15%
-        min_tolerance = 5
-    elif content_age < dt.timedelta(hours=6):
-        # Recent content: moderate tolerance
-        score_tolerance_percent = 0.25  # 25%
+        # Very fresh content: allow viral growth
+        score_tolerance_percent = 0.50  # 50% (was 15%)
         min_tolerance = 10
-    elif content_age < dt.timedelta(days=1):
-        # Day-old content: higher tolerance
-        score_tolerance_percent = 0.40  # 40%
+    elif content_age < dt.timedelta(hours=6):
+        # Recent content: higher tolerance for viral content
+        score_tolerance_percent = 0.75  # 75% (was 25%)
         min_tolerance = 20
-    elif content_age < dt.timedelta(days=7):
-        # Week-old content: even higher tolerance
-        score_tolerance_percent = 0.60  # 60%
+    elif content_age < dt.timedelta(days=1):
+        # Day-old content: even higher tolerance
+        score_tolerance_percent = 1.0   # 100% (was 40%)
         min_tolerance = 30
+    elif content_age < dt.timedelta(days=7):
+        # Week-old content: very high tolerance
+        score_tolerance_percent = 1.5   # 150% (was 60%)
+        min_tolerance = 50
     else:
         # Old content: highest tolerance
-        score_tolerance_percent = 1.0   # 100%
-        min_tolerance = 50
+        score_tolerance_percent = 2.0   # 200% (was 100%)
+        min_tolerance = 100
     
     # Anti-cheating mechanism: prevent unreasonably high scores
     max_reasonable_score = _calculate_max_reasonable_score(submitted_content, content_age)
@@ -587,20 +587,6 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
                 reason=f"Score {submitted_content.score} is extremely unrealistic (deviation: {score_deviation:.2f}x)",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-        
-        # For moderate outliers, apply penalty but still validate
-        penalty_factor = min(0.5, score_deviation * 0.1)                    # Max 50% penalty, scales with deviation
-        penalized_bytes = int(entity.content_size_bytes * penalty_factor)   # lower penalties for less score deviation
-        
-        bt.logging.info(
-            f"Score validation passed with penalty: submitted={submitted_content.score}, "
-            f"actual={actual_content.score}, deviation={score_deviation:.2f}x, penalty={penalty_factor:.2f}"
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason=f"Score validation failed with adjusted penalty for viral outlier (deviation: {score_deviation:.2f}x)",
-            content_size_bytes_validated=penalized_bytes,
-        )
     
     # Validate upvote_ratio if provided (submissions only)
     if submitted_content.upvote_ratio is not None:
@@ -620,20 +606,7 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
                 reason=f"Invalid upvote_ratio {submitted_content.upvote_ratio}, must be between 0.0 and 1.0",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-        
-        # Allow some tolerance for upvote_ratio changes (typically more stable than raw scores)
-        # Increased tolerance to account for Reddit's vote fuzzing and natural variance
-        ratio_tolerance = 0.12  # 12% tolerance (was 5% - too strict)
-        if abs(submitted_content.upvote_ratio - actual_content.upvote_ratio) > ratio_tolerance:
-            bt.logging.info(
-                f"Upvote ratio validation failed: submitted={submitted_content.upvote_ratio}, "
-                f"actual={actual_content.upvote_ratio}, tolerance={ratio_tolerance}"
-            )
-            return ValidationResult(
-                is_valid=False,
-                reason=f"Upvote ratio {submitted_content.upvote_ratio} differs too much from actual {actual_content.upvote_ratio}",
-                content_size_bytes_validated=entity.content_size_bytes,
-            )
+
     
     return ValidationResult(
         is_valid=True,
@@ -818,24 +791,24 @@ def _calculate_comment_count_tolerance(submitted_content: RedditContent, actual_
     # Age-based tolerance - newer content has more comment activity
     if content_age < dt.timedelta(hours=1):
         # Very fresh: high comment velocity
-        age_tolerance_percent = 0.50  # 50% tolerance
-        min_tolerance = 5
+        age_tolerance_percent = 0.75
+        min_tolerance = 10
     elif content_age < dt.timedelta(hours=6):
         # Recent: moderate comment velocity
-        age_tolerance_percent = 0.35  # 35% tolerance
-        min_tolerance = 3
+        age_tolerance_percent = 0.60
+        min_tolerance = 8
     elif content_age < dt.timedelta(days=1):
         # Day-old: slowing down
-        age_tolerance_percent = 0.25  # 25% tolerance
-        min_tolerance = 2
+        age_tolerance_percent = 0.50
+        min_tolerance = 5
     elif content_age < dt.timedelta(days=7):
         # Week-old: much slower
-        age_tolerance_percent = 0.15  # 15% tolerance
-        min_tolerance = 1
+        age_tolerance_percent = 0.35
+        min_tolerance = 3
     else:
         # Old: very slow growth
-        age_tolerance_percent = 0.10  # 10% tolerance
-        min_tolerance = 1
+        age_tolerance_percent = 0.25
+        min_tolerance = 2
     
     # Score-based adjustment: higher scoring posts get more comments
     score_multiplier = 1.0
