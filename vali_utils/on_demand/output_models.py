@@ -8,6 +8,7 @@ in organic query responses, matching the Go struct definitions exactly.
 from pydantic import BaseModel, Field
 from typing import Optional, List, Union, Dict
 import json
+import bittensor as bt
 from common.data import DataEntity, DataSource
 
 
@@ -139,6 +140,9 @@ class RedditOrganicOutput(BaseModel):
     parentId: Optional[str] = None
     media: Optional[List[str]] = None
     is_nsfw: bool
+    score: int
+    upvote_ratio: float
+    num_comments: int
     
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "RedditOrganicOutput":
@@ -149,7 +153,7 @@ class RedditOrganicOutput(BaseModel):
         reddit_content = RedditContent.from_data_entity(data_entity)
         
         return cls(
-            uri=data_entity.uri or "",
+            uri=data_entity.uri,
             datetime=data_entity.datetime.isoformat(),
             source="REDDIT",
             label=data_entity.label.value if data_entity.label else None,
@@ -165,6 +169,9 @@ class RedditOrganicOutput(BaseModel):
             parentId=reddit_content.parent_id,
             media=reddit_content.media,
             is_nsfw=reddit_content.is_nsfw,
+            score=reddit_content.score,
+            upvote_ratio=reddit_content.upvote_ratio,
+            num_comments=reddit_content.num_comments,
         )
 
 
@@ -244,3 +251,158 @@ def create_organic_output_dict(data_entity: DataEntity) -> Dict:
         return YouTubeOrganicOutput.from_data_entity(data_entity).model_dump()
     else:
         raise ValueError(f"Unknown source: {source}")
+
+
+def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+    """
+    Validate that a DataEntity has all required metadata fields for its output model.
+    Uses the Pydantic output models to determine required fields automatically.
+    
+    Args:
+        data_entity: DataEntity to validate
+        
+    Returns:
+        Tuple of (is_valid, missing_fields) where:
+        - is_valid: True if all required fields are present
+        - missing_fields: List of missing field names (empty if is_valid=True)
+    """
+    try:
+        source = DataSource(data_entity.source).name.upper()
+        
+        if source == "X":
+            return _validate_x_metadata_completeness(data_entity)
+        elif source == "REDDIT":
+            return _validate_reddit_metadata_completeness(data_entity)
+        elif source == "YOUTUBE":
+            return _validate_youtube_metadata_completeness(data_entity)
+        else:
+            bt.logging.warning(f"Unknown source for metadata validation: {source}")
+            return False, [f"Unknown source: {source}"]
+            
+    except Exception as e:
+        bt.logging.error(f"Error validating metadata completeness: {str(e)}")
+        return False, [f"Validation error: {str(e)}"]
+
+
+def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+    """Validate X content metadata completeness using XOrganicOutput model."""
+    try:
+        from scraping.x.model import XContent
+        x_content = XContent.from_data_entity(data_entity)
+        
+        missing_fields = []
+        
+        # Check XOrganicOutput required fields
+        # text, datetime, uri, source, content_size_bytes are always available from DataEntity
+        
+        # Check UserInfo required fields
+        user_required_fields = [
+            ('username', x_content.username),
+            ('user_id', x_content.user_id),
+            ('user_display_name', x_content.user_display_name),
+            ('user_verified', x_content.user_verified),
+            ('user_followers_count', x_content.user_followers_count),
+            ('user_following_count', x_content.user_following_count),
+        ]
+        
+        for field_name, field_value in user_required_fields:
+            if field_value is None:
+                missing_fields.append(f"user.{field_name}")
+        
+        # Check TweetInfo required fields
+        tweet_required_fields = [
+            ('tweet_id', x_content.tweet_id),
+            ('is_reply', x_content.is_reply),
+            ('is_quote', x_content.is_quote),
+        ]
+        
+        for field_name, field_value in tweet_required_fields:
+            if field_value is None:
+                missing_fields.append(f"tweet.{field_name}")
+        
+        if missing_fields:
+            bt.logging.debug(f"X metadata validation failed. Missing fields: {missing_fields}")
+            return False, missing_fields
+        
+        return True, []
+        
+    except Exception as e:
+        bt.logging.error(f"Error validating X metadata: {str(e)}")
+        return False, [f"X validation error: {str(e)}"]
+
+
+def _validate_reddit_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+    """Validate Reddit content metadata completeness using RedditOrganicOutput model."""
+    try:
+        from scraping.reddit.model import RedditContent
+        reddit_content = RedditContent.from_data_entity(data_entity)
+        
+        missing_fields = []
+        
+        # Check RedditOrganicOutput required fields
+        # uri, datetime, source, content_size_bytes are always available from DataEntity
+        
+        required_fields = [
+            ('id', reddit_content.id),
+            ('url', reddit_content.url),
+            ('username', reddit_content.username),
+            ('communityName', reddit_content.community),
+            ('body', reddit_content.body),
+            ('createdAt', reddit_content.created_at),
+            ('dataType', reddit_content.data_type),
+            ('is_nsfw', reddit_content.is_nsfw),
+            ('score', reddit_content.score),
+            ('upvote_ratio', reddit_content.upvote_ratio),
+            ('num_comments', reddit_content.num_comments),
+        ]
+        
+        for field_name, field_value in required_fields:
+            if field_value is None:
+                missing_fields.append(field_name)
+        
+        if missing_fields:
+            bt.logging.debug(f"Reddit metadata validation failed. Missing fields: {missing_fields}")
+            return False, missing_fields
+        
+        return True, []
+        
+    except Exception as e:
+        bt.logging.error(f"Error validating Reddit metadata: {str(e)}")
+        return False, [f"Reddit validation error: {str(e)}"]
+
+
+def _validate_youtube_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+    """Validate YouTube content metadata completeness using YouTubeOrganicOutput model."""
+    try:
+        from scraping.youtube.model import YouTubeContent
+        youtube_content = YouTubeContent.from_data_entity(data_entity)
+        
+        missing_fields = []
+        
+        # Check YouTubeOrganicOutput required fields
+        # uri, datetime, source, content_size_bytes are always available from DataEntity
+        
+        required_fields = [
+            ('video_id', youtube_content.video_id),
+            ('title', youtube_content.title),
+            ('channel_name', youtube_content.channel_name),
+            ('upload_date', youtube_content.upload_date),
+            ('transcript', youtube_content.transcript),
+            ('url', youtube_content.url),
+            ('duration_seconds', youtube_content.duration_seconds),
+            ('language', youtube_content.language),
+        ]
+        
+        for field_name, field_value in required_fields:
+            if field_value is None:
+                missing_fields.append(field_name)
+        
+        if missing_fields:
+            bt.logging.debug(f"YouTube metadata validation failed. Missing fields: {missing_fields}")
+            return False, missing_fields
+        
+        return True, []
+        
+    except Exception as e:
+        bt.logging.error(f"Error validating YouTube metadata: {str(e)}")
+        return False, [f"YouTube validation error: {str(e)}"]
