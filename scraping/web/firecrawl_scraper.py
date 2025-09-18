@@ -22,7 +22,7 @@ class FirecrawlWebScraper(Scraper):
     def __init__(self, api_key: str = None):
         """Initialize Firecrawl web scraper"""
         try:
-            self.firecrawl = Firecrawl(api_key='fc-6e9855c37813450aac5e4f463f9c7268')
+            self.firecrawl = Firecrawl(api_key=api_key)
             bt.logging.info("Firecrawl web scraper initialized")
         except Exception as e:
             bt.logging.error(f"Failed to initialize Firecrawl: {e}")
