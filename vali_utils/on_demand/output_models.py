@@ -89,16 +89,16 @@ class XOrganicOutput(BaseModel):
         # Create nested user and tweet structures
         user_info = UserInfo(
             username=x_content.username,
-            user_id=x_content.user_id or "",
-            user_display_name=x_content.user_display_name or "",
-            user_verified=x_content.user_verified or False,
+            id=x_content.user_id or "",
+            display_name=x_content.user_display_name or "",
+            verified=x_content.user_verified or False,
             user_blue_verified=x_content.user_blue_verified,
             user_description=x_content.user_description,
             user_location=x_content.user_location,
             profile_image_url=x_content.profile_image_url,
             cover_picture_url=x_content.cover_picture_url,
-            user_followers_count=int(x_content.user_followers_count or 0),
-            user_following_count=int(x_content.user_following_count or 0)
+            followers_count=int(x_content.user_followers_count or 0),
+            following_count=int(x_content.user_following_count or 0)
         )
         
         tweet_info = TweetInfo(
@@ -113,9 +113,10 @@ class XOrganicOutput(BaseModel):
             quoted_tweet_id=x_content.quoted_tweet_id,
             conversation_id=x_content.conversation_id,
             in_reply_to_user_id=x_content.in_reply_to_user_id,
-            tweet_id=x_content.tweet_id or "",
+            id=x_content.tweet_id or "",
             is_reply=x_content.is_reply or False,
-            is_quote=x_content.is_quote or False
+            is_quote=x_content.is_quote or False,
+            hashtags=x_content.tweet_hashtags or []
         )
         
         return cls(
