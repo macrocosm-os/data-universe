@@ -530,23 +530,23 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
     # Newer content has tighter tolerance, older content allows more variance
     if content_age < dt.timedelta(hours=1):
         # Very fresh content: allow viral growth
-        score_tolerance_percent = 0.50  # 50% (was 15%)
+        score_tolerance_percent = 0.50
         min_tolerance = 10
     elif content_age < dt.timedelta(hours=6):
         # Recent content: higher tolerance for viral content
-        score_tolerance_percent = 0.75  # 75% (was 25%)
+        score_tolerance_percent = 0.75
         min_tolerance = 20
     elif content_age < dt.timedelta(days=1):
         # Day-old content: even higher tolerance
-        score_tolerance_percent = 1.0   # 100% (was 40%)
+        score_tolerance_percent = 1.0
         min_tolerance = 30
     elif content_age < dt.timedelta(days=7):
         # Week-old content: very high tolerance
-        score_tolerance_percent = 1.5   # 150% (was 60%)
+        score_tolerance_percent = 1.5
         min_tolerance = 50
     else:
         # Old content: highest tolerance
-        score_tolerance_percent = 2.0   # 200% (was 100%)
+        score_tolerance_percent = 2.0
         min_tolerance = 100
     
     # Anti-cheating mechanism: prevent unreasonably high scores
