@@ -74,7 +74,14 @@ async def query_data(
             keyword_mode=request.keyword_mode,
             start_date=request.start_date,
             end_date=request.end_date,
-            limit=request.limit or 100 # default request is 100 items
+            limit=request.limit or 100, # default request is 100 items
+            # Web search specific parameters
+            web_search_query=request.web_search_query,
+            urls=request.urls or [],
+            crawl_limit=request.crawl_limit,
+            include_metadata=request.include_metadata,
+            formats=request.formats or ["markdown"],
+            extract_schema=request.extract_schema
         )
     except Exception as e:
         bt.logging.error(f"Error creating OrganicRequest: {str(e)}")

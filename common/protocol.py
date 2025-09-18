@@ -102,7 +102,7 @@ class OnDemandRequest(BaseProtocol):
     # Request parameters
     source: Optional[DataSource] = Field(
         default=None,
-        description="Source to query (X or Reddit)"
+        description="Source to query (X, Reddit, or WebSearch)"
     )
 
     usernames: List[str] = Field(
@@ -137,6 +137,41 @@ class OnDemandRequest(BaseProtocol):
         ge=1,
         le=1000,
         description="Maximum items to return"
+    )
+
+    # Web search specific parameters (for Firecrawl integration)
+    web_search_query: Optional[str] = Field(
+        default=None,
+        description="Web search query string for Firecrawl",
+        max_length=500
+    )
+
+    urls: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Specific URLs to crawl and extract content from",
+        max_length=20
+    )
+
+    crawl_limit: Optional[int] = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum pages to crawl per URL for web search"
+    )
+
+    include_metadata: Optional[bool] = Field(
+        default=True,
+        description="Include page metadata in web search results"
+    )
+
+    formats: Optional[List[str]] = Field(
+        default_factory=lambda: ["markdown"],
+        description="Output formats for web search: markdown, html, structured_data"
+    )
+
+    extract_schema: Optional[str] = Field(
+        default=None,
+        description="JSON schema for structured data extraction from web content"
     )
 
     # Response fields

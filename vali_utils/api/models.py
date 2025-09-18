@@ -15,7 +15,7 @@ class QueryRequest(StrictBaseModel):
     """Request model for data queries"""
     source: str = Field(
         ...,  # Required field
-        description="Data source (x, reddit, or youtube)"
+        description="Data source (x, reddit, youtube, or web_search)"
     )
     usernames: List[str] = Field(
         default_factory=list,
@@ -46,17 +46,48 @@ class QueryRequest(StrictBaseModel):
         default="all",
         description="Keyword matching mode: 'any' (if any keyword is present) or 'all' (all keywords must be present)"
     )
+    
+    # Web search specific parameters
+    web_search_query: Optional[str] = Field(
+        default=None,
+        description="Web search query string for Firecrawl",
+        max_length=500
+    )
+    urls: Optional[List[str]] = Field(
+        default_factory=list,
+        description="Specific URLs to crawl and extract content from",
+        max_length=20
+    )
+    crawl_limit: Optional[int] = Field(
+        default=10,
+        ge=1,
+        le=50,
+        description="Maximum pages to crawl per URL for web search"
+    )
+    include_metadata: Optional[bool] = Field(
+        default=True,
+        description="Include page metadata in web search results"
+    )
+    formats: Optional[List[str]] = Field(
+        default_factory=lambda: ["markdown"],
+        description="Output formats for web search: markdown, html, structured_data"
+    )
+    extract_schema: Optional[str] = Field(
+        default=None,
+        description="JSON schema for structured data extraction from web content"
+    )
 
     @field_validator('source')
     @classmethod
     def validate_source(cls, v: str) -> str:
         try:
             source = DataSource[v.upper()]
-            if source.weight == 0:  # Check if it's an active source
+            # Allow WEB_SEARCH even with 0 weight since it's OnDemand only
+            if source.weight == 0 and source != DataSource.WEB_SEARCH:
                 raise ValueError(f"Source {v} is not currently active")
             return v.upper()  # Return uppercase to match enum
         except KeyError:
-            valid_sources = [s.name.lower() for s in DataSource if s.weight > 0]
+            valid_sources = [s.name.lower() for s in DataSource if s.weight > 0] + ["web_search"]
             raise ValueError(f"Invalid source. Must be one of: {valid_sources}")
 
     @field_validator('usernames')

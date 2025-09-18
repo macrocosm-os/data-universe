@@ -163,6 +163,13 @@ class OrganicQueryProcessor:
             start_date=synapse.start_date,
             end_date=synapse.end_date,
             limit=synapse.limit,
+            # Web search specific parameters
+            web_search_query=synapse.web_search_query,
+            urls=synapse.urls,
+            crawl_limit=synapse.crawl_limit,
+            include_metadata=synapse.include_metadata,
+            formats=synapse.formats,
+            extract_schema=synapse.extract_schema,
             version=constants.PROTOCOL_VERSION
         )
         
@@ -253,6 +260,17 @@ class OrganicQueryProcessor:
                 elif source == 'REDDIT':
                     # Parse the content JSON to validate structure
                     reddit_content = RedditContent.from_data_entity(item)
+                    
+                elif source == 'WEB_SEARCH':
+                    # Validate web search content structure
+                    import json
+                    content_str = item.content.decode("utf-8")
+                    content_dict = json.loads(content_str)
+                    
+                    # Check for required web search fields
+                    if not content_dict.get("url") or not content_dict.get("content"):
+                        bt.logging.debug(f"Miner {miner_uid}: Web search item {i} missing required url or content")
+                        return False
                     
                 else:   # source == 'YOUTUBE'
                     youtube_content = YouTubeContent.from_data_entity(item)

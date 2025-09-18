@@ -15,6 +15,14 @@ class OrganicRequest(bt.Synapse):
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     limit: int = 100
+    
+    # Web search specific parameters
+    web_search_query: Optional[str] = None
+    urls: List[str] = []
+    crawl_limit: Optional[int] = 10
+    include_metadata: Optional[bool] = True
+    formats: List[str] = ["markdown"]
+    extract_schema: Optional[str] = None
 
     # Output fields
     data: List[Dict[str, Any]] = []

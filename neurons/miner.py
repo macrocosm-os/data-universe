@@ -48,6 +48,7 @@ from scraping.scraper import ScrapeConfig, ScraperId
 
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
+from scraping.web.firecrawl_scraper import FirecrawlScraperProvider
 import json
 
 # Enable logging to the miner TODO move it to some different location
@@ -553,6 +554,29 @@ class Miner:
                 # Use the scraper's regular scrape method with the ScrapeConfig
                 data_entities = await scraper.scrape(config)
                 synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
+            elif synapse.source == DataSource.WEB_SEARCH:
+                # Handle web search requests using Firecrawl
+                bt.logging.info("Processing web search request with Firecrawl")
+                try:
+                    # Initialize Firecrawl scraper provider
+                    firecrawl_provider = FirecrawlScraperProvider()
+                    
+                    # Validate web search parameters
+                    if not synapse.web_search_query and not synapse.urls:
+                        bt.logging.error("Web search request missing both query and URLs")
+                        synapse.data = []
+                        return synapse
+                    
+                    # Handle web search request
+                    data_entities = await firecrawl_provider.handle_web_search_request(synapse)
+                    synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
+                    
+                    bt.logging.info(f"Web search completed: {len(synapse.data)} entities returned")
+                    
+                except Exception as e:
+                    bt.logging.error(f"Error in web search request: {str(e)}")
+                    bt.logging.debug(traceback.format_exc())
+                    synapse.data = []
 
             synapse.version = constants.PROTOCOL_VERSION
 
