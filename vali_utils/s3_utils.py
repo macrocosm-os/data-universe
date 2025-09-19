@@ -182,7 +182,8 @@ class S3Validator:
             payload = {
                 "hotkey": hotkey,
                 "timestamp": timestamp,
-                "signature": signature.hex()
+                "signature": signature.hex(),
+                "miner_hotkey": miner_hotkey
             }
             
             response = requests.post(
@@ -686,13 +687,14 @@ class S3Validator:
             else:
                 timestamp = dt.datetime.now(dt.timezone.utc)
             
-            # Create XContent object
+            # Create XContent object with ALL uploaded fields
             x_content = XContent(
                 username=str(username),
                 text=str(text),
                 url=str(url),
                 timestamp=timestamp,
                 tweet_hashtags=row.get('tweet_hashtags', []) if pd.notna(row.get('tweet_hashtags')) else [],
+                media=row.get('media', None) if pd.notna(row.get('media')) else None,
                 user_id=str(row.get('user_id', '')),
                 user_display_name=str(row.get('user_display_name', username)),
                 user_verified=bool(row.get('user_verified', False)),
@@ -700,7 +702,25 @@ class S3Validator:
                 is_reply=bool(row.get('is_reply', False)),
                 is_quote=bool(row.get('is_quote', False)),
                 conversation_id=str(row.get('conversation_id', '')),
-                in_reply_to_user_id=str(row.get('in_reply_to_user_id', ''))
+                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')),
+                # Add missing engagement metrics that miners upload
+                language=str(row.get('language', '')) if pd.notna(row.get('language')) else None,
+                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username')) else None,
+                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id')) else None,
+                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count')) else None,
+                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count')) else None,
+                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count')) else None,
+                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count')) else None,
+                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count')) else None,
+                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count')) else None,
+                # Add missing user profile data that miners upload
+                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified')) else None,
+                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description')) else None,
+                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location')) else None,
+                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url')) else None,
+                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url')) else None,
+                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count')) else None,
+                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count')) else None
             )
             
             return XContent.to_data_entity(x_content)
@@ -734,7 +754,7 @@ class S3Validator:
             # Obfuscate timestamp to minute for Reddit validation
             created_at = created_at.replace(second=0, microsecond=0)
             
-            # Create RedditContent object
+            # Create RedditContent object with ALL uploaded fields
             reddit_content = RedditContent(
                 id=str(reddit_id),
                 username=str(username),
@@ -743,7 +763,14 @@ class S3Validator:
                 communityName=str(row.get('communityName', '')),
                 createdAt=created_at,
                 dataType=str(row.get('dataType', 'post')),
-                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None
+                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None,
+                # Add missing fields that miners upload
+                title=str(row.get('title', '')) if pd.notna(row.get('title')) else None,
+                media=row.get('media', None) if pd.notna(row.get('media')) else None,
+                is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
+                score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
+                upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
+                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None
             )
             
             return RedditContent.to_data_entity(reddit_content)

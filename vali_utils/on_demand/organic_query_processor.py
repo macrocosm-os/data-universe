@@ -19,7 +19,7 @@ from common.date_range import DateRange
 import datetime as dt
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.on_demand import utils as on_demand_utils
-from vali_utils.on_demand.output_models import create_organic_output_dict
+from vali_utils.on_demand.output_models import create_organic_output_dict, validate_metadata_completeness
 
 
 class OrganicQueryProcessor:
@@ -624,106 +624,31 @@ class OrganicQueryProcessor:
             return False
     
 
-    def _validate_x_metadata_completeness(self, x_content: XContent) -> bool:
+    def _validate_metadata_completeness(self, entity: DataEntity, post_id: str = None) -> bool:
         """
-        Validate that X content has all required metadata fields for output models.
-        Validates fields required by UserInfo, TweetInfo, and XOrganicOutput.
+        Generalized metadata completeness validation using Pydantic output models.
+        Works for all data sources (X, Reddit, YouTube).
         
         Args:
-            x_content: The XContent object to validate
+            entity: DataEntity to validate
+            post_id: Optional identifier for logging
             
         Returns:
             bool: True if all required metadata is present, False otherwise
         """
         try:
-            missing_fields = []
+            is_valid, missing_fields = validate_metadata_completeness(entity)
             
-            # XOrganicOutput required fields (except label which is optional)
-            base_required_fields = [
-                'text',
-                'url',
-            ]
-            
-            # UserInfo required fields 
-            user_required_fields = [
-                'user_display_name',
-                'user_followers_count',
-                'user_verified',
-                'user_id',
-                'user_following_count',
-                'username',
-            ]
-            
-            # TweetInfo required fields (except in_reply_to which is optional)
-            tweet_required_fields = [
-                'quote_count',
-                'tweet_id',
-                'retweet_count',
-                'like_count',
-                'is_reply',
-                'tweet_hashtags',
-                'conversation_id',
-                'is_quote',
-                'reply_count',
-            ]
-            
-            # Check all required field categories
-            all_required_fields = base_required_fields + user_required_fields + tweet_required_fields
-            
-            for field_name in all_required_fields:
-                field_value = getattr(x_content, field_name, None)
-                if field_value is None:
-                    missing_fields.append(field_name)
-            
-            # Fail validation if any required fields are missing
-            if missing_fields:
-                bt.logging.info(f"Tweet {x_content.url} missing required metadata: {missing_fields}")
+            if not is_valid:
+                source = DataSource(entity.source).name.upper()
+                post_identifier = post_id or entity.uri or "unknown"
+                bt.logging.info(f"{source} post {post_identifier} missing required metadata: {missing_fields}")
                 return False
-            
-            # Validate field types
-            
-            # Numeric fields must be numeric
-            numeric_fields = ['like_count', 'retweet_count', 'reply_count', 'quote_count', 
-                             'user_followers_count', 'user_following_count']
-            for field_name in numeric_fields:
-                field_value = getattr(x_content, field_name, None)
-                if field_value is not None and not isinstance(field_value, (int, float)):
-                    try:
-                        # Try to convert to numeric
-                        float(field_value)
-                    except (ValueError, TypeError):
-                        bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not numeric)")
-                        return False
-            
-            # Boolean fields must be boolean
-            boolean_fields = ['is_reply', 'is_quote', 'user_verified']
-            for field_name in boolean_fields:
-                field_value = getattr(x_content, field_name, None)
-                if field_value is not None and not isinstance(field_value, bool):
-                    bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not boolean)")
-                    return False
-            
-            # String fields must be strings
-            string_fields = ['text', 'url', 'user_display_name', 'user_id', 'username', 
-                           'tweet_id', 'conversation_id']
-            for field_name in string_fields:
-                field_value = getattr(x_content, field_name, None)
-                if field_value is not None and not isinstance(field_value, str):
-                    bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not string)")
-                    return False
-            
-            # List fields must be lists
-            list_fields = ['tweet_hashtags']
-            for field_name in list_fields:
-                field_value = getattr(x_content, field_name, None)
-                if field_value is not None and not isinstance(field_value, list):
-                    bt.logging.info(f"Tweet {x_content.url} has invalid {field_name}: {field_value} (not list)")
-                    return False
             
             return True
             
         except Exception as e:
-            bt.logging.error(f"Error validating X metadata completeness: {str(e)}")
+            bt.logging.error(f"Error validating metadata completeness: {str(e)}")
             return False
     
 
@@ -742,13 +667,17 @@ class OrganicQueryProcessor:
                 bt.logging.error(f"Post {post_id} failed request field validation")
                 return False
             
-            # Phase 2: Metadata completeness validation (X only)
+            # Phase 2: Metadata completeness validation (all sources)
+            if not self._validate_metadata_completeness(entity, post_id):
+                bt.logging.error(f"Post {post_id} failed metadata completeness validation")
+                return False
+            
+            # Convert to proper format for scraper validation if needed
             if synapse.source.upper() == 'X':
                 x_content = XContent.from_data_entity(entity)
-                if not self._validate_x_metadata_completeness(x_content=x_content):
-                    bt.logging.error(f"Post {post_id} failed metadata completeness validation")
-                    return False
                 entity_for_validation = XContent.to_data_entity(content=x_content)
+            else:
+                entity_for_validation = entity
             
             # Phase 3: Scraper validation (only if previous validation passes)
             scraper_result = await self._validate_with_scraper(synapse, entity_for_validation, post_id)
