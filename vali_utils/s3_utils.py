@@ -183,7 +183,7 @@ class S3Validator:
                 "hotkey": hotkey,
                 "timestamp": timestamp,
                 "signature": signature.hex(),
-                "miner_hotkey": miner_hotkey  # TODO Request specific miner only - MASSIVE performance boost!
+                "miner_hotkey": miner_hotkey
             }
             
             response = requests.post(
