@@ -5,6 +5,7 @@ import bittensor as bt
 from typing import List, Tuple, Optional, Dict, Any
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
+from common.protocol import KeywordMode
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
@@ -252,7 +253,7 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
         return results
 
     def _validate_tweet_content(
-            self, actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None
+            self, actual_tweet: XContent, entity: DataEntity, is_retweet: bool, author_data: dict = None, view_count: int = None, allow_low_engagement: bool = False
     ) -> ValidationResult:
         """Enhanced validation that skips spam and engagement filtering."""
         # Delegate directly to utils without spam/engagement checks
@@ -342,6 +343,106 @@ class EnhancedApiDojoTwitterScraper(ApiDojoTwitterScraper):
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
         )
 
+        data_entities = []
+        for x_content in x_contents:
+            data_entities.append(XContent.to_data_entity(content=x_content))
+
+        return data_entities
+
+    async def on_demand_scrape(
+        self,
+        usernames: List[str] = None,
+        keywords: List[str] = None,
+        keyword_mode: KeywordMode = "all",
+        start_datetime: dt.datetime = None,
+        end_datetime: dt.datetime = None,
+        limit: int = 100
+    ) -> List[DataEntity]:
+        """
+        Scrapes Twitter/X data based on specific search criteria.
+        
+        Args:
+            usernames: List of target usernames (without @, OR logic between them)
+            keywords: List of keywords to search for
+            keyword_mode: "any" (OR logic) or "all" (AND logic) for keyword matching
+            start_datetime: Earliest datetime for content (UTC)
+            end_datetime: Latest datetime for content (UTC)
+            limit: Maximum number of items to return
+        
+        Returns:
+            List of DataEntity objects matching the criteria
+        """
+        
+        # Return empty list if all key search parameters are None
+        if all(param is None for param in [usernames, keywords, start_datetime, end_datetime]):
+            bt.logging.trace("All search parameters are None, returning empty list")
+            return []
+        
+        bt.logging.trace(
+            f"On-demand X scrape with usernames={usernames}, keywords={keywords}, "
+            f"keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
+        )
+        
+        # Construct the query string
+        date_format = "%Y-%m-%d_%H:%M:%S_UTC"
+        query_parts = []
+        
+        # Add date range if provided
+        if start_datetime:
+            query_parts.append(f"since:{start_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
+        if end_datetime:
+            query_parts.append(f"until:{end_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
+        
+        # Add usernames with OR logic between them
+        if usernames:
+            username_queries = [f"from:{username.removeprefix('@')}" for username in usernames]
+            query_parts.append(f"({' OR '.join(username_queries)})")
+        
+        # Add keywords with specified logic
+        if keywords:
+            quoted_keywords = [f'"{keyword}"' for keyword in keywords]
+            if keyword_mode == "all":
+                query_parts.append(f"({' AND '.join(quoted_keywords)})")
+            else:  # keyword_mode == "any"
+                query_parts.append(f"({' OR '.join(quoted_keywords)})")
+        
+        # If no specific criteria provided, add default search term
+        if not query_parts or (not usernames and not keywords):
+            query_parts.append("e")  # Most common letter in English
+        
+        query = " ".join(query_parts)
+        
+        # Construct the input to the runner
+        run_input = {
+            **ApiDojoTwitterScraper.BASE_RUN_INPUT,
+            "searchTerms": [query],
+            "maxTweets": limit,
+        }
+
+        run_config = RunConfig(
+            actor_id=ApiDojoTwitterScraper.ACTOR_ID,
+            debug_info=f"On-demand scrape {query}",
+            max_data_entities=limit,
+            timeout_secs=ApiDojoTwitterScraper.SCRAPE_TIMEOUT_SECS,
+        )
+
+        bt.logging.success(f"Performing on-demand Twitter scrape for: {query}")
+
+        # Run the Actor and retrieve the scraped data
+        try:
+            dataset: List[dict] = await self.runner.run(run_config, run_input)
+        except Exception as e:
+            bt.logging.exception(f"Failed to scrape tweets using query {query}: {str(e)}")
+            return []
+
+        # Parse the results using enhanced methods
+        x_contents, _, _, _ = self._best_effort_parse_dataset(dataset)
+
+        bt.logging.success(
+            f"Completed on-demand scrape for {query}. Scraped {len(x_contents)} items."
+        )
+
+        # Convert to DataEntity objects
         data_entities = []
         for x_content in x_contents:
             data_entities.append(XContent.to_data_entity(content=x_content))
@@ -539,5 +640,101 @@ def print_enriched_content(content: EnhancedXContent):
     print(json.dumps(content.to_api_response(), indent=2))
 
 
+async def test_on_demand_scrape():
+    """Test the on_demand_scrape method with various parameter combinations."""
+    scraper = EnhancedApiDojoTwitterScraper()
+    
+    print("=" * 60)
+    print("TESTING ON-DEMAND X SCRAPE")
+    print("=" * 60)
+    
+    # Test 1: All parameters None (should return empty list)
+    print("\n1. Testing with all parameters None...")
+    entities = await scraper.on_demand_scrape()
+    print(f"   Result: {len(entities)} entities (expected: 0)")
+    
+    # Test 2: Search by keywords with "any" mode
+    print("\n2. Testing keyword search with 'any' mode...")
+    entities = await scraper.on_demand_scrape(keywords=["bitcoin", "crypto"], keyword_mode="any", limit=3)
+    print(f"   Result: {len(entities)} entities with 'bitcoin' OR 'crypto'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 3: Search by keywords with "all" mode
+    print("\n3. Testing keyword search with 'all' mode...")
+    entities = await scraper.on_demand_scrape(keywords=["bitcoin", "price"], keyword_mode="all", limit=3)
+    print(f"   Result: {len(entities)} entities with 'bitcoin' AND 'price'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 4: Search by single username
+    print("\n4. Testing single username search...")
+    entities = await scraper.on_demand_scrape(usernames=["elonmusk"], limit=3)
+    print(f"   Result: {len(entities)} entities from user 'elonmusk'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 5: Search by multiple usernames
+    print("\n5. Testing multiple usernames search...")
+    entities = await scraper.on_demand_scrape(usernames=["elonmusk", "naval"], limit=5)
+    print(f"   Result: {len(entities)} entities from users 'elonmusk' OR 'naval'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 6: Search by usernames + keywords (any mode)
+    print("\n6. Testing usernames + keywords ('any' mode)...")
+    entities = await scraper.on_demand_scrape(
+        usernames=["elonmusk", "naval"],
+        keywords=["AI", "technology"],
+        keyword_mode="any",
+        limit=3
+    )
+    print(f"   Result: {len(entities)} entities from specified users with 'AI' OR 'technology'")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+    
+    # Test 7: Date range filtering
+    print("\n7. Testing date range filtering (last 7 days)...")
+    end_time = dt.datetime.now(tz=dt.timezone.utc)
+    start_time = end_time - dt.timedelta(days=7)
+    entities = await scraper.on_demand_scrape(
+        keywords=["python"],
+        start_datetime=start_time,
+        end_datetime=end_time,
+        limit=3
+    )
+    print(f"   Result: {len(entities)} entities with 'python' in last 7 days")
+    if entities:
+        print(f"   Sample: {entities[0].uri}")
+        print(f"   Sample date: {entities[0].datetime}")
+    
+    # Test 8: keyword_mode comparison
+    print("\n8. Testing keyword_mode 'any' vs 'all' comparison...")
+    
+    # Test with "any" mode
+    entities_any = await scraper.on_demand_scrape(
+        keywords=["tesla", "spacex"],
+        keyword_mode="any",
+        limit=3
+    )
+    print(f"   'any' mode: {len(entities_any)} entities with 'tesla' OR 'spacex'")
+    
+    # Test with "all" mode  
+    entities_all = await scraper.on_demand_scrape(
+        keywords=["tesla", "spacex"],
+        keyword_mode="all",
+        limit=3
+    )
+    print(f"   'all' mode: {len(entities_all)} entities with 'tesla' AND 'spacex'")
+    print(f"   Expected: 'any' >= 'all' ({len(entities_any)} >= {len(entities_all)})")
+    
+    print(entities_all[0])
+
+    print("\n" + "=" * 60)
+    print("ON-DEMAND X SCRAPE TESTS COMPLETED")
+    print("=" * 60)
+
+
 if __name__ == "__main__":
     asyncio.run(test_enhanced_scraper())
+    asyncio.run(test_on_demand_scrape())
