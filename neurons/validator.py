@@ -44,7 +44,7 @@ from common import constants
 from common import utils
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.load_balancer.validator_registry import ValidatorRegistry
-from vali_utils.organic_query_processor import OrganicQueryProcessor
+from vali_utils.on_demand.organic_query_processor import OrganicQueryProcessor
 
 from vali_utils import metrics
 

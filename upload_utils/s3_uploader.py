@@ -292,7 +292,12 @@ class S3PartitionedUploader:
                     'createdAt': df['decoded_content'].apply(lambda x: x.get('createdAt')),
                     'dataType': df['decoded_content'].apply(lambda x: x.get('dataType')),
                     'parentId': df['decoded_content'].apply(lambda x: x.get('parentId')),
-                    'url': df['decoded_content'].apply(lambda x: x.get('url'))
+                    'url': df['decoded_content'].apply(lambda x: x.get('url')),
+                    'media': df['decoded_content'].apply(lambda x: x.get('media')),
+                    'is_nsfw': df['decoded_content'].apply(lambda x: x.get('is_nsfw')),
+                    'score': df['decoded_content'].apply(lambda x: x.get('score')),
+                    'upvote_ratio': df['decoded_content'].apply(lambda x: x.get('upvote_ratio')),
+                    'num_comments': df['decoded_content'].apply(lambda x: x.get('num_comments'))
                 })
             elif source == DataSource.YOUTUBE.value:
                 # YouTube data structure
@@ -328,7 +333,23 @@ class S3PartitionedUploader:
                     'is_reply': df['decoded_content'].apply(lambda x: x.get('is_reply')),
                     'is_quote': df['decoded_content'].apply(lambda x: x.get('is_quote')),
                     'conversation_id': df['decoded_content'].apply(lambda x: x.get('conversation_id')),
-                    'in_reply_to_user_id': df['decoded_content'].apply(lambda x: x.get('in_reply_to_user_id'))
+                    'in_reply_to_user_id': df['decoded_content'].apply(lambda x: x.get('in_reply_to_user_id')),
+                    'language': df['decoded_content'].apply(lambda x: x.get('language')),
+                    'in_reply_to_username': df['decoded_content'].apply(lambda x: x.get('in_reply_to_username')),
+                    'quoted_tweet_id': df['decoded_content'].apply(lambda x: x.get('quoted_tweet_id')),
+                    'like_count': df['decoded_content'].apply(lambda x: x.get('like_count')),
+                    'retweet_count': df['decoded_content'].apply(lambda x: x.get('retweet_count')),
+                    'reply_count': df['decoded_content'].apply(lambda x: x.get('reply_count')),
+                    'quote_count': df['decoded_content'].apply(lambda x: x.get('quote_count')),
+                    'view_count': df['decoded_content'].apply(lambda x: x.get('view_count')),
+                    'bookmark_count': df['decoded_content'].apply(lambda x: x.get('bookmark_count')),
+                    'user_blue_verified': df['decoded_content'].apply(lambda x: x.get('user_blue_verified')),
+                    'user_description': df['decoded_content'].apply(lambda x: x.get('user_description')),
+                    'user_location': df['decoded_content'].apply(lambda x: x.get('user_location')),
+                    'profile_image_url': df['decoded_content'].apply(lambda x: x.get('profile_image_url')),
+                    'cover_picture_url': df['decoded_content'].apply(lambda x: x.get('cover_picture_url')),
+                    'user_followers_count': df['decoded_content'].apply(lambda x: x.get('user_followers_count')),
+                    'user_following_count': df['decoded_content'].apply(lambda x: x.get('user_following_count'))
                 })
 
             return result_df
