@@ -182,7 +182,8 @@ class S3Validator:
             payload = {
                 "hotkey": hotkey,
                 "timestamp": timestamp,
-                "signature": signature.hex()
+                "signature": signature.hex(),
+                "miner_hotkey": miner_hotkey  # TODO Request specific miner only - MASSIVE performance boost!
             }
             
             response = requests.post(
