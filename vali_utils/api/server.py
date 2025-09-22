@@ -8,11 +8,12 @@ from threading import Thread
 import bittensor as bt
 from typing import Optional
 from .routes import router, get_validator
-from vali_utils.api.auth.key_routes import router as key_router
+from vali_utils.api.auth.key_routes import create_key_routes
 from vali_utils.api.auth.auth import (
-    key_manager,
-    require_master_key,
-    require_metrics_api_key,
+    APIKeyManager,
+    create_require_master_key,
+    create_require_metrics_api_key,
+    set_default_key_manager,
 )
 from vali_utils.api.utils import endpoint_error_handler
 from vali_utils.metrics import (
@@ -41,7 +42,22 @@ class ValidatorAPI:
         """
         self.validator = validator
         self.port = port
-        self.key_manager = key_manager
+
+        # Create APIKeyManager with validator's config (following miner evaluator pattern)
+        self.key_manager = APIKeyManager(
+            config=validator.config if hasattr(validator, "config") else None
+        )
+
+        # Set the default key manager for backwards compatibility with routes
+        set_default_key_manager(self.key_manager)
+
+        # Create auth functions with this key_manager instance
+        self.require_master_key = create_require_master_key(self.key_manager)
+        self.require_metrics_api_key = create_require_metrics_api_key(self.key_manager)
+
+        # Create key management routes
+        self.key_router = create_key_routes(self.key_manager, self.require_master_key)
+
         self.app = self._create_app()
         self.server_thread: Optional[Thread] = None
 
@@ -79,7 +95,7 @@ class ValidatorAPI:
         )
 
         @app.get("/metrics", include_in_schema=False)
-        def metrics(_: None = Depends(require_metrics_api_key)):
+        def metrics(_: None = Depends(self.require_metrics_api_key)):
             return Response(
                 generate_latest(prometheus_collector_registry),
                 media_type=CONTENT_TYPE_LATEST,
@@ -96,14 +112,14 @@ class ValidatorAPI:
 
         # Protected Swagger UI docs endpoint
         @app.get("/docs", include_in_schema=False)
-        async def get_docs(_: bool = Depends(require_master_key)):
+        async def get_docs(_: bool = Depends(self.require_master_key)):
             return get_swagger_ui_html(
                 openapi_url="/openapi.json", title="API Documentation"
             )
 
         # Protected ReDoc docs endpoint using default styling
         @app.get("/redoc", include_in_schema=False)
-        async def get_redoc(_: bool = Depends(require_master_key)):
+        async def get_redoc(_: bool = Depends(self.require_master_key)):
             return get_redoc_html(
                 openapi_url="/openapi.json", title="API Documentation"
             )
@@ -111,7 +127,7 @@ class ValidatorAPI:
         # Protected OpenAPI JSON schema endpoint
         @app.get("/openapi.json", include_in_schema=False)
         @endpoint_error_handler
-        async def openapi_schema(_: bool = Depends(require_master_key)):
+        async def openapi_schema(_: bool = Depends(self.require_master_key)):
             try:
                 if not app.openapi_schema:
                     from fastapi.openapi.utils import get_openapi
@@ -150,7 +166,7 @@ class ValidatorAPI:
 
         # Include API routes
         app.include_router(router, prefix="/api/v1")
-        app.include_router(key_router, prefix="/api/v1/keys")
+        app.include_router(self.key_router, prefix="/api/v1/keys")
 
         return app
 
