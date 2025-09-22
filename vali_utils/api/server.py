@@ -13,6 +13,7 @@ from vali_utils.api.auth.auth import (
     APIKeyManager,
     create_require_master_key,
     create_require_metrics_api_key,
+    set_default_key_manager,
 )
 from vali_utils.api.utils import endpoint_error_handler
 from vali_utils.metrics import (
@@ -46,6 +47,9 @@ class ValidatorAPI:
         self.key_manager = APIKeyManager(
             config=validator.config if hasattr(validator, "config") else None
         )
+
+        # Set the default key manager for backwards compatibility with routes
+        set_default_key_manager(self.key_manager)
 
         # Create auth functions with this key_manager instance
         self.require_master_key = create_require_master_key(self.key_manager)

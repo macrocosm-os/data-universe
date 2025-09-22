@@ -234,3 +234,47 @@ def create_require_metrics_api_key(key_manager: APIKeyManager):
         return True
 
     return require_metrics_api_key
+
+
+# Backwards compatibility: Create default instances that will be set by ValidatorAPI
+_default_key_manager = None
+
+def set_default_key_manager(key_manager: APIKeyManager):
+    """Set the default key manager for backwards compatibility with routes"""
+    global _default_key_manager
+    _default_key_manager = key_manager
+
+async def verify_api_key(api_key_header: str = Security(api_key_header)):
+    """Backwards compatible verify_api_key function for routes"""
+    if _default_key_manager is None:
+        raise RuntimeError("APIKeyManager not initialized. Call set_default_key_manager() first.")
+
+    if not _default_key_manager.is_valid_key(api_key_header):
+        raise HTTPException(status_code=403, detail="Invalid API key")
+
+    # Check rate limits
+    within_limit, headers = _default_key_manager.check_rate_limit(api_key_header)
+    if not within_limit:
+        raise HTTPException(
+            status_code=429, detail="Rate limit exceeded", headers=headers
+        )
+
+    return api_key_header
+
+
+async def require_master_key(api_key_header: str = Security(api_key_header)):
+    """Backwards compatible require_master_key function for routes"""
+    if _default_key_manager is None:
+        raise RuntimeError("APIKeyManager not initialized. Call set_default_key_manager() first.")
+
+    if not _default_key_manager.is_master_key(api_key_header):
+        raise HTTPException(status_code=403, detail="Invalid master key")
+
+    # Check rate limits even for master key
+    within_limit, headers = _default_key_manager.check_rate_limit(api_key_header)
+    if not within_limit:
+        raise HTTPException(
+            status_code=429, detail="Rate limit exceeded", headers=headers
+        )
+
+    return True
