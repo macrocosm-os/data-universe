@@ -1,5 +1,5 @@
 from uuid import uuid4
-from fastapi import HTTPException, Security, Depends
+from fastapi import HTTPException, Security
 from fastapi.security.api_key import APIKeyHeader
 import os
 import sqlite3
@@ -171,75 +171,63 @@ class APIKeyManager:
                 }
 
 
-# Global instance removed - now using dependency injection via ValidatorAPI
+# Simple auth functions - key_manager will be accessed via app state
 
-# Global reference for dependency injection
-class GetAPIKeyManager:
-    instance = None
+def create_verify_api_key(key_manager: APIKeyManager):
+    """Create a verify_api_key function with the given key_manager"""
+    async def verify_api_key(api_key_header: str = Security(api_key_header)):
+        """Verify API key and check rate limits"""
+        if not key_manager.is_valid_key(api_key_header):
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid API key"
+            )
 
-get_api_key_manager_auth = GetAPIKeyManager()
+        # Check rate limits
+        within_limit, headers = key_manager.check_rate_limit(api_key_header)
+        if not within_limit:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded",
+                headers=headers
+            )
 
-def get_auth_key_manager() -> APIKeyManager:
-    """Dependency to get the APIKeyManager instance for auth functions"""
-    if get_api_key_manager_auth.instance is None:
-        raise RuntimeError("APIKeyManager not initialized")
-    return get_api_key_manager_auth.instance
-
-async def verify_api_key(
-    api_key_header: str = Security(api_key_header),
-    key_manager: APIKeyManager = Depends(get_auth_key_manager)
-):
-    """Verify API key and check rate limits"""
-    if not key_manager.is_valid_key(api_key_header):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid API key"
-        )
-
-    # Check rate limits
-    within_limit, headers = key_manager.check_rate_limit(api_key_header)
-    if not within_limit:
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded",
-            headers=headers
-        )
-
-    return api_key_header
+        return api_key_header
+    return verify_api_key
 
 
-async def require_master_key(
-    api_key_header: str = Security(api_key_header),
-    key_manager: APIKeyManager = Depends(get_auth_key_manager)
-):
-    """Verify master API key"""
-    if not key_manager.is_master_key(api_key_header):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid master key"
-        )
+def create_require_master_key(key_manager: APIKeyManager):
+    """Create a require_master_key function with the given key_manager"""
+    async def require_master_key(api_key_header: str = Security(api_key_header)):
+        """Verify master API key"""
+        if not key_manager.is_master_key(api_key_header):
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid master key"
+            )
 
-    # Check rate limits even for master key
-    within_limit, headers = key_manager.check_rate_limit(api_key_header)
-    if not within_limit:
-        raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded",
-            headers=headers
-        )
+        # Check rate limits even for master key
+        within_limit, headers = key_manager.check_rate_limit(api_key_header)
+        if not within_limit:
+            raise HTTPException(
+                status_code=429,
+                detail="Rate limit exceeded",
+                headers=headers
+            )
 
-    return True
+        return True
+    return require_master_key
 
 
-async def require_metrics_api_key(
-    api_key_header: str = Security(api_key_header),
-    key_manager: APIKeyManager = Depends(get_auth_key_manager)
-):
-    """Verify master API key"""
-    if not key_manager.is_metrics_api_key(api_key_header):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid metrics api key"
-        )
+def create_require_metrics_api_key(key_manager: APIKeyManager):
+    """Create a require_metrics_api_key function with the given key_manager"""
+    async def require_metrics_api_key(api_key_header: str = Security(api_key_header)):
+        """Verify metrics API key"""
+        if not key_manager.is_metrics_api_key(api_key_header):
+            raise HTTPException(
+                status_code=403,
+                detail="Invalid metrics api key"
+            )
 
-    return True
+        return True
+    return require_metrics_api_key
