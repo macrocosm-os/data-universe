@@ -43,7 +43,9 @@ class ValidatorAPI:
         self.port = port
 
         # Create APIKeyManager with validator's config (following miner evaluator pattern)
-        self.key_manager = APIKeyManager(config=validator.config if hasattr(validator, 'config') else None)
+        self.key_manager = APIKeyManager(
+            config=validator.config if hasattr(validator, "config") else None
+        )
 
         # Create auth functions with this key_manager instance
         self.require_master_key = create_require_master_key(self.key_manager)
