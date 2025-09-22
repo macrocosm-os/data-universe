@@ -1,5 +1,5 @@
 from uuid import uuid4
-from fastapi import HTTPException, Security
+from fastapi import HTTPException, Security, Depends
 from fastapi.security.api_key import APIKeyHeader
 import os
 import sqlite3
@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import threading
 import secrets
 import bittensor as bt
+from pathlib import Path
 
 load_dotenv()
 
@@ -18,7 +19,9 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME)
 
 
 class APIKeyManager:
-    def __init__(self, db_path: str = None):
+    API_KEYS_FILENAME = "api_keys.db"
+
+    def __init__(self, config: 'bt.config' = None, db_path: str = None):
         self.metrics_api_key = os.getenv('METRICS_API_KEY', str(uuid4()))
 
         # Master key from environment
@@ -30,9 +33,19 @@ class APIKeyManager:
                 "Please set MASTER_KEY in your .env file."
             )
 
-        # Use provided path or default to current directory
+        # Use provided path or construct from config (following miner evaluator pattern)
         if db_path is None:
-            db_path = "api_keys.db"
+            if config is not None and hasattr(config, 'neuron') and hasattr(config.neuron, 'full_path'):
+                # Use validator's standard data directory (same as miner evaluator)
+                if not os.path.exists(config.neuron.full_path):
+                    os.makedirs(config.neuron.full_path, exist_ok=True)
+                db_path = os.path.join(config.neuron.full_path, self.API_KEYS_FILENAME)
+            else:
+                # Fallback to ~/.bittensor/api_keys.db for standalone usage
+                home_dir = Path.home()
+                bittensor_dir = home_dir / ".bittensor"
+                bittensor_dir.mkdir(exist_ok=True)
+                db_path = str(bittensor_dir / self.API_KEYS_FILENAME)
 
         self.db_path = db_path
         self.lock = threading.RLock()
@@ -158,11 +171,24 @@ class APIKeyManager:
                 }
 
 
-# Create global instance
-key_manager = APIKeyManager()
+# Global instance removed - now using dependency injection via ValidatorAPI
 
+# Global reference for dependency injection
+class GetAPIKeyManager:
+    instance = None
 
-async def verify_api_key(api_key_header: str = Security(api_key_header)):
+get_api_key_manager_auth = GetAPIKeyManager()
+
+def get_auth_key_manager() -> APIKeyManager:
+    """Dependency to get the APIKeyManager instance for auth functions"""
+    if get_api_key_manager_auth.instance is None:
+        raise RuntimeError("APIKeyManager not initialized")
+    return get_api_key_manager_auth.instance
+
+async def verify_api_key(
+    api_key_header: str = Security(api_key_header),
+    key_manager: APIKeyManager = Depends(get_auth_key_manager)
+):
     """Verify API key and check rate limits"""
     if not key_manager.is_valid_key(api_key_header):
         raise HTTPException(
@@ -182,7 +208,10 @@ async def verify_api_key(api_key_header: str = Security(api_key_header)):
     return api_key_header
 
 
-async def require_master_key(api_key_header: str = Security(api_key_header)):
+async def require_master_key(
+    api_key_header: str = Security(api_key_header),
+    key_manager: APIKeyManager = Depends(get_auth_key_manager)
+):
     """Verify master API key"""
     if not key_manager.is_master_key(api_key_header):
         raise HTTPException(
@@ -202,7 +231,10 @@ async def require_master_key(api_key_header: str = Security(api_key_header)):
     return True
 
 
-async def require_metrics_api_key(api_key_header: str = Security(api_key_header)):
+async def require_metrics_api_key(
+    api_key_header: str = Security(api_key_header),
+    key_manager: APIKeyManager = Depends(get_auth_key_manager)
+):
     """Verify master API key"""
     if not key_manager.is_metrics_api_key(api_key_header):
         raise HTTPException(

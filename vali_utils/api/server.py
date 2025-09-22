@@ -8,11 +8,12 @@ from threading import Thread
 import bittensor as bt
 from typing import Optional
 from .routes import router, get_validator
-from vali_utils.api.auth.key_routes import router as key_router
+from vali_utils.api.auth.key_routes import router as key_router, get_key_manager
 from vali_utils.api.auth.auth import (
-    key_manager,
+    APIKeyManager,
     require_master_key,
     require_metrics_api_key,
+    get_api_key_manager_auth,
 )
 from vali_utils.api.utils import endpoint_error_handler
 from vali_utils.metrics import (
@@ -41,7 +42,9 @@ class ValidatorAPI:
         """
         self.validator = validator
         self.port = port
-        self.key_manager = key_manager
+
+        # Create APIKeyManager with validator's config (following miner evaluator pattern)
+        self.key_manager = APIKeyManager(config=validator.config if hasattr(validator, 'config') else None)
         self.app = self._create_app()
         self.server_thread: Optional[Thread] = None
 
@@ -147,6 +150,8 @@ class ValidatorAPI:
 
         # Set validator instance for dependency injection
         get_validator.api = self
+        get_key_manager.api = self
+        get_api_key_manager_auth.instance = self.key_manager
 
         # Include API routes
         app.include_router(router, prefix="/api/v1")
