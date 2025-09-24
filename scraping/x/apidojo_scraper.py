@@ -410,9 +410,9 @@ class ApiDojoTwitterScraper(Scraper):
                         in_reply_to_user_id=data.get("inReplyToUserId"),
                         # ===== NEW FIELDS =====
                         # Static tweet metadata
-                        language=data.get("lang"),
-                        in_reply_to_username=data.get("inReplyToUsername"),
-                        quoted_tweet_id=data.get("quoteId"),
+                        language=data.get("lang") if data.get("lang") else None,
+                        in_reply_to_username=data.get("inReplyToUsername") if data.get("inReplyToUsername") else None,
+                        quoted_tweet_id=data.get("quoteId") if data.get("quoteId") else None,
                         # Dynamic engagement metrics
                         like_count=engagement_metrics["like_count"],
                         retweet_count=engagement_metrics["retweet_count"],
@@ -498,10 +498,10 @@ class ApiDojoTwitterScraper(Scraper):
         author = data.get("author", {})
         return {
             "user_blue_verified": author.get("isBlueVerified"),
-            "user_description": author.get("description"),
-            "user_location": author.get("location"),
-            "profile_image_url": author.get("profilePicture"),
-            "cover_picture_url": author.get("coverPicture"),
+            "user_description": author.get("description") if author.get("description") else None,
+            "user_location": author.get("location") if author.get("location") else None,
+            "profile_image_url": author.get("profilePicture") if author.get("profilePicture") else None,
+            "cover_picture_url": author.get("coverPicture") if author.get("coverPicture") else None,
             "user_followers_count": author.get("followers"),
             "user_following_count": author.get("following"),
         }
