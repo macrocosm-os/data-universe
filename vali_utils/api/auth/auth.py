@@ -10,6 +10,7 @@ from datetime import datetime, timedelta
 import threading
 import secrets
 import bittensor as bt
+from pathlib import Path
 
 load_dotenv()
 
@@ -18,21 +19,39 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME)
 
 
 class APIKeyManager:
-    def __init__(self, db_path: str = None):
-        self.metrics_api_key = os.getenv('METRICS_API_KEY', str(uuid4()))
+    API_KEYS_FILENAME = "api_keys.db"
+
+    def __init__(self, config: "bt.config" = None, db_path: str = None):
+        self.metrics_api_key = os.getenv("METRICS_API_KEY", str(uuid4()))
 
         # Master key from environment
-        self.master_key = os.getenv('MASTER_KEY')
+        self.master_key = os.getenv("MASTER_KEY")
         if not self.master_key:
-            bt.logging.error("MASTER_KEY not found in environment. API will be disabled.")
+            bt.logging.error(
+                "MASTER_KEY not found in environment. API will be disabled."
+            )
             raise ValueError(
                 "MASTER_KEY environment variable is required to enable API. "
                 "Please set MASTER_KEY in your .env file."
             )
 
-        # Use provided path or default to current directory
+        # Use provided path or construct from config (following miner evaluator pattern)
         if db_path is None:
-            db_path = "api_keys.db"
+            if (
+                config is not None
+                and hasattr(config, "neuron")
+                and hasattr(config.neuron, "full_path")
+            ):
+                # Use validator's standard data directory (same as miner evaluator)
+                if not os.path.exists(config.neuron.full_path):
+                    os.makedirs(config.neuron.full_path, exist_ok=True)
+                db_path = os.path.join(config.neuron.full_path, self.API_KEYS_FILENAME)
+            else:
+                # Fallback to ~/.bittensor/api_keys.db for standalone usage
+                home_dir = Path.home()
+                bittensor_dir = home_dir / ".bittensor"
+                bittensor_dir.mkdir(exist_ok=True)
+                db_path = str(bittensor_dir / self.API_KEYS_FILENAME)
 
         self.db_path = db_path
         self.lock = threading.RLock()
@@ -64,18 +83,14 @@ class APIKeyManager:
         api_key = f"sk_live_{secrets.token_urlsafe(32)}"
         with sqlite3.connect(self.db_path) as conn:
             conn.execute(
-                "INSERT INTO api_keys (key, name) VALUES (?, ?)",
-                (api_key, name)
+                "INSERT INTO api_keys (key, name) VALUES (?, ?)", (api_key, name)
             )
         return api_key
 
     def deactivate_api_key(self, key: str):
         """Deactivate an API key"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "UPDATE api_keys SET is_active = FALSE WHERE key = ?",
-                (key,)
-            )
+            conn.execute("UPDATE api_keys SET is_active = FALSE WHERE key = ?", (key,))
 
     def list_api_keys(self) -> List[Dict]:
         """List all API keys"""
@@ -93,8 +108,7 @@ class APIKeyManager:
 
         with sqlite3.connect(self.db_path) as conn:
             cursor = conn.execute(
-                "SELECT is_active FROM api_keys WHERE key = ?",
-                (api_key,)
+                "SELECT is_active FROM api_keys WHERE key = ?", (api_key,)
             )
             result = cursor.fetchone()
             return bool(result and result[0])
@@ -123,91 +137,144 @@ class APIKeyManager:
 
             with sqlite3.connect(self.db_path) as conn:
                 # Count recent requests
-                cursor = conn.execute("""
+                cursor = conn.execute(
+                    """
                     SELECT COUNT(*) FROM rate_limits 
                     WHERE key = ? AND request_time > datetime('now', '-1 hour')
-                """, (api_key,))
+                """,
+                    (api_key,),
+                )
                 count = cursor.fetchone()[0]
 
                 if count >= rate_limit:
                     # Get reset time
-                    cursor = conn.execute("""
+                    cursor = conn.execute(
+                        """
                         SELECT request_time FROM rate_limits 
                         WHERE key = ? 
                         ORDER BY request_time ASC 
                         LIMIT 1
-                    """, (api_key,))
+                    """,
+                        (api_key,),
+                    )
                     oldest = cursor.fetchone()
                     reset_time = datetime.fromisoformat(oldest[0]) + timedelta(hours=1)
 
                     return False, {
                         "X-RateLimit-Limit": str(rate_limit),
-                        "X-RateLimit-Reset": reset_time.isoformat()
+                        "X-RateLimit-Reset": reset_time.isoformat(),
                     }
 
                 # Record new request
                 conn.execute(
                     "INSERT INTO rate_limits (key, request_time) VALUES (?, datetime('now'))",
-                    (api_key,)
+                    (api_key,),
                 )
 
                 return True, {
                     "X-RateLimit-Limit": str(rate_limit),
                     "X-RateLimit-Remaining": str(rate_limit - count - 1),
-                    "X-RateLimit-Reset": (datetime.utcnow() + timedelta(hours=1)).isoformat()
+                    "X-RateLimit-Reset": (
+                        datetime.utcnow() + timedelta(hours=1)
+                    ).isoformat(),
                 }
 
 
-# Create global instance
-key_manager = APIKeyManager()
+# Simple auth functions - key_manager will be accessed via app state
 
+
+def create_verify_api_key(key_manager: APIKeyManager):
+    """Create a verify_api_key function with the given key_manager"""
+
+    async def verify_api_key(api_key_header: str = Security(api_key_header)):
+        """Verify API key and check rate limits"""
+        if not key_manager.is_valid_key(api_key_header):
+            raise HTTPException(status_code=403, detail="Invalid API key")
+
+        # Check rate limits
+        within_limit, headers = key_manager.check_rate_limit(api_key_header)
+        if not within_limit:
+            raise HTTPException(
+                status_code=429, detail="Rate limit exceeded", headers=headers
+            )
+
+        return api_key_header
+
+    return verify_api_key
+
+
+def create_require_master_key(key_manager: APIKeyManager):
+    """Create a require_master_key function with the given key_manager"""
+
+    async def require_master_key(api_key_header: str = Security(api_key_header)):
+        """Verify master API key"""
+        if not key_manager.is_master_key(api_key_header):
+            raise HTTPException(status_code=403, detail="Invalid master key")
+
+        # Check rate limits even for master key
+        within_limit, headers = key_manager.check_rate_limit(api_key_header)
+        if not within_limit:
+            raise HTTPException(
+                status_code=429, detail="Rate limit exceeded", headers=headers
+            )
+
+        return True
+
+    return require_master_key
+
+
+def create_require_metrics_api_key(key_manager: APIKeyManager):
+    """Create a require_metrics_api_key function with the given key_manager"""
+
+    async def require_metrics_api_key(api_key_header: str = Security(api_key_header)):
+        """Verify metrics API key"""
+        if not key_manager.is_metrics_api_key(api_key_header):
+            raise HTTPException(status_code=403, detail="Invalid metrics api key")
+
+        return True
+
+    return require_metrics_api_key
+
+
+# Backwards compatibility: Create default instances that will be set by ValidatorAPI
+_default_key_manager = None
+
+def set_default_key_manager(key_manager: APIKeyManager):
+    """Set the default key manager for backwards compatibility with routes"""
+    global _default_key_manager
+    _default_key_manager = key_manager
 
 async def verify_api_key(api_key_header: str = Security(api_key_header)):
-    """Verify API key and check rate limits"""
-    if not key_manager.is_valid_key(api_key_header):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid API key"
-        )
+    """Backwards compatible verify_api_key function for routes"""
+    if _default_key_manager is None:
+        raise RuntimeError("APIKeyManager not initialized. Call set_default_key_manager() first.")
+
+    if not _default_key_manager.is_valid_key(api_key_header):
+        raise HTTPException(status_code=403, detail="Invalid API key")
 
     # Check rate limits
-    within_limit, headers = key_manager.check_rate_limit(api_key_header)
+    within_limit, headers = _default_key_manager.check_rate_limit(api_key_header)
     if not within_limit:
         raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded",
-            headers=headers
+            status_code=429, detail="Rate limit exceeded", headers=headers
         )
 
     return api_key_header
 
 
 async def require_master_key(api_key_header: str = Security(api_key_header)):
-    """Verify master API key"""
-    if not key_manager.is_master_key(api_key_header):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid master key"
-        )
+    """Backwards compatible require_master_key function for routes"""
+    if _default_key_manager is None:
+        raise RuntimeError("APIKeyManager not initialized. Call set_default_key_manager() first.")
+
+    if not _default_key_manager.is_master_key(api_key_header):
+        raise HTTPException(status_code=403, detail="Invalid master key")
 
     # Check rate limits even for master key
-    within_limit, headers = key_manager.check_rate_limit(api_key_header)
+    within_limit, headers = _default_key_manager.check_rate_limit(api_key_header)
     if not within_limit:
         raise HTTPException(
-            status_code=429,
-            detail="Rate limit exceeded",
-            headers=headers
-        )
-
-    return True
-
-
-async def require_metrics_api_key(api_key_header: str = Security(api_key_header)):
-    """Verify master API key"""
-    if not key_manager.is_metrics_api_key(api_key_header):
-        raise HTTPException(
-            status_code=403,
-            detail="Invalid metrics api key"
+            status_code=429, detail="Rate limit exceeded", headers=headers
         )
 
     return True
