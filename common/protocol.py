@@ -156,5 +156,5 @@ REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
     GetMinerIndex: 1,
     GetDataEntityBucket: 1,
     GetContentsByBuckets: 5,
-    OnDemandRequest: 5,
+    OnDemandRequest: 20,
 }
