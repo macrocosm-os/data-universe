@@ -40,15 +40,18 @@ OPTIONAL_FIELDS = [
     "cover_picture_url",
 ]
 
-# Dynamic fields that require special validation (like Reddit score/comment count)
-DYNAMIC_FIELDS = [
+# Fields that can only increase (engagement metrics)
+INCREASING_ONLY_FIELDS = [
     "like_count",
     "retweet_count",
     "reply_count",
     "quote_count",
     "view_count",
     "bookmark_count",
-    # User profile metrics that change frequently
+]
+
+# Fields that can increase or decrease (follower metrics)
+BI_DIRECTIONAL_FIELDS = [
     "user_followers_count",
     "user_following_count",
 ]
@@ -524,8 +527,8 @@ def validate_engagement_metrics(
     now = dt.datetime.now(dt.timezone.utc)
     tweet_age = now - submitted_tweet.timestamp
 
-    # Dynamic engagement fields to validate - use the DYNAMIC_FIELDS constant
-    dynamic_fields = DYNAMIC_FIELDS
+    # Dynamic engagement fields to validate - combine increasing-only and bi-directional
+    dynamic_fields = INCREASING_ONLY_FIELDS + BI_DIRECTIONAL_FIELDS
 
     for field_name in dynamic_fields:
         submitted_value = getattr(submitted_tweet, field_name, None)
@@ -576,35 +579,36 @@ def _validate_engagement_field(
         )
 
     # Use percentage-based validation for follower counts since we have exact current values
-    if field_name in ["user_followers_count", "user_following_count"]:
+    if field_name in BI_DIRECTIONAL_FIELDS:
         return _validate_follower_count_percentage(
             field_name, submitted_value, actual_value, tweet_age, entity
         )
 
-    # For regular engagement metrics, use the original logic
-    # Anti-cheating: Maximum reasonable values based on tweet age and research data
-    max_reasonable_value = _calculate_max_reasonable_engagement(field_name, tweet_age)
-    if submitted_value > max_reasonable_value:
-        bt.logging.info(
-            f"Submitted {field_name} {submitted_value} exceeds reasonable maximum {max_reasonable_value} for tweet age {tweet_age}"
-        )
-        return ValidationResult(
-            is_valid=False,
-            reason=f"{field_name} {submitted_value} is unreasonably high for tweet of this age",
-            content_size_bytes_validated=entity.content_size_bytes,
-        )
+    # For increasing-only engagement metrics (likes, views, etc.)
+    # The comparison with actual_value is the real validation - if miner data matches
+    # what the validator scrapes, it's legitimate regardless of theoretical limits
 
-    # Calculate age-based tolerance
-    tolerance = _calculate_engagement_tolerance(
-        field_name, actual_value or 0, tweet_age
-    )
+    # Calculate tolerance first to determine what small decreases are acceptable
+    tolerance = _calculate_engagement_tolerance(field_name, submitted_value, tweet_age)
+    small_tolerance = max(min(tolerance // 10, 5), 2)
 
-    # Engagement metrics can only increase or stay the same (Twitter doesn't remove likes typically)
-    # Allow very small decreases for edge cases (deleted retweets, etc.)
-    max_allowed_value = (actual_value or 0) + tolerance
-    min_allowed_value = max(
-        0, (actual_value or 0) - min(tolerance // 10, 3)
-    )  # Very strict on decreases
+    # Allow small decreases for edge cases (spam removal, deleted retweets, etc.)
+    # The submitted value is what miner scraped (older, potentially lower)
+    # The actual value is what validator sees (newer, potentially higher)
+    if actual_value is not None:
+        max_allowed_decrease = small_tolerance
+        if submitted_value > actual_value + max_allowed_decrease:
+            bt.logging.info(
+                f"{field_name} validation failed: submitted value {submitted_value} > actual value {actual_value} + tolerance {max_allowed_decrease} (impossible decrease for increasing-only metric)"
+            )
+            return ValidationResult(
+                is_valid=False,
+                reason=f"{field_name} decreased too much: submitted {submitted_value} > actual {actual_value} + {max_allowed_decrease}",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+    min_allowed_value = max(0, submitted_value - small_tolerance)
+    max_allowed_value = submitted_value + tolerance
 
     # Validate engagement is within reasonable bounds - binary pass/fail
     if not (min_allowed_value <= submitted_value <= max_allowed_value):

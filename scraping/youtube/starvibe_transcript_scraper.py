@@ -106,10 +106,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 duration_seconds=int(meta_data.get('duration_seconds', 0)),
                 language=meta_data.get('language'),
             )
-            from scraping.youtube.youtube_custom_scraper import YouTubeTranscriptScraper
-            scraper = YouTubeTranscriptScraper()
-            compressed_content = scraper._compress_transcript(content)
-            entity = YouTubeContent.to_data_entity(compressed_content)
+            # Don't compress transcript - return full segments for proper validation
+            entity = YouTubeContent.to_data_entity(content)
             results.append(entity)
             return results
 
@@ -170,10 +168,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     duration_seconds=int(meta_data.get('duration_seconds', 0)),
                     language=meta_data.get('language', self.DEFAULT_LANGUAGE)
                 )
-                from scraping.youtube.youtube_custom_scraper import YouTubeTranscriptScraper
-                scraper = YouTubeTranscriptScraper()
-                compressed_content = scraper._compress_transcript(content)
-                entity = YouTubeContent.to_data_entity(compressed_content)
+                # Don't compress transcript - return full segments for proper validation
+                entity = YouTubeContent.to_data_entity(content)
                 results.append(entity)
 
             return results
@@ -186,7 +182,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
             return []
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
-        """Validate YouTube transcript entities - respects the original language used by miner."""
+        """Validate YouTube transcript entities using unified validation function."""
         if not entities:
             return []
 
@@ -195,13 +191,12 @@ class YouTubeChannelTranscriptScraper(Scraper):
         for entity in entities:
             try:
                 content_to_validate = YouTubeContent.from_data_entity(entity)
-                # Use the language that was originally stored by the miner
                 original_language = content_to_validate.language
 
                 bt.logging.info(
                     f"Validating video {content_to_validate.video_id} in original language: {original_language}")
 
-                # Get current data for validation using the SAME language the miner used
+                # Get raw actor payload
                 meta_data = await self._get_meta_from_actor(content_to_validate.video_id, original_language)
                 if not meta_data:
                     results.append(ValidationResult(
@@ -211,7 +206,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     ))
                     continue
 
-                # Validate view count during validation
+                # Validate view count (minimum engagement check)
                 view_count = meta_data.get('view_count', 0)
                 if int(view_count) < 100:
                     results.append(ValidationResult(
@@ -221,71 +216,31 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     ))
                     continue
 
-                # Get real upload date from actor response
-                published_at = meta_data.get('published_at')
-                if not published_at:
-                    results.append(ValidationResult(
-                        is_valid=False,
-                        reason="Cannot verify published_at from actor - potential timestamp manipulation",
-                        content_size_bytes_validated=entity.content_size_bytes
-                    ))
-                    continue
-
-                real_upload_date = dt.datetime.fromisoformat(published_at.replace('Z', '+00:00'))
-
-                # Use proper timestamp validation with obfuscation (like X and Reddit)
-                timestamp_validation = youtube_utils.validate_youtube_timestamp(
-                    content_to_validate, real_upload_date, entity
+                # Convert actor payload to DataEntity for comparison
+                actual_entities = await self.scrape(
+                    youtube_url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
+                    language=original_language
                 )
-                if not timestamp_validation.is_valid:
-                    results.append(timestamp_validation)
-                    continue
 
-                actual_video_id = meta_data.get('video_id')
-
-                if actual_video_id and actual_video_id != content_to_validate.video_id:
+                if not actual_entities:
                     results.append(ValidationResult(
                         is_valid=False,
-                        reason="Video ID mismatch",
-                        content_size_bytes_validated=entity.content_size_bytes
-                    ))
-                    continue
-                if not self._texts_are_similar(meta_data.get('title', ''), content_to_validate.title, threshold=0.8):
-                    results.append(ValidationResult(
-                        is_valid=False,
-                        reason="Title mismatch",
+                        reason="Video not available for validation in original language",
                         content_size_bytes_validated=entity.content_size_bytes
                     ))
                     continue
 
-                actual_transcript = meta_data.get('transcript', [])
-                if not self._transcripts_are_similar(actual_transcript, content_to_validate.transcript):
-                    results.append(ValidationResult(
-                        is_valid=False,
-                        reason="Transcript content mismatch",
-                        content_size_bytes_validated=entity.content_size_bytes
-                    ))
-                    continue
+                actual_entity = actual_entities[0]
 
-                # Validate content match first
-
-                actual_youtube_content = YouTubeContent(video_id=meta_data.get('video_id'),
-                                                        title=meta_data.get('title'),
-                                                        channel_name=meta_data.get('channel_name'),
-                                                        upload_date=real_upload_date,
-                                                        transcript=meta_data.get('transcript'),
-                                                        url=f"https://www.youtube.com/watch?v={meta_data.get('video_id')}",
-                                                        duration_seconds=int(meta_data.get('duration_seconds', 0)),
-                                                        language=meta_data.get('language'),
-                                                        )
-                # Validate DataEntity fields (including channel label) like X and Reddit do
-                entity_validation_result = youtube_utils.validate_youtube_data_entity_fields(actual_youtube_content,
-                                                                                             entity)
-
-                results.append(entity_validation_result)
+                # Use unified validation function
+                validation_result = youtube_utils.validate_youtube_data_entities(
+                    entity_to_validate=entity,
+                    actual_entity=actual_entity
+                )
+                results.append(validation_result)
 
             except Exception as e:
-                # bt.logging.error(f"Validation error: {str(e)}")
+                bt.logging.error(f"Validation error: {str(e)}")
                 results.append(ValidationResult(
                     is_valid=False,
                     reason=f"Validation error: {str(e)}",
@@ -391,6 +346,7 @@ async def test_scrape_video():
     else:
         print("No data scraped.")
     return []
+
 
 async def test_scrape_channel():
     # Initialize the scraper
@@ -514,7 +470,7 @@ async def test_validation():
     print(results)
     return results
 
-
-# asyncio.run(test_scrape_video())
-# asyncio.run(test_scrape_channel())
-asyncio.run(test_validation())
+if __name__ == '__main__':
+    # asyncio.run(test_scrape_video())
+    # asyncio.run(test_scrape_channel())
+    asyncio.run(test_validation())

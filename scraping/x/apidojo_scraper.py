@@ -84,8 +84,9 @@ class ApiDojoTwitterScraper(Scraper):
                         )
 
                 # Parse the response
+                check_engagement = not allow_low_engagement
                 tweets, is_retweets, author_datas, view_counts = (
-                    self._best_effort_parse_dataset(dataset)
+                    self._best_effort_parse_dataset(dataset=dataset, check_engagement=check_engagement)
                 )
 
                 actual_tweet = None
@@ -217,13 +218,113 @@ class ApiDojoTwitterScraper(Scraper):
             not allow_low_engagement
         )  # Disable filtering if allow_low_engagement=True
         x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(
-            dataset, check_engagement=check_engagement
+            dataset=dataset, check_engagement=check_engagement
         )
 
         bt.logging.success(
             f"Completed scrape for {query}. Scraped {len(x_contents)} items."
         )
 
+        data_entities = []
+        for x_content in x_contents:
+            data_entities.append(XContent.to_data_entity(content=x_content))
+
+        return data_entities
+
+    async def on_demand_scrape(
+        self,
+        usernames: List[str] = None,
+        keywords: List[str] = None,
+        keyword_mode: KeywordMode = "all",
+        start_datetime: dt.datetime = None,
+        end_datetime: dt.datetime = None,
+        limit: int = 100
+    ) -> List[DataEntity]:
+        """
+        Scrapes Twitter/X data based on specific search criteria, including low-engagement posts.
+        
+        Args:
+            usernames: List of target usernames (without @, OR logic between them)
+            keywords: List of keywords to search for
+            keyword_mode: "any" (OR logic) or "all" (AND logic) for keyword matching
+            start_datetime: Earliest datetime for content (UTC)
+            end_datetime: Latest datetime for content (UTC)
+            limit: Maximum number of items to return
+        
+        Returns:
+            List of DataEntity objects matching the criteria
+        """
+        
+        # Return empty list if all key search parameters are None
+        if all(param is None for param in [usernames, keywords, start_datetime, end_datetime]):
+            bt.logging.trace("All search parameters are None, returning empty list")
+            return []
+        
+        bt.logging.trace(
+            f"On-demand X scrape with usernames={usernames}, keywords={keywords}, "
+            f"keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
+        )
+        
+        # Construct the query string
+        date_format = "%Y-%m-%d_%H:%M:%S_UTC"
+        query_parts = []
+        
+        # Add date range if provided
+        if start_datetime:
+            query_parts.append(f"since:{start_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
+        if end_datetime:
+            query_parts.append(f"until:{end_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
+        
+        # Add usernames with OR logic between them
+        if usernames:
+            username_queries = [f"from:{username.removeprefix('@')}" for username in usernames]
+            query_parts.append(f"({' OR '.join(username_queries)})")
+        
+        # Add keywords with specified logic
+        if keywords:
+            quoted_keywords = [f'"{keyword}"' for keyword in keywords]
+            if keyword_mode == "all":
+                query_parts.append(f"({' AND '.join(quoted_keywords)})")
+            else:  # keyword_mode == "any"
+                query_parts.append(f"({' OR '.join(quoted_keywords)})")
+        
+        # If no specific criteria provided, add default search term
+        if not query_parts or (not usernames and not keywords):
+            query_parts.append("e")  # Most common letter in English
+        
+        query = " ".join(query_parts)
+        
+        # Construct the input to the runner
+        run_input = {
+            **ApiDojoTwitterScraper.BASE_RUN_INPUT,
+            "searchTerms": [query],
+            "maxTweets": limit,
+        }
+
+        run_config = RunConfig(
+            actor_id=ApiDojoTwitterScraper.ACTOR_ID,
+            debug_info=f"On-demand scrape {query}",
+            max_data_entities=limit,
+            timeout_secs=ApiDojoTwitterScraper.SCRAPE_TIMEOUT_SECS,
+        )
+
+        bt.logging.success(f"Performing on-demand Twitter scrape for: {query}")
+
+        # Run the Actor and retrieve the scraped data
+        try:
+            dataset: List[dict] = await self.runner.run(run_config, run_input)
+        except Exception as e:
+            bt.logging.exception(f"Failed to scrape tweets using query {query}: {str(e)}")
+            return []
+
+        # Parse the results using enhanced methods - ALLOW LOW ENGAGEMENT POSTS
+        x_contents, _, _, _ = self._best_effort_parse_dataset(dataset=dataset, check_engagement=False)
+
+        bt.logging.success(
+            f"Completed on-demand scrape for {query}. Scraped {len(x_contents)} items."
+        )
+
+        # Convert to DataEntity objects
         data_entities = []
         for x_content in x_contents:
             data_entities.append(XContent.to_data_entity(content=x_content))
@@ -264,8 +365,7 @@ class ApiDojoTwitterScraper(Scraper):
                         )
                         continue
 
-                # Extract reply information (tuple of (user_id, username))
-                reply_info = self._extract_reply_info(data)
+                # Extract reply user ID directly from Apify data
 
                 # Extract user information
                 user_info = self._extract_user_info(data)
@@ -307,12 +407,12 @@ class ApiDojoTwitterScraper(Scraper):
                         is_quote=data.get("isQuote", None),
                         # Additional metadata
                         conversation_id=data.get("conversationId"),
-                        in_reply_to_user_id=reply_info[0],
+                        in_reply_to_user_id=data.get("inReplyToUserId"),
                         # ===== NEW FIELDS =====
                         # Static tweet metadata
-                        language=data.get("lang"),
-                        in_reply_to_username=reply_info[1],
-                        quoted_tweet_id=data.get("quotedStatusId"),
+                        language=data.get("lang") if data.get("lang") else None,
+                        in_reply_to_username=data.get("inReplyToUsername") if data.get("inReplyToUsername") else None,
+                        quoted_tweet_id=data.get("quoteId") if data.get("quoteId") else None,
                         # Dynamic engagement metrics
                         like_count=engagement_metrics["like_count"],
                         retweet_count=engagement_metrics["retweet_count"],
@@ -336,19 +436,6 @@ class ApiDojoTwitterScraper(Scraper):
                 )
 
         return results, is_retweets, author_datas, view_counts
-
-    def _extract_reply_info(self, data: dict) -> Tuple[Optional[str], Optional[str]]:
-        """Extract reply information, returning (user_id, username) or (None, None)"""
-        if not data.get("isReply", False):
-            return None, None
-
-        user_id = data.get("inReplyToUserId")
-        username = None
-
-        if "inReplyToUser" in data and isinstance(data["inReplyToUser"], dict):
-            username = data["inReplyToUser"].get("userName")
-
-        return user_id, username
 
     def _extract_user_info(self, data: dict) -> dict:
         """Extract user information from tweet"""
@@ -411,10 +498,10 @@ class ApiDojoTwitterScraper(Scraper):
         author = data.get("author", {})
         return {
             "user_blue_verified": author.get("isBlueVerified"),
-            "user_description": author.get("description"),
-            "user_location": author.get("location"),
-            "profile_image_url": author.get("profilePicture"),
-            "cover_picture_url": author.get("coverPicture"),
+            "user_description": author.get("description") if author.get("description") else None,
+            "user_location": author.get("location") if author.get("location") else None,
+            "profile_image_url": author.get("profilePicture") if author.get("profilePicture") else None,
+            "cover_picture_url": author.get("coverPicture") if author.get("coverPicture") else None,
             "user_followers_count": author.get("followers"),
             "user_following_count": author.get("following"),
         }

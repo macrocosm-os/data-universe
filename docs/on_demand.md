@@ -1,12 +1,12 @@
 # On-Demand Data Request Implementation
 
 ## Overview
-On-demand data retrieval is ALREADY IMPLEMENTED in both validator and miner templates. This enhanced version now provides richer metadata for X/Twitter content while maintaining the original Reddit implementation.
+On-demand data retrieval is ALREADY IMPLEMENTED in both validator and miner templates. The unified XContent model now provides richer metadata for X/Twitter content while maintaining compatibility with the original Reddit implementation.
 
 ## For Miners
 
-### X/Twitter Scraping (Enhanced)
-The enhanced implementation uses `EnhancedApiDojoTwitterScraper` for X/Twitter which provides:
+### X/Twitter Scraping (Unified XContent)
+The implementation uses the standard `ApiDojoTwitterScraper` with the unified `XContent` model which provides:
 
 - **Rich User Metadata**
   - User ID, display name, verification status
@@ -37,16 +37,16 @@ You can:
 
 ### Integration Steps:
 
-1. **Simple Integration**: Import the enhanced scraper and provider:
+1. **Simple Integration**: Import the standard scraper:
    ```python
-   from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
-   from scraping.x.on_demand_model import EnhancedXContent
+   from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
+   from scraping.x.model import XContent
    ```
 
 2. **Update your scraper provider**:
    ```python
-   # Create enhanced scraper provider 
-   scraper_provider = EnhancedScraperProvider()
+   # Create scraper provider with unified XContent
+   scraper_provider = ScraperProvider()
    ```
 
 3. **Enjoy richer data**: The enhanced content is automatically used for X/Twitter requests
