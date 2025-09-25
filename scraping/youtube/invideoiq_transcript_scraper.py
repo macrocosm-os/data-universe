@@ -152,7 +152,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
                             continue
 
                         # Use the language that the actor actually returned
-                        actual_language = youtube_utils.language_to_iso(transcript_data.get('selected_language', self.DEFAULT_LANGUAGE))
+                        actual_language = youtube_utils.language_to_iso(transcript_data.get('selected_language'))
                         bt.logging.info(f"Video {video_id} transcript obtained in language: {actual_language}")
 
                         # Create content
