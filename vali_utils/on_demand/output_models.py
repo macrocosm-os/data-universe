@@ -11,7 +11,6 @@ import json
 import datetime as dt
 import bittensor as bt
 from common.data import DataEntity, DataSource
-from common.constants import ENHANCED_METADATA_REQUIRED_DATE
 
 
 class UserInfo(BaseModel):
@@ -23,12 +22,12 @@ class UserInfo(BaseModel):
     id: str
     following_count: int
     username: str
-    # Optional fields
-    user_blue_verified: Optional[bool] = None
-    user_description: Optional[str] = None
-    user_location: Optional[str] = None
-    profile_image_url: Optional[str] = None
-    cover_picture_url: Optional[str] = None
+    # Required fields
+    user_blue_verified: bool
+    user_description: str
+    user_location: str
+    profile_image_url: str
+    cover_picture_url: str
 
 
 class TweetInfo(BaseModel):
@@ -44,14 +43,13 @@ class TweetInfo(BaseModel):
     is_quote: bool
     reply_count: int
     is_retweet: bool = False
-    # Optional fields until ENHANCED_METADATA_REQUIRED_DATE
-    view_count: Optional[int] = None
-    bookmark_count: Optional[int] = None
-    language: Optional[str] = None
-    in_reply_to_username: Optional[str] = None
-    quoted_tweet_id: Optional[str] = None
-    in_reply_to_user_id: Optional[str] = None
-    in_reply_to: Optional[dict] = None
+    # Required fields
+    view_count: int
+    bookmark_count: int
+    language: str
+    in_reply_to_username: Optional[str] = None  # conditional field
+    quoted_tweet_id: Optional[str] = None       # conditional field
+    in_reply_to_user_id: Optional[str] = None   # conditional field
 
 
 class MediaItem(BaseModel):
@@ -91,7 +89,7 @@ class XOrganicOutput(BaseModel):
             username=x_content.username,
             id=x_content.user_id or "",
             display_name=x_content.user_display_name or "",
-            verified=x_content.user_verified or False,
+            verified=x_content.user_verified,
             user_blue_verified=x_content.user_blue_verified,
             user_description=x_content.user_description,
             user_location=x_content.user_location,
@@ -109,10 +107,10 @@ class XOrganicOutput(BaseModel):
             view_count=x_content.view_count,
             bookmark_count=x_content.bookmark_count,
             language=x_content.language,
-            in_reply_to_username=x_content.in_reply_to_username,
-            quoted_tweet_id=x_content.quoted_tweet_id,
+            in_reply_to_username=x_content.in_reply_to_username or None,
+            quoted_tweet_id=x_content.quoted_tweet_id or None,
             conversation_id=x_content.conversation_id,
-            in_reply_to_user_id=x_content.in_reply_to_user_id,
+            in_reply_to_user_id=x_content.in_reply_to_user_id or None,
             id=x_content.tweet_id or "",
             is_reply=x_content.is_reply or False,
             is_quote=x_content.is_quote or False,
@@ -150,9 +148,9 @@ class RedditOrganicOutput(BaseModel):
     parentId: Optional[str] = None
     media: Optional[List[str]] = None
     is_nsfw: bool
-    score: Optional[int] = None
-    upvote_ratio: Optional[float] = None
-    num_comments: Optional[int] = None
+    score: int
+    upvote_ratio: float
+    num_comments: int
     
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "RedditOrganicOutput":
@@ -301,26 +299,28 @@ def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, Li
         x_content = XContent.from_data_entity(data_entity)
         missing_fields = []
         
-        now = dt.datetime.now(dt.timezone.utc)
-        enhanced_validation_required = now >= ENHANCED_METADATA_REQUIRED_DATE
-        
-        # Core XOrganicOutput fields (required immediately)
+        # Core XOrganicOutput fields
         core_base_required_fields = [
             ('text', x_content.text),
         ]
         
-        # Core UserInfo fields (required immediately)
-        core_user_required_fields = [
+        # UserInfo fields (all required)
+        user_required_fields = [
             ('display_name', x_content.user_display_name),
             ('followers_count', x_content.user_followers_count),
             ('verified', x_content.user_verified),
             ('id', x_content.user_id),
             ('following_count', x_content.user_following_count),
             ('username', x_content.username),
+            ('user_blue_verified', x_content.user_blue_verified),
+            ('user_description', x_content.user_description),
+            ('user_location', x_content.user_location),
+            ('profile_image_url', x_content.profile_image_url),
+            ('cover_picture_url', x_content.cover_picture_url),
         ]
         
-        # Core TweetInfo fields (required immediately)
-        core_tweet_required_fields = [
+        # TweetInfo fields (all required)
+        tweet_required_fields = [
             ('quote_count', x_content.quote_count),
             ('id', x_content.tweet_id),
             ('retweet_count', x_content.retweet_count),
@@ -331,49 +331,28 @@ def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, Li
             ('is_quote', x_content.is_quote),
             ('reply_count', x_content.reply_count),
             ('is_retweet', getattr(x_content, 'is_retweet', False)),
+            ('view_count', x_content.view_count),
+            ('bookmark_count', x_content.bookmark_count),
+            ('language', x_content.language),
         ]
         
-        # Optional fields that become required after the deadline
-        optional_fields_after_deadline = [
-            ('user.user_blue_verified', x_content.user_blue_verified),
-            ('user.user_description', x_content.user_description),
-            ('user.user_location', x_content.user_location),
-            ('user.profile_image_url', x_content.profile_image_url),
-            ('user.cover_picture_url', x_content.cover_picture_url),
-            ('tweet.view_count', x_content.view_count),
-            ('tweet.bookmark_count', x_content.bookmark_count),
-            ('tweet.language', x_content.language),
-            ('tweet.in_reply_to_username', x_content.in_reply_to_username),
-            ('tweet.quoted_tweet_id', x_content.quoted_tweet_id),
-            ('tweet.in_reply_to_user_id', x_content.in_reply_to_user_id),
-        ]
-        
-        # Check core base required fields (always required)
+        # Check core base required fields
         for field_name, field_value in core_base_required_fields:
             if field_value is None:
                 missing_fields.append(field_name)
         
-        # Check core user required fields (always required)
-        for field_name, field_value in core_user_required_fields:
+        # Check user required fields
+        for field_name, field_value in user_required_fields:
             if field_value is None:
                 missing_fields.append(f"user.{field_name}")
         
-        # Check core tweet required fields (always required)
-        for field_name, field_value in core_tweet_required_fields:
+        # Check tweet required fields
+        for field_name, field_value in tweet_required_fields:
             if field_value is None:
                 missing_fields.append(f"tweet.{field_name}")
         
-        # Check optional fields only if deadline has passed
-        if enhanced_validation_required:
-            for field_name, field_value in optional_fields_after_deadline:
-                if field_value is None:
-                    missing_fields.append(field_name)
-        
         if missing_fields:
-            if enhanced_validation_required:
-                bt.logging.debug(f"X metadata validation failed (enhanced validation required). Missing fields: {missing_fields}")
-            else:
-                bt.logging.debug(f"X metadata validation failed (core validation only). Missing fields: {missing_fields}")
+            bt.logging.debug(f"X metadata validation failed. Missing fields: {missing_fields}")
             return False, missing_fields
         
         return True, []
@@ -390,11 +369,8 @@ def _validate_reddit_metadata_completeness(data_entity: DataEntity) -> tuple[boo
         reddit_content = RedditContent.from_data_entity(data_entity)
         missing_fields = []
         
-        now = dt.datetime.now(dt.timezone.utc)
-        enhanced_validation_required = now >= ENHANCED_METADATA_REQUIRED_DATE
-        
-        # Always required fields (core fields that have been required for a while)
-        core_required_fields = [
+        # All required fields
+        required_fields = [
             ('id', reddit_content.id),
             ('url', reddit_content.url),
             ('username', reddit_content.username),
@@ -403,31 +379,18 @@ def _validate_reddit_metadata_completeness(data_entity: DataEntity) -> tuple[boo
             ('createdAt', reddit_content.created_at),
             ('dataType', reddit_content.data_type),
             ('is_nsfw', reddit_content.is_nsfw),
-        ]
-        
-        # Enhanced fields (required after ENHANCED_METADATA_REQUIRED_DATE)
-        enhanced_required_fields = [
             ('score', reddit_content.score),
             ('upvote_ratio', reddit_content.upvote_ratio),
             ('num_comments', reddit_content.num_comments),
         ]
         
-        # Check core required fields (always required)
-        for field_name, field_value in core_required_fields:
+        # Check all required fields
+        for field_name, field_value in required_fields:
             if field_value is None:
                 missing_fields.append(field_name)
         
-        # Check enhanced fields only if deadline has passed
-        if enhanced_validation_required:
-            for field_name, field_value in enhanced_required_fields:
-                if field_value is None:
-                    missing_fields.append(field_name)
-        
         if missing_fields:
-            if enhanced_validation_required:
-                bt.logging.debug(f"Reddit metadata validation failed (enhanced validation required). Missing fields: {missing_fields}")
-            else:
-                bt.logging.debug(f"Reddit metadata validation failed (core validation only). Missing fields: {missing_fields}")
+            bt.logging.debug(f"Reddit metadata validation failed. Missing fields: {missing_fields}")
             return False, missing_fields
         
         return True, []
