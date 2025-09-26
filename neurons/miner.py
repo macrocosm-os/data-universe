@@ -534,24 +534,27 @@ class Miner:
             elif synapse.source == DataSource.YOUTUBE:
                 # Create a new scraper provider and get the YouTube scraper
                 provider = ScraperProvider()
-                scraper = provider.get(ScraperId.YOUTUBE_APIFY_TRANSCRIPT)
+                scraper = provider.get(ScraperId.YOUTUBE_MULTI_ACTOR)
 
                 if not scraper:
-                    bt.logging.error(f"No scraper available for ID {ScraperId.YOUTUBE_APIFY_TRANSCRIPT}")
+                    bt.logging.error(f"No scraper available for ID {ScraperId.YOUTUBE_MULTI_ACTOR}")
                     synapse.data = []
                     return synapse
 
-                # For YouTube, only channel identifiers are supported ('usernames')
-                labels = []
-                if synapse.usernames:
-                    from scraping.youtube.model import YouTubeContent
-                    labels.extend([DataLabel(value=YouTubeContent.create_channel_label(u)) for u in synapse.usernames])
-
-                config = ScrapeConfig(entity_limit=synapse.limit,
-                                      date_range=DateRange(start=start_dt, end=end_dt),
-                                      labels=labels)
-                # Use the scraper's regular scrape method with the ScrapeConfig
-                data_entities = await scraper.scrape(config)
+                # Extract channel identifier from usernames
+                channel_identifier = synapse.usernames[0] if synapse.usernames else None
+                if not channel_identifier:
+                    bt.logging.error("No channel identifier provided for YouTube scraping")
+                    synapse.data = []
+                    return synapse
+                
+                data_entities = await scraper.scrape(
+                    channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
+                    max_videos=synapse.limit or 10,
+                    start_date=start_dt.isoformat(),
+                    end_date=end_dt.isoformat(),
+                    language="en"
+                )
                 synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
 
             synapse.version = constants.PROTOCOL_VERSION

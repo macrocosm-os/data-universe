@@ -578,13 +578,19 @@ class OrganicQueryProcessor:
                                                                    end_datetime=end_date,
                                                                    limit=synapse.limit)
             elif synapse.source.upper() == 'YOUTUBE':
-                yt_label = DataLabel(value=YouTubeContent.create_channel_label(synapse.usernames[0]))
-                verify_config = ScrapeConfig(
-                    entity_limit=synapse.limit,  
-                    date_range=DateRange(start=start_date, end=end_date),
-                    labels=[yt_label],
+                # Extract channel URL/identifier from username
+                channel_identifier = synapse.usernames[0] if synapse.usernames else None
+                if not channel_identifier:
+                    bt.logging.error("No channel identifier provided for YouTube verification")
+                    return None
+
+                verification_data = await scraper.scrape(
+                    channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
+                    max_videos=synapse.limit or 10,
+                    start_date=start_date.isoformat(),
+                    end_date=end_date.isoformat(),
+                    language="en"
                 )
-                verification_data = await scraper.scrape(verify_config)
             
             return verification_data if verification_data else None
             
@@ -673,7 +679,7 @@ class OrganicQueryProcessor:
                 return False
             
             # Convert to proper format for scraper validation if needed
-            if synapse.source.upper() == 'X':
+            if synapse.source.upper() == 'X' and on_demand_utils.is_nested_format(entity):
                 x_content = XContent.from_data_entity(entity)
                 entity_for_validation = XContent.to_data_entity(content=x_content)
             else:
