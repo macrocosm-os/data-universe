@@ -679,7 +679,7 @@ class OrganicQueryProcessor:
                 return False
             
             # Convert to proper format for scraper validation if needed
-            if synapse.source.upper() == 'X':
+            if synapse.source.upper() == 'X' and on_demand_utils.is_nested_format(entity):
                 x_content = XContent.from_data_entity(entity)
                 entity_for_validation = XContent.to_data_entity(content=x_content)
             else:
