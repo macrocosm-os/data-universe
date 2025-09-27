@@ -13,7 +13,7 @@ from typing import Optional
 import difflib
 import unicodedata
 
-
+# new compare_text_similarity
 def compare_text_similarity(text1: str, text2: str, threshold: float = 0.8) -> bool:
     """Check if two texts are similar enough using sequence matching.
 
