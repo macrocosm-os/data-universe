@@ -9,6 +9,37 @@ from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE
 from .model import YouTubeContent
 from .model import normalize_channel_name
 
+import difflib
+import unicodedata
+
+
+def compare_text_similarity(text1: str, text2: str, threshold: float = 0.8) -> bool:
+    """Check if two texts are similar enough using sequence matching.
+
+    This method uses difflib for character-level similarity, which works better
+    for languages without spaces (e.g., Japanese) or with diacritics (e.g., Arabic).
+    """
+    if not text1 or not text2:
+        return text1 == text2
+
+    # Normalize texts: remove diacritics and convert to lowercase
+    def normalize(text: str) -> str:
+        # Decompose and remove non-spacing marks (diacritics)
+        text = unicodedata.normalize('NFD', text)
+        text = ''.join(c for c in text if not unicodedata.combining(c))
+        return text.lower()
+
+    norm_text1 = normalize(text1)
+    norm_text2 = normalize(text2)
+
+    if not norm_text1 or not norm_text2:
+        return False
+
+    # Compute similarity ratio using SequenceMatcher
+    similarity = difflib.SequenceMatcher(None, norm_text1, norm_text2).ratio()
+    print(f"Improved similarity: {similarity}")
+
+    return similarity >= threshold
 
 def extract_video_id(url: str) -> str:
     """
@@ -141,7 +172,7 @@ def transcripts_are_similar(transcript1, transcript2, threshold=0.8):
     text1 = " ".join([item.get('text', '') for item in transcript1])
     text2 = " ".join([item.get('text', '') for item in transcript2])
 
-    return texts_are_similar(text1, text2, threshold)
+    return compare_text_similarity(text1, text2, threshold)
 
 
 def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntity) -> ValidationResult:
@@ -294,7 +325,7 @@ def validate_youtube_data_entities(
             )
 
         # Step 4: Validate title similarity
-        if not texts_are_similar(actual_content.title, content_to_validate.title, threshold=0.8):
+        if not compare_text_similarity(actual_content.title, content_to_validate.title, threshold=0.8):
             return ValidationResult(
                 is_valid=False,
                 reason="Title does not match current video title",
