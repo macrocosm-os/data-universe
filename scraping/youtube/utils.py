@@ -1,4 +1,5 @@
 import re
+import langcodes
 from urllib.parse import urlparse, parse_qs
 import datetime as dt
 import bittensor as bt
@@ -7,7 +8,7 @@ from scraping.scraper import ValidationResult
 from common.data import DataEntity
 from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE
 from .model import YouTubeContent
-from .model import normalize_channel_name
+from typing import Optional
 
 import difflib
 import unicodedata
@@ -175,6 +176,25 @@ def transcripts_are_similar(transcript1, transcript2, threshold=0.8):
     return compare_text_similarity(text1, text2, threshold)
 
 
+def language_to_iso(language_name: str) -> Optional[str]:
+    """
+    Convert a language name to ISO 639-1 code.
+    Handles extra text like "(auto-generated)" by cleaning the input.
+    Returns None if no match found or if it's undetermined ('und').
+    """
+    # Clean the input: remove extra parts and convert to lowercase
+    cleaned_name = re.sub(r'\(.*\)', '', language_name).strip().lower()
+
+    try:
+        # Find the best matching language and get ISO 639-1 code
+        lang = langcodes.find(cleaned_name)
+        if lang.language == 'und':  # Handle undetermined/unknown case
+            return None
+        return lang.language  # This gives the 2-letter ISO 639-1 code
+    except LookupError:
+        return None
+
+
 def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntity) -> ValidationResult:
     """
     Validate YouTube timestamp with obfuscation logic, following X and Reddit pattern.
@@ -189,12 +209,12 @@ def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntit
         ValidationResult indicating if timestamp is valid
     """
     now = dt.datetime.now(dt.timezone.utc)
-    
+
     # Before the deadline: Allow both obfuscated and non-obfuscated timestamps
     if now < YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE:
         # Check if either exact match OR obfuscated match is valid
         actual_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_content)
-        
+
         if stored_content.upload_date == actual_content or stored_content.upload_date == actual_obfuscated_timestamp:
             return ValidationResult(
                 is_valid=True,
@@ -210,10 +230,10 @@ def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntit
                 reason="YouTube timestamps do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-    
+
     # After the deadline: Strict obfuscation required (same as X and Reddit)
     actual_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_content)
-    
+
     if stored_content.upload_date != actual_obfuscated_timestamp:
         # Check if this is specifically because the entity was not obfuscated.
         if stored_content.upload_date == actual_content:
@@ -234,7 +254,7 @@ def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntit
                 reason="YouTube timestamps do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-    
+
     return ValidationResult(
         is_valid=True,
         reason="YouTube timestamp validation passed",
@@ -261,17 +281,17 @@ def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: 
     actual_entity = actual_entity.model_copy(update={
         'datetime': utils.obfuscate_datetime_to_minute(actual_entity.datetime)
     })
-    
+
     # Validate content size (prevent claiming more bytes than actual)
     byte_difference_allowed = 0
-    
+
     if (entity.content_size_bytes - actual_entity.content_size_bytes) > byte_difference_allowed:
         return ValidationResult(
             is_valid=False,
             reason="The claimed bytes must not exceed the actual YouTube content size.",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Use the same DataEntity field equality check as X and Reddit
     if not DataEntity.are_non_content_fields_equal(actual_entity, entity):
         return ValidationResult(
@@ -279,7 +299,7 @@ def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: 
             reason="The DataEntity fields are incorrect based on the YouTube content.",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     return ValidationResult(
         is_valid=True,
         reason="Good job, you honest miner!",
@@ -288,8 +308,8 @@ def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: 
 
 
 def validate_youtube_data_entities(
-    entity_to_validate: DataEntity,
-    actual_entity: DataEntity
+        entity_to_validate: DataEntity,
+        actual_entity: DataEntity
 ) -> ValidationResult:
     """
     Unified YouTube validation function comparing two DataEntity objects.
@@ -352,8 +372,10 @@ def validate_youtube_data_entities(
         # Step 7: Use DataEntity field equality check (like X and Reddit)
         if not DataEntity.are_non_content_fields_equal(actual_entity_obfuscated, entity_to_validate_obfuscated):
             bt.logging.info(f"DataEntity field mismatch detected")
-            bt.logging.info(f"Actual: URI={actual_entity_obfuscated.uri}, DateTime={actual_entity_obfuscated.datetime}, Source={actual_entity_obfuscated.source}, Label={actual_entity_obfuscated.label}")
-            bt.logging.info(f"Expected: URI={entity_to_validate_obfuscated.uri}, DateTime={entity_to_validate_obfuscated.datetime}, Source={entity_to_validate_obfuscated.source}, Label={entity_to_validate_obfuscated.label}")
+            bt.logging.info(
+                f"Actual: URI={actual_entity_obfuscated.uri}, DateTime={actual_entity_obfuscated.datetime}, Source={actual_entity_obfuscated.source}, Label={actual_entity_obfuscated.label}")
+            bt.logging.info(
+                f"Expected: URI={entity_to_validate_obfuscated.uri}, DateTime={entity_to_validate_obfuscated.datetime}, Source={entity_to_validate_obfuscated.source}, Label={entity_to_validate_obfuscated.label}")
             return ValidationResult(
                 is_valid=False,
                 reason="The DataEntity fields are incorrect based on the YouTube content.",
