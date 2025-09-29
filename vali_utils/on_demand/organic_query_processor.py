@@ -128,8 +128,8 @@ class OrganicQueryProcessor:
         miner_scores = [(uid, float(self.metagraph.I[uid])) for uid in miner_uids]
         miner_scores.sort(key=lambda x: x[1], reverse=True)
         
-        # Take top 60% of miners (but at least 5 if available)
-        top_count = max(5, int(len(miner_scores) * 0.6))
+        # Take top 75% of miners (but at least 5 if available)
+        top_count = max(5, int(len(miner_scores) * 0.75))
         top_miners = miner_scores[:top_count]
         
         if len(top_miners) < 2:
