@@ -1,4 +1,5 @@
 import re
+import langcodes
 from urllib.parse import urlparse, parse_qs
 import datetime as dt
 import bittensor as bt
@@ -7,8 +8,39 @@ from scraping.scraper import ValidationResult
 from common.data import DataEntity
 from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE
 from .model import YouTubeContent
-from .model import normalize_channel_name
+from typing import Optional
 
+import difflib
+import unicodedata
+
+
+def compare_text_similarity(text1: str, text2: str, threshold: float = 0.8) -> bool:
+    """Check if two texts are similar enough using sequence matching.
+
+    This method uses difflib for character-level similarity, which works better
+    for languages without spaces (e.g., Japanese) or with diacritics (e.g., Arabic).
+    """
+    if not text1 or not text2:
+        return text1 == text2
+
+    # Normalize texts: remove diacritics and convert to lowercase
+    def normalize(text: str) -> str:
+        # Decompose and remove non-spacing marks (diacritics)
+        text = unicodedata.normalize('NFD', text)
+        text = ''.join(c for c in text if not unicodedata.combining(c))
+        return text.lower()
+
+    norm_text1 = normalize(text1)
+    norm_text2 = normalize(text2)
+
+    if not norm_text1 or not norm_text2:
+        return False
+
+    # Compute similarity ratio using SequenceMatcher
+    similarity = difflib.SequenceMatcher(None, norm_text1, norm_text2).ratio()
+    print(f"Improved similarity: {similarity}")
+
+    return similarity >= threshold
 
 def extract_video_id(url: str) -> str:
     """
@@ -141,7 +173,26 @@ def transcripts_are_similar(transcript1, transcript2, threshold=0.8):
     text1 = " ".join([item.get('text', '') for item in transcript1])
     text2 = " ".join([item.get('text', '') for item in transcript2])
 
-    return texts_are_similar(text1, text2, threshold)
+    return compare_text_similarity(text1, text2, threshold)
+
+
+def language_to_iso(language_name: str) -> Optional[str]:
+    """
+    Convert a language name to ISO 639-1 code.
+    Handles extra text like "(auto-generated)" by cleaning the input.
+    Returns None if no match found or if it's undetermined ('und').
+    """
+    # Clean the input: remove extra parts and convert to lowercase
+    cleaned_name = re.sub(r'\(.*\)', '', language_name).strip().lower()
+
+    try:
+        # Find the best matching language and get ISO 639-1 code
+        lang = langcodes.find(cleaned_name)
+        if lang.language == 'und':  # Handle undetermined/unknown case
+            return None
+        return lang.language  # This gives the 2-letter ISO 639-1 code
+    except LookupError:
+        return None
 
 
 def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntity) -> ValidationResult:
@@ -158,12 +209,12 @@ def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntit
         ValidationResult indicating if timestamp is valid
     """
     now = dt.datetime.now(dt.timezone.utc)
-    
+
     # Before the deadline: Allow both obfuscated and non-obfuscated timestamps
     if now < YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE:
         # Check if either exact match OR obfuscated match is valid
         actual_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_content)
-        
+
         if stored_content.upload_date == actual_content or stored_content.upload_date == actual_obfuscated_timestamp:
             return ValidationResult(
                 is_valid=True,
@@ -179,10 +230,10 @@ def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntit
                 reason="YouTube timestamps do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-    
+
     # After the deadline: Strict obfuscation required (same as X and Reddit)
     actual_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_content)
-    
+
     if stored_content.upload_date != actual_obfuscated_timestamp:
         # Check if this is specifically because the entity was not obfuscated.
         if stored_content.upload_date == actual_content:
@@ -203,7 +254,7 @@ def validate_youtube_timestamp(stored_content, actual_content, entity: DataEntit
                 reason="YouTube timestamps do not match",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-    
+
     return ValidationResult(
         is_valid=True,
         reason="YouTube timestamp validation passed",
@@ -230,17 +281,17 @@ def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: 
     actual_entity = actual_entity.model_copy(update={
         'datetime': utils.obfuscate_datetime_to_minute(actual_entity.datetime)
     })
-    
+
     # Validate content size (prevent claiming more bytes than actual)
     byte_difference_allowed = 0
-    
+
     if (entity.content_size_bytes - actual_entity.content_size_bytes) > byte_difference_allowed:
         return ValidationResult(
             is_valid=False,
             reason="The claimed bytes must not exceed the actual YouTube content size.",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Use the same DataEntity field equality check as X and Reddit
     if not DataEntity.are_non_content_fields_equal(actual_entity, entity):
         return ValidationResult(
@@ -248,7 +299,7 @@ def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: 
             reason="The DataEntity fields are incorrect based on the YouTube content.",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     return ValidationResult(
         is_valid=True,
         reason="Good job, you honest miner!",
@@ -257,8 +308,8 @@ def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: 
 
 
 def validate_youtube_data_entities(
-    entity_to_validate: DataEntity,
-    actual_entity: DataEntity
+        entity_to_validate: DataEntity,
+        actual_entity: DataEntity
 ) -> ValidationResult:
     """
     Unified YouTube validation function comparing two DataEntity objects.
@@ -294,7 +345,7 @@ def validate_youtube_data_entities(
             )
 
         # Step 4: Validate title similarity
-        if not texts_are_similar(actual_content.title, content_to_validate.title, threshold=0.8):
+        if not compare_text_similarity(actual_content.title, content_to_validate.title, threshold=0.8):
             return ValidationResult(
                 is_valid=False,
                 reason="Title does not match current video title",
@@ -321,8 +372,10 @@ def validate_youtube_data_entities(
         # Step 7: Use DataEntity field equality check (like X and Reddit)
         if not DataEntity.are_non_content_fields_equal(actual_entity_obfuscated, entity_to_validate_obfuscated):
             bt.logging.info(f"DataEntity field mismatch detected")
-            bt.logging.info(f"Actual: URI={actual_entity_obfuscated.uri}, DateTime={actual_entity_obfuscated.datetime}, Source={actual_entity_obfuscated.source}, Label={actual_entity_obfuscated.label}")
-            bt.logging.info(f"Expected: URI={entity_to_validate_obfuscated.uri}, DateTime={entity_to_validate_obfuscated.datetime}, Source={entity_to_validate_obfuscated.source}, Label={entity_to_validate_obfuscated.label}")
+            bt.logging.info(
+                f"Actual: URI={actual_entity_obfuscated.uri}, DateTime={actual_entity_obfuscated.datetime}, Source={actual_entity_obfuscated.source}, Label={actual_entity_obfuscated.label}")
+            bt.logging.info(
+                f"Expected: URI={entity_to_validate_obfuscated.uri}, DateTime={entity_to_validate_obfuscated.datetime}, Source={entity_to_validate_obfuscated.source}, Label={entity_to_validate_obfuscated.label}")
             return ValidationResult(
                 is_valid=False,
                 reason="The DataEntity fields are incorrect based on the YouTube content.",
