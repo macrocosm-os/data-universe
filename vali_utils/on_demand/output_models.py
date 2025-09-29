@@ -25,9 +25,9 @@ class UserInfo(BaseModel):
     # Required fields
     user_blue_verified: bool
     user_description: str
-    user_location: str
     profile_image_url: str
     cover_picture_url: str
+    user_location: Optional[str] = None  # conditional field
 
 
 class TweetInfo(BaseModel):
@@ -304,7 +304,7 @@ def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, Li
             ('text', x_content.text),
         ]
         
-        # UserInfo fields (all required)
+        # UserInfo fields
         user_required_fields = [
             ('display_name', x_content.user_display_name),
             ('followers_count', x_content.user_followers_count),
@@ -314,12 +314,11 @@ def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, Li
             ('username', x_content.username),
             ('user_blue_verified', x_content.user_blue_verified),
             ('user_description', x_content.user_description),
-            ('user_location', x_content.user_location),
             ('profile_image_url', x_content.profile_image_url),
             ('cover_picture_url', x_content.cover_picture_url),
         ]
         
-        # TweetInfo fields (all required)
+        # TweetInfo fields
         tweet_required_fields = [
             ('quote_count', x_content.quote_count),
             ('id', x_content.tweet_id),
