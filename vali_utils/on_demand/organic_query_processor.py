@@ -643,7 +643,7 @@ class OrganicQueryProcessor:
             return False
     
 
-    def _validate_metadata_completeness(self, entity: DataEntity, post_id: str = None) -> bool:
+    def _validate_metadata_completeness(self, entity: DataEntity, post_id: str = None, miner_uid: int = None) -> bool:
         """
         Generalized metadata completeness validation using Pydantic output models.
         Works for all data sources (X, Reddit, YouTube).
@@ -651,6 +651,7 @@ class OrganicQueryProcessor:
         Args:
             entity: DataEntity to validate
             post_id: Optional identifier for logging
+            miner_uid: Optional miner UID for logging
             
         Returns:
             bool: True if all required metadata is present, False otherwise
@@ -661,13 +662,13 @@ class OrganicQueryProcessor:
             if not is_valid:
                 source = DataSource(entity.source).name.upper()
                 post_identifier = post_id or entity.uri or "unknown"
-                bt.logging.info(f"{source} post {post_identifier} missing required metadata: {missing_fields}")
+                bt.logging.info(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} - {source} post {post_identifier} missing required metadata: {missing_fields}")
                 return False
             
             return True
             
         except Exception as e:
-            bt.logging.error(f"Error validating metadata completeness: {str(e)}")
+            bt.logging.error(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} - Error validating metadata completeness: {str(e)}")
             return False
     
 
@@ -682,12 +683,12 @@ class OrganicQueryProcessor:
             entity_for_validation = entity
 
             # Phase 1: Request field validation 
-            if not self._validate_request_fields(synapse, entity):
+            if not self._validate_request_fields(synapse, entity, miner_uid):
                 bt.logging.error(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} post {post_id} failed request field validation")
                 return False
             
             # Phase 2: Metadata completeness validation (all sources)
-            if not self._validate_metadata_completeness(entity, post_id):
+            if not self._validate_metadata_completeness(entity, post_id, miner_uid):
                 bt.logging.error(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} post {post_id} failed metadata completeness validation")
                 return False
             
@@ -707,24 +708,25 @@ class OrganicQueryProcessor:
             return False
     
 
-    def _validate_request_fields(self, synapse: OrganicRequest, entity: DataEntity) -> bool:
+    def _validate_request_fields(self, synapse: OrganicRequest, entity: DataEntity, miner_uid: int) -> bool:
         """
         Validates whether the returned content fields match the request fields.
         """
         try:
             if synapse.source.upper() == 'X':
-                return self._validate_x_request_fields(synapse, x_entity=entity)
+                return self._validate_x_request_fields(synapse, x_entity=entity, miner_uid=miner_uid)
             elif synapse.source.upper() == 'REDDIT':
-                return self._validate_reddit_request_fields(synapse, reddit_entity=entity)
+                return self._validate_reddit_request_fields(synapse, reddit_entity=entity, miner_uid=miner_uid)
             elif synapse.source.upper() == 'YOUTUBE':
-                return self._validate_youtube_request_fields(synapse, youtube_entity=entity)
+                return self._validate_youtube_request_fields(synapse, youtube_entity=entity, miner_uid=miner_uid)
         except Exception as e:
             bt.logging.error(f"Error in request field validation: {str(e)}")
             return False
     
 
-    def _validate_x_request_fields(self, synapse: OrganicRequest, x_entity: DataEntity) -> bool:
+    def _validate_x_request_fields(self, synapse: OrganicRequest, x_entity: DataEntity, miner_uid: int) -> bool:
         """X request field validation with the X DataEntity"""
+        hotkey = self.metagraph.hotkeys[miner_uid]
         x_content_dict = json.loads(x_entity.content.decode('utf-8'))
         
         # Username validation - handle both nested and flat formats
@@ -741,7 +743,7 @@ class OrganicQueryProcessor:
                 post_username = x_content_dict.get("username", "").strip('@').lower()
                 
             if not post_username or post_username not in requested_usernames:
-                bt.logging.debug(f"Username mismatch: {post_username} not in: {requested_usernames}")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keyword validation - text is at top level in both formats
@@ -753,29 +755,32 @@ class OrganicQueryProcessor:
             keyword_mode = synapse.keyword_mode
             if keyword_mode == 'all':
                 if not all(keyword.lower() in post_text for keyword in synapse.keywords):
-                    bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
+                    bt.logging.debug(f"Miner {miner_uid}:{hotkey} not all keywords ({synapse.keywords}) found in post: {post_text}")
                     return False
             else:  # keyword_mode == 'any'
                 if not any(keyword.lower() in post_text for keyword in synapse.keywords):
-                    bt.logging.debug(f"None of the keywords ({synapse.keywords}) found in post: {post_text}")
+                    bt.logging.debug(f"Miner {miner_uid}:{hotkey} none of the keywords ({synapse.keywords}) found in post: {post_text}")
                     return False
         
         # Time range validation
         if not self._validate_time_range(synapse, x_entity.datetime):
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
         
         return True
     
 
-    def _validate_reddit_request_fields(self, synapse: OrganicRequest, reddit_entity: DataEntity) -> bool:
+    def _validate_reddit_request_fields(self, synapse: OrganicRequest, reddit_entity: DataEntity, miner_uid: int) -> bool:
         """Reddit request field validation with the Reddit DataEntity"""
+        hotkey = self.metagraph.hotkeys[miner_uid]
+        bt.logging.debug(f"Miner {miner_uid}:{hotkey} - Starting Reddit request field validation")
         reddit_content_dict = json.loads(reddit_entity.content.decode('utf-8'))
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.lower() for u in synapse.usernames]
             post_username = reddit_content_dict.get("username")
             if not post_username or post_username.lower() not in requested_usernames:
-                bt.logging.debug(f"Reddit username mismatch: {post_username} not in: {requested_usernames}")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} Reddit username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keywords validation (subreddit or content)
@@ -800,18 +805,21 @@ class OrganicQueryProcessor:
                 keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
             
             if not (subreddit_match or keyword_in_content):
-                bt.logging.debug(f"Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")
                 return False
         
         # Time range validation using non-obfuscated datetime
         if not self._validate_time_range(synapse, reddit_entity.datetime):
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
         
         return True
     
 
-    def _validate_youtube_request_fields(self, synapse: OrganicRequest, youtube_entity: DataEntity) -> bool:
+    def _validate_youtube_request_fields(self, synapse: OrganicRequest, youtube_entity: DataEntity, miner_uid: int) -> bool:
         """YouTube request field validation with the Youtube DataEntity"""
+        hotkey = self.metagraph.hotkeys[miner_uid]
+        bt.logging.debug(f"Miner {miner_uid}:{hotkey} - Starting YouTube request field validation")
         youtube_content_dict = json.loads(youtube_entity.content.decode('utf-8'))
 
         # Username validation
@@ -820,11 +828,12 @@ class OrganicQueryProcessor:
             requested_channel = requested_channels[0]   # take only the first requested channel
             channel_name = youtube_content_dict.get("channel_name")
             if not channel_name or channel_name.lower() != requested_channel.lower():
-                bt.logging.debug(f"Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
                 return False
             
         # Time range validation
         if not self._validate_time_range(synapse, youtube_entity.datetime):
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
         
         return True
