@@ -7,6 +7,7 @@ from scraping import utils
 from scraping.scraper import ValidationResult
 from common.data import DataEntity
 from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE, YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
+from scraping.youtube.model import TranscriptSegmentWithEnd, TranscriptSegmentWithDuration
 from .model import YouTubeContent
 from .model import normalize_channel_name
 
@@ -255,7 +256,6 @@ def validate_transcript_segment_fields(
     Returns:
         ValidationResult if validation fails, None if passes
     """
-    from scraping.youtube.model import TranscriptSegmentWithEnd, TranscriptSegmentWithDuration
 
     now = dt.datetime.now(dt.timezone.utc)
     grace_period_active = now < YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
