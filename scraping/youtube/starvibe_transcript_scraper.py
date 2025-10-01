@@ -105,6 +105,11 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 url=f"https://www.youtube.com/watch?v={video_id}",
                 duration_seconds=int(meta_data.get('duration_seconds', 0)),
                 language=meta_data.get('language'),
+                description=meta_data.get('description'),
+                thumbnails=youtube_utils.generate_thumbnails(meta_data.get('video_id')),
+                view_count=meta_data.get('view_count'),
+                like_count=meta_data.get('like_count'),
+                subscriber_count=meta_data.get('subscriber_count')
             )
             # Don't compress transcript - return full segments for proper validation
             entity = YouTubeContent.to_data_entity(content)
@@ -166,7 +171,12 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     transcript=meta_data.get('transcript', ''),
                     url=f"https://www.youtube.com/watch?v={meta_data.get('video_id')}",
                     duration_seconds=int(meta_data.get('duration_seconds', 0)),
-                    language=meta_data.get('language', self.DEFAULT_LANGUAGE)
+                    language=meta_data.get('language', self.DEFAULT_LANGUAGE),
+                    description=meta_data.get('description'),
+                    thumbnails=youtube_utils.generate_thumbnails(meta_data.get('video_id')),
+                    view_count=meta_data.get('view_count'),
+                    like_count=meta_data.get('like_count'),
+                    subscriber_count=meta_data.get('subscriber_count')
                 )
                 # Don't compress transcript - return full segments for proper validation
                 entity = YouTubeContent.to_data_entity(content)
