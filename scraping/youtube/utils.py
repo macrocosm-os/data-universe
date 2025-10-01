@@ -240,6 +240,71 @@ def validate_youtube_data_entity_fields(actual_content: YouTubeContent, entity: 
     )
 
 
+def validate_transcript_segment_fields(
+    transcript: List[Dict],
+    entity: DataEntity
+) -> Optional[ValidationResult]:
+    """
+    Validate that transcript segments only contain allowed fields and no extras.
+    Prevents miners from padding segments with spam fields to inflate byte count.
+
+    Args:
+        transcript: List of transcript segment dictionaries
+        entity: DataEntity being validated
+
+    Returns:
+        ValidationResult if validation fails, None if passes
+    """
+    from scraping.youtube.model import TranscriptSegmentWithEnd, TranscriptSegmentWithDuration
+
+    now = dt.datetime.now(dt.timezone.utc)
+    grace_period_active = now < YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
+
+    for i, segment in enumerate(transcript):
+        if not isinstance(segment, dict):
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Transcript segment {i} is not a dictionary",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+        # Try to parse segment using Pydantic models to enforce schema
+        # This will reject any extra fields due to extra="forbid"
+        try:
+            has_end = 'end' in segment
+            has_duration = 'duration' in segment
+
+            if has_end:
+                # Try to parse as TranscriptSegmentWithEnd
+                TranscriptSegmentWithEnd(**segment)
+            elif has_duration and grace_period_active:
+                # During grace period, allow duration format
+                TranscriptSegmentWithDuration(**segment)
+            elif has_duration and not grace_period_active:
+                # After grace period, duration is not allowed
+                return ValidationResult(
+                    is_valid=False,
+                    reason=f"Transcript segment {i} uses deprecated 'duration' field (grace period expired)",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+            else:
+                return ValidationResult(
+                    is_valid=False,
+                    reason=f"Transcript segment {i} missing required timing fields",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+        except Exception as e:
+            # Pydantic validation failed - likely due to extra fields or wrong types
+            bt.logging.info(f"Transcript segment {i} validation failed: {str(e)}")
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Transcript segment {i} has invalid structure or extra fields: {str(e)}",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+
+    return None  # All segments are valid
+
+
 def validate_transcript_timing(
     transcript: List[Dict],
     video_duration_seconds: int,
@@ -428,7 +493,15 @@ def validate_youtube_data_entities(
                 content_size_bytes_validated=entity_to_validate.content_size_bytes
             )
 
-        # Step 5.5: Validate transcript timing structure (anti-cheating)
+        # Step 5.5: Validate transcript segments don't have extra fields (anti-padding)
+        segment_fields_validation = validate_transcript_segment_fields(
+            content_to_validate.transcript,
+            entity_to_validate
+        )
+        if segment_fields_validation is not None:
+            return segment_fields_validation
+
+        # Step 5.6: Validate transcript timing structure (anti-cheating)
         timing_validation = validate_transcript_timing(
             content_to_validate.transcript,
             content_to_validate.duration_seconds,
@@ -436,6 +509,15 @@ def validate_youtube_data_entities(
         )
         if timing_validation is not None:
             return timing_validation
+
+        # Step 5.7: Validate content size (prevent byte inflation with extra fields)
+        byte_difference_allowed = 20  # Allow small differences for encoding/formatting variations
+        if (entity_to_validate.content_size_bytes - actual_entity.content_size_bytes) > byte_difference_allowed:
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Claimed bytes ({entity_to_validate.content_size_bytes}) exceed actual content size ({actual_entity.content_size_bytes}) by more than {byte_difference_allowed} bytes",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
+            )
 
         # Step 6: Ensure both DataEntity datetime fields are obfuscated before comparison
         entity_to_validate_obfuscated = entity_to_validate.model_copy(update={

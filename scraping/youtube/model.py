@@ -2,9 +2,10 @@ import datetime as dt
 import hashlib
 import re
 import unicodedata
-from typing import Dict, List, Optional
-from pydantic.v1 import BaseModel, Field
+from typing import Dict, List, Optional, Union
+from pydantic.v1 import BaseModel, Field, validator
 from common.data import DataEntity, DataLabel, DataSource
+from common.constants import YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
 from scraping import utils
 
 
@@ -58,6 +59,28 @@ def normalize_channel_name(name: str, max_len: int = 50) -> str:
     
     # Pure non-ASCII case: use chan- prefix with hash
     return f"chan-{hash_suffix}"
+
+
+class TranscriptSegmentWithEnd(BaseModel):
+    """Transcript segment using 'end' field (standard format)."""
+
+    class Config:
+        extra = "forbid"
+
+    text: str = Field(description="The transcript text for this segment")
+    start: float = Field(description="Start time in seconds")
+    end: float = Field(description="End time in seconds")
+
+
+class TranscriptSegmentWithDuration(BaseModel):
+    """Transcript segment using 'duration' field (deprecated, grace period until Oct 8, 2025)."""
+
+    class Config:
+        extra = "forbid"
+
+    text: str = Field(description="The transcript text for this segment")
+    start: float = Field(description="Start time in seconds")
+    duration: float = Field(description="Duration in seconds (deprecated)")
 
 
 class YouTubeContent(BaseModel):
