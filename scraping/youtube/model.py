@@ -69,6 +69,7 @@ class YouTubeContent(BaseModel):
     video_id: str = Field(description="The YouTube video ID (e.g., 'dQw4w9WgXcQ')")
     title: str = Field(description="The title of the YouTube video")
     channel_name: str = Field(description="The name of the YouTube channel")
+
     upload_date: dt.datetime = Field(description="The date the video was uploaded")
     transcript: List[Dict] = Field(
         description="The transcript of the video, as a list of dictionaries with 'text', 'start', and 'end' keys",
@@ -83,6 +84,12 @@ class YouTubeContent(BaseModel):
         description="The transcript language in ISO 639-1 format (e.g., 'en' for English, 'fr' for French)",
         default="en"
     )
+    # todo remove the optionality of fields at 8th of October 2025
+    description: Optional[str] = Field(description='Description of the video.')
+    thumbnails: Optional[str] = Field(description='Image url that serves as a visual preview of a video.')
+    view_count: Optional[int] = Field(description='The view count of a video.')
+    like_count: Optional[int] = Field(description='The like count of a video.')
+    subscriber_count: Optional[int] = Field(description='Subscriber count of a video.')
 
     @classmethod
     def to_data_entity(cls, content: "YouTubeContent") -> DataEntity:

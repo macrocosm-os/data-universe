@@ -232,6 +232,12 @@ class S3PartitionedUploader:
                 f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
                 f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
             ]
+        elif source == DataSource.YOUTUBE.value:
+            # Search YouTube title and description fields
+            content_conditions = [
+                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'",
+                f"LOWER(JSON_EXTRACT(content, '$.description')) LIKE '%{normalized_keyword}%'"
+            ]
         else:
             # Search X text field specifically
             content_conditions = [
@@ -312,7 +318,12 @@ class S3PartitionedUploader:
                     'transcript': df['decoded_content'].apply(lambda x: x.get('transcript', [])),
                     'url': df['decoded_content'].apply(lambda x: x.get('url')),
                     'duration_seconds': df['decoded_content'].apply(lambda x: x.get('duration_seconds', 0)),
-                    'language': df['decoded_content'].apply(lambda x: x.get('language', 'en'))
+                    'language': df['decoded_content'].apply(lambda x: x.get('language', 'en')),
+                    'description': df['decoded_content'].apply(lambda x: x.get('description')),
+                    'thumbnails': df['decoded_content'].apply(lambda x: x.get('thumbnails')),
+                    'view_count': df['decoded_content'].apply(lambda x: x.get('view_count')),
+                    'like_count': df['decoded_content'].apply(lambda x: x.get('like_count')),
+                    'subscriber_count': df['decoded_content'].apply(lambda x: x.get('subscriber_count'))
                 })
             else:
                 # X/Twitter data structure
