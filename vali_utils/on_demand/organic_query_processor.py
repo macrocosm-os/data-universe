@@ -53,6 +53,7 @@ class OrganicQueryProcessor:
         """
         Main entry point for processing organic queries
         """
+        request_start_time = dt.datetime.now(dt.timezone.utc)
         bt.logging.info(f"Processing organic query for source: {synapse.source}")
         
         try:
@@ -98,7 +99,13 @@ class OrganicQueryProcessor:
                     bt.logging.info("Rescrape fallback found no data")
             
             # Step 8: Apply delayed penalties to empty miners (only if data was actually available)
-            self._apply_delayed_empty_penalties(empty_uids, pooled_data, verification_data)
+            penalized_empty_uids = self._apply_delayed_empty_penalties(empty_uids, pooled_data, verification_data)
+            
+            # Step 8.5: Log summary of all penalized miners for this request
+            all_penalized_uids = failed_miners + penalized_empty_uids
+            if all_penalized_uids:
+                penalized_with_hotkeys = [f"{uid}:{self.metagraph.hotkeys[uid]}" for uid in all_penalized_uids]
+                bt.logging.info(f"Failed Miners for {synapse.source} request at {request_start_time}: {penalized_with_hotkeys}")
             
             # Step 9: Format response
             return self._create_success_response(
@@ -121,8 +128,8 @@ class OrganicQueryProcessor:
         miner_scores = [(uid, float(self.metagraph.I[uid])) for uid in miner_uids]
         miner_scores.sort(key=lambda x: x[1], reverse=True)
         
-        # Take top 60% of miners (but at least 5 if available)
-        top_count = max(5, int(len(miner_scores) * 0.6))
+        # Take top 75% of miners (but at least 5 if available)
+        top_count = max(5, int(len(miner_scores) * 0.75))
         top_miners = miner_scores[:top_count]
         
         if len(top_miners) < 2:
@@ -149,7 +156,8 @@ class OrganicQueryProcessor:
                     if len(selected_miners) >= self.NUM_MINERS_TO_QUERY:
                         break
         
-        bt.logging.info(f"Selected {len(selected_miners)} miners for query: {selected_miners}")
+        selected_miners_with_hotkeys = [f"{uid}:{self.metagraph.hotkeys[uid]}" for uid in selected_miners]
+        bt.logging.info(f"Selected {len(selected_miners)} miners for query: {selected_miners_with_hotkeys}")
         return selected_miners
     
 
@@ -230,17 +238,17 @@ class OrganicQueryProcessor:
             try:
                 # Validate basic DataEntity structure
                 if not isinstance(item, DataEntity):
-                    bt.logging.debug(f"Miner {miner_uid}: Item {i} is not a DataEntity")
+                    bt.logging.debug(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]}: Item {i} is not a DataEntity")
                     return False
                     
                 if not item.uri or not item.content:
-                    bt.logging.debug(f"Miner {miner_uid}: Item {i} missing required fields (uri, content)")
+                    bt.logging.debug(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]}: Item {i} missing required fields (uri, content)")
                     return False
                 
                 # Check for duplicates within this miner's response
                 post_id = self._get_post_id(item)
                 if post_id in seen_post_ids:
-                    bt.logging.info(f"Miner {miner_uid} has duplicate posts in response (item {i}): {post_id}")
+                    bt.logging.info(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} has duplicate posts in response (item {i}): {post_id}")
                     return False
                 seen_post_ids.add(post_id)
                 
@@ -258,10 +266,10 @@ class OrganicQueryProcessor:
                     youtube_content = YouTubeContent.from_data_entity(item)
                     
             except Exception as e:
-                bt.logging.info(f"Miner {miner_uid} format validation failed on item {i}: {str(e)}")
+                bt.logging.info(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} format validation failed on item {i}: {str(e)}")
                 return False
         
-        bt.logging.trace(f"Miner {miner_uid}: Successfully validated all {len(data)} items for formatting and duplicates.")
+        bt.logging.trace(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]}: Successfully validated all {len(data)} items for formatting and duplicates.")
         return True
     
 
@@ -273,7 +281,7 @@ class OrganicQueryProcessor:
         # Non-responsive miners
         non_responsive_uids = [uid for uid in selected_miners if uid not in miner_responses]
         for uid in non_responsive_uids:
-            bt.logging.info(f"Applying penalty to non-responsive miner {uid}")
+            bt.logging.info(f"Applying penalty to non-responsive miner {uid}:{self.metagraph.hotkeys[uid]}")
             self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
         
         # Empty response miners
@@ -291,7 +299,7 @@ class OrganicQueryProcessor:
                 bt.logging.info(f"Verification found {len(verification_data)} items - applying penalties and returning verification data")
                 # Apply penalties to all miners that returned empty results when data exists
                 for uid in empty_uids:
-                    bt.logging.info(f"Applying penalty to miner {uid} for returning empty results when data exists")
+                    bt.logging.info(f"Applying penalty to miner {uid}:{self.metagraph.hotkeys[uid]} for returning empty results when data exists")
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
                 
                 # Return verification data as response
@@ -378,7 +386,7 @@ class OrganicQueryProcessor:
                     mult_factor = min((underperformance_ratio - 0.2) / 0.8, 1.0)
                     
                     penalized_miners.append(uid)
-                    bt.logging.info(f"Miner {uid}: {post_count} posts vs consensus {consensus_count:.1f} "
+                    bt.logging.info(f"Miner {uid}:{self.metagraph.hotkeys[uid]}: {post_count} posts vs consensus {consensus_count:.1f} "
                                    f"({underperformance_ratio:.1%} underperformance, {mult_factor:.2f} penalty)")
                     
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
@@ -387,7 +395,7 @@ class OrganicQueryProcessor:
         return penalized_miners
 
     
-    def _apply_delayed_empty_penalties(self, empty_uids: List[int], pooled_data: List, verification_data: Optional[List]) -> None:
+    def _apply_delayed_empty_penalties(self, empty_uids: List[int], pooled_data: List, verification_data: Optional[List]) -> List[int]:
         """
         Apply penalties to empty miners only if data was actually available.
         This prevents penalizing miners who correctly return 0 rows when no legitimate data exists.
@@ -396,9 +404,12 @@ class OrganicQueryProcessor:
             empty_uids: List of miner UIDs that returned empty responses
             pooled_data: Final pooled data from valid miners  
             verification_data: Data from verification rescrape (if performed)
+            
+        Returns:
+            List of miner UIDs that were penalized for empty responses
         """
         if not empty_uids:
-            return
+            return []
             
         has_valid_pooled_data = pooled_data and len(pooled_data) > 0
         has_verification_data = verification_data and len(verification_data) > 0
@@ -406,10 +417,12 @@ class OrganicQueryProcessor:
         if has_valid_pooled_data or has_verification_data:
             # Data for this request actually exists, so empty miners should be penalized
             for uid in empty_uids:
-                bt.logging.info(f"Applying delayed penalty to empty miner {uid} - data was available")
+                bt.logging.info(f"Applying delayed penalty to empty miner {uid}:{self.metagraph.hotkeys[uid]} - data was available")
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+            return empty_uids
         else:
             bt.logging.info(f"No penalties for {len(empty_uids)} empty miners - no data was actually available")
+            return []
 
 
     async def _apply_volume_penalties(self, 
@@ -459,7 +472,7 @@ class OrganicQueryProcessor:
             if miner_count > 0:
                 # Check for fake data padding if verification rescrape wasn't capped
                 if verification_count < synapse.limit and miner_count > verification_count:
-                        bt.logging.info(f"Miner {uid}: fake data padding detected - {miner_count} posts vs {verification_count} verified, applying full penalty")
+                        bt.logging.info(f"Miner {uid}:{self.metagraph.hotkeys[uid]}: fake data padding detected - {miner_count} posts vs {verification_count} verified, applying full penalty")
                         self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
                         continue
                 
@@ -468,7 +481,7 @@ class OrganicQueryProcessor:
                 mult_factor = min(underperformance_ratio, 1.0)
                 
                 if mult_factor > 0.1:  # Only penalize underperformance of > 10%
-                    bt.logging.info(f"Miner {uid}: {miner_count} posts vs {verification_count} verified "
+                    bt.logging.info(f"Miner {uid}:{self.metagraph.hotkeys[uid]}: {miner_count} posts vs {verification_count} verified "
                                    f"({underperformance_ratio:.1%} underperformance, {mult_factor:.2f} penalty)")
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
         
@@ -503,14 +516,14 @@ class OrganicQueryProcessor:
             num_to_validate = min(self.PER_MINER_VALIDATION_SAMPLE_SIZE, len(posts))
             selected_posts = random.sample(posts, num_to_validate)
             
-            bt.logging.info(f"Validating {num_to_validate} posts from miner {uid}")
+            bt.logging.info(f"Validating {num_to_validate} posts from miner {uid}:{self.metagraph.hotkeys[uid]}")
             
             for post in selected_posts:
                 post_id = self._get_post_id(post)
                 post_ids.append(post_id)
                 
                 # Create async task for validation
-                task = self._validate_entity(synapse=synapse, entity=post, post_id=post_id)
+                task = self._validate_entity(synapse=synapse, entity=post, post_id=post_id, miner_uid=uid)
                 validation_tasks.append(task)
         
         # Run all validations concurrently
@@ -578,13 +591,19 @@ class OrganicQueryProcessor:
                                                                    end_datetime=end_date,
                                                                    limit=synapse.limit)
             elif synapse.source.upper() == 'YOUTUBE':
-                yt_label = DataLabel(value=YouTubeContent.create_channel_label(synapse.usernames[0]))
-                verify_config = ScrapeConfig(
-                    entity_limit=synapse.limit,  
-                    date_range=DateRange(start=start_date, end=end_date),
-                    labels=[yt_label],
+                # Extract channel URL/identifier from username
+                channel_identifier = synapse.usernames[0] if synapse.usernames else None
+                if not channel_identifier:
+                    bt.logging.error("No channel identifier provided for YouTube verification")
+                    return None
+
+                verification_data = await scraper.scrape(
+                    channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
+                    max_videos=synapse.limit or 10,
+                    start_date=start_date.isoformat(),
+                    end_date=end_date.isoformat(),
+                    language="en"
                 )
-                verification_data = await scraper.scrape(verify_config)
             
             return verification_data if verification_data else None
             
@@ -624,7 +643,7 @@ class OrganicQueryProcessor:
             return False
     
 
-    def _validate_metadata_completeness(self, entity: DataEntity, post_id: str = None) -> bool:
+    def _validate_metadata_completeness(self, entity: DataEntity, post_id: str = None, miner_uid: int = None) -> bool:
         """
         Generalized metadata completeness validation using Pydantic output models.
         Works for all data sources (X, Reddit, YouTube).
@@ -632,6 +651,7 @@ class OrganicQueryProcessor:
         Args:
             entity: DataEntity to validate
             post_id: Optional identifier for logging
+            miner_uid: Optional miner UID for logging
             
         Returns:
             bool: True if all required metadata is present, False otherwise
@@ -642,17 +662,17 @@ class OrganicQueryProcessor:
             if not is_valid:
                 source = DataSource(entity.source).name.upper()
                 post_identifier = post_id or entity.uri or "unknown"
-                bt.logging.info(f"{source} post {post_identifier} missing required metadata: {missing_fields}")
+                bt.logging.info(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} - {source} post {post_identifier} missing required metadata: {missing_fields}")
                 return False
             
             return True
             
         except Exception as e:
-            bt.logging.error(f"Error validating metadata completeness: {str(e)}")
+            bt.logging.error(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} - Error validating metadata completeness: {str(e)}")
             return False
     
 
-    async def _validate_entity(self, synapse: OrganicRequest, entity: DataEntity, post_id: str) -> bool:
+    async def _validate_entity(self, synapse: OrganicRequest, entity: DataEntity, post_id: str, miner_uid: int) -> bool:
         """
         Three-phase validation:
         1. Request field validation 
@@ -663,17 +683,17 @@ class OrganicQueryProcessor:
             entity_for_validation = entity
 
             # Phase 1: Request field validation 
-            if not self._validate_request_fields(synapse, entity):
-                bt.logging.error(f"Post {post_id} failed request field validation")
+            if not self._validate_request_fields(synapse, entity, miner_uid):
+                bt.logging.error(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} post {post_id} failed request field validation")
                 return False
             
             # Phase 2: Metadata completeness validation (all sources)
-            if not self._validate_metadata_completeness(entity, post_id):
-                bt.logging.error(f"Post {post_id} failed metadata completeness validation")
+            if not self._validate_metadata_completeness(entity, post_id, miner_uid):
+                bt.logging.error(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} post {post_id} failed metadata completeness validation")
                 return False
             
             # Convert to proper format for scraper validation if needed
-            if synapse.source.upper() == 'X':
+            if synapse.source.upper() == 'X' and on_demand_utils.is_nested_format(entity):
                 x_content = XContent.from_data_entity(entity)
                 entity_for_validation = XContent.to_data_entity(content=x_content)
             else:
@@ -684,28 +704,29 @@ class OrganicQueryProcessor:
             return scraper_result
             
         except Exception as e:
-            bt.logging.error(f"Validation error for {post_id}: {str(e)}")
+            bt.logging.error(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} validation error for {post_id}: {str(e)}")
             return False
     
 
-    def _validate_request_fields(self, synapse: OrganicRequest, entity: DataEntity) -> bool:
+    def _validate_request_fields(self, synapse: OrganicRequest, entity: DataEntity, miner_uid: int) -> bool:
         """
         Validates whether the returned content fields match the request fields.
         """
         try:
             if synapse.source.upper() == 'X':
-                return self._validate_x_request_fields(synapse, x_entity=entity)
+                return self._validate_x_request_fields(synapse, x_entity=entity, miner_uid=miner_uid)
             elif synapse.source.upper() == 'REDDIT':
-                return self._validate_reddit_request_fields(synapse, reddit_entity=entity)
+                return self._validate_reddit_request_fields(synapse, reddit_entity=entity, miner_uid=miner_uid)
             elif synapse.source.upper() == 'YOUTUBE':
-                return self._validate_youtube_request_fields(synapse, youtube_entity=entity)
+                return self._validate_youtube_request_fields(synapse, youtube_entity=entity, miner_uid=miner_uid)
         except Exception as e:
             bt.logging.error(f"Error in request field validation: {str(e)}")
             return False
     
 
-    def _validate_x_request_fields(self, synapse: OrganicRequest, x_entity: DataEntity) -> bool:
+    def _validate_x_request_fields(self, synapse: OrganicRequest, x_entity: DataEntity, miner_uid: int) -> bool:
         """X request field validation with the X DataEntity"""
+        hotkey = self.metagraph.hotkeys[miner_uid]
         x_content_dict = json.loads(x_entity.content.decode('utf-8'))
         
         # Username validation - handle both nested and flat formats
@@ -722,7 +743,7 @@ class OrganicQueryProcessor:
                 post_username = x_content_dict.get("username", "").strip('@').lower()
                 
             if not post_username or post_username not in requested_usernames:
-                bt.logging.debug(f"Username mismatch: {post_username} not in: {requested_usernames}")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keyword validation - text is at top level in both formats
@@ -734,29 +755,32 @@ class OrganicQueryProcessor:
             keyword_mode = synapse.keyword_mode
             if keyword_mode == 'all':
                 if not all(keyword.lower() in post_text for keyword in synapse.keywords):
-                    bt.logging.debug(f"Not all keywords ({synapse.keywords}) found in post: {post_text}")
+                    bt.logging.debug(f"Miner {miner_uid}:{hotkey} not all keywords ({synapse.keywords}) found in post: {post_text}")
                     return False
             else:  # keyword_mode == 'any'
                 if not any(keyword.lower() in post_text for keyword in synapse.keywords):
-                    bt.logging.debug(f"None of the keywords ({synapse.keywords}) found in post: {post_text}")
+                    bt.logging.debug(f"Miner {miner_uid}:{hotkey} none of the keywords ({synapse.keywords}) found in post: {post_text}")
                     return False
         
         # Time range validation
         if not self._validate_time_range(synapse, x_entity.datetime):
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
         
         return True
     
 
-    def _validate_reddit_request_fields(self, synapse: OrganicRequest, reddit_entity: DataEntity) -> bool:
+    def _validate_reddit_request_fields(self, synapse: OrganicRequest, reddit_entity: DataEntity, miner_uid: int) -> bool:
         """Reddit request field validation with the Reddit DataEntity"""
+        hotkey = self.metagraph.hotkeys[miner_uid]
+        bt.logging.debug(f"Miner {miner_uid}:{hotkey} - Starting Reddit request field validation")
         reddit_content_dict = json.loads(reddit_entity.content.decode('utf-8'))
         # Username validation
         if synapse.usernames:
             requested_usernames = [u.lower() for u in synapse.usernames]
             post_username = reddit_content_dict.get("username")
             if not post_username or post_username.lower() not in requested_usernames:
-                bt.logging.debug(f"Reddit username mismatch: {post_username} not in: {requested_usernames}")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} Reddit username mismatch: {post_username} not in: {requested_usernames}")
                 return False
         
         # Keywords validation (subreddit or content)
@@ -781,18 +805,21 @@ class OrganicQueryProcessor:
                 keyword_in_content = any(keyword.lower() in content_text for keyword in synapse.keywords) if content_text else False
             
             if not (subreddit_match or keyword_in_content):
-                bt.logging.debug(f"Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} Reddit keyword mismatch in subreddit: '{post_community}' and content: '{content_text}'")
                 return False
         
         # Time range validation using non-obfuscated datetime
         if not self._validate_time_range(synapse, reddit_entity.datetime):
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
         
         return True
     
 
-    def _validate_youtube_request_fields(self, synapse: OrganicRequest, youtube_entity: DataEntity) -> bool:
+    def _validate_youtube_request_fields(self, synapse: OrganicRequest, youtube_entity: DataEntity, miner_uid: int) -> bool:
         """YouTube request field validation with the Youtube DataEntity"""
+        hotkey = self.metagraph.hotkeys[miner_uid]
+        bt.logging.debug(f"Miner {miner_uid}:{hotkey} - Starting YouTube request field validation")
         youtube_content_dict = json.loads(youtube_entity.content.decode('utf-8'))
 
         # Username validation
@@ -801,11 +828,12 @@ class OrganicQueryProcessor:
             requested_channel = requested_channels[0]   # take only the first requested channel
             channel_name = youtube_content_dict.get("channel_name")
             if not channel_name or channel_name.lower() != requested_channel.lower():
-                bt.logging.debug(f"Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
                 return False
             
         # Time range validation
         if not self._validate_time_range(synapse, youtube_entity.datetime):
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
         
         return True
@@ -877,7 +905,7 @@ class OrganicQueryProcessor:
                     validated_posts_count += 1
                     if not validation_results[post_id]:
                         miner_failed_validation = True
-                        bt.logging.error(f"Miner {uid} failed validation for post {post_id}")
+                        bt.logging.error(f"Miner {uid}:{self.metagraph.hotkeys[uid]} failed validation for post {post_id}")
                         break
             
             if miner_failed_validation:
