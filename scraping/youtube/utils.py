@@ -6,7 +6,7 @@ from typing import Optional, List, Dict
 from scraping import utils
 from scraping.scraper import ValidationResult
 from common.data import DataEntity
-from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE
+from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE, YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
 from .model import YouTubeContent
 from .model import normalize_channel_name
 
@@ -265,21 +265,60 @@ def validate_transcript_timing(
         # Empty transcript is allowed (some videos have no transcript)
         return None
 
+    now = dt.datetime.now(dt.timezone.utc)
+    grace_period_active = now < YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
+
     prev_end_time = 0.0
     total_duration = 0.0
 
     for i, segment in enumerate(transcript):
-        # Check segment has required fields (per model: 'start' and 'end')
-        if 'start' not in segment or 'end' not in segment:
-            bt.logging.info(f"Transcript segment {i} missing 'start' or 'end' field")
+        # Check segment has required fields
+        # Grace period: accept both 'end' and 'duration' formats before deadline
+        has_end = 'end' in segment
+        has_duration = 'duration' in segment
+        has_start = 'start' in segment
+
+        if not has_start:
+            bt.logging.info(f"Transcript segment {i} missing 'start' field")
             return ValidationResult(
                 is_valid=False,
-                reason=f"Transcript segment {i} missing required timing fields ('start' and 'end')",
+                reason=f"Transcript segment {i} missing required 'start' field",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
+        # After grace period: require 'end' field only
+        if not grace_period_active:
+            if not has_end:
+                bt.logging.info(
+                    f"Transcript segment {i} missing 'end' field (grace period expired, "
+                    f"'duration' format no longer supported after {YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE})"
+                )
+                return ValidationResult(
+                    is_valid=False,
+                    reason=f"Transcript segment {i} must use 'end' field (grace period expired)",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+        else:
+            # During grace period: accept either 'end' or 'duration'
+            if not has_end and not has_duration:
+                bt.logging.info(f"Transcript segment {i} missing both 'end' and 'duration' fields")
+                return ValidationResult(
+                    is_valid=False,
+                    reason=f"Transcript segment {i} missing timing fields ('end' or 'duration')",
+                    content_size_bytes_validated=entity.content_size_bytes,
+                )
+
         start = float(segment.get('start', 0))
-        end = float(segment.get('end', 0))
+
+        # Calculate end time (support both formats during grace period)
+        if has_end:
+            end = float(segment.get('end', 0))
+        elif has_duration and grace_period_active:
+            # Grace period: calculate end from duration
+            end = start + float(segment.get('duration', 0))
+        else:
+            end = start  # Fallback (will fail validation below)
+
         duration = end - start
 
         # Check start time is non-negative

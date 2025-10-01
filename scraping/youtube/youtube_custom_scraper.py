@@ -924,10 +924,16 @@ class YouTubeTranscriptScraper(Scraper):
                     # Fetch the data AND store the language info
                     transcript_data = first_transcript.fetch().to_raw_data()
 
-                    # Add language info to the data since to_raw_data() doesn't include it
+                    # Convert to model format: 'start' and 'end' (YouTubeTranscriptApi returns 'start' and 'duration')
                     for item in transcript_data:
+                        # Add language info since to_raw_data() doesn't include it
                         item['language_code'] = first_transcript.language_code
                         item['language'] = first_transcript.language
+
+                        # Convert duration to end (per model spec: transcript has 'start' and 'end')
+                        if 'duration' in item and 'end' not in item:
+                            item['end'] = item['start'] + item['duration']
+                            del item['duration']  # Remove duration to match model spec
 
                     return transcript_data
                 else:
