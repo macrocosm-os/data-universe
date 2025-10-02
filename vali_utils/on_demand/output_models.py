@@ -22,12 +22,12 @@ class UserInfo(BaseModel):
     id: str
     following_count: int
     username: str
-    # Required fields
     user_blue_verified: bool
-    user_description: str
-    profile_image_url: str
-    cover_picture_url: str
-    user_location: Optional[str] = None  # conditional field
+    # Conditional fields
+    user_description: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    cover_picture_url: Optional[str] = None
+    user_location: Optional[str] = None
 
 
 class TweetInfo(BaseModel):
@@ -107,10 +107,10 @@ class XOrganicOutput(BaseModel):
             view_count=x_content.view_count,
             bookmark_count=x_content.bookmark_count,
             language=x_content.language,
-            in_reply_to_username=x_content.in_reply_to_username or None,
-            quoted_tweet_id=x_content.quoted_tweet_id or None,
+            in_reply_to_username=x_content.in_reply_to_username,
+            quoted_tweet_id=x_content.quoted_tweet_id,
             conversation_id=x_content.conversation_id,
-            in_reply_to_user_id=x_content.in_reply_to_user_id or None,
+            in_reply_to_user_id=x_content.in_reply_to_user_id,
             id=x_content.tweet_id or "",
             is_reply=x_content.is_reply or False,
             is_quote=x_content.is_quote or False,
@@ -313,9 +313,6 @@ def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, Li
             ('following_count', x_content.user_following_count),
             ('username', x_content.username),
             ('user_blue_verified', x_content.user_blue_verified),
-            ('user_description', x_content.user_description),
-            ('profile_image_url', x_content.profile_image_url),
-            ('cover_picture_url', x_content.cover_picture_url),
         ]
         
         # TweetInfo fields
