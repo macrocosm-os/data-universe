@@ -54,21 +54,108 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
         bt.logging.info("YouTube Channel Transcript Scraper initialized")
 
-    async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
+    async def scrape(
+        self,
+        scrape_config: Optional[ScrapeConfig] = None,
+        youtube_url: Optional[str] = None,
+        channel_url: Optional[str] = None,
+        language: str = "en",
+        max_videos: int = 3,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[DataEntity]:
         """
-        Scrapes YouTube transcripts with channel-based approach.
+        Scrapes YouTube transcripts with channel-based approach or single video.
         Language is determined automatically by the actor for each video.
         """
-        bt.logging.info(f"Starting YouTube channel scrape with config: {scrape_config}")
+        # Handle single video scraping (multi-actor scraper compatibility)
+        if youtube_url:
+            return await self._scrape_single_video(youtube_url, language)
+        
+        # Handle channel scraping with ScrapeConfig
+        if scrape_config:
+            bt.logging.info(f"Starting YouTube channel scrape with config: {scrape_config}")
+            
+            # Parse channel identifiers from labels
+            channel_identifiers = self._parse_channel_configs_from_labels(scrape_config.labels)
 
-        # Parse channel identifiers from labels
-        channel_identifiers = self._parse_channel_configs_from_labels(scrape_config.labels)
+            if not channel_identifiers:
+                bt.logging.warning("No channel identifiers found in labels")
+                return []
 
-        if not channel_identifiers:
-            bt.logging.warning("No channel identifiers found in labels")
+            return await self._scrape_channels_hybrid(channel_identifiers, scrape_config)
+        
+        bt.logging.error("Must provide either youtube_url or scrape_config")
+        return []
+
+    async def _scrape_single_video(self, youtube_url: str, language: str) -> List[DataEntity]:
+        """Scrape a single video using _get_transcript_from_actor method."""
+        # Extract video_id from URL
+        video_id = self._extract_video_id_from_url(youtube_url)
+        if not video_id:
+            bt.logging.error(f"Invalid YouTube URL: {youtube_url}")
             return []
 
-        return await self._scrape_channels_hybrid(channel_identifiers, scrape_config)
+        try:
+            # Get transcript data using the actor (the method that works for long videos)
+            transcript_data = await self._get_transcript_from_actor(video_id, language)
+            if not transcript_data:
+                bt.logging.error(f"No transcript data returned for video {video_id}")
+                return []
+
+            # Get upload date from API
+            upload_date = await self._get_upload_date_from_api(video_id)
+            if not upload_date:
+                bt.logging.warning(f"No upload date for video {video_id}, using current time")
+                upload_date = dt.datetime.now(dt.timezone.utc)
+
+            # Get additional data from API
+            statistics = await self._get_video_statistics_from_api(video_id)
+            if statistics:
+                transcript_data['view_count'] = statistics.get('view_count', transcript_data.get('view_count'))
+                transcript_data['like_count'] = statistics.get('like_count')
+
+            # Get subscriber count
+            channel_id = transcript_data.get('channel_id')
+            if channel_id:
+                subscriber_count = await self._get_channel_subscriber_count(channel_id)
+                transcript_data['subscriber_count'] = subscriber_count
+
+            # Create YouTubeContent
+            content = self._create_youtube_content(
+                video_id=video_id,
+                language=language,
+                upload_date=upload_date,
+                transcript_data=transcript_data,
+                channel_identifier=transcript_data.get('channel', '')
+            )
+
+            # Convert to DataEntity
+            entity = YouTubeContent.to_data_entity(content)
+            
+            bt.logging.success(f"Successfully scraped video {video_id} using invideoiq actor")
+            return [entity]
+
+        except Exception as e:
+            bt.logging.error(f"Error scraping video {video_id}: {str(e)}")
+            return []
+
+    def _extract_video_id_from_url(self, url: str) -> Optional[str]:
+        """Extract video ID from YouTube URL."""
+        if not url:
+            return None
+
+        import re
+        patterns = [
+            r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+            r'(?:embed|v|vi|youtu\.be\/)([0-9A-Za-z_-]{11}).*',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+        return None
 
     def _parse_channel_configs_from_labels(self, labels: List[DataLabel]) -> List[str]:
         """
