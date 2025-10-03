@@ -52,3 +52,6 @@ ENHANCED_METADATA_REQUIRED_DATE = dt.datetime(2025, 9, 23, tzinfo=dt.timezone.ut
 YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE = dt.datetime(2025, 10, 8, tzinfo=dt.timezone.utc) # October 8, 2025 UTC (1 week grace period)
 
 EVALUATION_ON_STARTUP = 15
+
+# Emission Control / Burn Configuration
+EMISSION_CONTROL_PERCENTAGE = 0.20  # 20% of emissions redirected to subnet owner (burn)
