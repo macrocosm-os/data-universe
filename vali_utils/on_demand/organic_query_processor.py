@@ -505,7 +505,7 @@ class OrganicQueryProcessor:
         """Perform OnDemand validation: selecting random posts per miner with non-empty responses"""
         validation_results = {}
         validation_tasks = []
-        post_ids = []
+        miner_post_keys = []
         
         # For each miner with non-empty responses, select up to 2 random posts
         for uid, posts in miner_responses.items():
@@ -520,7 +520,9 @@ class OrganicQueryProcessor:
             
             for post in selected_posts:
                 post_id = self._get_post_id(post)
-                post_ids.append(post_id)
+                # Create unique key combining miner and post to avoid cross-miner contamination
+                miner_post_key = f"{uid}:{post_id}"
+                miner_post_keys.append(miner_post_key)
                 
                 # Create async task for validation
                 task = self._validate_entity(synapse=synapse, entity=post, post_id=post_id, miner_uid=uid)
@@ -531,14 +533,14 @@ class OrganicQueryProcessor:
             validation_task_results = await asyncio.gather(*validation_tasks, return_exceptions=True)
             
             # Process results
-            for i, post_id in enumerate(post_ids):
+            for i, miner_post_key in enumerate(miner_post_keys):
                 result = validation_task_results[i]
                 
                 if isinstance(result, Exception):
-                    bt.logging.error(f"Validation error for {post_id}: {str(result)}")
-                    validation_results[post_id] = False
+                    bt.logging.error(f"Validation error for {miner_post_key}: {str(result)}")
+                    validation_results[miner_post_key] = False
                 else:
-                    validation_results[post_id] = result
+                    validation_results[miner_post_key] = result
         
         bt.logging.info(f"Simplified validation completed: {sum(validation_results.values())}/{len(validation_results)} passed")
         return validation_results
@@ -895,15 +897,17 @@ class OrganicQueryProcessor:
                 failed_miners.append(uid)
                 continue
             
-            # Apply validation penalty
+            # Apply validation penalty based on miner-specific validation results
             miner_failed_validation = False
             validated_posts_count = 0
             
             for post in miner_responses[uid]:
                 post_id = self._get_post_id(post)
-                if post_id in validation_results:
+                # Use miner-specific key to check validation results
+                miner_post_key = f"{uid}:{post_id}"
+                if miner_post_key in validation_results:
                     validated_posts_count += 1
-                    if not validation_results[post_id]:
+                    if not validation_results[miner_post_key]:
                         miner_failed_validation = True
                         bt.logging.error(f"Miner {uid}:{self.metagraph.hotkeys[uid]} failed validation for post {post_id}")
                         break
