@@ -1,3 +1,4 @@
+import asyncio
 import base64
 from datetime import datetime, timedelta, timezone
 import json
@@ -5,7 +6,7 @@ import uuid
 import time
 from dataclasses import dataclass
 from hashlib import sha256
-from typing import Any, Dict, List, Literal, Optional, Union
+from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from substrateinterface.keypair import Keypair
@@ -294,6 +295,7 @@ class OnDemandClient:
         req: ListJobsWithSubmissionsForValidationRequest,
         *,
         max_parallelism: int = 8,
+        job_ids_to_skip_downloading: Set[str] = set()
     ) -> tuple[ListJobsWithSubmissionForValidationResponse, list[dict]]:
         """
         Calls /on-demand/validator/jobs and concurrently downloads the JSON bodies
@@ -328,7 +330,8 @@ class OnDemandClient:
         sem = asyncio.Semaphore(max_parallelism)
         tasks: list[asyncio.Task] = []
 
-        async def _fetch_one(job_id: str, sub: OnDemandJobSubmission) -> dict:
+        async def _fetch_one(job_id: str, sub: OnDemandJobSubmission) -> Any:
+            
             url = getattr(sub, "s3_presigned_url", None)
             if not url:
                 return {
@@ -350,11 +353,8 @@ class OnDemandClient:
                     r = await client.get(url)
                     status = r.status_code
                     if 200 <= status < 300:
-                        # Try JSON first; if it fails, attempt to parse text as JSON.
-                        try:
-                            data = r.json()
-                        except Exception:
-                            data = json.loads(r.text)
+
+                        data = json.load(r)
                         return {
                             "job_id": job_id,
                             "miner_hotkey": getattr(sub, "miner_hotkey", None),
@@ -400,6 +400,9 @@ class OnDemandClient:
         # Schedule downloads
         for jws in validator_resp.jobs_with_submissions:
             job_id = jws.job.id
+            if job_id in job_ids_to_skip_downloading:
+                continue
+
             for sub in jws.submissions:
                 tasks.append(asyncio.create_task(_fetch_one(job_id, sub)))
 

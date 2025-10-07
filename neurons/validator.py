@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+from collections import defaultdict
 import copy
 import json
 import sys
@@ -30,6 +31,10 @@ from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
+from upload_utils.on_demand_api import (
+    ListJobsWithSubmissionsForValidationRequest,
+    OnDemandClient,
+)
 from vali_utils.validator_s3_access import ValidatorS3Access
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
@@ -58,13 +63,13 @@ def filtered_trace(message, *args, **kwargs):
         original_trace(message, *args, **kwargs)
 
 
-bt.logging.trace = filtered_trace 
+bt.logging.trace = filtered_trace
 
 # Filter out the specific deprecation warning from datetime.utcnow()
 warnings.filterwarnings(
     "ignore",
     category=DeprecationWarning,
-    message="datetime.datetime.utcnow() is deprecated"
+    message="datetime.datetime.utcnow() is deprecated",
 )
 # import datetime after the warning filter
 import datetime as dt
@@ -113,8 +118,10 @@ class Validator:
             self._on_metagraph_updated, netuids=[self.config.netuid]
         )
         bt.logging.info(f"Metagraph: {self.metagraph}.")
-        
-        self.validator_registry = ValidatorRegistry(metagraph=self.metagraph, organic_whitelist=self.config.organic_whitelist)
+
+        self.validator_registry = ValidatorRegistry(
+            metagraph=self.metagraph, organic_whitelist=self.config.organic_whitelist
+        )
         self.organic_processor = None
 
         # Create asyncio event loop to manage async tasks.
@@ -136,6 +143,7 @@ class Validator:
 
         # Add counter for evaluation cycles since startup
         self.evaluation_cycles_since_startup = 0
+        self.processed_job_ids_cache = utils.LRUSet(capacity=10_000)
 
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
@@ -150,12 +158,14 @@ class Validator:
                 self.wandb_run = None
                 self.wandb_run_start = None
 
-        metrics.VALIDATOR_INFO.info({
-            "hotkey": self.wallet.hotkey.ss58_address,
-            "uid": str(self.uid),
-            "netuid": str(self.config.netuid),
-            "version": self.get_version_tag(),
-        })
+        metrics.VALIDATOR_INFO.info(
+            {
+                "hotkey": self.wallet.hotkey.ss58_address,
+                "uid": str(self.uid),
+                "netuid": str(self.config.netuid),
+                "version": self.get_version_tag(),
+            }
+        )
 
         # Load any state from previous runs.
         self.load_state()
@@ -171,12 +181,28 @@ class Validator:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
         self.organic_processor = OrganicQueryProcessor(
-            wallet=self.wallet,
-            metagraph=self.metagraph,
-            evaluator=self.evaluator
+            wallet=self.wallet, metagraph=self.metagraph, evaluator=self.evaluator
         )
-        
+
         self.is_setup = True
+
+        self.data_universe_api_base_url = (
+            "https://data-universe-api-branch-main.api.macrocosmos.ai"
+            if "test" in self.config.subtensor.network
+            else "https://data-universe-api.api.macrocosmos.ai"
+        )
+        self.verify_ssl = "localhost" not in self.data_universe_api_base_url
+        bt.logging.info(
+            f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
+        )
+
+    def _on_demand_client(self) -> OnDemandClient:
+        return OnDemandClient(
+            base_url=self.data_universe_api_base_url,
+            verify_ssl=self.verify_ssl,
+            keypair=self.wallet.hotkey,
+            timeout=60,
+        )
 
     def get_updated_lookup(self):
         try:
@@ -190,8 +216,12 @@ class Validator:
 
             duration = time.perf_counter() - t_start
 
-            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(duration)
-            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
+            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION.labels(
+                hotkey=self.wallet.hotkey.ss58_address
+            ).set(duration)
+            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS.labels(
+                hotkey=self.wallet.hotkey.ss58_address
+            ).set(int(time.time()))
         except Exception as e:
             bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
             bt.logging.exception("Exception details:")
@@ -199,14 +229,18 @@ class Validator:
     def get_version_tag(self):
         """Fetches version tag"""
         try:
-            subprocess.run(['git', 'fetch', '--tags'], check=True)
-            version_tag = subprocess.check_output(['git', 'describe', '--tags', '--abbrev=0']).strip().decode('utf-8')
+            subprocess.run(["git", "fetch", "--tags"], check=True)
+            version_tag = (
+                subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"])
+                .strip()
+                .decode("utf-8")
+            )
             return version_tag
-        
+
         except subprocess.CalledProcessError as e:
             print(f"Couldn't fetch latest version tag: {e}")
             return "error"
-        
+
     def get_scraper_providers(self):
         """Fetches a validator's scraper providers to display in WandB logs."""
         scrapers = self.evaluator.PREFERRED_SCRAPERS
@@ -220,7 +254,7 @@ class Validator:
         name = "validator-" + str(self.uid) + "-" + run_id
         version_tag = self.get_version_tag()
         scraper_providers = self.get_scraper_providers()
-    
+
         # Allow multiple runs in one process and only set start time after success
         self.wandb_run = wandb.init(
             name=name,
@@ -232,80 +266,152 @@ class Validator:
                 "run_name": run_id,
                 "type": "validator",
                 "version": version_tag,
-                "scrapers": scraper_providers
+                "scrapers": scraper_providers,
             },
             allow_val_change=True,
             anonymous="allow",
             reinit=True,
-            resume="never", # force a brand-new run ID on each rotation
+            resume="never",  # force a brand-new run ID on each rotation
             settings=wandb.Settings(start_method="thread"),
         )
-    
+
         # Start time after successful init so rotation scheduling is correct
         self.wandb_run_start = now
-    
+
         bt.logging.debug(f"Started a new wandb run: {name}")
 
+    async def loop_poll_on_demand_jobs_with_submissions(self):
+        while self.is_running:
+
+            bt.logging.info("Pulling on demand jobs with submissions")
+            try:
+                async with self._on_demand_client() as client:
+                    jobs_with_submissions_downloaded_response = (
+                        await client.validator_list_and_download_submission_json(
+                            req=ListJobsWithSubmissionsForValidationRequest(
+                                expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=30),
+                                limit=100,  # larger limit and-or random sample
+                            ),
+                            job_ids_to_skip_downloading=set(self.processed_job_ids_cache.data.keys())
+                        )
+                    )
+            except:
+                bt.logging.exception("Failed to pull on demand jobs with submissions")
+                await asyncio.sleep(30.0)
+                continue
+
+            # co locate each job id and miner hotkey
+            job_list_with_submissions_resp, downloads = (
+                jobs_with_submissions_downloaded_response
+            )
+
+            job_data_per_job_id_and_miner_hotkey = defaultdict(defaultdict())
+            for download in downloads:
+                job_id = download["job_id"]
+                miner_hotkey = download["miner_hotkey"]
+
+                job_data_per_job_id_and_miner_hotkey[job_id][miner_hotkey] = download
+
+            bt.logging.info(
+                f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
+            )
+
+            hotkeys_that_did_not_upload = set()
+            # validate
+            for (
+                job_with_submission
+            ) in job_list_with_submissions_resp.jobs_with_submissions:
+                job = job_with_submission.job
+                if job.id in self.processed_job_ids_cache:
+                    continue
+
+                submissions = job_with_submission.submissions
+
+                # punish miners that did submit but did not upload
+                for submission in submissions:
+                    if submission.s3_presigned_url is None:
+                        hotkeys_that_did_not_upload.add(submission.miner_hotkey)
+                        continue
+
+                    data_download_for_submission = job_data_per_job_id_and_miner_hotkey[
+                        job.id
+                    ][submission.miner_hotkey]["data"]
+                    # schema validate, field validation, rescrape validation, etc
+
+                # punish registered miners that did not even submit
+
+            for job_id in job_data_per_job_id_and_miner_hotkey.keys():
+                self.processed_job_ids_cache.add(job_id)
+
+            await asyncio.sleep(30.0)
 
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
-    
+
         1. Evaluates miners
         2. Periodically writes the latest scores to the chain
         3. Saves state
         """
         assert self.is_setup, "Validator must be setup before running."
-    
+
         # Check that validator is registered on the network.
         utils.assert_registered(self.wallet, self.metagraph)
-    
+
         bt.logging.info(
             f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
         )
-    
+
         bt.logging.info(f"Validator starting at block: {self.block}.")
-    
+
+        asyncio.create_task(self.loop_poll_on_demand_jobs_with_submissions())
+
         while not self.should_exit:
             try:
                 t_start = time.perf_counter()
-    
+
                 bt.logging.debug(
                     f"Validator running on step({self.step}) block({self.block})."
                 )
-    
+
                 # Ensure validator hotkey is still registered on the network.
                 utils.assert_registered(self.wallet, self.metagraph)
-    
+
                 # Evaluate the next batch of miners.
                 next_batch_delay_secs = self.loop.run_until_complete(
                     self.evaluator.run_next_eval_batch()
                 )
                 self._on_eval_batch_complete()
-    
+
                 # Maybe set weights.
                 if self.should_set_weights():
                     self.set_weights()
-    
+
                 # Always save state.
                 self.save_state()
-    
+
                 # Update to the latest desirability list after each evaluation.
                 self.get_updated_lookup()
-    
+
                 self.step += 1
-    
-                metrics.MAIN_LOOP_ITERATIONS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
-                metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
-                metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(time.perf_counter() - t_start)
-    
+
+                metrics.MAIN_LOOP_ITERATIONS_TOTAL.labels(
+                    hotkey=self.wallet.hotkey.ss58_address
+                ).inc()
+                metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(
+                    hotkey=self.wallet.hotkey.ss58_address
+                ).set(int(time.time()))
+                metrics.MAIN_LOOP_DURATION.labels(
+                    hotkey=self.wallet.hotkey.ss58_address
+                ).set(time.perf_counter() - t_start)
+
                 wait_time = max(0.0, float(next_batch_delay_secs))
                 if wait_time > 0:
                     bt.logging.info(
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
                     )
                     time.sleep(wait_time)
-    
+
                 if not self.config.wandb.off and self.wandb_run is None:
                     try:
                         self.new_wandb_run()
@@ -314,21 +420,31 @@ class Validator:
                         bt.logging.error(f"W&B init retry failed: {e}")
 
                 # Rotation with retry (only when we actually have a start time)
-                if (not self.config.wandb.off) and (self.wandb_run_start is not None) and \
-                ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=3)):
+                if (
+                    (not self.config.wandb.off)
+                    and (self.wandb_run_start is not None)
+                    and (
+                        (dt.datetime.now() - self.wandb_run_start)
+                        >= dt.timedelta(hours=3)
+                    )
+                ):
 
                     try:
                         self.new_wandb_run()
                         bt.logging.info("W&B: rotated run successfully")
                     except Exception as e:
-                        bt.logging.error(f"W&B rotation failed; keeping current run active: {e}")
+                        bt.logging.error(
+                            f"W&B rotation failed; keeping current run active: {e}"
+                        )
 
             except KeyboardInterrupt:
                 self.axon.stop()
                 if self.wandb_run:
                     self.wandb_run.finish()
             except Exception as err:
-                metrics.MAIN_LOOP_ERRORS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
+                metrics.MAIN_LOOP_ERRORS_TOTAL.labels(
+                    hotkey=self.wallet.hotkey.ss58_address
+                ).inc()
                 bt.logging.error("Error during validation", str(err))
 
     def run_in_background_thread(self):
@@ -347,6 +463,8 @@ class Validator:
             self.thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
+
+            asyncio.create_task(self.loop_poll_on_demand_jobs_with_submissions())
 
     def stop_run_thread(self):
         """
@@ -396,7 +514,7 @@ class Validator:
             self.axon.attach(
                 forward_fn=self.process_organic_query,
                 blacklist_fn=self.organic_blacklist,
-                priority_fn=self.organic_priority
+                priority_fn=self.organic_priority,
             )
 
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
@@ -404,6 +522,7 @@ class Validator:
                 try:
                     bt.logging.info("Starting Validator API...")
                     from vali_utils.api.server import ValidatorAPI
+
                     self.api = ValidatorAPI(self, port=self.config.neuron.api_port)
                     self.api.start()
                     # Start monitoring to auto-restart if it fails
@@ -450,7 +569,11 @@ class Validator:
             try:
                 head_block = int(getattr(metagraph, "block", 0))
                 last_update = int(metagraph.last_update[uid])
-                block_diff = max(0, head_block - last_update) if head_block and last_update else 0
+                block_diff = (
+                    max(0, head_block - last_update)
+                    if head_block and last_update
+                    else 0
+                )
             except Exception:
                 block_diff = 0
         else:
@@ -458,7 +581,9 @@ class Validator:
             block_diff = 0
 
         metrics.BITTENSOR_VALIDATOR_VTRUST.labels(hotkey=hotkey).set(vtrust)
-        metrics.BITTENSOR_VALIDATOR_BLOCK_DIFFERENCE.labels(hotkey=hotkey).set(block_diff)
+        metrics.BITTENSOR_VALIDATOR_BLOCK_DIFFERENCE.labels(hotkey=hotkey).set(
+            block_diff
+        )
         metrics.METAGRAPH_LAST_UPDATE_TS.labels(hotkey=hotkey).set(int(time.time()))
 
     def _on_eval_batch_complete(self):
@@ -481,29 +606,34 @@ class Validator:
             # Check if we've completed at least two evaluation cycles since startup
             if not self.evaluation_cycles_since_startup:
                 self.evaluation_cycles_since_startup = 0
-                bt.logging.info("Initializing evaluation cycles counter for delayed weight setting")
+                bt.logging.info(
+                    "Initializing evaluation cycles counter for delayed weight setting"
+                )
 
             #  if we've completed fewer than the allotted number of evaluation cycles, don't set weights
             if self.evaluation_cycles_since_startup < constants.EVALUATION_ON_STARTUP:
 
                 bt.logging.info(
-                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/15 evaluation cycles since startup")
+                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/15 evaluation cycles since startup"
+                )
                 return False
 
             # Normal 20-minute interval check for subsequent weight settings
-            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(minutes=20)
+            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(
+                minutes=20
+            )
 
     def _start_api_monitoring(self):
         """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
 
-        master_key = os.getenv('MASTER_KEY')
+        master_key = os.getenv("MASTER_KEY")
 
         def monitor_api():
             consecutive_failures = 0
             max_failures = 3  # Restart after 3 consecutive failures
 
             while not self.should_exit:
-                if not hasattr(self, 'api') or not self.api:
+                if not hasattr(self, "api") or not self.api:
                     time.sleep(60 * 20)
                     continue
 
@@ -512,7 +642,7 @@ class Validator:
                     response = requests.get(
                         f"http://localhost:{self.config.neuron.api_port}/api/v1/monitoring/system-status",
                         headers={"X-API-Key": master_key},
-                        timeout=10
+                        timeout=10,
                     )
 
                     if response.status_code == 200:
@@ -521,26 +651,32 @@ class Validator:
                     else:
                         # HTTP error
                         consecutive_failures += 1
-                        bt.logging.warning(f"API health check returned status {response.status_code}")
+                        bt.logging.warning(
+                            f"API health check returned status {response.status_code}"
+                        )
                 except requests.RequestException:
                     # Connection error (most likely API is down)
                     consecutive_failures += 1
-                    bt.logging.warning(f"API server not responding ({consecutive_failures}/{max_failures})")
+                    bt.logging.warning(
+                        f"API server not responding ({consecutive_failures}/{max_failures})"
+                    )
 
                 # If too many consecutive failures, restart API
                 if consecutive_failures >= max_failures:
-                    bt.logging.warning(f"API server unresponsive for {consecutive_failures} checks, restarting...")
+                    bt.logging.warning(
+                        f"API server unresponsive for {consecutive_failures} checks, restarting..."
+                    )
 
                     try:
                         # Stop API if it's running
-                        if hasattr(self.api, 'stop'):
+                        if hasattr(self.api, "stop"):
                             self.api.stop()
 
                         # Wait a moment
                         time.sleep(2)
 
                         # Start API again
-                        if hasattr(self.api, 'start'):
+                        if hasattr(self.api, "start"):
                             self.api.start()
 
                         bt.logging.info("API server restarted")
@@ -610,7 +746,6 @@ class Validator:
         console = Console()
         console.print(table)
 
-
         # Set the weights on chain via our subtensor connection.
         t0 = time.perf_counter()
         success, message = self.subtensor.set_weights(
@@ -621,15 +756,19 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
-        
+
         with self.lock:
             self.last_weights_set_time = dt.datetime.utcnow()
 
         bt.logging.success("Finished setting weights.")
 
-        metric_status = 'ok' if success else 'fail'
-        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).observe(time.perf_counter() - t0)
-        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(int(time.time()))
+        metric_status = "ok" if success else "fail"
+        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(
+            hotkey=self.wallet.hotkey.ss58_address, status=metric_status
+        ).observe(time.perf_counter() - t0)
+        metrics.SET_WEIGHTS_LAST_TS.labels(
+            hotkey=self.wallet.hotkey.ss58_address, status=metric_status
+        ).set(int(time.time()))
 
     @property
     def block(self):
@@ -657,22 +796,30 @@ class Validator:
             synapse.meta = {"error": "Organic query processor not initialized"}
             synapse.data = []
             return synapse
-        
-        t_start = time.perf_counter() 
+
+        t_start = time.perf_counter()
         self.organic_processor.update_metagraph(self.evaluator.metagraph)
         synapse_resp = await self.organic_processor.process_organic_query(synapse)
 
-        metrics.ORGANIC_QUERY_PROCESS_DURATION.labels(request_source=synapse.source, response_status=synapse_resp.status).observe(time.perf_counter() - t_start)
+        metrics.ORGANIC_QUERY_PROCESS_DURATION.labels(
+            request_source=synapse.source, response_status=synapse_resp.status
+        ).observe(time.perf_counter() - t_start)
 
         try:
             json_str = json.dumps(synapse_resp.data)
-            size_bytes = len(json_str.encode('utf-8'))
+            size_bytes = len(json_str.encode("utf-8"))
 
-            metrics.ORGANIC_QUERY_RESPONSE_SIZE.labels(request_source=synapse.source, response_status=synapse_resp.status).observe(size_bytes)
+            metrics.ORGANIC_QUERY_RESPONSE_SIZE.labels(
+                request_source=synapse.source, response_status=synapse_resp.status
+            ).observe(size_bytes)
         except (TypeError, ValueError) as e:  # JSON serialization errors
-            bt.logging.debug("Failed to serialize synapse response data to JSON. Skipping metrics.ORGANIC_QUERY_RESPONSE_BYTES observation")
+            bt.logging.debug(
+                "Failed to serialize synapse response data to JSON. Skipping metrics.ORGANIC_QUERY_RESPONSE_BYTES observation"
+            )
 
-        metrics.ORGANIC_QUERY_REQUESTS_TOTAL.labels(request_source=synapse.source, response_status=synapse_resp.status).inc()
+        metrics.ORGANIC_QUERY_REQUESTS_TOTAL.labels(
+            request_source=synapse.source, response_status=synapse_resp.status
+        ).inc()
         return synapse_resp
 
     async def organic_blacklist(self, synapse: OrganicRequest) -> Tuple[bool, str]:
@@ -680,7 +827,7 @@ class Validator:
         Simplified blacklist function that only checks whitelist membership
         """
         # Only allow hotkeys in the whitelist
-        if hasattr(self.config, 'organic_whitelist') and self.config.organic_whitelist:
+        if hasattr(self.config, "organic_whitelist") and self.config.organic_whitelist:
             if synapse.dendrite.hotkey in self.config.organic_whitelist:
                 return False, "Request accepted from whitelisted hotkey"
             else:

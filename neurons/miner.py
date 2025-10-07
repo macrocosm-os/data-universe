@@ -129,7 +129,7 @@ class Miner:
                 blacklist_fn=self.get_contents_by_buckets_blacklist,
                 priority_fn=self.get_contents_by_buckets_priority,
             ).attach(
-                forward_fn=self.poll_on_demand_jobs,
+                forward_fn=self.loop_poll_on_demand_active_jobs,
                 blacklist_fn=self.handle_on_demand_blacklist,
                 priority_fn=self.handle_on_demand_priority,
             )
@@ -188,7 +188,7 @@ class Miner:
 
         self.data_universe_api_base_url = (
             "https://data-universe-api-branch-main.api.macrocosmos.ai"
-            if "test" in config.subtensor.network
+            if "test" in self.config.subtensor.network
             else "https://data-universe-api.api.macrocosmos.ai"
         )
         self.verify_ssl = "localhost" not in self.data_universe_api_base_url
@@ -197,7 +197,7 @@ class Miner:
         )
 
         self.on_demand_job_queue: asyncio.Queue[OnDemandJob] = asyncio.Queue()
-        self.processed_jobs_cache = utils.LRUSet(capacity=10_000)
+        self.processed_job_ids_cache = utils.LRUSet(capacity=10_000)
 
     def refresh_index(self):
         """
@@ -307,7 +307,7 @@ class Miner:
 
         self.scraping_coordinator.run_in_background_thread()
 
-        asyncio.create_task(self.poll_on_demand_jobs())
+        asyncio.create_task(self.loop_poll_on_demand_active_jobs())
         asyncio.create_task(self.process_on_demand_jobs_queue())
 
         while not self.should_exit:
@@ -356,7 +356,7 @@ class Miner:
             keypair=self.wallet.hotkey,
         )
 
-    async def poll_on_demand_jobs(self):
+    async def loop_poll_on_demand_active_jobs(self):
         while self.is_running:
             since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
             bt.logging.info(
@@ -391,11 +391,11 @@ class Miner:
             except asyncio.TimeoutError:
                 continue
 
-            job_id_already_processed = job_request.id in self.processed_jobs_cache
+            job_id_already_processed = job_request.id in self.processed_job_ids_cache
             if job_id_already_processed:
                 continue
 
-            self.processed_jobs_cache.add(job_request.id)
+            self.processed_job_ids_cache.add(job_request.id)
 
             # miner tune this on how fast you can process a job
             process_on_demand_minimum_duration = dt.timedelta(seconds=10)
@@ -446,7 +446,7 @@ class Miner:
                 keywords.extend(rd_job.keywords)
 
         # process
-        synapse_resp = await self.poll_on_demand_jobs(
+        synapse_resp = await self.loop_poll_on_demand_active_jobs(
             synapse=OnDemandRequest(
                 source=data_source,
                 limit=job_request.limit,
@@ -638,7 +638,7 @@ class Miner:
     ) -> float:
         return self.default_priority(synapse)
 
-    async def poll_on_demand_jobs(self, synapse: OnDemandRequest) -> OnDemandRequest:
+    async def loop_poll_on_demand_active_jobs(self, synapse: OnDemandRequest) -> OnDemandRequest:
         """
         Handle on-demand data requests from validators.
         Uses enhanced scraper for X data while maintaining protocol compatibility.
