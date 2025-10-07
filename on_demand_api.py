@@ -12,6 +12,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from substrateinterface.keypair import Keypair
 import httpx
 
+TEN_MB_BYTES =10 * 1_000_000
 
 class OnDemandJobPayloadX(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -295,7 +296,8 @@ class OnDemandClient:
         req: ListJobsWithSubmissionsForValidationRequest,
         *,
         max_parallelism: int = 8,
-        job_ids_to_skip_downloading: Set[str] = set()
+        job_ids_to_skip_downloading: Set[str] = set(),
+        file_size_limit_bytes : int = TEN_MB_BYTES
     ) -> tuple[ListJobsWithSubmissionForValidationResponse, list[dict]]:
         """
         Calls /on-demand/validator/jobs and concurrently downloads the JSON bodies
@@ -332,6 +334,38 @@ class OnDemandClient:
 
         async def _fetch_one(job_id: str, sub: OnDemandJobSubmission) -> Any:
             
+            if not getattr(sub, "s3_content_length"):
+                return {
+                    "job_id": job_id,
+                    "miner_hotkey": getattr(sub, "miner_hotkey", None),
+                    "s3_path": getattr(sub, "s3_path", None),
+                    "s3_last_modified": getattr(sub, "s3_last_modified", None),
+                    "s3_etag": getattr(sub, "s3_etag", None),
+                    "s3_content_length": getattr(sub, "s3_content_length", None),
+                    "url": None,
+                    "status": 0,
+                    "ok": False,
+                    "error": "missing s3 content length",
+                    "data": None,
+                }
+            
+            length_bytes = sub['s3_content_length']
+            if length_bytes > file_size_limit_bytes:
+                return {
+                    "job_id": job_id,
+                    "miner_hotkey": getattr(sub, "miner_hotkey", None),
+                    "s3_path": getattr(sub, "s3_path", None),
+                    "s3_last_modified": getattr(sub, "s3_last_modified", None),
+                    "s3_etag": getattr(sub, "s3_etag", None),
+                    "s3_content_length": getattr(sub, "s3_content_length", None),
+                    "url": None,
+                    "status": 0,
+                    "ok": False,
+                    "error": "file size above limit",
+                    "data": None,
+                }
+ 
+
             url = getattr(sub, "s3_presigned_url", None)
             if not url:
                 return {
