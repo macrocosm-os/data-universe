@@ -370,7 +370,7 @@ class Miner:
                     )
             except:
                 bt.logging.exception("Failed to list active jobs")
-                await asyncio.sleep(20.0)
+                await asyncio.sleep(5.0)
                 continue
 
             bt.logging.info(
@@ -380,7 +380,7 @@ class Miner:
             for job in active_jobs_response.jobs:
                 await self.on_demand_job_queue.put(job)
 
-            await asyncio.sleep(20.0)
+            await asyncio.sleep(5.0)
 
     async def process_on_demand_jobs_queue(self):
         while self.is_running:

@@ -297,7 +297,7 @@ class Validator:
                     )
             except:
                 bt.logging.exception("Failed to pull on demand jobs with submissions")
-                await asyncio.sleep(30.0)
+                await asyncio.sleep(20.0)
                 continue
 
             # co locate each job id and miner hotkey
@@ -343,7 +343,7 @@ class Validator:
             for job_id in job_data_per_job_id_and_miner_hotkey.keys():
                 self.processed_job_ids_cache.add(job_id)
 
-            await asyncio.sleep(30.0)
+            await asyncio.sleep(20.0)
 
     def run(self):
         """
