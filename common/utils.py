@@ -1,5 +1,6 @@
 """General utility functions."""
 
+from collections import OrderedDict
 import datetime as dt
 import functools
 import concurrent
@@ -51,12 +52,18 @@ def is_miner(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int) -> bool:
     return not is_validator(uid, metagraph, vpermit_rao_limit)
 
 
-def is_validator(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int = 10_000) -> bool:
+def is_validator(
+    uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int = 10_000
+) -> bool:
     """Checks if a UID on the subnet is a validator."""
-    return metagraph.validator_permit[uid] and float(metagraph.S[uid]) >= vpermit_rao_limit
+    return (
+        metagraph.validator_permit[uid] and float(metagraph.S[uid]) >= vpermit_rao_limit
+    )
 
 
-def get_validator_data(metagraph: bt.metagraph, vpermit_rao_limit: int) -> Dict[str, Dict[str, Any]]:
+def get_validator_data(
+    metagraph: bt.metagraph, vpermit_rao_limit: int
+) -> Dict[str, Dict[str, Any]]:
     """Retrieve validator data (hotkey, percent stake) from metagraph. For use in Gravity."""
     total_stake = sum(
         float(stake)
@@ -66,9 +73,9 @@ def get_validator_data(metagraph: bt.metagraph, vpermit_rao_limit: int) -> Dict[
 
     validator_data = {
         hotkey: {
-            'percent_stake': float(stake) / total_stake,
-            'github_hash': None,
-            'json': None
+            "percent_stake": float(stake) / total_stake,
+            "github_hash": None,
+            "json": None,
         }
         for uid, (hotkey, stake) in enumerate(zip(metagraph.hotkeys, metagraph.S))
         if is_validator(uid, metagraph, vpermit_rao_limit)
@@ -123,31 +130,32 @@ def time_bucket_id_to_date_range(bucket: int) -> DateRange:
         end=datetime_from_hours_since_epoch(bucket + 1),
     )
 
+
 def parse_iso_date(date_str: str) -> Optional[dt.datetime]:
     """
     Parse ISO date string, handling 'Z' suffix for UTC timezone.
     Assumes UTC for timezone-naive objects and always returns a timezone-aware object.
-    
+
     Args:
         date_str: ISO format date string, potentially with 'Z' suffix
-        
+
     Returns:
         Timezone-aware datetime object or None if parsing fails
     """
     if not date_str:
         return None
-    
+
     # Replace 'Z' with '+00:00' for proper timezone parsing
-    if date_str.endswith('Z'):
-        date_str = date_str[:-1] + '+00:00'
-    
+    if date_str.endswith("Z"):
+        date_str = date_str[:-1] + "+00:00"
+
     try:
         parsed_dt = dt.datetime.fromisoformat(date_str)
-        
+
         # If the parsed datetime is timezone-naive, assume UTC
         if parsed_dt.tzinfo is None:
             parsed_dt = parsed_dt.replace(tzinfo=dt.timezone.utc)
-        
+
         return parsed_dt
     except ValueError as e:
         bt.logging.warning(f"Failed to parse date '{date_str}': {e}")
@@ -309,3 +317,23 @@ def run_in_thread(func: functools.partial, ttl: int, name=None) -> Any:
         bt.logging.trace(f"Completed {name}")
         executor.shutdown(wait=False)
         bt.logging.trace(f"{name} cleaned up successfully")
+
+
+class LRUSet:
+    def __init__(self, capacity: int):
+        self.capacity = capacity
+        self.data = OrderedDict()
+
+    def add(self, key: str) -> bool:
+        if key in self.data:
+            self.data.move_to_end(key)
+            return False  # already seen
+
+        self.data[key] = None
+
+        if len(self.data) > self.capacity:
+            self.data.popitem(last=False)
+        return True
+
+    def __contains__(self, key: str) -> bool:
+        return key in self.data

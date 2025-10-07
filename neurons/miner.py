@@ -15,6 +15,7 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+import asyncio
 from collections import defaultdict
 import copy
 import sys
@@ -30,7 +31,7 @@ from common.protocol import (
     GetDataEntityBucket,
     GetMinerIndex,
     GetContentsByBuckets,
-    REQUEST_LIMIT_BY_TYPE_PER_PERIOD
+    REQUEST_LIMIT_BY_TYPE_PER_PERIOD,
 )
 
 from scraping.config.config_reader import ConfigReader
@@ -38,6 +39,14 @@ from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
+from upload_utils.on_demand_api import (
+    ListActiveJobsRequest,
+    OnDemandClient,
+    OnDemandJob,
+    OnDemandJobPayloadReddit,
+    OnDemandJobPayloadX,
+    OnDemandJobPayloadYoutube,
+)
 from upload_utils.s3_uploader import S3PartitionedUploader
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 
@@ -120,9 +129,9 @@ class Miner:
                 blacklist_fn=self.get_contents_by_buckets_blacklist,
                 priority_fn=self.get_contents_by_buckets_priority,
             ).attach(
-                forward_fn=self.handle_on_demand,
+                forward_fn=self.poll_on_demand_jobs,
                 blacklist_fn=self.handle_on_demand_blacklist,
-                priority_fn=self.handle_on_demand_priority
+                priority_fn=self.handle_on_demand_priority,
             )
 
             bt.logging.success(f"Axon created: {self.axon}.")
@@ -177,6 +186,19 @@ class Miner:
         self.last_cleared_request_limits = dt.datetime.now()
         self.requests_by_type_by_hotkey = defaultdict(lambda: defaultdict(lambda: 0))
 
+        self.data_universe_api_base_url = (
+            "https://data-universe-api-branch-main.api.macrocosmos.ai"
+            if "test" in config.subtensor.network
+            else "https://data-universe-api.api.macrocosmos.ai"
+        )
+        self.verify_ssl = "localhost" not in self.data_universe_api_base_url
+        bt.logging.info(
+            f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
+        )
+
+        self.on_demand_job_queue: asyncio.Queue[OnDemandJob] = asyncio.Queue()
+        self.processed_jobs_cache = utils.LRUSet(capacity=10_000)
+
     def refresh_index(self):
         """
         Refreshes the cached compressed miner index periodically off the hot path of GetMinerIndex requests.
@@ -211,13 +233,17 @@ class Miner:
             try:
                 current_datetime = dt.datetime.utcnow()
 
-                bt.logging.info(f"Checking for update. Last update: {last_update}, Current time: {current_datetime}")
+                bt.logging.info(
+                    f"Checking for update. Last update: {last_update}, Current time: {current_datetime}"
+                )
 
                 # Check if it's a new day and we haven't updated yet
                 if last_update is None or current_datetime.date() > last_update.date():
                     bt.logging.info("Retrieving the latest dynamic lookup...")
                     sync_run_retrieval(self.config)
-                    bt.logging.info(f"New desirable data list has been written to total.json")
+                    bt.logging.info(
+                        f"New desirable data list has been written to total.json"
+                    )
                     last_update = current_datetime
                     bt.logging.info(f"Updated dynamic lookup at {last_update}")
                 else:
@@ -245,7 +271,9 @@ class Miner:
                 if success:
                     bt.logging.success("S3 partitioned upload completed successfully")
                 else:
-                    bt.logging.warning("S3 partitioned upload completed with some failures")
+                    bt.logging.warning(
+                        "S3 partitioned upload completed with some failures"
+                    )
             except Exception:
                 bt.logging.error(traceback.format_exc())
 
@@ -278,6 +306,9 @@ class Miner:
             bt.logging.success(f"Miner starting at {self.last_sync_timestamp}.")
 
         self.scraping_coordinator.run_in_background_thread()
+
+        asyncio.create_task(self.poll_on_demand_jobs())
+        asyncio.create_task(self.process_on_demand_jobs_queue())
 
         while not self.should_exit:
             # This loop maintains the miner's operations until intentionally stopped.
@@ -317,6 +348,136 @@ class Miner:
             # In case of unforeseen errors, the miner will log the error and continue operations.
             except Exception as e:
                 bt.logging.error(traceback.format_exc())
+
+    def _on_demand_client(self) -> OnDemandClient:
+        return OnDemandClient(
+            base_url=self.data_universe_api_base_url,
+            verify_ssl=self.verify_ssl,
+            keypair=self.wallet.hotkey,
+        )
+
+    async def poll_on_demand_jobs(self):
+        while self.is_running:
+            since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
+            bt.logging.info(
+                f"Pulling latest active jobs since {since.strftime("%d/%m/%Y, %H:%M:%S")} UTC"
+            )
+
+            try:
+                async with self._on_demand_client() as client:
+                    active_jobs_response = await client.miner_list_active_jobs(
+                        req=ListActiveJobsRequest(since=since)
+                    )
+            except:
+                bt.logging.exception("Failed to list active jobs")
+                await asyncio.sleep(20.0)
+                continue
+
+            bt.logging.info(
+                f"Adding {len(active_jobs_response.jobs)} to on demand scrape queue"
+            )
+
+            for job in active_jobs_response.jobs:
+                await self.on_demand_job_queue.put(job)
+
+            await asyncio.sleep(20.0)
+
+    async def process_on_demand_jobs_queue(self):
+        while self.is_running:
+            try:
+                job_request = await asyncio.wait_for(
+                    self.on_demand_job_queue.get(), timeout=20.0
+                )
+            except asyncio.TimeoutError:
+                continue
+
+            job_id_already_processed = job_request.id in self.processed_jobs_cache
+            if job_id_already_processed:
+                continue
+
+            self.processed_jobs_cache.add(job_request.id)
+
+            # miner tune this on how fast you can process a job
+            process_on_demand_minimum_duration = dt.timedelta(seconds=10)
+            has_enough_time_to_process = (
+                dt.datetime.now(dt.timezone.utc) + process_on_demand_minimum_duration
+                >= job_request.expire_at
+            )
+            if has_enough_time_to_process:
+                bt.logging.warning(
+                    f"Not enough time to process job that expires at {job_request.expire_at}"
+                )
+                continue
+            
+            task = self.scrape_on_demand_job(job_request=job_request)
+            asyncio.create_task(task)
+            # or await task if you get rate limited / want to process 1 at a time
+
+    async def scrape_on_demand_job(self, job_request: OnDemandJob):
+        bt.logging.info(
+            f"Starting on demand scrape for job with id {job_request.id}:\n\n {job_request}"
+        )
+
+        # map job request to existing synapse on demand
+        usernames: typing.Optional[typing.List[str]] = []
+        keywords: typing.Optional[typing.List[str]] = []
+
+        data_source: DataSource
+        if job_request.job.platform == "x":
+            data_source = DataSource.X
+            x_job: OnDemandJobPayloadX = job_request.job
+            usernames = x_job.usernames
+            keywords = x_job.keywords
+
+        if job_request.job.platform == "youtube":
+            data_source = DataSource.YOUTUBE
+            yt_job: OnDemandJobPayloadYoutube = job_request.job
+            usernames = yt_job.channels
+
+        if job_request.job.platform == "reddit":
+            data_source = DataSource.REDDIT
+            rd_job: OnDemandJobPayloadReddit = job_request.job
+            usernames = rd_job.usernames
+
+            if rd_job.subreddit:
+                keywords = [rd_job.subreddit]
+
+            if rd_job.keywords:
+                keywords.extend(rd_job.keywords)
+
+        # process
+        synapse_resp = await self.poll_on_demand_jobs(
+            synapse=OnDemandRequest(
+                source=data_source,
+                limit=job_request.limit,
+                start_date=(
+                    job_request.start_date.isoformat()
+                    if job_request.start_date
+                    else None
+                ),
+                end_date=(
+                    job_request.end_date.isoformat() if job_request.end_date else None
+                ),
+                keyword_mode=job_request.keyword_mode,
+                usernames=usernames,
+                keywords=keywords,
+                data=[],
+            )
+        )
+
+        data = synapse_resp.data
+        # todo (@vlad, @amy) -- check if we need to do extra wrangling before we upload response
+        # this will be the raw response validator and product gets from each miner, it should have a schema we can validate
+
+        bt.logging.info(
+            f"Submitting and uploading data for job with id {job_request.id}"
+        )
+        try:
+            async with self._on_demand_client() as client:
+                await client.miner_submit_and_upload(job_id=job_request.id, data=data)
+        except:
+            bt.logging.exception(f"Failed to submit and upload data for job with id: {job_request.id}")
+    
 
     def run_in_background_thread(self):
         """
@@ -477,7 +638,7 @@ class Miner:
     ) -> float:
         return self.default_priority(synapse)
 
-    async def handle_on_demand(self, synapse: OnDemandRequest) -> OnDemandRequest:
+    async def poll_on_demand_jobs(self, synapse: OnDemandRequest) -> OnDemandRequest:
         """
         Handle on-demand data requests from validators.
         Uses enhanced scraper for X data while maintaining protocol compatibility.
@@ -486,10 +647,16 @@ class Miner:
 
         try:
             # Create date range with utility function
-            start_dt = (utils.parse_iso_date(synapse.start_date)
-                        if synapse.start_date else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1))
-            end_dt = (utils.parse_iso_date(synapse.end_date)
-                    if synapse.end_date else dt.datetime.now(dt.timezone.utc))
+            start_dt = (
+                utils.parse_iso_date(synapse.start_date)
+                if synapse.start_date
+                else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+            )
+            end_dt = (
+                utils.parse_iso_date(synapse.end_date)
+                if synapse.end_date
+                else dt.datetime.now(dt.timezone.utc)
+            )
 
             # Fallback to default dates if parsing failed
             if start_dt is None:
@@ -503,33 +670,43 @@ class Miner:
             if synapse.source == DataSource.X:
                 # Initialize the standard scraper (now includes low-engagement posts)
                 scraper = ApiDojoTwitterScraper()
-                data_entities = await scraper.on_demand_scrape(usernames=synapse.usernames,
-                                                               keywords=synapse.keywords,
-                                                               keyword_mode=synapse.keyword_mode,
-                                                               start_datetime=start_dt,
-                                                               end_datetime=end_dt,
-                                                               limit=synapse.limit)
+                data_entities = await scraper.on_demand_scrape(
+                    usernames=synapse.usernames,
+                    keywords=synapse.keywords,
+                    keyword_mode=synapse.keyword_mode,
+                    start_datetime=start_dt,
+                    end_datetime=end_dt,
+                    limit=synapse.limit,
+                )
 
                 # Update response with data entities (already includes all enhanced fields)
-                synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
+                synapse.data = (
+                    data_entities[: synapse.limit] if synapse.limit else data_entities
+                )
 
             elif synapse.source == DataSource.REDDIT:
                 # Create a new scraper provider and get the appropriate scraper
                 scraper = RedditCustomScraper()
 
                 if not scraper:
-                    bt.logging.error(f"No scraper available for ID: {ScraperId.REDDIT_CUSTOM}")
+                    bt.logging.error(
+                        f"No scraper available for ID: {ScraperId.REDDIT_CUSTOM}"
+                    )
                     synapse.data = []
                     return synapse
 
-                data = await scraper.on_demand_scrape(usernames=synapse.usernames,
-                                                      subreddit=synapse.keywords[0] if synapse.keywords else None,
-                                                      keywords=synapse.keywords[1:] if len(synapse.keywords) > 1 else None,
-                                                      keyword_mode=synapse.keyword_mode,
-                                                      start_datetime=start_dt,
-                                                      end_datetime=end_dt,
-                                                      limit=synapse.limit)
-                synapse.data = data[:synapse.limit] if synapse.limit else data
+                data = await scraper.on_demand_scrape(
+                    usernames=synapse.usernames,
+                    subreddit=synapse.keywords[0] if synapse.keywords else None,
+                    keywords=(
+                        synapse.keywords[1:] if len(synapse.keywords) > 1 else None
+                    ),
+                    keyword_mode=synapse.keyword_mode,
+                    start_datetime=start_dt,
+                    end_datetime=end_dt,
+                    limit=synapse.limit,
+                )
+                synapse.data = data[: synapse.limit] if synapse.limit else data
 
             elif synapse.source == DataSource.YOUTUBE:
                 # Create a new scraper provider and get the YouTube scraper
@@ -537,25 +714,31 @@ class Miner:
                 scraper = provider.get(ScraperId.YOUTUBE_MULTI_ACTOR)
 
                 if not scraper:
-                    bt.logging.error(f"No scraper available for ID {ScraperId.YOUTUBE_MULTI_ACTOR}")
+                    bt.logging.error(
+                        f"No scraper available for ID {ScraperId.YOUTUBE_MULTI_ACTOR}"
+                    )
                     synapse.data = []
                     return synapse
 
                 # Extract channel identifier from usernames
                 channel_identifier = synapse.usernames[0] if synapse.usernames else None
                 if not channel_identifier:
-                    bt.logging.error("No channel identifier provided for YouTube scraping")
+                    bt.logging.error(
+                        "No channel identifier provided for YouTube scraping"
+                    )
                     synapse.data = []
                     return synapse
-                
+
                 data_entities = await scraper.scrape(
                     channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
                     max_videos=synapse.limit or 10,
                     start_date=start_dt.isoformat(),
                     end_date=end_dt.isoformat(),
-                    language="en"
+                    language="en",
                 )
-                synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
+                synapse.data = (
+                    data_entities[: synapse.limit] if synapse.limit else data_entities
+                )
 
             synapse.version = constants.PROTOCOL_VERSION
 
@@ -571,14 +754,12 @@ class Miner:
         return synapse
 
     async def handle_on_demand_blacklist(
-            self, synapse: OnDemandRequest
+        self, synapse: OnDemandRequest
     ) -> typing.Tuple[bool, str]:
         """Blacklist function for on-demand requests"""
         return self.default_blacklist(synapse)
 
-    async def handle_on_demand_priority(
-            self, synapse: OnDemandRequest
-    ) -> float:
+    async def handle_on_demand_priority(self, synapse: OnDemandRequest) -> float:
         """Priority function for on-demand requests"""
         return self.default_priority(synapse)
 
@@ -636,7 +817,7 @@ class Miner:
             )
 
         uid = self.metagraph.hotkeys.index(hotkey)
-        
+
         if not utils.is_validator(uid, self.metagraph, self.vpermit_rao_limit):
             return (
                 True,
