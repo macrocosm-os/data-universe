@@ -39,7 +39,7 @@ from scraping.coordinator import ScraperCoordinator
 from scraping.provider import ScraperProvider
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
-from on_demand_api import (
+from data_universe_api import (
     ListActiveJobsRequest,
     OnDemandClient,
     OnDemandJob,
