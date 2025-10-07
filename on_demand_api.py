@@ -12,7 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from substrateinterface.keypair import Keypair
 import httpx
 
-TEN_MB_BYTES =10 * 1_000_000
+TEN_MB_BYTES = 10 * 1_000_000
+
 
 class OnDemandJobPayloadX(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -92,7 +93,7 @@ class SubmitJobRequest(BaseModel):
 
 
 class SubmitOnDemandJobResponse(BaseModel):
-    presigned_upload_url: str
+    presigned_post_upload_data: dict
 
 
 class GetJobSubmissionsResponse(BaseModel):
@@ -265,15 +266,30 @@ class OnDemandClient:
         submit_req = SubmitJobRequest(submission=OnDemandJobSubmission(job_id=job_id))
 
         submit_resp = await self.miner_submit_job(submit_req)
-        url = submit_resp.presigned_upload_url
-        if not url:
-            raise RuntimeError("Server did not return a presigned_upload_url.")
+        presigned = submit_resp.presigned_post_upload_data
+        if not presigned or "url" not in presigned or "fields" not in presigned:
+            raise RuntimeError("Server did not return a valid presigned_post_upload_data (missing url/fields).")
+
+        # Build the multipart request:
+        # - All fields from the signer must be included as regular form fields
+        # - The payload goes in the "file" part
+        fields = dict(presigned["fields"])  # policy, signature, key, Content-Type, etc.
+
+        # If signer pinned Content-Type, mirror it on the file part; otherwise default to JSON
+        content_type = fields.get("Content-Type", "application/json")
+        files = {
+            "file": ("data.json", json.dumps(data), content_type),
+        }
 
         client = self._ensure_client()
-        put_resp = await client.put(url, content=json.dumps(data))
-        _raise_for_status(put_resp)
+        post_resp = await client.post(presigned["url"], data=fields, files=files)
+
+        # S3 presigned POST usually returns 204; some setups return 201/200
+        if post_resp.status_code not in (204, 201, 200):
+            raise RuntimeError(f"Upload failed: {post_resp.status_code} {post_resp.text}")
 
         return submit_resp
+
 
     async def validator_list_jobs_with_submissions(
         self, req: ListJobsWithSubmissionsForValidationRequest
@@ -297,7 +313,7 @@ class OnDemandClient:
         *,
         max_parallelism: int = 8,
         job_ids_to_skip_downloading: Set[str] = set(),
-        file_size_limit_bytes : int = TEN_MB_BYTES
+        file_size_limit_bytes: int = TEN_MB_BYTES,
     ) -> tuple[ListJobsWithSubmissionForValidationResponse, list[dict]]:
         """
         Calls /on-demand/validator/jobs and concurrently downloads the JSON bodies
@@ -333,7 +349,7 @@ class OnDemandClient:
         tasks: list[asyncio.Task] = []
 
         async def _fetch_one(job_id: str, sub: OnDemandJobSubmission) -> Any:
-            
+
             if not getattr(sub, "s3_content_length"):
                 return {
                     "job_id": job_id,
@@ -348,8 +364,8 @@ class OnDemandClient:
                     "error": "missing s3 content length",
                     "data": None,
                 }
-            
-            length_bytes = sub['s3_content_length']
+
+            length_bytes = sub["s3_content_length"]
             if length_bytes > file_size_limit_bytes:
                 return {
                     "job_id": job_id,
@@ -364,7 +380,6 @@ class OnDemandClient:
                     "error": "file size above limit",
                     "data": None,
                 }
- 
 
             url = getattr(sub, "s3_presigned_url", None)
             if not url:
@@ -395,7 +410,9 @@ class OnDemandClient:
                             "s3_path": getattr(sub, "s3_path", None),
                             "s3_last_modified": getattr(sub, "s3_last_modified", None),
                             "s3_etag": getattr(sub, "s3_etag", None),
-                            "s3_content_length": getattr(sub, "s3_content_length", None),
+                            "s3_content_length": getattr(
+                                sub, "s3_content_length", None
+                            ),
                             "url": url,
                             "status": status,
                             "ok": True,
@@ -409,7 +426,9 @@ class OnDemandClient:
                             "s3_path": getattr(sub, "s3_path", None),
                             "s3_last_modified": getattr(sub, "s3_last_modified", None),
                             "s3_etag": getattr(sub, "s3_etag", None),
-                            "s3_content_length": getattr(sub, "s3_content_length", None),
+                            "s3_content_length": getattr(
+                                sub, "s3_content_length", None
+                            ),
                             "url": url,
                             "status": status,
                             "ok": False,
@@ -446,6 +465,7 @@ class OnDemandClient:
                 downloads.append(await coro)
 
         return validator_resp, downloads
+
 
 def _raise_for_status(resp: httpx.Response) -> None:
     if 200 <= resp.status_code < 300:
