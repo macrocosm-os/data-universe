@@ -41,7 +41,7 @@ from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from neurons.config import NeuronType, check_config, create_config
 from data_universe_api import (
     ListActiveJobsRequest,
-    OnDemandClient,
+    DataUniverseApiClient,
     OnDemandJob,
     OnDemandJobPayloadReddit,
     OnDemandJobPayloadX,
@@ -349,8 +349,8 @@ class Miner:
             except Exception as e:
                 bt.logging.error(traceback.format_exc())
 
-    def _on_demand_client(self) -> OnDemandClient:
-        return OnDemandClient(
+    def _on_demand_client(self) -> DataUniverseApiClient:
+        return DataUniverseApiClient(
             base_url=self.data_universe_api_base_url,
             verify_ssl=self.verify_ssl,
             keypair=self.wallet.hotkey,

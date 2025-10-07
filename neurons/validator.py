@@ -33,7 +33,7 @@ from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
 from data_universe_api import (
     ListJobsWithSubmissionsForValidationRequest,
-    OnDemandClient,
+    DataUniverseApiClient,
 )
 from vali_utils.validator_s3_access import ValidatorS3Access
 from rewards.data_value_calculator import DataValueCalculator
@@ -196,8 +196,8 @@ class Validator:
             f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
         )
 
-    def _on_demand_client(self) -> OnDemandClient:
-        return OnDemandClient(
+    def _on_demand_client(self) -> DataUniverseApiClient:
+        return DataUniverseApiClient(
             base_url=self.data_universe_api_base_url,
             verify_ssl=self.verify_ssl,
             keypair=self.wallet.hotkey,

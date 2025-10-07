@@ -149,7 +149,7 @@ class TaoSigner:
         }
 
 
-class OnDemandClient:
+class DataUniverseApiClient:
     """
     Async client for:
       - POST /on-demand/miner/jobs/active
@@ -186,7 +186,7 @@ class OnDemandClient:
         self._verify_ssl = verify_ssl
         self._client: Optional[httpx.AsyncClient] = None
 
-    async def __aenter__(self) -> "OnDemandClient":
+    async def __aenter__(self) -> "DataUniverseApiClient":
         self._client = httpx.AsyncClient(
             base_url=self.base_url,
             timeout=self._timeout,
