@@ -315,36 +315,11 @@ class DataUniverseApiClient:
         req: ListJobsWithSubmissionsForValidationRequest,
         *,
         max_parallelism: int = 8,
-        job_ids_to_skip_downloading: Set[str] = set(),
+        job_ids_to_skip_downloading: Optional[Set[str]] = None,
         file_size_limit_bytes: int = TEN_MB_BYTES,
     ) -> tuple[ListJobsWithSubmissionForValidationResponse, list[dict]]:
-        """
-        Calls /on-demand/validator/jobs and concurrently downloads the JSON bodies
-        of all returned submissions via their presigned URLs.
+        job_ids_to_skip_downloading = job_ids_to_skip_downloading or set()
 
-        Returns:
-            (validator_response, downloads)
-            - validator_response: your ListJobsWithSubmissionForValidationResponse
-            - downloads: list of dicts with:
-                {
-                  "job_id": str,
-                  "miner_hotkey": str | None,
-                  "s3_path": str | None,
-                  "s3_last_modified": str | None,
-                  "s3_etag": str | None,
-                  "s3_content_length": int | None,
-                  "url": str,
-                  "status": int,
-                  "ok": bool,
-                  "error": str | None,
-                  "data": Any  # parsed JSON on success
-                }
-        Notes:
-            - Skips submissions without a usable 's3_presigned_url'.
-            - Respects `max_parallelism` using an asyncio.Semaphore.
-            - Uses the same underlying httpx.AsyncClient (inherits timeout/verify).
-        """
-        # First, list jobs with submissions
         validator_resp = await self.validator_list_jobs_with_submissions(req)
         bt.logging.debug(f"Validator job list with submissions:\n\n{validator_resp}")
 
@@ -352,113 +327,61 @@ class DataUniverseApiClient:
         sem = asyncio.Semaphore(max_parallelism)
         tasks: list[asyncio.Task] = []
 
-        async def _fetch_one(job_id: str, sub: OnDemandJobSubmission) -> Any:
-            if not getattr(sub, "s3_content_length"):
-                return {
-                    "job_id": job_id,
-                    "miner_hotkey": getattr(sub, "miner_hotkey", None),
-                    "s3_path": getattr(sub, "s3_path", None),
-                    "s3_last_modified": getattr(sub, "s3_last_modified", None),
-                    "s3_etag": getattr(sub, "s3_etag", None),
-                    "s3_content_length": getattr(sub, "s3_content_length", None),
-                    "url": None,
-                    "status": 0,
-                    "ok": False,
-                    "error": "missing s3 content length",
-                    "data": None,
-                }
-
-            length_bytes = sub["s3_content_length"]
-            if length_bytes > file_size_limit_bytes:
-                return {
-                    "job_id": job_id,
-                    "miner_hotkey": getattr(sub, "miner_hotkey", None),
-                    "s3_path": getattr(sub, "s3_path", None),
-                    "s3_last_modified": getattr(sub, "s3_last_modified", None),
-                    "s3_etag": getattr(sub, "s3_etag", None),
-                    "s3_content_length": getattr(sub, "s3_content_length", None),
-                    "url": None,
-                    "status": 0,
-                    "ok": False,
-                    "error": "file size above limit",
-                    "data": None,
-                }
-
+        async def _fetch_one(job_id: str, sub: OnDemandJobSubmission):
+            # Pull fields via getattr only
+            miner_hotkey = getattr(sub, "miner_hotkey", None)
+            s3_path = getattr(sub, "s3_path", None)
+            s3_last_modified = getattr(sub, "s3_last_modified", None)
+            s3_etag = getattr(sub, "s3_etag", None)
+            length = getattr(sub, "s3_content_length", None)
             url = getattr(sub, "s3_presigned_url", None)
-            if not url:
+
+            def base(ok: bool, status: int = 0, error: str | None = None, data=None, url_out=None):
                 return {
                     "job_id": job_id,
-                    "miner_hotkey": getattr(sub, "miner_hotkey", None),
-                    "s3_path": getattr(sub, "s3_path", None),
-                    "s3_last_modified": getattr(sub, "s3_last_modified", None),
-                    "s3_etag": getattr(sub, "s3_etag", None),
-                    "s3_content_length": getattr(sub, "s3_content_length", None),
-                    "url": None,
-                    "status": 0,
-                    "ok": False,
-                    "error": "missing presigned url",
-                    "data": None,
+                    "miner_hotkey": miner_hotkey,
+                    "s3_path": s3_path,
+                    "s3_last_modified": s3_last_modified,
+                    "s3_etag": s3_etag,
+                    "s3_content_length": length,
+                    "url": url_out if ok else None,
+                    "status": status,
+                    "ok": ok,
+                    "error": error,
+                    "data": data,
                 }
+
+            if length is None:
+                return base(False, error="missing s3 content length")
+            try:
+                length_int = int(length)
+            except Exception:
+                return base(False, error=f"invalid s3 content length: {length!r}")
+            if length_int > file_size_limit_bytes:
+                return base(False, error="file size above limit")
+            if not url:
+                return base(False, error="missing presigned url")
 
             async with sem:
                 try:
-                    r = await client.get(url)
+                    r = await client.get(url, follow_redirects=True, timeout=60.0)
                     status = r.status_code
                     if 200 <= status < 300:
-
-                        data = json.load(r)
-                        return {
-                            "job_id": job_id,
-                            "miner_hotkey": getattr(sub, "miner_hotkey", None),
-                            "s3_path": getattr(sub, "s3_path", None),
-                            "s3_last_modified": getattr(sub, "s3_last_modified", None),
-                            "s3_etag": getattr(sub, "s3_etag", None),
-                            "s3_content_length": getattr(
-                                sub, "s3_content_length", None
-                            ),
-                            "url": url,
-                            "status": status,
-                            "ok": True,
-                            "error": None,
-                            "data": data,
-                        }
-                    else:
-                        return {
-                            "job_id": job_id,
-                            "miner_hotkey": getattr(sub, "miner_hotkey", None),
-                            "s3_path": getattr(sub, "s3_path", None),
-                            "s3_last_modified": getattr(sub, "s3_last_modified", None),
-                            "s3_etag": getattr(sub, "s3_etag", None),
-                            "s3_content_length": getattr(
-                                sub, "s3_content_length", None
-                            ),
-                            "url": url,
-                            "status": status,
-                            "ok": False,
-                            "error": r.text,
-                            "data": None,
-                        }
+                        try:
+                            data = r.json()
+                        except Exception:
+                            data = json.loads(r.text)
+                        return base(True, status=status, data=data, url_out=str(r.url))
+                    
+                    body_snip = r.text[:500]
+                    return base(False, status=status, error=body_snip)
                 except Exception as e:
-                    return {
-                        "job_id": job_id,
-                        "miner_hotkey": getattr(sub, "miner_hotkey", None),
-                        "s3_path": getattr(sub, "s3_path", None),
-                        "s3_last_modified": getattr(sub, "s3_last_modified", None),
-                        "s3_etag": getattr(sub, "s3_etag", None),
-                        "s3_content_length": getattr(sub, "s3_content_length", None),
-                        "url": url,
-                        "status": 0,
-                        "ok": False,
-                        "error": str(e),
-                        "data": None,
-                    }
+                    return base(False, error=str(e))
 
-        # Schedule downloads
         for jws in validator_resp.jobs_with_submissions:
             job_id = jws.job.id
             if job_id in job_ids_to_skip_downloading:
                 continue
-
             for sub in jws.submissions:
                 tasks.append(asyncio.create_task(_fetch_one(job_id, sub)))
 
@@ -466,9 +389,8 @@ class DataUniverseApiClient:
         if tasks:
             for coro in asyncio.as_completed(tasks):
                 downloads.append(await coro)
-        
-        return validator_resp, downloads
 
+        return validator_resp, downloads
 
 def _raise_for_status(resp: httpx.Response) -> None:
     if 200 <= resp.status_code < 300:
