@@ -590,7 +590,11 @@ def _validate_engagement_field(
 
     # Calculate tolerance first to determine what small decreases are acceptable
     tolerance = _calculate_engagement_tolerance(field_name, submitted_value, tweet_age)
-    small_tolerance = max(min(tolerance // 10, 5), 2)
+
+    # Dynamic small tolerance for decreases based on engagement size
+    # Allow 1% decrease with appropriate minimums for each metric
+    # This handles spam removal, deleted retweets, quote tweet conversions, etc.
+    small_tolerance = max(int(submitted_value * 0.01), 10)  # 1% with min 10 for all metrics
 
     # Allow small decreases for edge cases (spam removal, deleted retweets, etc.)
     # The submitted value is what miner scraped (older, potentially lower)
