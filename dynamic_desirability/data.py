@@ -109,13 +109,18 @@ class JobParams(BaseModel):
         if self.keyword is None and self.label is None:
             raise ValueError("At least one of 'keyword' or 'label' must be provided")
         
-        # YouTube-specific validation
+        # YouTube-specific validation: either keyword (video URL) OR label (channel), but not both
         if self.platform == 'youtube':
-            if self.label is None:
-                raise ValueError("YouTube jobs must have a label (channel name)")
-            if self.keyword is not None:
-                raise ValueError("YouTube jobs cannot have keywords - use label for channel name only")
+            if self.keyword is not None and self.label is not None:
+                raise ValueError("YouTube jobs cannot have both keyword and label - use either keyword (video URL) OR label (channel)")
+            if self.keyword is None and self.label is None:
+                raise ValueError("YouTube jobs must have either keyword (video URL) OR label (channel)")
             
+            # Validate YouTube URL format if keyword is provided
+            if self.keyword is not None:
+                if not self._is_youtube_url(self.keyword):
+                    raise ValueError("YouTube keyword must be a valid YouTube URL")
+                    
         # Validate datetime order if both are present
         start = self.post_start_datetime
         end = self.post_end_datetime
@@ -128,6 +133,17 @@ class JobParams(BaseModel):
                 raise ValueError("post_start_datetime must be before post_end_datetime")
                 
         return self
+    
+    def _is_youtube_url(self, url: str) -> bool:
+        """Check if URL is a YouTube URL - minimal validation for desirability"""
+        if not url or not isinstance(url, str):
+            return False
+        
+        url = url.strip().lower()
+        
+        # Basic domain check - same as API validation
+        youtube_domains = ['youtube.com', 'youtu.be', 'm.youtube.com']
+        return any(domain in url for domain in youtube_domains)
 
 
 class Job(BaseModel):
