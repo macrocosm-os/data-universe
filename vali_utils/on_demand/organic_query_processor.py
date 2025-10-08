@@ -591,19 +591,32 @@ class OrganicQueryProcessor:
                                                                    end_datetime=end_date,
                                                                    limit=synapse.limit)
             elif synapse.source.upper() == 'YOUTUBE':
-                # Extract channel URL/identifier from username
-                channel_identifier = synapse.usernames[0] if synapse.usernames else None
-                if not channel_identifier:
-                    bt.logging.error("No channel identifier provided for YouTube verification")
+                # Determine YouTube scraping mode: channel or video URL
+                valid_usernames = [u.strip() for u in synapse.usernames if u and u.strip()]
+                valid_keywords = [k.strip() for k in synapse.keywords if k and k.strip()]
+                
+                if valid_usernames:
+                    # Channel mode
+                    channel_identifier = valid_usernames[0]
+                    bt.logging.info(f"YouTube verification: channel scraping @{channel_identifier}")
+                    verification_data = await scraper.scrape(
+                        channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
+                        max_videos=synapse.limit or 10,
+                        start_date=start_date.isoformat(),
+                        end_date=end_date.isoformat(),
+                        language="en"
+                    )
+                elif valid_keywords:
+                    # Video URL mode
+                    youtube_url = valid_keywords[0]
+                    bt.logging.info(f"YouTube verification: video URL scraping {youtube_url}")
+                    verification_data = await scraper.scrape(
+                        youtube_url=youtube_url,
+                        language="en"
+                    )
+                else:
+                    bt.logging.error("YouTube verification needs either username (channel) or keyword (video URL)")
                     return None
-
-                verification_data = await scraper.scrape(
-                    channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
-                    max_videos=synapse.limit or 10,
-                    start_date=start_date.isoformat(),
-                    end_date=end_date.isoformat(),
-                    language="en"
-                )
             
             return verification_data if verification_data else None
             
