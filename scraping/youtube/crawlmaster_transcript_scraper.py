@@ -206,27 +206,7 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 bt.logging.info(
                     f"Validating video {content_to_validate.video_id} in original language: {original_language}")
 
-                # Get raw actor payload
-                meta_data = await self._get_meta_from_actor(content_to_validate.video_id, original_language)
-                if not meta_data:
-                    results.append(ValidationResult(
-                        is_valid=False,
-                        reason="Video metadata not available in original language",
-                        content_size_bytes_validated=entity.content_size_bytes
-                    ))
-                    continue
-
-                # Validate view count (minimum engagement check)
-                view_count = meta_data.get('view_count', 0)
-                if int(view_count) < 100:
-                    results.append(ValidationResult(
-                        is_valid=False,
-                        reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
-                        content_size_bytes_validated=entity.content_size_bytes
-                    ))
-                    continue
-
-                # Convert actor payload to DataEntity for comparison
+                # Scrape fresh data from actor (single call)
                 actual_entities = await self.scrape(
                     youtube_url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
                     language=original_language
@@ -241,6 +221,17 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     continue
 
                 actual_entity = actual_entities[0]
+
+                # Validate view count (minimum engagement check) from scraped entity
+                actual_content = YouTubeContent.from_data_entity(actual_entity)
+                view_count = actual_content.view_count or 0
+                if int(view_count) < 100:
+                    results.append(ValidationResult(
+                        is_valid=False,
+                        reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
 
                 # Use unified validation function
                 validation_result = youtube_utils.validate_youtube_data_entities(
