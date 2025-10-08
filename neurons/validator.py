@@ -18,6 +18,7 @@
 from collections import defaultdict
 import copy
 import json
+import random
 import sys
 import torch
 import numpy as np
@@ -326,8 +327,6 @@ class Validator:
                     f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
                 )
 
-                hotkeys_that_did_not_upload = set()
-
                 # validate
                 for (
                     job_with_submission
@@ -338,23 +337,23 @@ class Validator:
                         continue
 
                     submissions = job_with_submission.submissions
+                    submissions_with_valid_downloads = [
+                        sub for sub in submissions 
+                        if sub.miner_hotkey in job_data_per_job_id_and_miner_hotkey[job.id] 
+                        and job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['error'] is None
+                    ]
 
-                    # punish miners that did submit but did not upload
-                    for submission in submissions:
-                        if submission.s3_presigned_url is None:
-                            hotkeys_that_did_not_upload.add(submission.miner_hotkey)
-                            continue
-                        
-                        has_data = submission.miner_hotkey in job_data_per_job_id_and_miner_hotkey[
-                            job.id
-                        ]
-                        if has_data:
-                            data_download_for_submission = job_data_per_job_id_and_miner_hotkey[
-                                job.id
-                            ][submission.miner_hotkey]["data"]
-                        # schema validate, field validation, rescrape validation, etc
+                    if len(submissions_with_valid_downloads) > 15: # amount of miners to validate per job id
+                        random.shuffle(submissions_with_valid_downloads)
+                        submissions_with_valid_downloads = submissions_with_valid_downloads[:15]
+                    
+                    for sub in submissions_with_valid_downloads:
+                        # job.id
+                        miner_hotkey = sub.miner_hotkey
+                        miner_uploaded_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data']
 
-                    # punish registered miners that did not even submit or burn
+                        # validate miner data
+                        # todo (@amy)
 
                 if use_cache:
                     job_ids_processed_in_this_loop_not_already_in_cache = set([ job_id for job_id in set(job_data_per_job_id_and_miner_hotkey.keys()) if job_id not in self.processed_job_ids_cache])
