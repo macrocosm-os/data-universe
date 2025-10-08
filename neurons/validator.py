@@ -291,7 +291,7 @@ class Validator:
                     jobs_with_submissions_downloaded_response = (
                         await client.validator_list_and_download_submission_json(
                             req=ListJobsWithSubmissionsForValidationRequest(
-                                expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=30),
+                                expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=10),
                                 limit=10, 
                             ),
                             job_ids_to_skip_downloading=set(self.processed_job_ids_cache.data.keys())
@@ -308,7 +308,10 @@ class Validator:
                     jobs_with_submissions_downloaded_response
                 )
 
-                job_data_per_job_id_and_miner_hotkey = defaultdict(dict)
+                job_data_per_job_id_and_miner_hotkey = {}
+
+                for job_with_submissions in job_list_with_submissions_resp.jobs_with_submissions:
+                    job_data_per_job_id_and_miner_hotkey[job_with_submissions.job.id] = {} # job id -> hotkey
 
                 for download in downloads:
                     job_id = download["job_id"]
