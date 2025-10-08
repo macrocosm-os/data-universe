@@ -7,33 +7,29 @@
 ### Base URL selection
 ### Toggle the desired line (comment/uncomment)
 ### ---------------------
-@baseUrl = https://data-universe-api-branch-main.api.macrocosmos.ai   // TESTNET_URL
-# @baseUrl = https://data-universe-api.api.macrocosmos.ai             // MAINNET_URL
+@baseUrl = https://data-universe-api-branch-main.api.macrocosmos.ai 
+# @baseUrl = https://data-universe-api.api.macrocosmos.ai             
 
 ### ---------------------
 ### API Key (from env)
 ### ---------------------
-@apiKey = {{$dotenv CONSTELLATION_API_KEY}} || {{$processEnv CONSTELLATION_API_KEY}}
+@apiKey = {{$dotenv CONSTELLATION_API_KEY}}
 
 
 ### ---------------------------------------------------------
 ### 1) Create On-Demand Job (X) — keywords: #ai (sample)
 ### ---------------------------------------------------------
 # @name create_x_job
-POST {{baseUrl}}/constellation/jobs
-Content-Type: application/json
-Accept: application/json
+POST {{baseUrl}}/on-demand/constellation/jobs
 X-API-Key: {{apiKey}}
+Content-Type: application/json
 
 {
   "job": {
     "job": {
       "platform": "x",
-      "usernames": null,
-      "keywords": ["#ai"]
+      "keywords": ["#bittensor"]
     },
-    "start_date": null,
-    "end_date": null,
     "limit": 100,
     "keyword_mode": "any"
   }
@@ -45,35 +41,30 @@ X-API-Key: {{apiKey}}
 ###     You can also scope to a subreddit by setting "subreddit": "r/ai"
 ### ---------------------------------------------------------
 # @name create_reddit_job
-POST {{baseUrl}}/constellation/jobs
-Content-Type: application/json
-Accept: application/json
+POST {{baseUrl}}/on-demand/constellation/jobs
 X-API-Key: {{apiKey}}
+Content-Type: application/json
 
 {
   "job": {
     "job": {
       "platform": "reddit",
-      "subreddit": null,
-      "usernames": null,
-      "keywords": ["#ai"]
+      "keywords": ["#bittensor"]
     },
-    "start_date": null,
-    "end_date": null,
     "limit": 100,
     "keyword_mode": "any"
   }
 }
 
 
+
 ### ---------------------------------------------------------
 ### 3) Create On-Demand Job (YouTube) — channel: @MrBeast (sample)
 ### ---------------------------------------------------------
 # @name create_youtube_job
-POST {{baseUrl}}/constellation/jobs
-Content-Type: application/json
-Accept: application/json
+POST {{baseUrl}}/on-demand/constellation/jobs
 X-API-Key: {{apiKey}}
+Content-Type: application/json
 
 {
   "job": {
@@ -81,8 +72,6 @@ X-API-Key: {{apiKey}}
       "platform": "youtube",
       "channels": ["@MrBeast"]
     },
-    "start_date": null,
-    "end_date": null,
     "limit": 100,
     "keyword_mode": "any"
   }
@@ -92,6 +81,6 @@ X-API-Key: {{apiKey}}
 ### ---------------------------------------------------------
 ### GET job submission(s)
 ### ---------------------------------------------------------
-GET {{baseUrl}}/constellation/jobs/{{jobIdX}}
+GET {{baseUrl}}/on-demand/constellation/jobs/8b5c46da-f3aa-4815-af41-ff8697b63828
 Accept: application/json
 X-API-Key: {{apiKey}}
