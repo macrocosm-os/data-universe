@@ -199,6 +199,12 @@ class YouTubeOrganicOutput(BaseModel):
     url: str
     duration_seconds: int
     language: str
+    thumbnails: str
+    view_count: int
+    like_count: int
+    # Conditional fields (can be missing/null)
+    description: Optional[str] = None
+    subscriber_count: Optional[int] = None
     
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "YouTubeOrganicOutput":
@@ -233,6 +239,13 @@ class YouTubeOrganicOutput(BaseModel):
             url=youtube_content.url,
             duration_seconds=youtube_content.duration_seconds,
             language=youtube_content.language,
+            # New required fields
+            thumbnails=youtube_content.thumbnails or "", #TODO: remove fallback values after YT fields are required on YouTubeContent
+            view_count=youtube_content.view_count or 0,
+            like_count=youtube_content.like_count or 0,
+            # Conditional fields
+            description=youtube_content.description,
+            subscriber_count=youtube_content.subscriber_count,
         )
 
 
@@ -412,6 +425,9 @@ def _validate_youtube_metadata_completeness(data_entity: DataEntity) -> tuple[bo
             ('url', youtube_content.url),
             ('duration_seconds', youtube_content.duration_seconds),
             ('language', youtube_content.language),
+            ('thumbnails', youtube_content.thumbnails),
+            ('view_count', youtube_content.view_count),
+            ('like_count', youtube_content.like_count),
         ]
         
         for field_name, field_value in required_fields:
