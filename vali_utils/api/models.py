@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Dict, Any
 import datetime as dt
+import bittensor as bt
 from common.data import DataSource, StrictBaseModel
 from common.protocol import KeywordMode
 
@@ -61,17 +62,30 @@ class QueryRequest(StrictBaseModel):
 
     @field_validator('usernames')
     @classmethod
-    def validate_usernames_for_youtube(cls, v: List[str], info) -> List[str]:
-        # Get the source from the model context
+    def validate_usernames(cls, v: List[str], info) -> List[str]:
         source = info.data.get('source', '').upper()
         
-        if source == 'YOUTUBE':
-            if len(v) != 1:
-                raise ValueError("YouTube requests must have exactly one username")
-            if not v[0].strip():
-                raise ValueError("YouTube username cannot be empty")
+        # Clean usernames by removing empty/whitespace-only strings
+        cleaned_usernames = [username.strip() for username in v if username and username.strip()]
         
-        return v
+        # Source-specific validation
+        if source == 'YOUTUBE':
+            if len(cleaned_usernames) != 1:
+                raise ValueError("YouTube requests must have exactly one non-empty username")
+        
+        if len(cleaned_usernames) < len(v):
+            removed_count = len(v) - len(cleaned_usernames)
+            bt.logging.warning(f"Filtered out {removed_count} empty username(s) from request")
+        
+        return cleaned_usernames
+    
+    @model_validator(mode='after')
+    def validate_x_requirements(self):
+        """Validate that X requests have either usernames or keywords"""
+        if self.source.upper() == 'X':
+            if not self.usernames and not self.keywords:
+                raise ValueError("X requests must have either usernames or keywords (or both)")
+        return self
 
     @field_validator('keywords')
     @classmethod
