@@ -43,7 +43,7 @@ import warnings
 import requests
 from dotenv import load_dotenv
 import bittensor as bt
-from typing import Tuple
+from typing import Dict, Tuple
 from common.organic_protocol import OrganicRequest
 from common import constants
 from common import utils
@@ -283,6 +283,9 @@ class Validator:
         bt.logging.debug(f"Started a new wandb run: {name}")
 
     async def loop_poll_on_demand_jobs_with_submissions(self):
+        use_cache = True
+        use_cache = False # for dev
+
         while not self.should_exit:
             bt.logging.info("Pulling on demand jobs with submissions")
 
@@ -308,7 +311,7 @@ class Validator:
                     jobs_with_submissions_downloaded_response
                 )
 
-                job_data_per_job_id_and_miner_hotkey = {}
+                job_data_per_job_id_and_miner_hotkey : Dict[str, Dict[str, Dict]]= {} # d[job id][miner hotkey]{download data}
 
                 for job_with_submissions in job_list_with_submissions_resp.jobs_with_submissions:
                     job_data_per_job_id_and_miner_hotkey[job_with_submissions.job.id] = {} # job id -> hotkey
@@ -330,7 +333,8 @@ class Validator:
                     job_with_submission
                 ) in job_list_with_submissions_resp.jobs_with_submissions:
                     job = job_with_submission.job
-                    if job.id in self.processed_job_ids_cache:
+
+                    if use_cache and job.id in self.processed_job_ids_cache:
                         continue
 
                     submissions = job_with_submission.submissions
@@ -350,10 +354,14 @@ class Validator:
                             ][submission.miner_hotkey]["data"]
                         # schema validate, field validation, rescrape validation, etc
 
-                    # punish registered miners that did not even submit
+                    # punish registered miners that did not even submit or burn
 
-                for job_id in job_data_per_job_id_and_miner_hotkey.keys():
-                    self.processed_job_ids_cache.add(job_id)
+                if use_cache:
+                    job_ids_processed_in_this_loop_not_already_in_cache = set([ job_id for job_id in set(job_data_per_job_id_and_miner_hotkey.keys()) if job_id not in self.processed_job_ids_cache])
+                    bt.logging.info(f"Adding processed on demand job ids to cache: {job_ids_processed_in_this_loop_not_already_in_cache}")
+                    for job_id in job_ids_processed_in_this_loop_not_already_in_cache:
+                        if job_id not in self.processed_job_ids_cache:
+                            self.processed_job_ids_cache.add(job_id)
             except:
                 bt.logging.exception("Error while validating on demand jobs and submissions")
 
