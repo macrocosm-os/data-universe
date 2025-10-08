@@ -87,8 +87,8 @@ class YouTubeContent(BaseModel):
     description: str = Field(description='Description of the video.')
     thumbnails: str = Field(description='Image url that serves as a visual preview of a video.')
     view_count: int = Field(description='The view count of a video.')
-    like_count: int = Field(description='The like count of a video.')
     # some channels hide this number so it's optional
+    like_count: Optional[int] = Field(description='The like count of a video.')
     subscriber_count: Optional[int] = Field(description='Subscriber count of a video.')
 
     @classmethod
