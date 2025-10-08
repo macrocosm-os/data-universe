@@ -295,8 +295,8 @@ class Validator:
                     jobs_with_submissions_downloaded_response = (
                         await client.validator_list_and_download_submission_json(
                             req=ListJobsWithSubmissionsForValidationRequest(
-                                expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=10),
-                                expired_until=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=5),
+                                expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=45),
+                                expired_until=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2),
                                 limit=10, 
                             ),
                             job_ids_to_skip_downloading=set(self.processed_job_ids_cache.data.keys())
@@ -327,6 +327,8 @@ class Validator:
                 bt.logging.info(
                     f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
                 )
+
+                bt.logging.debug(f"job_data_per_job_id_and_miner_hotkey:\n\n {job_data_per_job_id_and_miner_hotkey}")
 
                 # validate
                 for (
