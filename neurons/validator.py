@@ -296,6 +296,7 @@ class Validator:
                         await client.validator_list_and_download_submission_json(
                             req=ListJobsWithSubmissionsForValidationRequest(
                                 expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=10),
+                                expired_until=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=5),
                                 limit=10, 
                             ),
                             job_ids_to_skip_downloading=set(self.processed_job_ids_cache.data.keys())
@@ -350,9 +351,14 @@ class Validator:
                     for sub in submissions_with_valid_downloads:
                         # job.id
                         miner_hotkey = sub.miner_hotkey
-                        miner_uploaded_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data']
+                        # constructed from create_organic_output_dict
+                        miner_uploaded_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data'] 
 
                         # validate miner data
+                        # schema payload hint:
+                        # look at s3://data-universe-storage/on-demand-jobs/date=2025-10-08/hour=16/job_id=d2d96267-63f7-40a6-ae9e-608e07266cb0/5HSmU8zVqHRhVskecoyh2JWPD5erGuDRT6B6TBNtUwqJyopG.json
+                        # https://cloud.digitalocean.com/spaces/data-universe-storage?i=a0c233&path=on-demand-jobs%2Fdate%3D2025-10-08%2Fhour%3D16%2Fjob_id%3Dd2d96267-63f7-40a6-ae9e-608e07266cb0%2F
+
                         # todo (@amy)
 
                 if use_cache:

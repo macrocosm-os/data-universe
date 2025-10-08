@@ -60,6 +60,8 @@ from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 import json
 
+from vali_utils.on_demand.output_models import create_organic_output_dict
+
 # Enable logging to the miner TODO move it to some different location
 bt.logging.set_info(True)
 bt.logging.set_debug(True)
@@ -323,9 +325,6 @@ class Miner:
 
         self.scraping_coordinator.run_in_background_thread()
 
-        asyncio.create_task(self.poll_on_demand_active_jobs())
-        asyncio.create_task(self.process_on_demand_jobs_queue())
-
         while not self.should_exit:
             # This loop maintains the miner's operations until intentionally stopped.
             try:
@@ -402,6 +401,8 @@ class Miner:
             await asyncio.sleep(5.0)
 
     async def process_on_demand_jobs_queue(self):
+        use_cache = True
+
         while not self.should_exit:
             try:
                 job_request = await asyncio.wait_for(
@@ -416,13 +417,13 @@ class Miner:
             
             try:
                 job_id_already_processed = job_request.id in self.processed_job_ids_cache
-                if job_id_already_processed:
+                if use_cache and job_id_already_processed:
                     continue
 
                 self.processed_job_ids_cache.add(job_request.id)
 
                 # miner tune this on how fast you can process a job
-                process_on_demand_minimum_duration = dt.timedelta(seconds=10)
+                process_on_demand_minimum_duration = dt.timedelta(seconds=5)
                 has_enough_time_to_process = (
                     dt.datetime.now(dt.timezone.utc) + process_on_demand_minimum_duration
                     >= job_request.expire_at
@@ -435,6 +436,9 @@ class Miner:
                 
                 task = self.scrape_on_demand_job(job_request=job_request)
                 asyncio.create_task(task)
+                # or
+                # await task
+                # if you want to process 1-1 instead of all in parallel
             except:
                 bt.logging.exception("Failed to process item from on_demand_job_queue")
 
@@ -485,22 +489,26 @@ class Miner:
                         job_request.end_date.isoformat() if job_request.end_date else None
                     ),
                     keyword_mode=job_request.keyword_mode,
-                    usernames=usernames,
-                    keywords=keywords,
+                    usernames=usernames if usernames is not None else [],
+                    keywords=keywords if keywords else None,
                     data=[],
-                )
+                ),
+                reraise_instead_of_return_empty=True
             )
 
-            data = synapse_resp.data
+            data = synapse_resp.data # List[DataEntity]
+            bt.logging.debug(f"Scraped (through synapse) on demand data entities for job_id: {job_request.id}, payload:\n\n{data}")
+
+            processed_data = [create_organic_output_dict(item) for item in data]
             # todo (@vlad, @amy) -- check if we need to do extra wrangling before we upload response
             # this will be the raw response validator and product gets from each miner, it should have a schema we can validate
 
             bt.logging.info(
-                f"Submitting and uploading data for job with id {job_request.id}"
+                f"Submitting and uploading data for job with id: {job_request.id}"
             )
             try:
                 async with self._on_demand_client() as client:
-                    await client.miner_submit_and_upload(job_id=job_request.id, data=data)
+                    await client.miner_submit_and_upload(job_id=job_request.id, data=processed_data)
             except:
                 bt.logging.exception(f"Failed to submit and upload data for job with id: {job_request.id}")
         except:
@@ -671,12 +679,13 @@ class Miner:
     ) -> float:
         return self.default_priority(synapse)
 
-    async def loop_poll_on_demand_active_jobs(self, synapse: OnDemandRequest) -> OnDemandRequest:
+    async def loop_poll_on_demand_active_jobs(self, synapse: OnDemandRequest, reraise_instead_of_return_empty: bool = False) -> OnDemandRequest:
         """
         Handle on-demand data requests from validators.
         Uses enhanced scraper for X data while maintaining protocol compatibility.
         """
-        bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
+        if hasattr(synapse, 'dendrite') and hasattr(synapse.dendrite, 'hotkey'):
+            bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
             # Create date range with utility function
@@ -782,7 +791,12 @@ class Miner:
         except Exception as e:
             bt.logging.error(f"Error in on-demand request: {str(e)}")
             bt.logging.debug(traceback.format_exc())
+
+            if reraise_instead_of_return_empty:
+                raise
+
             synapse.data = []
+
 
         return synapse
 

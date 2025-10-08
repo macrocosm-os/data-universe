@@ -250,15 +250,17 @@ def create_organic_output_dict(data_entity: DataEntity) -> Dict:
         Dictionary representation of the appropriate output model
     """
     source = DataSource(data_entity.source).name
-    
-    if source.upper() == "X":
-        return XOrganicOutput.from_data_entity(data_entity).model_dump()
-    elif source.upper() == "REDDIT":
-        return RedditOrganicOutput.from_data_entity(data_entity).model_dump()
-    elif source.upper() == "YOUTUBE":
-        return YouTubeOrganicOutput.from_data_entity(data_entity).model_dump()
-    else:
-        raise ValueError(f"Unknown source: {source}")
+    try:
+        if source.upper() == "X":
+            return XOrganicOutput.from_data_entity(data_entity).model_dump()
+        elif source.upper() == "REDDIT":
+            return RedditOrganicOutput.from_data_entity(data_entity).model_dump()
+        elif source.upper() == "YOUTUBE":
+            return YouTubeOrganicOutput.from_data_entity(data_entity).model_dump()
+        else:
+            raise ValueError(f"Unknown source: {source}")
+    except:
+        bt.logging.exception(f"Failed to parse data entity into organic output, data_entity:\n\n{data_entity}")
 
 
 def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:

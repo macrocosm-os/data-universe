@@ -77,7 +77,7 @@ class OnDemandJobSubmission(BaseModel):
     s3_etag: Optional[str] = None
     s3_content_length: Optional[int] = None
     s3_last_modified: Optional[datetime] = None
-    submitted_at: Optional[datetime]
+    submitted_at: Optional[datetime] = None
 
 
 class ListActiveJobsRequest(BaseModel):
