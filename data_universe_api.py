@@ -12,6 +12,8 @@ from pydantic import BaseModel, ConfigDict, Field
 from substrateinterface.keypair import Keypair
 import httpx
 
+import bittensor as bt
+
 TEN_MB_BYTES = 10 * 1_000_000
 
 
@@ -299,6 +301,7 @@ class DataUniverseApiClient:
             raise RuntimeError("validator_keypair was not provided.")
 
         payload_json = req.model_dump_json()
+        bt.logging.debug(f"validator_list_jobs_with_submissions payload: {payload_json}")
         resp = await self._post_signed_json(
             "/on-demand/validator/jobs", self._signer, payload_json
         )
@@ -343,13 +346,13 @@ class DataUniverseApiClient:
         """
         # First, list jobs with submissions
         validator_resp = await self.validator_list_jobs_with_submissions(req)
+        bt.logging.debug(f"Validator job list with submissions:\n\n{validator_resp}")
 
         client = self._ensure_client()
         sem = asyncio.Semaphore(max_parallelism)
         tasks: list[asyncio.Task] = []
 
         async def _fetch_one(job_id: str, sub: OnDemandJobSubmission) -> Any:
-
             if not getattr(sub, "s3_content_length"):
                 return {
                     "job_id": job_id,
@@ -463,7 +466,7 @@ class DataUniverseApiClient:
         if tasks:
             for coro in asyncio.as_completed(tasks):
                 downloads.append(await coro)
-
+        
         return validator_resp, downloads
 
 

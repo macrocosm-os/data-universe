@@ -145,6 +145,8 @@ class Validator:
         self.evaluation_cycles_since_startup = 0
         self.processed_job_ids_cache = utils.LRUSet(capacity=10_000)
 
+        self.on_demand_thread: threading.Thread = None
+
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
@@ -184,8 +186,6 @@ class Validator:
             wallet=self.wallet, metagraph=self.metagraph, evaluator=self.evaluator
         )
 
-        self.is_setup = True
-
         self.data_universe_api_base_url = (
             "https://data-universe-api-branch-main.api.macrocosmos.ai"
             if "test" in self.config.subtensor.network
@@ -195,6 +195,8 @@ class Validator:
         bt.logging.info(
             f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
         )
+
+        self.is_setup = True
 
     def _on_demand_client(self) -> DataUniverseApiClient:
         return DataUniverseApiClient(
@@ -281,16 +283,16 @@ class Validator:
         bt.logging.debug(f"Started a new wandb run: {name}")
 
     async def loop_poll_on_demand_jobs_with_submissions(self):
-        while self.is_running:
-
+        while not self.should_exit:
             bt.logging.info("Pulling on demand jobs with submissions")
+
             try:
                 async with self._on_demand_client() as client:
                     jobs_with_submissions_downloaded_response = (
                         await client.validator_list_and_download_submission_json(
                             req=ListJobsWithSubmissionsForValidationRequest(
                                 expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=30),
-                                limit=100,  # larger limit and-or random sample
+                                limit=10, 
                             ),
                             job_ids_to_skip_downloading=set(self.processed_job_ids_cache.data.keys())
                         )
@@ -299,51 +301,72 @@ class Validator:
                 bt.logging.exception("Failed to pull on demand jobs with submissions")
                 await asyncio.sleep(20.0)
                 continue
+            
+            try:
+                # co locate each job id and miner hotkey
+                job_list_with_submissions_resp, downloads = (
+                    jobs_with_submissions_downloaded_response
+                )
 
-            # co locate each job id and miner hotkey
-            job_list_with_submissions_resp, downloads = (
-                jobs_with_submissions_downloaded_response
-            )
+                job_data_per_job_id_and_miner_hotkey = defaultdict(dict)
 
-            job_data_per_job_id_and_miner_hotkey = defaultdict(defaultdict())
-            for download in downloads:
-                job_id = download["job_id"]
-                miner_hotkey = download["miner_hotkey"]
+                for download in downloads:
+                    job_id = download["job_id"]
+                    miner_hotkey = download["miner_hotkey"]
 
-                job_data_per_job_id_and_miner_hotkey[job_id][miner_hotkey] = download
+                    job_data_per_job_id_and_miner_hotkey[job_id][miner_hotkey] = download
 
-            bt.logging.info(
-                f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
-            )
+                bt.logging.info(
+                    f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
+                )
 
-            hotkeys_that_did_not_upload = set()
-            # validate
-            for (
-                job_with_submission
-            ) in job_list_with_submissions_resp.jobs_with_submissions:
-                job = job_with_submission.job
-                if job.id in self.processed_job_ids_cache:
-                    continue
+                hotkeys_that_did_not_upload = set()
 
-                submissions = job_with_submission.submissions
-
-                # punish miners that did submit but did not upload
-                for submission in submissions:
-                    if submission.s3_presigned_url is None:
-                        hotkeys_that_did_not_upload.add(submission.miner_hotkey)
+                # validate
+                for (
+                    job_with_submission
+                ) in job_list_with_submissions_resp.jobs_with_submissions:
+                    job = job_with_submission.job
+                    if job.id in self.processed_job_ids_cache:
                         continue
 
-                    data_download_for_submission = job_data_per_job_id_and_miner_hotkey[
-                        job.id
-                    ][submission.miner_hotkey]["data"]
-                    # schema validate, field validation, rescrape validation, etc
+                    submissions = job_with_submission.submissions
 
-                # punish registered miners that did not even submit
+                    # punish miners that did submit but did not upload
+                    for submission in submissions:
+                        if submission.s3_presigned_url is None:
+                            hotkeys_that_did_not_upload.add(submission.miner_hotkey)
+                            continue
+                        
+                        has_data = submission.miner_hotkey in job_data_per_job_id_and_miner_hotkey[
+                            job.id
+                        ]
+                        if has_data:
+                            data_download_for_submission = job_data_per_job_id_and_miner_hotkey[
+                                job.id
+                            ][submission.miner_hotkey]["data"]
+                        # schema validate, field validation, rescrape validation, etc
 
-            for job_id in job_data_per_job_id_and_miner_hotkey.keys():
-                self.processed_job_ids_cache.add(job_id)
+                    # punish registered miners that did not even submit
+
+                for job_id in job_data_per_job_id_and_miner_hotkey.keys():
+                    self.processed_job_ids_cache.add(job_id)
+            except:
+                bt.logging.exception("Error while validating on demand jobs and submissions")
 
             await asyncio.sleep(20.0)
+
+    def run_on_demand(self):
+        loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(loop)
+
+        poll_task = loop.create_task(self.loop_poll_on_demand_jobs_with_submissions())
+
+        try:
+            loop.run_forever()
+        finally:
+            loop.close()
+            loop = None
 
     def run(self):
         """
@@ -363,8 +386,6 @@ class Validator:
         )
 
         bt.logging.info(f"Validator starting at block: {self.block}.")
-
-        asyncio.create_task(self.loop_poll_on_demand_jobs_with_submissions())
 
         while not self.should_exit:
             try:
@@ -461,10 +482,11 @@ class Validator:
             self.should_exit = False
             self.thread = threading.Thread(target=self.run, daemon=True)
             self.thread.start()
+
+            self.on_demand_thread = threading.Thread(target=self.run_on_demand, daemon=True)
+            self.on_demand_thread.start()
             self.is_running = True
             bt.logging.debug("Started.")
-
-            asyncio.create_task(self.loop_poll_on_demand_jobs_with_submissions())
 
     def stop_run_thread(self):
         """
@@ -474,6 +496,7 @@ class Validator:
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
+            self.on_demand_thread.join(5)
             self.is_running = False
             bt.logging.debug("Stopped.")
 
@@ -498,6 +521,7 @@ class Validator:
             bt.logging.debug("Stopping validator in background thread.")
             self.should_exit = True
             self.thread.join(5)
+            self.on_demand_thread.join(5)
             self.is_running = False
 
             # Cleanup loggers
