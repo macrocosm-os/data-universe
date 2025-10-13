@@ -303,12 +303,13 @@ def validate_transcript_timing(
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
-        # Check end time is after start time and duration is reasonable (max 5 minutes per segment)
-        if end <= start or duration > 300:
+        # Check end time is after start time and duration is reasonable (max 10 minutes per segment)
+        max_segment_duration = 600  # 10 minutes - some videos have long segments
+        if end <= start or duration > max_segment_duration:
             bt.logging.info(f"Transcript segment {i} has invalid timing: start={start}, end={end}, duration={duration}")
             return ValidationResult(
                 is_valid=False,
-                reason=f"Transcript segment {i} has invalid timing (end must be > start, duration max 300s)",
+                reason=f"Transcript segment {i} has invalid timing (end must be > start, duration max {max_segment_duration}s)",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
@@ -504,8 +505,16 @@ def validate_youtube_description(
     Returns:
         ValidationResult if validation fails, None if validation passes
     """
-    # Skip validation if miner didn't provide description (backward compatibility)
+    # If miner didn't provide description but video has one, fail
     if submitted_content.description is None:
+        if actual_content.description and len(actual_content.description.strip()) > 0:
+            bt.logging.info("Miner omitted description but video has one")
+            return ValidationResult(
+                is_valid=False,
+                reason="Miner did not provide description but video has a description",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        # Video also has no description, validation passes
         return None
 
     # If miner provided description, validate it strictly
