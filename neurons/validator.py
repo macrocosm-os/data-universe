@@ -149,6 +149,35 @@ class Validator:
 
         self.on_demand_thread: threading.Thread = None
 
+    def _create_validation_context_from_job(self, job):
+        """Convert OnDemandJob to OrganicRequest for validation purposes"""
+        from common.organic_protocol import OrganicRequest
+        
+        # Extract usernames based on job platform
+        usernames = []
+        if hasattr(job.job, 'usernames') and job.job.usernames:
+            usernames = job.job.usernames
+        elif hasattr(job.job, 'channels') and job.job.channels:
+            usernames = job.job.channels
+            
+        # Extract keywords based on job platform
+        keywords = []
+        if hasattr(job.job, 'keywords') and job.job.keywords:
+            keywords = job.job.keywords
+        if hasattr(job.job, 'subreddit') and job.job.subreddit:
+            keywords.insert(0, job.job.subreddit)
+            
+        return OrganicRequest(
+            source=job.job.platform,
+            usernames=usernames,
+            keywords=keywords,
+            keyword_mode=job.keyword_mode,
+            start_date=job.start_date.isoformat() if job.start_date else None,
+            end_date=job.end_date.isoformat() if job.end_date else None,
+            limit=job.limit,
+            data=[]
+        )
+
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
         assert not self.is_setup, "Validator already setup."
@@ -361,10 +390,67 @@ class Validator:
                         miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
 
                         # validate miner data
-                        # schema payload hint:
 
+                        validation_context = self._create_validation_context_from_job(job)
 
-                        # todo (@amy)
+                        # Prepare miner responses in the format expected by validation methods
+                        miner_responses = {}
+                        miner_data_counts = {}
+
+                        for sub in submissions_with_valid_downloads:
+                            miner_hotkey = sub.miner_hotkey
+                            try:
+                                # Convert hotkey to UID
+                                uid = self.metagraph.hotkeys.index(miner_hotkey)
+                                
+                                # Get uploaded data
+                                miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][miner_hotkey]['data']
+                                miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
+                                
+                                # Store in format expected by validation methods
+                                miner_responses[uid] = miner_upload.data_entities
+                                miner_data_counts[uid] = len(miner_upload.data_entities)
+                                
+                            except ValueError:
+                                bt.logging.warning(f"Miner hotkey {miner_hotkey} not found in metagraph")
+                                continue
+
+                        # Step 1: Format validation (reuse from OrganicQueryProcessor)
+                        for uid, data in miner_responses.items():
+                            if data and not self.organic_processor._validate_miner_data_format(validation_context, data, uid):
+                                bt.logging.info(f"Miner {uid} failed format validation")
+                                miner_responses[uid] = []  # Treat as empty
+                                miner_data_counts[uid] = 0
+
+                        # Step 2: Perform detailed validation on sample posts (reuse from OrganicQueryProcessor) 
+                        validation_results = {}
+                        for uid, posts in miner_responses.items():
+                            if not posts:
+                                continue
+                            
+                            # Sample posts for validation (similar to _perform_validation)
+                            num_to_validate = min(2, len(posts))  # Same as PER_MINER_VALIDATION_SAMPLE_SIZE
+                            selected_posts = random.sample(posts, num_to_validate)
+                            
+                            for post in selected_posts:
+                                post_id = self.organic_processor._get_post_id(post)
+                                
+                                # Use the 3-phase validation from OrganicQueryProcessor
+                                is_valid = await self.organic_processor._validate_entity(validation_context, post, post_id, uid)
+                                validation_results[post_id] = is_valid
+
+                        # Step 3: Apply validation penalties (reuse from OrganicQueryProcessor)
+                        miner_scores, failed_miners = self.organic_processor._apply_validation_penalties(miner_responses, validation_results)
+
+                        # Step 4: Volume consensus validation (reuse from OrganicQueryProcessor)
+                        consensus_count = self.organic_processor._calculate_volume_consensus(miner_data_counts)
+                        if consensus_count:
+                            penalized_miners = self.organic_processor._apply_consensus_volume_penalties(
+                                miner_data_counts, job.limit, consensus_count
+                            )
+                            bt.logging.info(f"Applied volume penalties to {len(penalized_miners)} miners")
+
+                        bt.logging.info(f"Job {job.id} validation complete: {len(failed_miners)} miners failed validation")
 
                 if use_cache:
                     job_ids_processed_in_this_loop_not_already_in_cache = set([ job_id for job_id in set(job_data_per_job_id_and_miner_hotkey.keys()) if job_id not in self.processed_job_ids_cache])
