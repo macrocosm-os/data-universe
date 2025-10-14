@@ -47,6 +47,7 @@ from data_universe_api import (
     OnDemandJobPayloadReddit,
     OnDemandJobPayloadX,
     OnDemandJobPayloadYoutube,
+    OnDemandMinerUpload,
 )
 from upload_utils.s3_uploader import S3PartitionedUploader
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
@@ -387,22 +388,25 @@ class Miner:
                 bt.logging.exception("Failed to list active jobs")
                 await asyncio.sleep(5.0)
                 continue
-            
-            try:
-                bt.logging.info(
-                    f"Adding {len(active_jobs_response.jobs)} to on demand scrape queue"
-                )
 
-                for job in active_jobs_response.jobs:
+            try:
+                jobs_to_process = [job for job in active_jobs_response.jobs if job.id not in self.processed_job_ids_cache]
+
+                if len(jobs_to_process) > 0:
+                    bt.logging.info(
+                        f"Adding {len(active_jobs_response.jobs)} to on demand scrape queue"
+                    )
+
+                for job in jobs_to_process:
                     await self.on_demand_job_queue.put(job)
+
+                    self.processed_job_ids_cache.add(job.id)
             except:
                 bt.logging.exception("Failed to append to on_demand_job_queue")
 
             await asyncio.sleep(5.0)
 
     async def process_on_demand_jobs_queue(self):
-        use_cache = True
-
         while not self.should_exit:
             try:
                 job_request = await asyncio.wait_for(
@@ -416,12 +420,6 @@ class Miner:
                 continue
             
             try:
-                job_id_already_processed = job_request.id in self.processed_job_ids_cache
-                if use_cache and job_id_already_processed:
-                    continue
-
-                self.processed_job_ids_cache.add(job_request.id)
-
                 # miner tune this on how fast you can process a job
                 process_on_demand_minimum_duration = dt.timedelta(seconds=5)
                 has_enough_time_to_process = (
@@ -490,27 +488,26 @@ class Miner:
                     ),
                     keyword_mode=job_request.keyword_mode,
                     usernames=usernames if usernames is not None else [],
-                    keywords=keywords if keywords else None,
+                    keywords=keywords if keywords is not None else [],
                     data=[],
                 ),
                 reraise_instead_of_return_empty=True
             )
 
-            data = synapse_resp.data # List[DataEntity]
+            data = synapse_resp.data
             bt.logging.debug(f"Scraped (through synapse) on demand data entities for job_id: {job_request.id}, payload:\n\n{data}")
 
-            processed_data = [create_organic_output_dict(item) for item in data]
-            # todo (@vlad, @amy) -- check if we need to do extra wrangling before we upload response
-            # this will be the raw response validator and product gets from each miner, it should have a schema we can validate
+            miner_upload = OnDemandMinerUpload(data_entities=data)
+            bt.logging.debug(f"\nprocessed data (DataContent form): {miner_upload}")
 
             bt.logging.info(
                 f"Submitting and uploading data for job with id: {job_request.id}"
             )
             try:
                 async with self._on_demand_client() as client:
-                    await client.miner_submit_and_upload(job_id=job_request.id, data=processed_data)
+                    await client.miner_submit_and_upload(job_id=job_request.id, data=miner_upload)
             except:
-                bt.logging.exception(f"Failed to submit and upload data for job with id: {job_request.id}")
+                bt.logging.exception(f"Failed to submit and upload data for job with {job_request.id}")
         except:
             bt.logging.exception("Failed to process scrape on demand job")
         

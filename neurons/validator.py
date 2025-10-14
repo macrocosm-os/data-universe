@@ -35,6 +35,7 @@ from neurons import __spec_version__ as spec_version
 from data_universe_api import (
     ListJobsWithSubmissionsForValidationRequest,
     DataUniverseApiClient,
+    OnDemandMinerUpload,
 )
 from vali_utils.validator_s3_access import ValidatorS3Access
 from rewards.data_value_calculator import DataValueCalculator
@@ -346,20 +347,22 @@ class Validator:
                         and job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['error'] is None
                     ]
 
-                    if len(submissions_with_valid_downloads) > 15: # amount of miners to validate per job id
+                    if len(submissions_with_valid_downloads) > 5: # amount of miners to validate per job id
                         random.shuffle(submissions_with_valid_downloads)
-                        submissions_with_valid_downloads = submissions_with_valid_downloads[:15]
+                        submissions_with_valid_downloads = submissions_with_valid_downloads[:5]
                     
                     for sub in submissions_with_valid_downloads:
                         # job.id
                         miner_hotkey = sub.miner_hotkey
                         # constructed from create_organic_output_dict
-                        miner_uploaded_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data'] 
+                        miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data'] 
+
+                        bt.logging.debug(miner_uploaded_raw_json)
+                        miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
 
                         # validate miner data
                         # schema payload hint:
-                        # look at s3://data-universe-storage/on-demand-jobs/date=2025-10-08/hour=16/job_id=d2d96267-63f7-40a6-ae9e-608e07266cb0/5HSmU8zVqHRhVskecoyh2JWPD5erGuDRT6B6TBNtUwqJyopG.json
-                        # https://cloud.digitalocean.com/spaces/data-universe-storage?i=a0c233&path=on-demand-jobs%2Fdate%3D2025-10-08%2Fhour%3D16%2Fjob_id%3Dd2d96267-63f7-40a6-ae9e-608e07266cb0%2F
+
 
                         # todo (@amy)
 

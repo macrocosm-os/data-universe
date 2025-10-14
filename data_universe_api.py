@@ -9,12 +9,36 @@ from hashlib import sha256
 from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, ConfigDict, Field
+from common.data import DataEntity
 from substrateinterface.keypair import Keypair
 import httpx
 
 import bittensor as bt
 
 TEN_MB_BYTES = 10 * 1_000_000
+
+class OnDemandMinerUpload(BaseModel):
+    data_entities: List[DataEntity]
+
+    def model_dump(self, **kwargs):
+        """
+        Override the dump method to use DataEntity.to_json_dict
+        for each DataEntity object.
+        """
+
+        base_dump = {} # super().model_dump(**kwargs)
+
+        base_dump["data_entities"] = [
+            entity.to_json_dict() for entity in self.data_entities
+        ]
+        return base_dump
+
+    def model_dump_json(self, **kwargs):
+        return json.dumps(self.model_dump(**kwargs))
+
+    @classmethod
+    def model_validate(cls, obj, **kwargs) -> "OnDemandMinerUpload":
+        return OnDemandMinerUpload(data_entities=[DataEntity.from_json_dict(entity_dict) for entity_dict in obj['data_entities']])
 
 
 class OnDemandJobPayloadX(BaseModel):
@@ -254,7 +278,7 @@ class DataUniverseApiClient:
         return SubmitOnDemandJobResponse.model_validate_json(resp.text)
 
     async def miner_submit_and_upload(
-        self, *, job_id: str, data: Any
+        self, *, job_id: str, data: OnDemandMinerUpload
     ) -> SubmitOnDemandJobResponse:
         """
         Convenience:
@@ -280,7 +304,7 @@ class DataUniverseApiClient:
         # If signer pinned Content-Type, mirror it on the file part; otherwise default to JSON
         content_type = fields.get("Content-Type", "application/json")
         files = {
-            "file": ("data.json", json.dumps(data), content_type),
+            "file": ("data.json", data.model_dump_json(), content_type),
         }
 
         client = self._ensure_client()
