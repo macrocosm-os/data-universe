@@ -133,7 +133,7 @@ class MinerEvaluator:
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
         s3_validation_result = None
 
-        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 2550:  # ~8.5 hrs
+        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 1800:  # ~6 hrs
             s3_validation_result = await self._perform_s3_validation(uid, hotkey, current_block)
         ##########
 
@@ -258,10 +258,14 @@ class MinerEvaluator:
 
         if s3_validation_result:
             if s3_validation_result.is_valid:
+                job_match_info = ""
+                if 'job_match_rate' in s3_validation_result.quality_metrics:
+                    job_match_info = f", Job match: {s3_validation_result.quality_metrics['job_match_rate']:.1f}%"
                 bt.logging.info(
                     f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} passed S3 validation. "
                     f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
                     f"Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}"
+                    f"{job_match_info}"
                 )
             else:
                 bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. Reason: {s3_validation_result.reason}")
