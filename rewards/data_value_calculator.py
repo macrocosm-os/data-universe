@@ -28,8 +28,6 @@ class DataValueCalculator:
         
         # Calculate time scalar
         time_scalar = self._scale_factor_for_age(time_bucket_id, current_time_bucket.id)
-        if time_scalar == 0.0:
-            return 0.0  # No need to do further processing
         
         # Find matching jobs directly using time bucket ID
         # Currently only finds matching jobs where keyword is None.
@@ -52,11 +50,14 @@ class DataValueCalculator:
                     # overlaps with the job's date range, so use full time scalar of 1.0
                     time_scalar = 1.0
                 else:
-                    # For jobs without date constraints, use linear depreciation
-                    time_scalar = self._scale_factor_for_age(
-                        scorable_data_entity_bucket.time_bucket_id, 
-                        current_time_bucket.id
-                    )
+                    # For jobs without date constraints, data from past 3 months gets full score
+                    data_age_in_hours = current_time_bucket.id - scorable_data_entity_bucket.time_bucket_id
+                    data_age_in_hours = max(0, data_age_in_hours)  # Guard against future data
+                    
+                    if data_age_in_hours <= (3 * 30 * 24):  # 3 months * 30 days * 24 hours
+                        time_scalar = 1.0
+                    else:
+                        time_scalar = 0.0
                 
                 # Add this job's contribution to total score
                 contribution = data_source_weight * job_weight * time_scalar * scorable_data_entity_bucket.scorable_bytes
