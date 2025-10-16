@@ -396,12 +396,30 @@ class S3Validator:
 
                             # Handle different label formats
                             if platform in ['x', 'twitter']:
-                                # For X: check with and without # prefix
-                                matches_job = (
-                                    entity_label == job_label_normalized or
-                                    entity_label == f"#{job_label_normalized.lstrip('#')}" or
-                                    entity_label.lstrip('#') == job_label_normalized.lstrip('#')
-                                )
+                                # For X: check if label is in tweet_hashtags array (handles multiple hashtags)
+                                tweet_hashtags = row.get('tweet_hashtags', [])
+                                if isinstance(tweet_hashtags, list):
+                                    # Normalize hashtags to lowercase
+                                    hashtags_lower = [str(h).lower().strip() for h in tweet_hashtags]
+                                    label_without_hash = job_label_normalized.lstrip('#')
+                                    label_with_hash = f"#{label_without_hash}"
+
+                                    # Check if job label is in the hashtags array
+                                    matches_job = (
+                                        label_with_hash in hashtags_lower or
+                                        label_without_hash in hashtags_lower or
+                                        # Fallback: check main label field
+                                        entity_label == label_with_hash or
+                                        entity_label == label_without_hash
+                                    )
+                                else:
+                                    # Fallback if tweet_hashtags is not a list
+                                    label_without_hash = job_label_normalized.lstrip('#')
+                                    label_with_hash = f"#{label_without_hash}"
+                                    matches_job = (
+                                        entity_label == label_with_hash or
+                                        entity_label == label_without_hash
+                                    )
                             elif platform == 'reddit':
                                 # For Reddit: check with and without r/ prefix
                                 matches_job = (

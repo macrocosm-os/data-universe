@@ -192,10 +192,18 @@ class S3PartitionedUploader:
                 f"LOWER(label) = '#ytc_c_{normalized_label.removeprefix('#ytc_c_')}'",
             ]
         else:
-            # For X: check hashtags with and without #
+            # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
+            label_without_hash = normalized_label.lstrip('#')
+            label_with_hash = f"#{label_without_hash}"
+
             label_conditions = [
-                f"LOWER(label) = '{normalized_label}'",
-                f"LOWER(label) = '#{normalized_label.removeprefix('#')}'",
+                # Check if hashtag (with #) appears in the tweet_hashtags JSON array inside content
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_with_hash}')",
+                # Check if hashtag (without #) appears in the tweet_hashtags JSON array
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_without_hash}')",
+                # Fallback: check main label field (stores first hashtag)
+                f"LOWER(label) = '{label_with_hash}'",
+                f"LOWER(label) = '{label_without_hash}'",
             ]
 
         label_condition_sql = " OR ".join(label_conditions)
