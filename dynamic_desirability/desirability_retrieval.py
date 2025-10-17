@@ -76,8 +76,56 @@ def create_job_key(job_params: Dict[str, Any]) -> tuple[Optional[str], str, Opti
     return key
 
 
+def upload_aggregate_to_github(total_json_path: str) -> bool:
+    """Upload the aggregate total.json file to the gravity repository."""
+    original_dir = os.getcwd()
+    repo_name = REPO_URL.split("/")[-1].replace(".git", "")
+    
+    try:
+        # Clone or navigate to existing repo
+        if os.path.exists(repo_name):
+            bt.logging.info(f"Repo already exists: {repo_name}.")
+        else:
+            bt.logging.info(f"Cloning repository: {REPO_URL}")
+            subprocess.run(["git", "clone", REPO_URL], check=True, capture_output=True)
+
+        os.chdir(repo_name)
+
+        bt.logging.info(f"Checking out and updating branch: main")
+        subprocess.run(["git", "checkout", "main"], check=True, capture_output=True)
+        subprocess.run(["git", "pull", "origin", "main"], check=True, capture_output=True)
+
+        # Copy the total.json file to the repo root
+        destination_file = "total.json"
+        shutil.copy2(total_json_path, destination_file)
+        bt.logging.info(f"Copied {total_json_path} to {destination_file}")
+
+        # Stage, commit, and push changes
+        try:
+            subprocess.run(["git", "add", destination_file], check=True, capture_output=True)
+            subprocess.run(["git", "commit", "-m", "Update aggregate dynamic desirability total.json"], check=True, capture_output=True)
+            subprocess.run(["git", "push", "origin", "main"], check=True, capture_output=True)
+            bt.logging.info("Successfully uploaded aggregate total.json to gravity repo")
+            return True
+        except subprocess.CalledProcessError as e:
+            if "nothing to commit" in e.stderr.decode().lower():
+                bt.logging.info("No changes to upload - total.json is already up to date")
+                return True
+            else:
+                bt.logging.error(f"Failed to commit/push: {e}")
+                return False
+
+    except subprocess.CalledProcessError as e:
+        bt.logging.error(f"Git operation failed: {e}")
+        return False
+    except Exception as e:
+        bt.logging.error(f"Failed to upload aggregate to GitHub: {e}")
+        return False
+    finally:
+        os.chdir(original_dir)
+
 def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_json_path: str = DEFAULT_JSON_PATH,
-                            total_vali_weight: float = TOTAL_VALI_WEIGHT) -> None:
+                            total_vali_weight: float = TOTAL_VALI_WEIGHT, upload_to_gravity: bool = False) -> None:
     """Calculate total weights and write to total.json using the new job-based format.
     Compatible with both old label_weights format and new job-based format.
     Preserves first submitter's custom IDs (or uses default)."""
@@ -224,6 +272,11 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
         json.dump(final_jobs, f, indent=4)
 
     bt.logging.info(f"\nTotal weights have been calculated and written to {AGGREGATE_JSON_PATH}")
+    
+    # Upload to gravity repo if requested
+    if upload_to_gravity:
+        bt.logging.info("Uploading aggregate total.json to gravity repository...")
+        upload_aggregate_to_github(total_path)
 
 
 def to_lookup(json_path: str):
@@ -320,7 +373,7 @@ def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: 
         return None
 
 
-async def run_retrieval(config) -> DataDesirabilityLookup:
+async def run_retrieval(config, upload_to_gravity: bool = False) -> DataDesirabilityLookup:
     try:
         my_wallet = bt.wallet(config=config)
         subtensor = bt.subtensor(config=config)
@@ -343,7 +396,7 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         default_path = os.path.join(script_dir, DEFAULT_JSON_PATH)
         calculate_total_weights(validator_data=validator_data, default_json_path=default_path,
-                                total_vali_weight=TOTAL_VALI_WEIGHT)
+                                total_vali_weight=TOTAL_VALI_WEIGHT, upload_to_gravity=upload_to_gravity)
 
         return to_lookup(os.path.join(script_dir, AGGREGATE_JSON_PATH))
 
@@ -352,8 +405,8 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         return to_lookup(os.path.join(script_dir, DEFAULT_JSON_PATH))
 
-def sync_run_retrieval(config):
-    return asyncio.run(run_retrieval(config))
+def sync_run_retrieval(config, upload_to_gravity: bool = False):
+    return asyncio.run(run_retrieval(config, upload_to_gravity))
 
 if __name__ == "__main__":
     asyncio.run(run_retrieval(config=None))
