@@ -54,4 +54,4 @@ YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE = dt.datetime(2025, 10, 8, tzinfo=dt.
 EVALUATION_ON_STARTUP = 15
 
 # Emission Control / Burn Configuration
-EMISSION_CONTROL_PERCENTAGE = 0.20  # 20% of emissions redirected to subnet owner (burn)
+EMISSION_CONTROL_PERCENTAGE = 0.30  # 20% of emissions redirected to subnet owner (burn)
