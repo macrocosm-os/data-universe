@@ -585,8 +585,8 @@ class S3Validator:
     ) -> S3ValidationResultDetailed:
         """Calculate final validation result based on all analyses"""
 
-        # Determine if duplicates are acceptable - zero tolerance for duplicates
-        duplicate_threshold = 0.0  # Any duplicates = cheating
+        # Allow up to 10% duplicates (accidents happen during uploads)
+        duplicate_threshold = 10.0  # Allow 10% duplicates, penalize proportionally
         has_duplicates = (
             duplicate_analysis['duplicate_percentage'] > duplicate_threshold
         )
@@ -615,10 +615,15 @@ class S3Validator:
         # Final validation decision - must pass ALL checks
         is_valid = duplicate_validation_passed and job_match_validation_passed and scraper_validation_passed
 
+        # Calculate duplicate score (proportional penalty)
+        # 0% duplicates = 30 points, 10% duplicates = 0 points, linear scale
+        duplicate_pct = duplicate_analysis['duplicate_percentage']
+        duplicate_score = max(0, 30.0 * (1 - duplicate_pct / 10.0))
+
         # Calculate overall validation percentage (including size bonus)
-        # Base: 30% duplicates + 30% job matching + 40% scraper = 100%
+        # Base: 30% duplicates (proportional) + 30% job matching + 40% scraper = 100%
         base_validation_percentage = (
-            (30.0 if duplicate_validation_passed else 0.0) +
+            duplicate_score +
             (job_match_analysis['match_rate'] * 0.3) +
             (scraper_validation['success_rate'] * 0.4)
         )
@@ -630,7 +635,7 @@ class S3Validator:
         issues = []
         if has_duplicates:
             issues.append(
-                f"Too many duplicates: {duplicate_analysis['duplicate_percentage']:.1f}%"
+                f"Too many duplicates: {duplicate_analysis['duplicate_percentage']:.1f}% (max 10% allowed)"
             )
         if not job_match_validation_passed:
             issues.append(
