@@ -49,3 +49,6 @@ X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinf
 ENHANCED_METADATA_REQUIRED_DATE = dt.datetime(2025, 9, 23, tzinfo=dt.timezone.utc) # September 23, 2025 UTC
 
 EVALUATION_ON_STARTUP = 15
+
+# Emission Control / Burn Configuration
+EMISSION_CONTROL_PERCENTAGE = 0.30  # 20% of emissions redirected to subnet owner (burn)
