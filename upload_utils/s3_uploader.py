@@ -393,7 +393,7 @@ class S3PartitionedUploader:
             if not os.path.exists(self.output_dir):
                 os.makedirs(self.output_dir, exist_ok=True)
 
-            # Generate filename with timestamp, record count, and random hash for security
+            # Generate filename with timestamp, record count, and random hash
             timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
             random_hash = secrets.token_hex(8)  # 16 character random hex string
             filename = f"data_{timestamp}_{len(raw_df)}_{random_hash}.parquet"
