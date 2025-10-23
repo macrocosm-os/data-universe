@@ -14,6 +14,7 @@ import pandas as pd
 import bittensor as bt
 import sqlite3
 import re
+import secrets
 from contextlib import contextmanager
 from typing import List, Dict
 from upload_utils.s3_utils import S3Auth
@@ -392,9 +393,10 @@ class S3PartitionedUploader:
             if not os.path.exists(self.output_dir):
                 os.makedirs(self.output_dir, exist_ok=True)
 
-            # Generate filename with timestamp and record count
+            # Generate filename with timestamp, record count, and random hash
             timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"data_{timestamp}_{len(raw_df)}.parquet"
+            random_hash = secrets.token_hex(8)  # 16 character random hex string
+            filename = f"data_{timestamp}_{len(raw_df)}_{random_hash}.parquet"
             local_path = os.path.join(self.output_dir, filename)
 
             # Save to parquet
