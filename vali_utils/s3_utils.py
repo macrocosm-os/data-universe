@@ -553,14 +553,17 @@ class S3Validator:
                 for i, result in enumerate(validation_results):
                     total_validated += 1
                     job_id = (
-                        platform_entities[i][1] 
+                        platform_entities[i][1]
                         if i < len(platform_entities) else "unknown"
                     )
-                    
+
                     if result.is_valid:
                         total_passed += 1
                         sample_results.append(f"✅ {platform} ({job_id}): {result.reason}")
                     else:
+                        bt.logging.warning(
+                            f"Scraper validation failed for {platform} (job: {job_id}): {result.reason}"
+                        )
                         sample_results.append(f"❌ {platform} ({job_id}): {result.reason}")
                         
             except Exception as e:
@@ -571,6 +574,10 @@ class S3Validator:
                     sample_results.append(f"❌ {platform}: Scraper error - {str(e)}")
         
         success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+
+        bt.logging.info(
+            f"Scraper validation complete: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
+        )
 
         return {
             'entities_validated': total_validated,
