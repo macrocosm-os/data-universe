@@ -1,6 +1,7 @@
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 from typing import List, Optional, Dict, Any
 import datetime as dt
+import bittensor as bt
 from common.data import DataSource, StrictBaseModel
 from common.protocol import KeywordMode
 
@@ -61,29 +62,60 @@ class QueryRequest(StrictBaseModel):
 
     @field_validator('usernames')
     @classmethod
-    def validate_usernames_for_youtube(cls, v: List[str], info) -> List[str]:
-        # Get the source from the model context
-        source = info.data.get('source', '').upper()
+    def validate_usernames(cls, v: List[str], info) -> List[str]:
+        # Clean usernames by removing empty/whitespace-only strings
+        cleaned_usernames = [username.strip() for username in v if username and username.strip()]
         
-        if source == 'YOUTUBE':
-            if len(v) != 1:
-                raise ValueError("YouTube requests must have exactly one username")
-            if not v[0].strip():
-                raise ValueError("YouTube username cannot be empty")
+        if len(cleaned_usernames) < len(v):
+            removed_count = len(v) - len(cleaned_usernames)
+            bt.logging.warning(f"Filtered out {removed_count} empty username(s) from request")
         
-        return v
+        return cleaned_usernames
+    
+    @model_validator(mode='after')
+    def validate_source_requirements(self):
+        """Validate source-specific requirements"""
+        source = self.source.upper()
+        
+        if source == 'X':
+            # X requires either usernames or keywords (or both)
+            if not self.usernames and not self.keywords:
+                raise ValueError("X requests must have either usernames or keywords (or both)")
+        
+        elif source == 'YOUTUBE':
+            # YouTube requires either one username (channel) OR one keyword (video URL), not both
+            has_username = len(self.usernames) == 1
+            has_keyword = len(self.keywords) == 1
+            
+            if has_username and has_keyword:
+                raise ValueError("YouTube requests cannot have both username and keyword - use either username (channel) OR keyword (video URL)")
+            elif has_username and not self.keywords:
+                # Channel mode - valid
+                pass
+            elif not self.usernames and has_keyword:
+                # Video URL mode - basic validation for user experience
+                if not self._is_youtube_domain(self.keywords[0]):
+                    raise ValueError("YouTube keyword must be a YouTube URL (youtube.com, youtu.be, etc.)")
+            elif len(self.usernames) > 1:
+                raise ValueError("YouTube requests can have at most one username (channel identifier)")
+            elif len(self.keywords) > 1:
+                raise ValueError("YouTube requests can have at most one keyword (video URL)")
+            else:
+                raise ValueError("YouTube requests must have either one username (channel) OR one keyword (video URL)")
+        
+        return self
+    
+    def _is_youtube_domain(self, url: str) -> bool:
+        """Check if URL points to YouTube domain - minimal check"""
+        if not url or not isinstance(url, str):
+            return False
+        
+        url = url.strip().lower()
+        
+        # Basic domain check - let scrapers handle everything else
+        youtube_domains = ['youtube.com', 'youtu.be', 'm.youtube.com']
+        return any(domain in url for domain in youtube_domains)
 
-    @field_validator('keywords')
-    @classmethod
-    def validate_keywords_for_youtube(cls, v: List[str], info) -> List[str]:
-        # Get the source from the model context
-        source = info.data.get('source', '').upper()
-        
-        if source == 'YOUTUBE':
-            if len(v) > 0:
-                raise ValueError("YouTube requests cannot have keywords")
-        
-        return v
 
 
 class QueryResponse(StrictBaseModel):

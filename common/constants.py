@@ -48,7 +48,7 @@ X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinf
 # Date after which enhanced metadata completeness validation is required for organic outputs
 ENHANCED_METADATA_REQUIRED_DATE = dt.datetime(2025, 9, 23, tzinfo=dt.timezone.utc) # September 23, 2025 UTC
 
-# Date after which YouTube transcript format must use 'end' field (no more 'duration' support)
-YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE = dt.datetime(2025, 10, 8, tzinfo=dt.timezone.utc) # October 8, 2025 UTC (1 week grace period)
-
 EVALUATION_ON_STARTUP = 15
+
+# Emission Control / Burn Configuration
+EMISSION_CONTROL_PERCENTAGE = 0.30  # 20% of emissions redirected to subnet owner (burn)

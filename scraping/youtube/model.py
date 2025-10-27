@@ -84,10 +84,10 @@ class YouTubeContent(BaseModel):
         description="The transcript language in ISO 639-1 format (e.g., 'en' for English, 'fr' for French)",
         default="en"
     )
-    # todo remove the optionality of fields at 8th of October 2025
-    description: Optional[str] = Field(description='Description of the video.')
-    thumbnails: Optional[str] = Field(description='Image url that serves as a visual preview of a video.')
-    view_count: Optional[int] = Field(description='The view count of a video.')
+    thumbnails: str = Field(description='Image url that serves as a visual preview of a video.')
+    view_count: int = Field(description='The view count of a video.')
+    # some channels hide this number so it's optional
+    description: Optional[str] = Field(description='Description of the video. Some videos may not have descriptions.', default=None)
     like_count: Optional[int] = Field(description='The like count of a video.')
     subscriber_count: Optional[int] = Field(description='Subscriber count of a video.')
 

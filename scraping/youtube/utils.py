@@ -6,7 +6,7 @@ from typing import Optional, List, Dict
 from scraping import utils
 from scraping.scraper import ValidationResult
 from common.data import DataEntity
-from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE, YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
+from common.constants import YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE
 from .model import YouTubeContent
 from .model import normalize_channel_name
 
@@ -265,17 +265,12 @@ def validate_transcript_timing(
         # Empty transcript is allowed (some videos have no transcript)
         return None
 
-    now = dt.datetime.now(dt.timezone.utc)
-    grace_period_active = now < YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE
-
     prev_end_time = 0.0
     total_duration = 0.0
 
     for i, segment in enumerate(transcript):
-        # Check segment has required fields
-        # Grace period: accept both 'end' and 'duration' formats before deadline
+        # Check segment has required fields: 'start' and 'end'
         has_end = 'end' in segment
-        has_duration = 'duration' in segment
         has_start = 'start' in segment
 
         if not has_start:
@@ -286,38 +281,16 @@ def validate_transcript_timing(
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
-        # After grace period: require 'end' field only
-        if not grace_period_active:
-            if not has_end:
-                bt.logging.info(
-                    f"Transcript segment {i} missing 'end' field (grace period expired, "
-                    f"'duration' format no longer supported after {YOUTUBE_TRANSCRIPT_END_FIELD_REQUIRED_DATE})"
-                )
-                return ValidationResult(
-                    is_valid=False,
-                    reason=f"Transcript segment {i} must use 'end' field (grace period expired)",
-                    content_size_bytes_validated=entity.content_size_bytes,
-                )
-        else:
-            # During grace period: accept either 'end' or 'duration'
-            if not has_end and not has_duration:
-                bt.logging.info(f"Transcript segment {i} missing both 'end' and 'duration' fields")
-                return ValidationResult(
-                    is_valid=False,
-                    reason=f"Transcript segment {i} missing timing fields ('end' or 'duration')",
-                    content_size_bytes_validated=entity.content_size_bytes,
-                )
+        if not has_end:
+            bt.logging.info(f"Transcript segment {i} missing 'end' field")
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Transcript segment {i} missing required 'end' field",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
 
         start = float(segment.get('start', 0))
-
-        # Calculate end time (support both formats during grace period)
-        if has_end:
-            end = float(segment.get('end', 0))
-        elif has_duration and grace_period_active:
-            # Grace period: calculate end from duration
-            end = start + float(segment.get('duration', 0))
-        else:
-            end = start  # Fallback (will fail validation below)
+        end = float(segment.get('end', 0))
 
         duration = end - start
 
@@ -330,12 +303,13 @@ def validate_transcript_timing(
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
-        # Check end time is after start time and duration is reasonable (max 5 minutes per segment)
-        if end <= start or duration > 300:
+        # Check end time is after start time and duration is reasonable (max 10 minutes per segment)
+        max_segment_duration = 600  # 10 minutes - some videos have long segments
+        if end <= start or duration > max_segment_duration:
             bt.logging.info(f"Transcript segment {i} has invalid timing: start={start}, end={end}, duration={duration}")
             return ValidationResult(
                 is_valid=False,
-                reason=f"Transcript segment {i} has invalid timing (end must be > start, duration max 300s)",
+                reason=f"Transcript segment {i} has invalid timing (end must be > start, duration max {max_segment_duration}s)",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
@@ -457,6 +431,15 @@ def validate_youtube_data_entities(
                 content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
 
+        # Step 7.5: Validate content size (prevent byte inflation with extra fields)
+        byte_difference_allowed = 20  # Allow small differences for encoding/formatting variations
+        if (entity_to_validate.content_size_bytes - actual_entity.content_size_bytes) > byte_difference_allowed:
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Claimed bytes ({entity_to_validate.content_size_bytes}) exceed actual content size ({actual_entity.content_size_bytes}) by more than {byte_difference_allowed} bytes",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes,
+            )
+
         # Step 8: Validate optional description field
         description_result = validate_youtube_description(content_to_validate, actual_content, entity_to_validate)
         if description_result is not None:
@@ -522,8 +505,16 @@ def validate_youtube_description(
     Returns:
         ValidationResult if validation fails, None if validation passes
     """
-    # Skip validation if miner didn't provide description (backward compatibility)
+    # If miner didn't provide description but video has one, fail
     if submitted_content.description is None:
+        if actual_content.description and len(actual_content.description.strip()) > 0:
+            bt.logging.info("Miner omitted description but video has one")
+            return ValidationResult(
+                is_valid=False,
+                reason="Miner did not provide description but video has a description",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        # Video also has no description, validation passes
         return None
 
     # If miner provided description, validate it strictly
@@ -644,7 +635,13 @@ def _validate_youtube_engagement_field(
     # For increasing-only engagement metrics (view_count, like_count)
     # Calculate tolerance first to determine what small decreases are acceptable
     tolerance = _calculate_engagement_tolerance(field_name, submitted_value, video_age)
-    small_tolerance = max(min(tolerance // 10, 5), 2)
+
+    # Dynamic small tolerance for decreases based on engagement size
+    # Allow 0.5% decrease with min/max bounds appropriate to the metric
+    if field_name == "view_count":
+        small_tolerance = max(int(submitted_value * 0.005), 10)  # 0.5% with min 10 views
+    else:  # like_count
+        small_tolerance = max(int(submitted_value * 0.005), 3)   # 0.5% with min 3 likes
 
     # Allow small decreases for edge cases (spam removal, etc.)
     if actual_value is not None:

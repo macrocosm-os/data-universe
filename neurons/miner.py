@@ -759,25 +759,32 @@ class Miner:
                     synapse.data = []
                     return synapse
 
-                # Extract channel identifier from usernames
-                channel_identifier = synapse.usernames[0] if synapse.usernames else None
-                if not channel_identifier:
-                    bt.logging.error(
-                        "No channel identifier provided for YouTube scraping"
+                # Determine scraping mode: channel or video URL
+                if synapse.usernames:
+                    # Channel mode (existing logic)
+                    channel_identifier = synapse.usernames[0]
+                    bt.logging.info(f"YouTube channel scraping: @{channel_identifier}")
+                    data_entities = await scraper.scrape(
+                        channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
+                        max_videos=synapse.limit or 10,
+                        start_date=start_dt.isoformat(),
+                        end_date=end_dt.isoformat(),
+                        language="en"
                     )
+                elif synapse.keywords:
+                    # Video URL mode
+                    youtube_url = synapse.keywords[0]
+                    bt.logging.info(f"YouTube video URL scraping: {youtube_url}")
+                    data_entities = await scraper.scrape(
+                        youtube_url=youtube_url,
+                        language="en"
+                    )
+                else:
+                    bt.logging.error("YouTube request needs either username (channel) or keyword (video URL)")
                     synapse.data = []
                     return synapse
-
-                data_entities = await scraper.scrape(
-                    channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
-                    max_videos=synapse.limit or 10,
-                    start_date=start_dt.isoformat(),
-                    end_date=end_dt.isoformat(),
-                    language="en",
-                )
-                synapse.data = (
-                    data_entities[: synapse.limit] if synapse.limit else data_entities
-                )
+                
+                synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
 
             synapse.version = constants.PROTOCOL_VERSION
 

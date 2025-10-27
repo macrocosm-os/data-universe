@@ -843,6 +843,15 @@ class Validator:
         # Replace any NaN values with 0.
         raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
 
+        # Apply burn mechanism - redirect percentage to subnet owner
+        raw_weights = utils.apply_burn_to_weights(
+            raw_weights=raw_weights,
+            metagraph=self.metagraph,
+            subtensor=self.subtensor,
+            netuid=self.config.netuid,
+            burn_percentage=constants.EMISSION_CONTROL_PERCENTAGE
+        )
+
         # Process the raw weights to final_weights via subtensor limitations.
         (
             processed_weight_uids,

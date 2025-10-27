@@ -14,6 +14,7 @@ import pandas as pd
 import bittensor as bt
 import sqlite3
 import re
+import secrets
 from contextlib import contextmanager
 from typing import List, Dict
 from upload_utils.s3_utils import S3Auth
@@ -192,10 +193,18 @@ class S3PartitionedUploader:
                 f"LOWER(label) = '#ytc_c_{normalized_label.removeprefix('#ytc_c_')}'",
             ]
         else:
-            # For X: check hashtags with and without #
+            # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
+            label_without_hash = normalized_label.lstrip('#')
+            label_with_hash = f"#{label_without_hash}"
+
             label_conditions = [
-                f"LOWER(label) = '{normalized_label}'",
-                f"LOWER(label) = '#{normalized_label.removeprefix('#')}'",
+                # Check if hashtag (with #) appears in the tweet_hashtags JSON array inside content
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_with_hash}')",
+                # Check if hashtag (without #) appears in the tweet_hashtags JSON array
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_without_hash}')",
+                # Fallback: check main label field (stores first hashtag)
+                f"LOWER(label) = '{label_with_hash}'",
+                f"LOWER(label) = '{label_without_hash}'",
             ]
 
         label_condition_sql = " OR ".join(label_conditions)
@@ -384,9 +393,10 @@ class S3PartitionedUploader:
             if not os.path.exists(self.output_dir):
                 os.makedirs(self.output_dir, exist_ok=True)
 
-            # Generate filename with timestamp and record count
+            # Generate filename with timestamp, record count, and random hash
             timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"data_{timestamp}_{len(raw_df)}.parquet"
+            random_hash = secrets.token_hex(8)  # 16 character random hex string
+            filename = f"data_{timestamp}_{len(raw_df)}_{random_hash}.parquet"
             local_path = os.path.join(self.output_dir, filename)
 
             # Save to parquet

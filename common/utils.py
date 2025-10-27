@@ -9,6 +9,7 @@ import sys
 import time
 from math import floor
 from typing import Any, Callable, List, Optional, Dict
+import torch
 import bittensor as bt
 from functools import lru_cache, update_wrapper
 from common.date_range import DateRange
@@ -337,3 +338,73 @@ class LRUSet:
 
     def __contains__(self, key: str) -> bool:
         return key in self.data
+def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> Optional[str]:
+    """Query the subnet owner hotkey from the chain.
+
+    Args:
+        subtensor: Bittensor subtensor connection
+        netuid: Network UID to query
+
+    Returns:
+        The subnet owner hotkey address, or None if query fails
+    """
+    try:
+        owner_hotkey = subtensor.query_subtensor("SubnetOwnerHotkey", params=[netuid])
+        if owner_hotkey:
+            bt.logging.debug(f"Subnet {netuid} owner hotkey: {owner_hotkey}")
+            return owner_hotkey
+        else:
+            bt.logging.warning(f"Could not query subnet owner for netuid {netuid}")
+            return None
+    except Exception as e:
+        bt.logging.error(f"Error querying subnet owner: {e}")
+        return None
+
+
+def apply_burn_to_weights(
+    raw_weights: torch.Tensor,
+    metagraph: bt.metagraph,
+    subtensor: bt.subtensor,
+    netuid: int,
+    burn_percentage: float
+) -> torch.Tensor:
+    """Apply burn mechanism to weight distribution.
+
+    Args:
+        raw_weights: Normalized weight tensor for all UIDs
+        metagraph: The Bittensor metagraph
+        subtensor: Bittensor subtensor connection
+        netuid: Network UID
+        burn_percentage: Percentage of total weight to burn (0.0 to 1.0)
+
+    Returns:
+        Modified weight tensor with burn applied, or original weights if burn fails
+    """
+
+    # Query subnet owner and find in metagraph
+    owner_hotkey = get_subnet_owner_hotkey(subtensor, netuid)
+    if not owner_hotkey or owner_hotkey not in metagraph.hotkeys:
+        bt.logging.warning("Subnet owner not found, skipping burn")
+        return raw_weights
+
+    owner_uid = metagraph.hotkeys.index(owner_hotkey)
+
+    # Safety check: ensure weights are valid
+    if torch.sum(raw_weights) == 0 or torch.sum(raw_weights[torch.arange(len(raw_weights)) != owner_uid]) == 0:
+        bt.logging.warning("Invalid weight distribution, skipping burn")
+        return raw_weights
+
+    # Apply burn: set owner to burn_percentage, scale others proportionally
+    new_weights = raw_weights.clone()
+    new_weights[owner_uid] = burn_percentage
+
+    # Scale remaining weights to sum to (1 - burn_percentage)
+    other_mask = torch.arange(len(raw_weights)) != owner_uid
+    other_sum = torch.sum(raw_weights[other_mask])
+    new_weights[other_mask] = raw_weights[other_mask] * (1 - burn_percentage) / other_sum
+
+    bt.logging.info(
+        f"Applied {burn_percentage*100:.1f}% burn to UID {owner_uid} ({owner_hotkey[:8]}...)"
+    )
+
+    return new_weights
