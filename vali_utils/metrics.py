@@ -130,12 +130,12 @@ ORGANIC_QUERY_REQUESTS_TOTAL = Counter(
     unit="requests",
 )
 
-ORGANIC_MINER_FAILURES = Counter(
-    "organic_miner_failures",
-    "Total number of organic query requests",
-    labelnames=["miner_uid", "failure_type"],
+ORGANIC_MINER_RESULTS = Counter(
+    "organic_miner_results",
+    "Total number of organic query miner results (successes and failures)",
+    labelnames=["miner_uid", "result_type"],
     **_params,
-    unit="failures",
+    unit="results",
 )
 
 
