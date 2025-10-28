@@ -20,7 +20,8 @@ from dynamic_desirability.constants import (REPO_URL,
                                             AGGREGATE_JSON_PATH,
                                             TOTAL_VALI_WEIGHT,
                                             DEFAULT_SCALE_FACTOR,
-                                            AMPLICATION_FACTOR
+                                            AMPLICATION_FACTOR,
+                                            MINIMUM_DD_SCALE,
                                             )
 
 
@@ -203,8 +204,8 @@ def calculate_total_weights(validator_data: Dict[str, Dict[str, Any]], default_j
 
     # Apply floor weight - ensure no job is below DEFAULT_SCALE_FACTOR
     for job_key, job_data in aggregated_jobs.items():
-        if job_data["weight"] < DEFAULT_SCALE_FACTOR:
-            job_data["weight"] = DEFAULT_SCALE_FACTOR + 0.01
+        if job_data["weight"] < MINIMUM_DD_SCALE:
+            job_data["weight"] = MINIMUM_DD_SCALE
 
     # Convert aggregated jobs to final format
     final_jobs = []

@@ -78,7 +78,7 @@ Note: Credibility has a direct influence on the Final Score, while the Incentive
 - Credibility Alpha (α): 0.15
 - Max Data Entity Bucket Size: 128 MB
 - Max Data Entity Bucket Count per Miner Index: 350,000
-- Data Age Limit: 30 days
+- Data Age Limit: 30 days (For non-desirable jobs. For desirable jobs, dependent on specified date range.)
 - Min Evaluation Period: 60 minutes
 
 ## Data Source Weights
@@ -88,7 +88,9 @@ Note: Credibility has a direct influence on the Final Score, while the Incentive
 
 ## Desirable Data
 
-For the current list of desirable data sources and their jobs, run with the `--gravity` tag.
+- For the current list of desirable data sources and their jobs, run with the `--gravity` tag.
+- Desirable jobs grant greater reward, compared to jobs not only the Dynamic Desirability List. 
+- Desirable jobs may have user specified date ranges. Any data from this range will be rewarded, even if it is outside of the default 30-day freshness allotment.
 
 ## Important Notes
 

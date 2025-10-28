@@ -195,6 +195,9 @@ class YouTubeTranscriptScraper(Scraper):
                         # Determine the language of the transcript
                         transcript_language = self._detect_transcript_language(transcript_data)
 
+                        # Get subscriber count
+                        subscriber_count = await self._get_channel_subscriber_count(video_info.get("channelId"))
+
                         # Create YouTubeContent object using the normalized channel_identifier as channel_id
                         content = YouTubeContent(
                             video_id=video_id,
@@ -204,7 +207,12 @@ class YouTubeTranscriptScraper(Scraper):
                             transcript=transcript_data,
                             url=f"https://www.youtube.com/watch?v={video_id}",
                             language=transcript_language,
-                            duration_seconds=0  # You could add this if you get video details
+                            duration_seconds=video_info.get("duration_seconds", 0),
+                            description=video_info.get("description"),
+                            thumbnails=youtube_utils.generate_thumbnails(video_id),
+                            view_count=video_info.get("view_count"),
+                            like_count=video_info.get("like_count"),
+                            subscriber_count=subscriber_count
                         )
 
                         # Compress the transcript (optional)
@@ -426,6 +434,9 @@ class YouTubeTranscriptScraper(Scraper):
                         transcript_valid = self._verify_transcript(transcript_data, content_to_validate.transcript)
 
                         if transcript_valid:
+                            # Get subscriber count
+                            subscriber_count = await self._get_channel_subscriber_count(video_metadata['snippet'].get('channelId'))
+
                             # Create actual YouTube content for DataEntity validation
                             actual_youtube_content = YouTubeContent(
                                 video_id=content_to_validate.video_id,
@@ -437,7 +448,12 @@ class YouTubeTranscriptScraper(Scraper):
                                 transcript=transcript_data,
                                 url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
                                 duration_seconds=content_to_validate.duration_seconds,
-                                language=content_to_validate.language
+                                language=content_to_validate.language,
+                                description=video_metadata['snippet'].get('description'),
+                                thumbnails=youtube_utils.generate_thumbnails(content_to_validate.video_id),
+                                view_count=video_metadata.get('statistics', {}).get('viewCount'),
+                                like_count=video_metadata.get('statistics', {}).get('likeCount'),
+                                subscriber_count=subscriber_count
                             )
                             
                             # Validate DataEntity fields (including channel label) like X and Reddit do
@@ -456,6 +472,9 @@ class YouTubeTranscriptScraper(Scraper):
                     except (TranscriptsDisabled, NoTranscriptFound):
                         # If content has empty transcript, this is valid
                         if not content_to_validate.transcript:
+                            # Get subscriber count
+                            subscriber_count = await self._get_channel_subscriber_count(video_metadata['snippet'].get('channelId'))
+
                             # Create actual YouTube content for DataEntity validation
                             actual_youtube_content = YouTubeContent(
                                 video_id=content_to_validate.video_id,
@@ -467,7 +486,12 @@ class YouTubeTranscriptScraper(Scraper):
                                 transcript=[],  # Empty transcript
                                 url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
                                 duration_seconds=content_to_validate.duration_seconds,
-                                language=content_to_validate.language
+                                language=content_to_validate.language,
+                                description=video_metadata['snippet'].get('description'),
+                                thumbnails=youtube_utils.generate_thumbnails(content_to_validate.video_id),
+                                view_count=video_metadata.get('statistics', {}).get('viewCount'),
+                                like_count=video_metadata.get('statistics', {}).get('likeCount'),
+                                subscriber_count=subscriber_count
                             )
                             
                             # Validate DataEntity fields (including channel label) like X and Reddit do
@@ -571,7 +595,12 @@ class YouTubeTranscriptScraper(Scraper):
             transcript=compressed_transcript,
             url=content.url,
             language=content.language,
-            duration_seconds=content.duration_seconds
+            duration_seconds=content.duration_seconds,
+            description=content.description,
+            thumbnails=content.thumbnails,
+            view_count=content.view_count,
+            like_count=content.like_count,
+            subscriber_count=content.subscriber_count
         )
 
     def _verify_metadata(self, api_metadata: Dict[str, Any], content_to_validate: YouTubeContent) -> bool:
@@ -689,6 +718,7 @@ class YouTubeTranscriptScraper(Scraper):
                 item = response["items"][0]
                 snippet = item.get("snippet", {})
                 content_details = item.get("contentDetails", {})
+                statistics = item.get("statistics", {})
 
                 # Convert ISO 8601 duration to seconds
                 duration_str = content_details.get("duration", "PT0S")
@@ -700,7 +730,9 @@ class YouTubeTranscriptScraper(Scraper):
                     "channelTitle": snippet.get("channelTitle", ""),
                     "publishedAt": snippet.get("publishedAt", ""),
                     "description": snippet.get("description", ""),
-                    "duration_seconds": duration_seconds
+                    "duration_seconds": duration_seconds,
+                    "view_count": int(statistics.get("viewCount", 0)),
+                    "like_count": int(statistics.get("likeCount", 0))
                 }
 
             except HttpError as e:
@@ -725,6 +757,7 @@ class YouTubeTranscriptScraper(Scraper):
         item = resp["items"][0]
         snippet = item.get("snippet", {})
         content_details = item.get("contentDetails", {})
+        statistics = item.get("statistics", {})
 
         duration_str = content_details.get("duration", "PT0S")
         duration_seconds = int(isodate.parse_duration(duration_str).total_seconds())
@@ -736,7 +769,44 @@ class YouTubeTranscriptScraper(Scraper):
             "publishedAt": snippet.get("publishedAt", ""),
             "description": snippet.get("description", ""),
             "duration_seconds": duration_seconds,
+            "view_count": int(statistics.get("viewCount", 0)),
+            "like_count": int(statistics.get("likeCount", 0))
         }
+
+    async def _get_channel_subscriber_count(self, channel_id: str) -> Optional[int]:
+        """Get subscriber count for a channel."""
+        if not self.api_key:
+            return None
+
+        try:
+            # Try googleapiclient first
+            if self.use_googleapi and self.youtube:
+                try:
+                    response = self.youtube.channels().list(
+                        id=channel_id,
+                        part="statistics"
+                    ).execute()
+
+                    if response.get("items"):
+                        statistics = response["items"][0].get("statistics", {})
+                        return int(statistics.get("subscriberCount", 0))
+                except Exception as e:
+                    bt.logging.warning(f"Error with googleapiclient channel stats: {str(e)}")
+                    # Fall through to httpx
+
+            # Fallback to httpx
+            resp = await self._yt_get(
+                "channels",
+                {"id": channel_id, "part": "statistics"}
+            )
+            if resp and resp.get("items"):
+                statistics = resp["items"][0].get("statistics", {})
+                return int(statistics.get("subscriberCount", 0))
+
+        except Exception as e:
+            bt.logging.warning(f"Failed to get subscriber count for channel {channel_id}: {str(e)}")
+
+        return None
 
     async def _yt_get(self, path: str, params: dict) -> dict | None:
         """
@@ -854,10 +924,16 @@ class YouTubeTranscriptScraper(Scraper):
                     # Fetch the data AND store the language info
                     transcript_data = first_transcript.fetch().to_raw_data()
 
-                    # Add language info to the data since to_raw_data() doesn't include it
+                    # Convert to model format: 'start' and 'end' (YouTubeTranscriptApi returns 'start' and 'duration')
                     for item in transcript_data:
+                        # Add language info since to_raw_data() doesn't include it
                         item['language_code'] = first_transcript.language_code
                         item['language'] = first_transcript.language
+
+                        # Convert duration to end (per model spec: transcript has 'start' and 'end')
+                        if 'duration' in item and 'end' not in item:
+                            item['end'] = item['start'] + item['duration']
+                            del item['duration']  # Remove duration to match model spec
 
                     return transcript_data
                 else:

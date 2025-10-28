@@ -50,29 +50,35 @@ class S3ValidationResultDetailed:
     """Detailed S3 validation result with comprehensive metrics"""
     is_valid: bool
     validation_percentage: float
-    
+
     # Job and file metrics
     total_active_jobs: int
     recent_jobs_analyzed: int
     recent_files_count: int
     total_size_bytes: int
-    
+
     # Duplicate analysis
     has_duplicates: bool
     duplicate_percentage: float
-    
+
     # Scraper validation metrics
     entities_validated: int
     entities_passed_scraper: int
     scraper_success_rate: float
-    
+
+    # Job content validation metrics
+    entities_checked_for_job_match: int
+    entities_matched_job: int
+    job_match_rate: float
+
     # Issues and reasoning
     validation_issues: List[str]
     reason: str
-    
+
     # Sample data for transparency
     sample_duplicate_uris: List[str]
     sample_validation_results: List[str]
+    sample_job_mismatches: List[str]
 
 
 # Mapping of scrapers to use based on the data source to validate
@@ -150,18 +156,25 @@ class S3Validator:
             duplicate_analysis = await self._check_for_duplicates(
                 wallet, s3_auth_url, miner_hotkey, recent_data_analysis['recent_job_files']
             )
-            
-            # Step 5: Perform scraper validation
-            scraper_validation = await self._perform_scraper_validation(
-                wallet, s3_auth_url, miner_hotkey, 
+
+            # Step 5: Validate job content matching
+            job_match_analysis = await self._check_job_content_match(
+                wallet, s3_auth_url, miner_hotkey,
                 recent_data_analysis['recent_job_files'], expected_jobs
             )
-            
-            # Step 6: Calculate final validation result
+
+            # Step 6: Perform scraper validation
+            scraper_validation = await self._perform_scraper_validation(
+                wallet, s3_auth_url, miner_hotkey,
+                recent_data_analysis['recent_job_files'], expected_jobs
+            )
+
+            # Step 7: Calculate final validation result
             return self._calculate_final_result(
                 len(active_job_folders),
                 recent_data_analysis,
                 duplicate_analysis,
+                job_match_analysis,
                 scraper_validation
             )
             
@@ -182,7 +195,8 @@ class S3Validator:
             payload = {
                 "hotkey": hotkey,
                 "timestamp": timestamp,
-                "signature": signature.hex()
+                "signature": signature.hex(),
+                "miner_hotkey": miner_hotkey
             }
             
             response = requests.post(
@@ -324,6 +338,143 @@ class S3Validator:
             'sample_duplicates': duplicate_uris[:10]
         }
     
+    async def _check_job_content_match(
+        self, wallet, s3_auth_url: str, miner_hotkey: str,
+        recent_job_files: Dict, expected_jobs: Dict
+    ) -> Dict:
+        """Validate that uploaded data actually matches the job requirements (labels/keywords)"""
+        total_checked = 0
+        total_matched = 0
+        mismatch_samples = []
+
+        for job_id, job_data in recent_job_files.items():
+            files = job_data['files']
+            expected_job = expected_jobs.get(job_id, {})
+
+            if not expected_job:
+                bt.logging.debug(f"No expected job config found for job_id: {job_id}")
+                continue
+
+            params = expected_job.get('params', {})
+            platform = params.get('platform', '').lower()
+            job_label = params.get('label')
+            job_keyword = params.get('keyword')
+
+            # Sample files to check (2 files per job)
+            sample_files = random.sample(files, min(2, len(files)))
+            file_keys = [f['key'] for f in sample_files]
+
+            # Get presigned URLs for files
+            file_urls = await self._get_file_presigned_urls(
+                wallet, s3_auth_url, miner_hotkey, file_keys
+            )
+            if not file_urls:
+                continue
+
+            # Check entities in sampled files
+            for file_key, file_info in file_urls.items():
+                try:
+                    presigned_url = file_info.get('presigned_url')
+                    if not presigned_url:
+                        continue
+
+                    df = pd.read_parquet(presigned_url)
+
+                    # Sample rows to check (up to 10 per file)
+                    sample_size = min(10, len(df))
+                    sample_df = df.head(sample_size)
+
+                    for _, row in sample_df.iterrows():
+                        total_checked += 1
+                        matches_job = False
+
+                        # Check if data matches job requirements
+                        if job_label:
+                            # Label-based job: check if entity label matches
+                            entity_label = str(row.get('label', '')).lower().strip()
+                            job_label_normalized = job_label.lower().strip()
+
+                            # Handle different label formats
+                            if platform in ['x', 'twitter']:
+                                # For X: check if label is in tweet_hashtags array (handles multiple hashtags)
+                                tweet_hashtags = row.get('tweet_hashtags', [])
+                                if isinstance(tweet_hashtags, list):
+                                    # Normalize hashtags to lowercase
+                                    hashtags_lower = [str(h).lower().strip() for h in tweet_hashtags]
+                                    label_without_hash = job_label_normalized.lstrip('#')
+                                    label_with_hash = f"#{label_without_hash}"
+
+                                    # Check if job label is in the hashtags array
+                                    matches_job = (
+                                        label_with_hash in hashtags_lower or
+                                        label_without_hash in hashtags_lower or
+                                        # Fallback: check main label field
+                                        entity_label == label_with_hash or
+                                        entity_label == label_without_hash
+                                    )
+                                else:
+                                    # Fallback if tweet_hashtags is not a list
+                                    label_without_hash = job_label_normalized.lstrip('#')
+                                    label_with_hash = f"#{label_without_hash}"
+                                    matches_job = (
+                                        entity_label == label_with_hash or
+                                        entity_label == label_without_hash
+                                    )
+                            elif platform == 'reddit':
+                                # For Reddit: check with and without r/ prefix
+                                matches_job = (
+                                    entity_label == job_label_normalized or
+                                    entity_label == f"r/{job_label_normalized.removeprefix('r/')}" or
+                                    entity_label.removeprefix('r/') == job_label_normalized.removeprefix('r/')
+                                )
+                            elif platform == 'youtube':
+                                # For YouTube: check channel labels
+                                matches_job = (
+                                    entity_label == job_label_normalized or
+                                    job_label_normalized in entity_label
+                                )
+                            else:
+                                matches_job = (entity_label == job_label_normalized)
+
+                        elif job_keyword:
+                            # Keyword-based job: check if content contains keyword
+                            job_keyword_normalized = job_keyword.lower().strip()
+
+                            # Check in relevant content fields based on platform
+                            if platform == 'reddit':
+                                body = str(row.get('body', '')).lower()
+                                title = str(row.get('title', '')).lower()
+                                matches_job = (job_keyword_normalized in body or job_keyword_normalized in title)
+                            elif platform == 'youtube':
+                                title = str(row.get('title', '')).lower()
+                                matches_job = job_keyword_normalized in title
+                            else:  # X/Twitter
+                                text = str(row.get('text', '')).lower()
+                                matches_job = job_keyword_normalized in text
+
+                        if matches_job:
+                            total_matched += 1
+                        else:
+                            # Record mismatch sample
+                            if len(mismatch_samples) < 10:
+                                uri = self._get_uri_value(row)
+                                mismatch_samples.append(
+                                    f"Job {job_id}: Expected {job_label or job_keyword}, got label='{row.get('label', 'N/A')}' in {uri[:50]}"
+                                )
+
+                except Exception as e:
+                    bt.logging.debug(f"Error checking job content match: {str(e)}")
+                    continue
+
+        match_rate = (total_matched / total_checked * 100) if total_checked > 0 else 0
+
+        return {
+            'total_checked': total_checked,
+            'total_matched': total_matched,
+            'match_rate': match_rate,
+            'mismatch_samples': mismatch_samples
+        }
+
     async def _perform_scraper_validation(
         self, wallet, s3_auth_url: str, miner_hotkey: str, 
         recent_job_files: Dict, expected_jobs: Dict
@@ -402,14 +553,17 @@ class S3Validator:
                 for i, result in enumerate(validation_results):
                     total_validated += 1
                     job_id = (
-                        platform_entities[i][1] 
+                        platform_entities[i][1]
                         if i < len(platform_entities) else "unknown"
                     )
-                    
+
                     if result.is_valid:
                         total_passed += 1
                         sample_results.append(f"✅ {platform} ({job_id}): {result.reason}")
                     else:
+                        bt.logging.warning(
+                            f"Scraper validation failed for {platform} (job: {job_id}): {result.reason}"
+                        )
                         sample_results.append(f"❌ {platform} ({job_id}): {result.reason}")
                         
             except Exception as e:
@@ -421,6 +575,10 @@ class S3Validator:
         
         success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
 
+        bt.logging.info(
+            f"Scraper validation complete: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
+        )
+
         return {
             'entities_validated': total_validated,
             'entities_passed': total_passed,
@@ -430,23 +588,29 @@ class S3Validator:
     
     def _calculate_final_result(
         self, total_active_jobs: int, recent_data_analysis: Dict,
-        duplicate_analysis: Dict, scraper_validation: Dict
+        duplicate_analysis: Dict, job_match_analysis: Dict, scraper_validation: Dict
     ) -> S3ValidationResultDetailed:
         """Calculate final validation result based on all analyses"""
-        
-        # Determine if duplicates are acceptable - zero tolerance for duplicates
-        duplicate_threshold = 0.0  # Any duplicates = cheating
+
+        # Allow up to 10% duplicates (accidents happen during uploads)
+        duplicate_threshold = 10.0  # Allow 10% duplicates, penalize proportionally
         has_duplicates = (
             duplicate_analysis['duplicate_percentage'] > duplicate_threshold
         )
         duplicate_validation_passed = not has_duplicates
-        
+
+        # Determine if job content matching passed
+        min_job_match_rate = 80.0  # Require 80% of data to match job requirements
+        job_match_validation_passed = (
+            job_match_analysis['match_rate'] >= min_job_match_rate
+        )
+
         # Determine if scraper validation passed
         min_scraper_success_rate = 60.0  # min_scraper_success_rate = 60.0
         scraper_validation_passed = (
             scraper_validation['success_rate'] >= min_scraper_success_rate
         )
-        
+
         # Calculate size bonus (logarithmic scaling - bigger uploads = better scores with diminishing returns)
         size_bytes = recent_data_analysis['total_size_bytes']
         min_size_for_bonus = 10 * 1024 * 1024  # 10MB minimum for any bonus
@@ -454,36 +618,48 @@ class S3Validator:
             size_bonus = math.log10(size_bytes / min_size_for_bonus) * 20  # Log base 10 scaling
         else:
             size_bonus = 0
-        
-        # Final validation decision
-        is_valid = duplicate_validation_passed and scraper_validation_passed
-        
+
+        # Final validation decision - must pass ALL checks
+        is_valid = duplicate_validation_passed and job_match_validation_passed and scraper_validation_passed
+
+        # Calculate duplicate score (proportional penalty)
+        # 0% duplicates = 30 points, 10% duplicates = 0 points, linear scale
+        duplicate_pct = duplicate_analysis['duplicate_percentage']
+        duplicate_score = max(0, 30.0 * (1 - duplicate_pct / 10.0))
+
         # Calculate overall validation percentage (including size bonus)
+        # Base: 30% duplicates (proportional) + 30% job matching + 40% scraper = 100%
         base_validation_percentage = (
-            (50.0 if duplicate_validation_passed else 0.0) +
-            (scraper_validation['success_rate'] * 0.5)
+            duplicate_score +
+            (job_match_analysis['match_rate'] * 0.3) +
+            (scraper_validation['success_rate'] * 0.4)
         )
-        
+
         # Apply size bonus to base validation (no cap on final score)
         validation_percentage = base_validation_percentage + size_bonus
-        
+
         # Collect validation issues
         issues = []
         if has_duplicates:
             issues.append(
-                f"Too many duplicates: {duplicate_analysis['duplicate_percentage']:.1f}%"
+                f"Too many duplicates: {duplicate_analysis['duplicate_percentage']:.1f}% (max 10% allowed)"
+            )
+        if not job_match_validation_passed:
+            issues.append(
+                f"Low job match rate: {job_match_analysis['match_rate']:.1f}% (need ≥{min_job_match_rate}%)"
             )
         if not scraper_validation_passed:
             issues.append(
                 f"Low scraper success rate: {scraper_validation['success_rate']:.1f}%"
             )
-        
+
         reason = (
             f"S3 validation: {'PASSED' if is_valid else 'FAILED'} - "
             f"Duplicates: {duplicate_analysis['duplicate_percentage']:.1f}%, "
+            f"Job match: {job_match_analysis['match_rate']:.1f}%, "
             f"Scraper: {scraper_validation['success_rate']:.1f}%"
         )
-        
+
         return S3ValidationResultDetailed(
             is_valid=is_valid,
             validation_percentage=validation_percentage,
@@ -496,10 +672,14 @@ class S3Validator:
             entities_validated=scraper_validation['entities_validated'],
             entities_passed_scraper=scraper_validation['entities_passed'],
             scraper_success_rate=scraper_validation['success_rate'],
+            entities_checked_for_job_match=job_match_analysis['total_checked'],
+            entities_matched_job=job_match_analysis['total_matched'],
+            job_match_rate=job_match_analysis['match_rate'],
             validation_issues=issues,
             reason=reason,
             sample_duplicate_uris=duplicate_analysis['sample_duplicates'][:5],
-            sample_validation_results=scraper_validation['sample_results'][:5]
+            sample_validation_results=scraper_validation['sample_results'][:5],
+            sample_job_mismatches=job_match_analysis['mismatch_samples'][:5]
         )
     
     async def _validate_entities_with_scraper(
@@ -547,10 +727,14 @@ class S3Validator:
             entities_validated=0,
             entities_passed_scraper=0,
             scraper_success_rate=0.0,
+            entities_checked_for_job_match=0,
+            entities_matched_job=0,
+            job_match_rate=0.0,
             validation_issues=[reason],
             reason=reason,
             sample_duplicate_uris=[],
-            sample_validation_results=[]
+            sample_validation_results=[],
+            sample_job_mismatches=[]
         )
     
     # Additional helper methods
@@ -686,13 +870,14 @@ class S3Validator:
             else:
                 timestamp = dt.datetime.now(dt.timezone.utc)
             
-            # Create XContent object
+            # Create XContent object with ALL uploaded fields
             x_content = XContent(
                 username=str(username),
                 text=str(text),
                 url=str(url),
                 timestamp=timestamp,
                 tweet_hashtags=row.get('tweet_hashtags', []) if pd.notna(row.get('tweet_hashtags')) else [],
+                media=row.get('media', None) if pd.notna(row.get('media')) else None,
                 user_id=str(row.get('user_id', '')),
                 user_display_name=str(row.get('user_display_name', username)),
                 user_verified=bool(row.get('user_verified', False)),
@@ -700,7 +885,25 @@ class S3Validator:
                 is_reply=bool(row.get('is_reply', False)),
                 is_quote=bool(row.get('is_quote', False)),
                 conversation_id=str(row.get('conversation_id', '')),
-                in_reply_to_user_id=str(row.get('in_reply_to_user_id', ''))
+                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')),
+                # Add missing engagement metrics that miners upload
+                language=str(row.get('language', '')) if pd.notna(row.get('language')) else None,
+                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username')) else None,
+                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id')) else None,
+                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count')) else None,
+                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count')) else None,
+                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count')) else None,
+                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count')) else None,
+                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count')) else None,
+                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count')) else None,
+                # Add missing user profile data that miners upload
+                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified')) else None,
+                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description')) else None,
+                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location')) else None,
+                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url')) else None,
+                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url')) else None,
+                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count')) else None,
+                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count')) else None
             )
             
             return XContent.to_data_entity(x_content)
@@ -734,7 +937,7 @@ class S3Validator:
             # Obfuscate timestamp to minute for Reddit validation
             created_at = created_at.replace(second=0, microsecond=0)
             
-            # Create RedditContent object
+            # Create RedditContent object with ALL uploaded fields
             reddit_content = RedditContent(
                 id=str(reddit_id),
                 username=str(username),
@@ -743,7 +946,14 @@ class S3Validator:
                 communityName=str(row.get('communityName', '')),
                 createdAt=created_at,
                 dataType=str(row.get('dataType', 'post')),
-                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None
+                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None,
+                # Add missing fields that miners upload
+                title=str(row.get('title', '')) if pd.notna(row.get('title')) else None,
+                media=row.get('media', None) if pd.notna(row.get('media')) else None,
+                is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
+                score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
+                upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
+                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None
             )
             
             return RedditContent.to_data_entity(reddit_content)
@@ -941,6 +1151,7 @@ async def validate_s3_miner_data(
                 recent_files=enhanced_result.recent_files_count,
                 quality_metrics={
                     'duplicate_percentage': enhanced_result.duplicate_percentage,
+                    'job_match_rate': enhanced_result.job_match_rate,
                     'scraper_success_rate': enhanced_result.scraper_success_rate
                 },
                 issues=enhanced_result.validation_issues,

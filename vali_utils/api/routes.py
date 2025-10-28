@@ -19,7 +19,6 @@ from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
@@ -72,6 +71,7 @@ async def query_data(
             source=request.source.upper(),
             usernames=request.usernames or [],
             keywords=request.keywords or [],
+            keyword_mode=request.keyword_mode,
             start_date=request.start_date,
             end_date=request.end_date,
             limit=request.limit or 100 # default request is 100 items
@@ -111,6 +111,7 @@ async def query_data(
                 source=request.source,
                 keywords=request.keywords or [],
                 usernames=request.usernames or [],
+                keyword_mode=request.keyword_mode,
                 start_date=request.start_date,
                 end_date=request.end_date,
                 limit=request.limit or 100

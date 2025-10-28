@@ -14,7 +14,7 @@ LOOKUP = DataDesirabilityLookup(
     distribution={
         DataSource.REDDIT: DataSourceDesirability(
             weight=0.6,
-            default_scale_factor=0.5,
+            default_scale_factor=0.15,
             label_scale_factors={
                 DataLabel(value="r/Bitcoin"): 1.0,
                 DataLabel(value="r/BitcoinCash"): 1.0,
@@ -33,7 +33,7 @@ LOOKUP = DataDesirabilityLookup(
         ),
         DataSource.X: DataSourceDesirability(
             weight=0.4,
-            default_scale_factor=0.5,
+            default_scale_factor=0.15,
             label_scale_factors={
                 DataLabel(value="#bitcoin"): 1.0,
                 DataLabel(value="#bitcoincharts"): 1.0,
