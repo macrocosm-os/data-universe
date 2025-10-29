@@ -1,0 +1,86 @@
+### ====================================================================
+### Macrocosmos Constellation API — On-Demand Jobs (X, Reddit, YouTube)
+### Paste into a .http file in VS Code (REST Client extension)
+### ====================================================================
+
+### ---------------------
+### Base URL selection
+### Toggle the desired line (comment/uncomment)
+### ---------------------
+@baseUrl = https://data-universe-api-branch-main.api.macrocosmos.ai 
+# @baseUrl = https://data-universe-api.api.macrocosmos.ai             
+
+### ---------------------
+### API Key (from env)
+### ---------------------
+@apiKey = {{$dotenv CONSTELLATION_API_KEY}}
+
+
+### ---------------------------------------------------------
+### 1) Create On-Demand Job (X) — keywords: #ai (sample)
+### ---------------------------------------------------------
+# @name create_x_job
+POST {{baseUrl}}/on-demand/constellation/jobs
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "job": {
+    "job": {
+      "platform": "x",
+      "keywords": ["#bittensor"]
+    },
+    "limit": 100,
+    "keyword_mode": "any"
+  }
+}
+
+
+### ---------------------------------------------------------
+### 2) Create On-Demand Job (Reddit) — keywords: #ai (sample)
+###     You can also scope to a subreddit by setting "subreddit": "r/ai"
+### ---------------------------------------------------------
+# @name create_reddit_job
+POST {{baseUrl}}/on-demand/constellation/jobs
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "job": {
+    "job": {
+      "platform": "reddit",
+      "keywords": ["#bittensor"]
+    },
+    "limit": 100,
+    "keyword_mode": "any"
+  }
+}
+
+
+
+### ---------------------------------------------------------
+### 3) Create On-Demand Job (YouTube) — channel: @MrBeast (sample)
+### ---------------------------------------------------------
+# @name create_youtube_job
+POST {{baseUrl}}/on-demand/constellation/jobs
+X-API-Key: {{apiKey}}
+Content-Type: application/json
+
+{
+  "job": {
+    "job": {
+      "platform": "youtube",
+      "channels": ["@MrBeast"]
+    },
+    "limit": 100,
+    "keyword_mode": "any"
+  }
+}
+
+
+### ---------------------------------------------------------
+### GET job submission(s)
+### ---------------------------------------------------------
+GET {{baseUrl}}/on-demand/constellation/jobs/d2d96267-63f7-40a6-ae9e-608e07266cb0
+Accept: application/json
+X-API-Key: {{apiKey}}

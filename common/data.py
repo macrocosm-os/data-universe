@@ -134,6 +134,29 @@ class DataEntity(StrictBaseModel):
                 and this.label == other.label
         )
 
+    def to_json_dict(self) -> Dict[str, Any]:
+        """Convert DataEntity to JSON-serializable dictionary."""
+        return {
+            "uri": self.uri,
+            "datetime": self.datetime.isoformat(),
+            "source": self.source,
+            "label": self.label.value if self.label else None,
+            "content": self.content.decode('utf-8'),
+            "content_size_bytes": self.content_size_bytes
+        }
+
+    @classmethod
+    def from_json_dict(cls, data: Dict[str, Any]) -> "DataEntity":
+        """Reconstruct DataEntity from JSON dictionary."""
+        return cls(
+            uri=data["uri"],
+            datetime=dt.datetime.fromisoformat(data["datetime"]),
+            source=DataSource(data["source"]),
+            label=DataLabel(value=data["label"]) if data["label"] else None,
+            content=data["content"].encode('utf-8'),
+            content_size_bytes=data["content_size_bytes"]
+        )
+
 
 class DataEntityBucketId(StrictBaseModel):
     """Uniquely identifies a bucket to group DataEntities by time bucket, source, and label."""
