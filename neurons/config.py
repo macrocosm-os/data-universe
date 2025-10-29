@@ -163,8 +163,7 @@ def add_args(neuron_type: NeuronType, parser):
             "--organic_whitelist",
             nargs="+",
             help="Whitelist of hotkeys allowed for organic requests",
-            default=['5CzCCUzF3h5Eq3fNAr696YGRZvETYTnUHDcL16C3c9cpmbtE',
-                     '5HEU7ksVSKoCHY3SVcRkJYyGRKTUtKEfCDk5m5QgJUBA4F3F'], #uids 89 and 232
+            default=['5DfVcAvRRxY6ESuT7KCpDFD37Ae2ZC1F84oL2HLZuXmiaeNr'], #uid 0
         )
 
         parser.add_argument(
