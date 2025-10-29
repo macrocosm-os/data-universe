@@ -1,6 +1,6 @@
 # The link to the github repo where preferences JSONs are uploaded.
 REPO_URL: str = 'https://github.com/macrocosm-os/gravity.git'
-BRANCH_NAME: str = 'testnet'
+BRANCH_NAME: str = 'main'
 PREFERENCES_FOLDER: str = 'validator_preferences'
 
 # Total weight of all validators. Subnet (default) voting weight = 1-TOTAL_VALI_WEIGHT. 
