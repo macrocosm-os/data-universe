@@ -371,6 +371,15 @@ def validate_youtube_data_entities(
 
         bt.logging.info(f"Validating video {content_to_validate.video_id} in language: {content_to_validate.language}")
 
+        # Step 1.5: Validate minimum view count (engagement check)
+        view_count = actual_content.view_count or 0
+        if int(view_count) < 100:
+            return ValidationResult(
+                is_valid=False,
+                reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
+                content_size_bytes_validated=entity_to_validate.content_size_bytes
+            )
+
         # Step 2: Validate timestamp with obfuscation
         timestamp_validation = validate_youtube_timestamp(
             content_to_validate, actual_content.upload_date, entity_to_validate
