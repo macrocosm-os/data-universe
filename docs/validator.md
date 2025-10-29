@@ -38,7 +38,7 @@ cd data-universe
 python -m pip install -e .
 ```
 
-5. Make sure you've [created a Wallet](https://docs.bittensor.com/getting-started/wallets) and [registered a hotkey](https://docs.bittensor.com/subnets/register-and-participate).
+5. Make sure you've [created a Wallet](https://docs.learnbittensor.org/keys/working-with-keys) and [registered a hotkey](https://docs.learnbittensor.org/local-build/mine-validate#1-register-the-neuron-hotkeys).
 
 ```
 

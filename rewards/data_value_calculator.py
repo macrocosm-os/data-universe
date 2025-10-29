@@ -28,8 +28,6 @@ class DataValueCalculator:
         
         # Calculate time scalar
         time_scalar = self._scale_factor_for_age(time_bucket_id, current_time_bucket.id)
-        if time_scalar == 0.0:
-            return 0.0  # No need to do further processing
         
         # Find matching jobs directly using time bucket ID
         # Currently only finds matching jobs where keyword is None.

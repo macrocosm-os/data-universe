@@ -5,12 +5,17 @@ import bittensor as bt
 from typing import List, Dict, Any, Optional
 import datetime as dt
 import httpx
-
+import os
+from dotenv import load_dotenv
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.youtube.model import YouTubeContent
+from scraping.youtube import utils as youtube_utils
 from scraping.apify import ActorRunner, RunConfig, ActorRunError
+from apify_client import ApifyClient
+
+load_dotenv()
 
 
 class YouTubeChannelTranscriptScraper(Scraper):
@@ -39,7 +44,6 @@ class YouTubeChannelTranscriptScraper(Scraper):
         self.runner = runner or ActorRunner()
 
         # Minimal YouTube API setup for upload dates and video discovery
-        import os
         self.youtube_api_key = os.getenv("YOUTUBE_API_KEY")
         if not self.youtube_api_key:
             bt.logging.warning(
@@ -50,21 +54,108 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
         bt.logging.info("YouTube Channel Transcript Scraper initialized")
 
-    async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
+    async def scrape(
+        self,
+        scrape_config: Optional[ScrapeConfig] = None,
+        youtube_url: Optional[str] = None,
+        channel_url: Optional[str] = None,
+        language: str = "en",
+        max_videos: int = 3,
+        start_date: Optional[str] = None,
+        end_date: Optional[str] = None,
+    ) -> List[DataEntity]:
         """
-        Scrapes YouTube transcripts with channel-based approach.
+        Scrapes YouTube transcripts with channel-based approach or single video.
         Language is determined automatically by the actor for each video.
         """
-        bt.logging.info(f"Starting YouTube channel scrape with config: {scrape_config}")
+        # Handle single video scraping (multi-actor scraper compatibility)
+        if youtube_url:
+            return await self._scrape_single_video(youtube_url, language)
+        
+        # Handle channel scraping with ScrapeConfig
+        if scrape_config:
+            bt.logging.info(f"Starting YouTube channel scrape with config: {scrape_config}")
+            
+            # Parse channel identifiers from labels
+            channel_identifiers = self._parse_channel_configs_from_labels(scrape_config.labels)
 
-        # Parse channel identifiers from labels
-        channel_identifiers = self._parse_channel_configs_from_labels(scrape_config.labels)
+            if not channel_identifiers:
+                bt.logging.warning("No channel identifiers found in labels")
+                return []
 
-        if not channel_identifiers:
-            bt.logging.warning("No channel identifiers found in labels")
+            return await self._scrape_channels_hybrid(channel_identifiers, scrape_config)
+        
+        bt.logging.error("Must provide either youtube_url or scrape_config")
+        return []
+
+    async def _scrape_single_video(self, youtube_url: str, language: str) -> List[DataEntity]:
+        """Scrape a single video using _get_transcript_from_actor method."""
+        # Extract video_id from URL
+        video_id = self._extract_video_id_from_url(youtube_url)
+        if not video_id:
+            bt.logging.error(f"Invalid YouTube URL: {youtube_url}")
             return []
 
-        return await self._scrape_channels_hybrid(channel_identifiers, scrape_config)
+        try:
+            # Get transcript data using the actor (the method that works for long videos)
+            transcript_data = await self._get_transcript_from_actor(video_id, language)
+            if not transcript_data:
+                bt.logging.error(f"No transcript data returned for video {video_id}")
+                return []
+
+            # Get upload date from API
+            upload_date = await self._get_upload_date_from_api(video_id)
+            if not upload_date:
+                bt.logging.warning(f"No upload date for video {video_id}, using current time")
+                upload_date = dt.datetime.now(dt.timezone.utc)
+
+            # Get additional data from API
+            statistics = await self._get_video_statistics_from_api(video_id)
+            if statistics:
+                transcript_data['view_count'] = statistics.get('view_count', transcript_data.get('view_count'))
+                transcript_data['like_count'] = statistics.get('like_count')
+
+            # Get subscriber count
+            channel_id = transcript_data.get('channel_id')
+            if channel_id:
+                subscriber_count = await self._get_channel_subscriber_count(channel_id)
+                transcript_data['subscriber_count'] = subscriber_count
+
+            # Create YouTubeContent
+            content = self._create_youtube_content(
+                video_id=video_id,
+                language=language,
+                upload_date=upload_date,
+                transcript_data=transcript_data,
+                channel_identifier=transcript_data.get('channel', '')
+            )
+
+            # Convert to DataEntity
+            entity = YouTubeContent.to_data_entity(content)
+            
+            bt.logging.success(f"Successfully scraped video {video_id} using invideoiq actor")
+            return [entity]
+
+        except Exception as e:
+            bt.logging.error(f"Error scraping video {video_id}: {str(e)}")
+            return []
+
+    def _extract_video_id_from_url(self, url: str) -> Optional[str]:
+        """Extract video ID from YouTube URL."""
+        if not url:
+            return None
+
+        import re
+        patterns = [
+            r'(?:v=|\/)([0-9A-Za-z_-]{11}).*',
+            r'(?:embed|v|vi|youtu\.be\/)([0-9A-Za-z_-]{11}).*',
+        ]
+
+        for pattern in patterns:
+            match = re.search(pattern, url)
+            if match:
+                return match.group(1)
+        return None
 
     def _parse_channel_configs_from_labels(self, labels: List[DataLabel]) -> List[str]:
         """
@@ -128,17 +219,19 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
                         # Get view count from Apify actor response
                         view_count = transcript_data.get('view_count', 0)
-                        
+
                         # Filter low engagement videos (100+ views required)
-                        if view_count < 100:
-                            bt.logging.info(f"Video {video_id} has only {view_count} views, skipping (minimum 100 required)")
+                        if int(view_count) < 100:
+                            bt.logging.info(
+                                f"Video {video_id} has only {view_count} views, skipping (minimum 100 required)")
                             continue
 
                         # Get upload date from API
                         upload_date = await self._get_upload_date_from_api(video_id)
                         if not upload_date:
-                            bt.logging.warning(f"No upload date for video {video_id}, using current time")
-                            upload_date = dt.datetime.now(dt.timezone.utc)
+                            bt.logging.warning(
+                                f"No upload date for video {video_id}, skipping to prevent timestamp validation bypass")
+                            continue
 
                         # Check date range
                         if not self._is_within_date_range(upload_date, scrape_config.date_range):
@@ -148,6 +241,18 @@ class YouTubeChannelTranscriptScraper(Scraper):
                         # Use the language that the actor actually returned
                         actual_language = transcript_data.get('selected_language', self.DEFAULT_LANGUAGE)
                         bt.logging.info(f"Video {video_id} transcript obtained in language: {actual_language}")
+
+                        # Get video statistics from API (view_count, like_count)
+                        statistics = await self._get_video_statistics_from_api(video_id)
+                        if statistics:
+                            transcript_data['view_count'] = statistics.get('view_count', transcript_data.get('view_count'))
+                            transcript_data['like_count'] = statistics.get('like_count')
+
+                        # Get subscriber count from API
+                        channel_id = transcript_data.get('channel_id')
+                        if channel_id:
+                            subscriber_count = await self._get_channel_subscriber_count(channel_id)
+                            transcript_data['subscriber_count'] = subscriber_count
 
                         # Create content
                         content = self._create_youtube_content(
@@ -215,8 +320,6 @@ class YouTubeChannelTranscriptScraper(Scraper):
                 response = await client.get(url, params=params)
                 response.raise_for_status()
                 data = response.json()
-                print('DATA from YT google response')
-                print(data)
                 if not data.get("items"):
                     bt.logging.warning(f"No channel data found for ID: {channel_id}")
                     return []
@@ -305,7 +408,8 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             run_input = {
                 "video_url": video_url,
-                "best_effort": True
+                "best_effort": True,
+                "get_yt_original_metadata": True
             }
 
             run_config = RunConfig(
@@ -342,10 +446,13 @@ class YouTubeChannelTranscriptScraper(Scraper):
         try:
             video_url = f"https://www.youtube.com/watch?v={video_id}"
 
+            apify_api_key = os.getenv("APIFY_API_TOKEN")
+            client = ApifyClient(apify_api_key)
             run_input = {
                 "video_url": video_url,
                 "language": language,
-                "best_effort": True
+                "best_effort": True,
+                "get_yt_original_metadata": True
             }
 
             run_config = RunConfig(
@@ -357,8 +464,24 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             dataset = await self.runner.run(run_config, run_input)
 
-            if not dataset or len(dataset) == 0:
-                return None
+            if not dataset or len(dataset) == 0 or not dataset[0].get("transcript", ""):
+                bt.logging.debug(
+                    f"Getting transcript for video {video_id} language {language} failed. Now trying with residential proxy")
+
+                max_retry = 2
+                run_input["use_residential_proxy_for_yt"] = True
+
+                for try_cnt in range(max_retry):
+                    await asyncio.sleep(5)
+                    run = client.actor("invideoiq/video-transcript-scraper").call(run_input=run_input)
+                    bt.logging.info("💾 Check your data here: https://console.apify.com/storage/key-value-stores/" + run[
+                        "defaultKeyValueStoreId"])
+                    output_data = client.key_value_store(run["defaultKeyValueStoreId"]).get_record('OUTPUT')['value']
+                    if not output_data or not output_data.get("transcript", ""):
+                        if try_cnt == max_retry - 1:
+                            return None
+                        continue
+                    return output_data
 
             return dataset[0]
 
@@ -396,6 +519,67 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
         return None
 
+    async def _get_video_statistics_from_api(self, video_id: str) -> dict:
+        """Get video statistics (view_count, like_count) from YouTube API."""
+        if not self.youtube_api_key:
+            return {}
+
+        try:
+            url = "https://www.googleapis.com/youtube/v3/videos"
+            params = {
+                "id": video_id,
+                "part": "statistics",
+                "fields": "items(statistics(viewCount,likeCount))",
+                "key": self.youtube_api_key
+            }
+
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("items") and len(data["items"]) > 0:
+                    item = data["items"][0]
+                    statistics = item.get("statistics", {})
+                    return {
+                        "view_count": int(statistics.get("viewCount", 0)),
+                        "like_count": int(statistics.get("likeCount", 0))
+                    }
+
+        except Exception as e:
+            bt.logging.warning(f"Failed to get statistics for {video_id}: {str(e)}")
+
+        return {}
+
+    async def _get_channel_subscriber_count(self, channel_id: str) -> Optional[int]:
+        """Get subscriber count for a channel from YouTube API."""
+        if not self.youtube_api_key:
+            return None
+
+        try:
+            url = "https://www.googleapis.com/youtube/v3/channels"
+            params = {
+                "id": channel_id,
+                "part": "statistics",
+                "fields": "items(statistics(subscriberCount))",
+                "key": self.youtube_api_key
+            }
+
+            async with httpx.AsyncClient(timeout=self._http_timeout) as client:
+                response = await client.get(url, params=params)
+                response.raise_for_status()
+                data = response.json()
+
+                if data.get("items") and len(data["items"]) > 0:
+                    item = data["items"][0]
+                    statistics = item.get("statistics", {})
+                    return int(statistics.get("subscriberCount", 0))
+
+        except Exception as e:
+            bt.logging.warning(f"Failed to get subscriber count for channel {channel_id}: {str(e)}")
+
+        return None
+
     def _create_youtube_content(self, video_id: str, language: str, upload_date: dt.datetime,
                                 transcript_data: Dict[str, Any], channel_identifier: str) -> YouTubeContent:
         """Create YouTubeContent object from scraped data."""
@@ -413,11 +597,16 @@ class YouTubeChannelTranscriptScraper(Scraper):
             transcript=transcript_data.get('transcript', []),
             url=f"https://www.youtube.com/watch?v={video_id}",
             duration_seconds=int(transcript_data.get('duration', '0')),
-            language=language
+            language=language,
+            description=transcript_data.get('description'),
+            thumbnails=youtube_utils.generate_thumbnails(video_id),
+            view_count=transcript_data.get('view_count'),
+            like_count=transcript_data.get('like_count'),
+            subscriber_count=transcript_data.get('subscriber_count')
         )
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
-        """Validate YouTube transcript entities - respects the original language used by miner."""
+        """Validate YouTube transcript entities using unified validation function."""
         if not entities:
             return []
 
@@ -426,13 +615,22 @@ class YouTubeChannelTranscriptScraper(Scraper):
         for entity in entities:
             try:
                 content_to_validate = YouTubeContent.from_data_entity(entity)
-                # Use the language that was originally stored by the miner
                 original_language = content_to_validate.language
 
                 bt.logging.info(
                     f"Validating video {content_to_validate.video_id} in original language: {original_language}")
 
-                # Get current data for validation using the SAME language the miner used
+                # Get upload date from YouTube API for enhanced timestamp validation
+                real_upload_date = await self._get_upload_date_from_api(content_to_validate.video_id)
+                if not real_upload_date:
+                    results.append(ValidationResult(
+                        is_valid=False,
+                        reason="Cannot verify upload date from YouTube API - potential timestamp manipulation",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
+
+                # Get raw actor payload
                 transcript_data = await self._get_transcript_from_actor(content_to_validate.video_id, original_language)
                 if not transcript_data:
                     results.append(ValidationResult(
@@ -442,9 +640,9 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     ))
                     continue
 
-                # Validate view count during validation
+                # Validate view count (minimum engagement check)
                 view_count = transcript_data.get('view_count', 0)
-                if view_count < 100:
+                if int(view_count) < 100:
                     results.append(ValidationResult(
                         is_valid=False,
                         reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
@@ -452,8 +650,43 @@ class YouTubeChannelTranscriptScraper(Scraper):
                     ))
                     continue
 
-                # Validate content
-                validation_result = self._validate_content_match(transcript_data, content_to_validate, entity)
+                # Get additional data from API for validation
+                statistics = await self._get_video_statistics_from_api(content_to_validate.video_id)
+                if statistics:
+                    transcript_data['view_count'] = statistics.get('view_count', transcript_data.get('view_count'))
+                    transcript_data['like_count'] = statistics.get('like_count')
+
+                # Get subscriber count from API
+                channel_id = transcript_data.get('channel_id')
+                subscriber_count = None
+                if channel_id:
+                    subscriber_count = await self._get_channel_subscriber_count(channel_id)
+
+                # Create YouTubeContent from actor payload (same logic as scrape method)
+                actual_youtube_content = YouTubeContent(
+                    video_id=transcript_data.get('video_id', content_to_validate.video_id),
+                    title=transcript_data.get('title', ''),
+                    channel_name=transcript_data.get('channel', ''),
+                    upload_date=real_upload_date,  # Use API timestamp for accuracy
+                    transcript=transcript_data.get('transcript', []),
+                    url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
+                    duration_seconds=int(transcript_data.get('duration', 0)),
+                    language=original_language,
+                    description=transcript_data.get('description'),
+                    thumbnails=youtube_utils.generate_thumbnails(content_to_validate.video_id),
+                    view_count=transcript_data.get('view_count'),
+                    like_count=transcript_data.get('like_count'),
+                    subscriber_count=subscriber_count
+                )
+
+                # Convert to DataEntity (labels created automatically)
+                actual_entity = YouTubeContent.to_data_entity(actual_youtube_content)
+
+                # Use unified validation function
+                validation_result = youtube_utils.validate_youtube_data_entities(
+                    entity_to_validate=entity,
+                    actual_entity=actual_entity
+                )
                 results.append(validation_result)
 
             except Exception as e:
@@ -469,6 +702,15 @@ class YouTubeChannelTranscriptScraper(Scraper):
     def _validate_content_match(self, actual_data: Dict[str, Any], stored_content: YouTubeContent,
                                 entity: DataEntity) -> ValidationResult:
         """Validate that stored content matches actual data."""
+
+        # Validate video ID (should be exact match)
+        actual_video_id = actual_data.get('video_id', '')
+        if actual_video_id and actual_video_id != stored_content.video_id:
+            return ValidationResult(
+                is_valid=False,
+                reason="Video ID mismatch",
+                content_size_bytes_validated=entity.content_size_bytes
+            )
 
         # Validate title (allow minor differences)
         if not self._texts_are_similar(actual_data.get('title', ''), stored_content.title, threshold=0.8):
@@ -502,7 +744,6 @@ class YouTubeChannelTranscriptScraper(Scraper):
             reason="Content validated successfully",
             content_size_bytes_validated=entity.content_size_bytes
         )
-
 
     def _extract_video_id_from_url(self, url: str) -> Optional[str]:
         """Extract video ID from YouTube URL."""
@@ -693,6 +934,21 @@ async def test_validation():
     return results
 
 
+async def test_get_transcript():
+    # a small(< 9MB output) non-en video
+    # video_id = 'LfCYDBOdaN4'
+    # language = 'th'
+
+    # a long(> 9MB output) non-en video
+    video_id = 'x5dArZ6MaKk'
+    language = 'th'
+
+    scraper = YouTubeChannelTranscriptScraper()
+    transcript_data = await scraper._get_transcript_from_actor(video_id, language)
+    result = True if transcript_data else False
+    return result
+
+
 async def main():
     """Main test function."""
     print("\nFinal YouTube Channel-Based Transcript Scraper")
@@ -700,9 +956,10 @@ async def main():
     print("1. Test channel scraping")
     print("2. Test validation")
     print("3. Test full pipeline")
-    print("4. Exit")
+    print("4. Test get transcript")
+    print("5. Exit")
 
-    choice = input("\nEnter your choice (1-4): ")
+    choice = input("\nEnter your choice (1-5): ")
 
     if choice == "1":
         await test_channel_scrape()
@@ -713,6 +970,10 @@ async def main():
         await test_channel_scrape()
         await test_validation()
     elif choice == "4":
+        bt.logging.info("Running get transcript test...")
+        await test_get_transcript()
+        return
+    elif choice == "5":
         print("Exiting.")
         return
     else:

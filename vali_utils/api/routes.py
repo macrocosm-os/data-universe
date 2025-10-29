@@ -10,6 +10,7 @@ from common import constants
 from common.protocol import OnDemandRequest, GetDataEntityBucket
 from common.organic_protocol import OrganicRequest
 from common import utils  # Import your utils
+from vali_utils import metrics
 from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, \
     DesirabilityRequest
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
@@ -18,7 +19,6 @@ from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ValidationResult
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
@@ -71,6 +71,7 @@ async def query_data(
             source=request.source.upper(),
             usernames=request.usernames or [],
             keywords=request.keywords or [],
+            keyword_mode=request.keyword_mode,
             start_date=request.start_date,
             end_date=request.end_date,
             limit=request.limit or 100 # default request is 100 items
@@ -84,7 +85,7 @@ async def query_data(
     last_error = None
     status = None
     
-    for uid in available_validators:
+    for attempt_i, uid in enumerate(available_validators):
         queried_validator = validator_registry.validators[uid]
         
         bt.logging.info(f"Querying validator {queried_validator.uid} at {queried_validator.axon}")
@@ -100,6 +101,7 @@ async def query_data(
             
             wallet = validator.wallet
             
+            t_start = time.perf_counter()
             # Query the validator
             response = await query_validator(
                 wallet=wallet,
@@ -109,13 +111,19 @@ async def query_data(
                 source=request.source,
                 keywords=request.keywords or [],
                 usernames=request.usernames or [],
+                keyword_mode=request.keyword_mode,
                 start_date=request.start_date,
                 end_date=request.end_date,
                 limit=request.limit or 100
             )
-            
-            # Check if we got a valid response
+            duration = time.perf_counter() - t_start
+
             status = response.get('status') if isinstance(response, dict) else getattr(response, 'status', 'unknown')
+
+            metric_status_to_log = status if response and status else 'error'      
+            metrics.ON_DEMAND_VALIDATOR_QUERY_DURATION.labels(hotkey=queried_validator.hotkey, status=metric_status_to_log).observe(duration)
+
+            # Check if we got a valid response
             if response and status:
                 # Update validator status based on response
                 validator_registry.update_validators(uid, status)
@@ -137,6 +145,8 @@ async def query_data(
             bt.logging.error(f"Error querying validator {uid}: {str(e)}")
             last_error = str(e)
     
+    metrics.ON_DEMAND_VALIDATOR_QUERY_ATTEMPTS.observe(attempt_i + 1)
+
     # If we didn't get a successful response from any validator
     if not response or not status or status not in ["success", "warning"]:
         bt.logging.error(f"All validators failed to process request. Status: {status}")

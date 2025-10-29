@@ -16,6 +16,7 @@
 # DEALINGS IN THE SOFTWARE.
 
 import copy
+import json
 import sys
 import torch
 import numpy as np
@@ -38,20 +39,14 @@ import requests
 from dotenv import load_dotenv
 import bittensor as bt
 from typing import Tuple
-import json
 from common.organic_protocol import OrganicRequest
-from common.data import DataSource, DataLabel, DataEntity
 from common import constants
-from common.protocol import OnDemandRequest
 from common import utils
-from scraping.scraper import ScrapeConfig, ValidationResult
-from common.date_range import DateRange
-from scraping.provider import ScraperProvider
-from scraping.x.enhanced_apidojo_scraper import EnhancedApiDojoTwitterScraper
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.load_balancer.validator_registry import ValidatorRegistry
-from vali_utils.organic_query_processor import OrganicQueryProcessor
-import random
+from vali_utils.on_demand.organic_query_processor import OrganicQueryProcessor
+
+from vali_utils import metrics
 
 load_dotenv()
 # Temporary solution to getting rid of annoying bittensor trace logs
@@ -150,9 +145,17 @@ class Validator:
             try:
                 self.new_wandb_run()
             except Exception as e:
-                bt.logging.error(f"Failed to initialize wandb: {str(e)}")
-                bt.logging.warning("Continuing without wandb logging.")
-                self.config.wandb.off = True
+                bt.logging.exception("W&B init failed; will retry later.")
+                # Do NOT flip wandb.off here; just remember there is no active run.
+                self.wandb_run = None
+                self.wandb_run_start = None
+
+        metrics.VALIDATOR_INFO.info({
+            "hotkey": self.wallet.hotkey.ss58_address,
+            "uid": str(self.uid),
+            "netuid": str(self.config.netuid),
+            "version": self.get_version_tag(),
+        })
 
         # Load any state from previous runs.
         self.load_state()
@@ -177,12 +180,18 @@ class Validator:
 
     def get_updated_lookup(self):
         try:
+            t_start = time.perf_counter()
             bt.logging.info("Retrieving the latest dynamic lookup...")
             model = sync_run_retrieval(self.config)
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
             bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
+
+            duration = time.perf_counter() - t_start
+
+            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(duration)
+            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
         except Exception as e:
             bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
             bt.logging.exception("Exception details:")
@@ -207,12 +216,12 @@ class Validator:
         """Creates a new wandb run to save information to."""
         # Create a unique run id for this run.
         now = dt.datetime.now()
-        self.wandb_run_start = now
         run_id = now.strftime("%Y-%m-%d_%H-%M-%S")
         name = "testnet-validator-" + str(self.uid) + "-" + run_id
         version_tag = self.get_version_tag()
         scraper_providers = self.get_scraper_providers()
-
+    
+        # Allow multiple runs in one process and only set start time after success
         self.wandb_run = wandb.init(
             name=name,
             project="data-universe-validators",
@@ -227,96 +236,99 @@ class Validator:
             },
             allow_val_change=True,
             anonymous="allow",
+            reinit=True,
+            resume="never", # force a brand-new run ID on each rotation
+            settings=wandb.Settings(start_method="thread"),
         )
-
+    
+        # Start time after successful init so rotation scheduling is correct
+        self.wandb_run_start = now
+    
         bt.logging.debug(f"Started a new wandb run: {name}")
+
 
     def run(self):
         """
         Initiates and manages the main loop for the validator, which
-
+    
         1. Evaluates miners
         2. Periodically writes the latest scores to the chain
         3. Saves state
         """
         assert self.is_setup, "Validator must be setup before running."
-
+    
         # Check that validator is registered on the network.
         utils.assert_registered(self.wallet, self.metagraph)
-
+    
         bt.logging.info(
             f"Running validator {self.axon} on network: {self.config.subtensor.chain_endpoint} with netuid: {self.config.netuid}."
         )
-
+    
         bt.logging.info(f"Validator starting at block: {self.block}.")
-
-        # This loop maintains the validator's operations until intentionally stopped.
+    
         while not self.should_exit:
             try:
+                t_start = time.perf_counter()
+    
                 bt.logging.debug(
                     f"Validator running on step({self.step}) block({self.block})."
                 )
-
+    
                 # Ensure validator hotkey is still registered on the network.
                 utils.assert_registered(self.wallet, self.metagraph)
-
+    
                 # Evaluate the next batch of miners.
                 next_batch_delay_secs = self.loop.run_until_complete(
                     self.evaluator.run_next_eval_batch()
                 )
                 self._on_eval_batch_complete()
-
-                # Set the next batch start time.
-                next_batch_start_time = dt.datetime.utcnow() + dt.timedelta(
-                    seconds=next_batch_delay_secs
-                )
-
+    
                 # Maybe set weights.
                 if self.should_set_weights():
                     self.set_weights()
-
+    
                 # Always save state.
                 self.save_state()
-
+    
                 # Update to the latest desirability list after each evaluation.
                 self.get_updated_lookup()
-
+    
                 self.step += 1
-
-                # Now that we've finished a full evaluation loop, compute how long we should
-                # wait until the next evaluation loop.
-                wait_time = max(
-                    0,
-                    (next_batch_start_time - dt.datetime.utcnow()).total_seconds(),
-                )
+    
+                metrics.MAIN_LOOP_ITERATIONS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
+                metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
+                metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(time.perf_counter() - t_start)
+    
+                wait_time = max(0.0, float(next_batch_delay_secs))
                 if wait_time > 0:
                     bt.logging.info(
                         f"Finished full evaluation loop early. Waiting {wait_time} seconds until running next evaluation loop."
                     )
                     time.sleep(wait_time)
-
-                # Check if we should start a new wandb run.
-                if not self.config.wandb.off:
-                    if (dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(
-                        hours=12
-                    ):
-                        bt.logging.info(
-                            "Current wandb run is more than 12 hours old. Starting a new run."
-                        )
-                        self.wandb_run.finish()
+    
+                if not self.config.wandb.off and self.wandb_run is None:
+                    try:
                         self.new_wandb_run()
+                        bt.logging.info("W&B: started new run successfully")
+                    except Exception as e:
+                        bt.logging.error(f"W&B init retry failed: {e}")
 
+                # Rotation with retry (only when we actually have a start time)
+                if (not self.config.wandb.off) and (self.wandb_run_start is not None) and \
+                ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=3)):
 
-            # If someone intentionally stops the validator, it'll safely terminate operations.
+                    try:
+                        self.new_wandb_run()
+                        bt.logging.info("W&B: rotated run successfully")
+                    except Exception as e:
+                        bt.logging.error(f"W&B rotation failed; keeping current run active: {e}")
+
             except KeyboardInterrupt:
                 self.axon.stop()
-                
-                # Cleanup loggers
                 if self.wandb_run:
                     self.wandb_run.finish()
-
-            # In case of unforeseen errors, the validator will log the error and continue operations.
             except Exception as err:
+                metrics.MAIN_LOOP_ERRORS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
                 bt.logging.error("Error during validation", str(err))
 
     def run_in_background_thread(self):
@@ -414,6 +426,40 @@ class Validator:
         with self.lock:
             assert netuid == self.config.netuid
             self.metagraph = copy.deepcopy(metagraph)
+
+        # Validator Health Checks
+        hotkey = self.wallet.hotkey.ss58_address
+
+        # Resolve current UID from hotkey (survives dereg/re-reg)
+        try:
+            uid = metagraph.hotkeys.index(hotkey)
+            registered = 1
+        except ValueError:
+            uid = None
+            registered = 0
+
+        metrics.BITTENSOR_VALIDATOR_REGISTERED.labels(hotkey=hotkey).set(registered)
+
+        # Set vtrust + block diff since last update only when registered; otherwise zero them
+        if registered:
+            try:
+                vtrust = float(metagraph.validator_trust[uid])
+            except Exception:
+                vtrust = 0.0
+
+            try:
+                head_block = int(getattr(metagraph, "block", 0))
+                last_update = int(metagraph.last_update[uid])
+                block_diff = max(0, head_block - last_update) if head_block and last_update else 0
+            except Exception:
+                block_diff = 0
+        else:
+            vtrust = 0.0
+            block_diff = 0
+
+        metrics.BITTENSOR_VALIDATOR_VTRUST.labels(hotkey=hotkey).set(vtrust)
+        metrics.BITTENSOR_VALIDATOR_BLOCK_DIFFERENCE.labels(hotkey=hotkey).set(block_diff)
+        metrics.METAGRAPH_LAST_UPDATE_TS.labels(hotkey=hotkey).set(int(time.time()))
 
     def _on_eval_batch_complete(self):
         with self.lock:
@@ -530,6 +576,15 @@ class Validator:
         # Replace any NaN values with 0.
         raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
 
+        # Apply burn mechanism - redirect percentage to subnet owner
+        raw_weights = utils.apply_burn_to_weights(
+            raw_weights=raw_weights,
+            metagraph=self.metagraph,
+            subtensor=self.subtensor,
+            netuid=self.config.netuid,
+            burn_percentage=constants.EMISSION_CONTROL_PERCENTAGE
+        )
+
         # Process the raw weights to final_weights via subtensor limitations.
         (
             processed_weight_uids,
@@ -564,8 +619,10 @@ class Validator:
         console = Console()
         console.print(table)
 
+
         # Set the weights on chain via our subtensor connection.
-        self.subtensor.set_weights(
+        t0 = time.perf_counter()
+        success, message = self.subtensor.set_weights(
             wallet=self.wallet,
             netuid=self.config.netuid,
             uids=processed_weight_uids,
@@ -573,11 +630,15 @@ class Validator:
             wait_for_finalization=False,
             version_key=spec_version,
         )
-
+        
         with self.lock:
             self.last_weights_set_time = dt.datetime.utcnow()
 
         bt.logging.success("Finished setting weights.")
+
+        metric_status = 'ok' if success else 'fail'
+        metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).observe(time.perf_counter() - t0)
+        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(int(time.time()))
 
     @property
     def block(self):
@@ -606,7 +667,22 @@ class Validator:
             synapse.data = []
             return synapse
         
-        return await self.organic_processor.process_organic_query(synapse)
+        t_start = time.perf_counter() 
+        self.organic_processor.update_metagraph(self.evaluator.metagraph)
+        synapse_resp = await self.organic_processor.process_organic_query(synapse)
+
+        metrics.ORGANIC_QUERY_PROCESS_DURATION.labels(request_source=synapse.source, response_status=synapse_resp.status).observe(time.perf_counter() - t_start)
+
+        try:
+            json_str = json.dumps(synapse_resp.data)
+            size_bytes = len(json_str.encode('utf-8'))
+
+            metrics.ORGANIC_QUERY_RESPONSE_SIZE.labels(request_source=synapse.source, response_status=synapse_resp.status).observe(size_bytes)
+        except (TypeError, ValueError) as e:  # JSON serialization errors
+            bt.logging.debug("Failed to serialize synapse response data to JSON. Skipping metrics.ORGANIC_QUERY_RESPONSE_BYTES observation")
+
+        metrics.ORGANIC_QUERY_REQUESTS_TOTAL.labels(request_source=synapse.source, response_status=synapse_resp.status).inc()
+        return synapse_resp
 
     async def organic_blacklist(self, synapse: OrganicRequest) -> Tuple[bool, str]:
         """

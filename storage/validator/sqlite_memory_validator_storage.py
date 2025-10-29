@@ -14,35 +14,39 @@ class AutoIncrementDict:
 
     Provides O(1) ability to insert a key and get its id, and to lookup the key for an id.
 
-    Not thread safe.
+    Thread safe.
     """
 
     def __init__(self):
         self.available_ids = set()
         self.items = []
         self.indexes = {}
+        self.lock = threading.Lock()
 
     def get_or_insert(self, key: Any) -> int:
-        if key not in self.indexes:
-            if self.available_ids:
-                key_id = self.available_ids.pop()
-                self.items[key_id] = key
-                self.indexes[key] = key_id
-            else:
-                self.items.append(key)
-                self.indexes[key] = len(self.items) - 1
+        with self.lock:
+            if key not in self.indexes:
+                if self.available_ids:
+                    key_id = self.available_ids.pop()
+                    self.items[key_id] = key
+                    self.indexes[key] = key_id
+                else:
+                    self.items.append(key)
+                    self.indexes[key] = len(self.items) - 1
 
-        return self.indexes[key]
+            return self.indexes[key]
 
     def get_by_id(self, id: int) -> Any:
-        return self.items[id]
+        with self.lock:
+            return self.items[id]
 
     def delete_key(self, key: Any):
-        if key in self.indexes:
-            key_id = self.indexes[key]
-            self.items[key_id] = None
-            del self.indexes[key]
-            self.available_ids.add(key_id)
+        with self.lock:
+            if key in self.indexes:
+                key_id = self.indexes[key]
+                self.items[key_id] = None
+                del self.indexes[key]
+                self.available_ids.add(key_id)
 
 
 # Use a timezone aware adapter for timestamp columns.

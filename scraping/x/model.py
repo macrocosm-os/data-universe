@@ -1,13 +1,16 @@
 import datetime as dt
+from typing import Dict, List, Optional, Any
 import json
-from typing import Dict, List, Optional
+
 # Use v1 for these models to keep serialization consistent.
 # Pydantic v2 doesn't include spaces in its serialization.
 from pydantic.v1 import BaseModel, Field
 
 from common import constants
+from common.constants import X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
 from common.data import DataEntity, DataLabel, DataSource
 from scraping import utils
+from vali_utils.on_demand import utils as on_demand_utils
 
 
 class XContent(BaseModel):
@@ -50,6 +53,29 @@ class XContent(BaseModel):
     conversation_id: Optional[str] = None
     in_reply_to_user_id: Optional[str] = None
 
+    # ===== NEW FIELDS =====
+    # Static tweet metadata
+    language: Optional[str] = None
+    in_reply_to_username: Optional[str] = None
+    quoted_tweet_id: Optional[str] = None
+
+    # Dynamic engagement metrics
+    like_count: Optional[int] = None
+    retweet_count: Optional[int] = None
+    reply_count: Optional[int] = None
+    quote_count: Optional[int] = None
+    view_count: Optional[int] = None
+    bookmark_count: Optional[int] = None
+
+    # User profile data
+    user_blue_verified: Optional[bool] = None
+    user_description: Optional[str] = None
+    user_location: Optional[str] = None
+    profile_image_url: Optional[str] = None
+    cover_picture_url: Optional[str] = None
+    user_followers_count: Optional[int] = None
+    user_following_count: Optional[int] = None
+
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:
         """Converts the XContent to a DataEntity."""
@@ -76,6 +102,14 @@ class XContent(BaseModel):
 
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
-        """Converts a DataEntity to an XContent."""
+        """Converts a DataEntity to an XContent with backward compatibility for nested format."""
         content_str = data_entity.content.decode("utf-8")
-        return XContent.parse_raw(content_str)
+        
+        # Check if this is the legacy nested format and we're still in compatibility period
+        if on_demand_utils.is_nested_format(data_entity) and dt.datetime.now(dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
+            # Handle legacy nested format
+            base_fields = on_demand_utils.from_enhanced_nested_format(data_entity)
+            return cls(**base_fields)
+        else:
+            return XContent.parse_raw(content_str)
+    

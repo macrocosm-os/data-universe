@@ -14,6 +14,7 @@ import pandas as pd
 import bittensor as bt
 import sqlite3
 import re
+import secrets
 from contextlib import contextmanager
 from typing import List, Dict
 from upload_utils.s3_utils import S3Auth
@@ -192,10 +193,18 @@ class S3PartitionedUploader:
                 f"LOWER(label) = '#ytc_c_{normalized_label.removeprefix('#ytc_c_')}'",
             ]
         else:
-            # For X: check hashtags with and without #
+            # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
+            label_without_hash = normalized_label.lstrip('#')
+            label_with_hash = f"#{label_without_hash}"
+
             label_conditions = [
-                f"LOWER(label) = '{normalized_label}'",
-                f"LOWER(label) = '#{normalized_label.removeprefix('#')}'",
+                # Check if hashtag (with #) appears in the tweet_hashtags JSON array inside content
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_with_hash}')",
+                # Check if hashtag (without #) appears in the tweet_hashtags JSON array
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_without_hash}')",
+                # Fallback: check main label field (stores first hashtag)
+                f"LOWER(label) = '{label_with_hash}'",
+                f"LOWER(label) = '{label_without_hash}'",
             ]
 
         label_condition_sql = " OR ".join(label_conditions)
@@ -231,6 +240,12 @@ class S3PartitionedUploader:
             content_conditions = [
                 f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
                 f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
+            ]
+        elif source == DataSource.YOUTUBE.value:
+            # Search YouTube title and description fields
+            content_conditions = [
+                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'",
+                f"LOWER(JSON_EXTRACT(content, '$.description')) LIKE '%{normalized_keyword}%'"
             ]
         else:
             # Search X text field specifically
@@ -292,7 +307,12 @@ class S3PartitionedUploader:
                     'createdAt': df['decoded_content'].apply(lambda x: x.get('createdAt')),
                     'dataType': df['decoded_content'].apply(lambda x: x.get('dataType')),
                     'parentId': df['decoded_content'].apply(lambda x: x.get('parentId')),
-                    'url': df['decoded_content'].apply(lambda x: x.get('url'))
+                    'url': df['decoded_content'].apply(lambda x: x.get('url')),
+                    'media': df['decoded_content'].apply(lambda x: x.get('media')),
+                    'is_nsfw': df['decoded_content'].apply(lambda x: x.get('is_nsfw')),
+                    'score': df['decoded_content'].apply(lambda x: x.get('score')),
+                    'upvote_ratio': df['decoded_content'].apply(lambda x: x.get('upvote_ratio')),
+                    'num_comments': df['decoded_content'].apply(lambda x: x.get('num_comments'))
                 })
             elif source == DataSource.YOUTUBE.value:
                 # YouTube data structure
@@ -307,7 +327,12 @@ class S3PartitionedUploader:
                     'transcript': df['decoded_content'].apply(lambda x: x.get('transcript', [])),
                     'url': df['decoded_content'].apply(lambda x: x.get('url')),
                     'duration_seconds': df['decoded_content'].apply(lambda x: x.get('duration_seconds', 0)),
-                    'language': df['decoded_content'].apply(lambda x: x.get('language', 'en'))
+                    'language': df['decoded_content'].apply(lambda x: x.get('language', 'en')),
+                    'description': df['decoded_content'].apply(lambda x: x.get('description')),
+                    'thumbnails': df['decoded_content'].apply(lambda x: x.get('thumbnails')),
+                    'view_count': df['decoded_content'].apply(lambda x: x.get('view_count')),
+                    'like_count': df['decoded_content'].apply(lambda x: x.get('like_count')),
+                    'subscriber_count': df['decoded_content'].apply(lambda x: x.get('subscriber_count'))
                 })
             else:
                 # X/Twitter data structure
@@ -328,7 +353,23 @@ class S3PartitionedUploader:
                     'is_reply': df['decoded_content'].apply(lambda x: x.get('is_reply')),
                     'is_quote': df['decoded_content'].apply(lambda x: x.get('is_quote')),
                     'conversation_id': df['decoded_content'].apply(lambda x: x.get('conversation_id')),
-                    'in_reply_to_user_id': df['decoded_content'].apply(lambda x: x.get('in_reply_to_user_id'))
+                    'in_reply_to_user_id': df['decoded_content'].apply(lambda x: x.get('in_reply_to_user_id')),
+                    'language': df['decoded_content'].apply(lambda x: x.get('language')),
+                    'in_reply_to_username': df['decoded_content'].apply(lambda x: x.get('in_reply_to_username')),
+                    'quoted_tweet_id': df['decoded_content'].apply(lambda x: x.get('quoted_tweet_id')),
+                    'like_count': df['decoded_content'].apply(lambda x: x.get('like_count')),
+                    'retweet_count': df['decoded_content'].apply(lambda x: x.get('retweet_count')),
+                    'reply_count': df['decoded_content'].apply(lambda x: x.get('reply_count')),
+                    'quote_count': df['decoded_content'].apply(lambda x: x.get('quote_count')),
+                    'view_count': df['decoded_content'].apply(lambda x: x.get('view_count')),
+                    'bookmark_count': df['decoded_content'].apply(lambda x: x.get('bookmark_count')),
+                    'user_blue_verified': df['decoded_content'].apply(lambda x: x.get('user_blue_verified')),
+                    'user_description': df['decoded_content'].apply(lambda x: x.get('user_description')),
+                    'user_location': df['decoded_content'].apply(lambda x: x.get('user_location')),
+                    'profile_image_url': df['decoded_content'].apply(lambda x: x.get('profile_image_url')),
+                    'cover_picture_url': df['decoded_content'].apply(lambda x: x.get('cover_picture_url')),
+                    'user_followers_count': df['decoded_content'].apply(lambda x: x.get('user_followers_count')),
+                    'user_following_count': df['decoded_content'].apply(lambda x: x.get('user_following_count'))
                 })
 
             return result_df
@@ -352,9 +393,10 @@ class S3PartitionedUploader:
             if not os.path.exists(self.output_dir):
                 os.makedirs(self.output_dir, exist_ok=True)
 
-            # Generate filename with timestamp and record count
+            # Generate filename with timestamp, record count, and random hash
             timestamp = dt.datetime.now().strftime("%Y%m%d_%H%M%S")
-            filename = f"data_{timestamp}_{len(raw_df)}.parquet"
+            random_hash = secrets.token_hex(8)  # 16 character random hex string
+            filename = f"data_{timestamp}_{len(raw_df)}_{random_hash}.parquet"
             local_path = os.path.join(self.output_dir, filename)
 
             # Save to parquet

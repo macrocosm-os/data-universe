@@ -6,7 +6,10 @@ from common.data import (
     DataEntity,
     DataEntityBucketId,
 )
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Literal
+
+
+KeywordMode = Literal["any", "all"]
 
 
 class BaseProtocol(bt.Synapse):
@@ -114,6 +117,11 @@ class OnDemandRequest(BaseProtocol):
         max_length=5
     )
 
+    keyword_mode: KeywordMode = Field(
+        default="all",
+        description="Keyword matching mode: 'any' or 'all'"
+    )
+
     start_date: Optional[str] = Field(
         default=None,
         description="Start date (ISO format)"
@@ -148,5 +156,5 @@ REQUEST_LIMIT_BY_TYPE_PER_PERIOD = {
     GetMinerIndex: 1,
     GetDataEntityBucket: 1,
     GetContentsByBuckets: 5,
-    OnDemandRequest: 5,
+    OnDemandRequest: 20,
 }
