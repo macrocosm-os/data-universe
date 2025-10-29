@@ -20,6 +20,7 @@ import datetime as dt
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.on_demand import utils as on_demand_utils
 from vali_utils.on_demand.output_models import create_organic_output_dict, validate_metadata_completeness
+from vali_utils.metrics import ORGANIC_MINER_RESULTS
 
 
 class OrganicQueryProcessor:
@@ -205,6 +206,7 @@ class OrganicQueryProcessor:
                                 miner_responses[uid] = []
                                 miner_data_counts[uid] = 0
                                 bt.logging.warning(f"Miner {uid} ({hotkey}) failed format validation - treating as empty")
+                                ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_format_validation").inc()
                         else:
                             miner_responses[uid] = data
                             miner_data_counts[uid] = data_count
@@ -283,6 +285,7 @@ class OrganicQueryProcessor:
         for uid in non_responsive_uids:
             bt.logging.info(f"Applying penalty to non-responsive miner {uid}:{self.metagraph.hotkeys[uid]}")
             self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+            ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_non_responsive").inc()
         
         # Empty response miners
         empty_uids = [uid for uid, rows in miner_responses.items() if len(rows) == 0]
@@ -301,6 +304,7 @@ class OrganicQueryProcessor:
                 for uid in empty_uids:
                     bt.logging.info(f"Applying penalty to miner {uid}:{self.metagraph.hotkeys[uid]} for returning empty results when data exists")
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                    ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_empty_when_data_exists").inc()
                 
                 # Return verification data as response
                 processed_data = [self._create_entity_dictionary(item) for item in verification_data]
@@ -384,12 +388,13 @@ class OrganicQueryProcessor:
                 if underperformance_ratio > 0.2:
                     # Scale mult_factor: 0.2 underperformance = 0.1 mult_factor, 1.0 underperformance = 1.0 mult_factor
                     mult_factor = min((underperformance_ratio - 0.2) / 0.8, 1.0)
-                    
+
                     penalized_miners.append(uid)
                     bt.logging.info(f"Miner {uid}:{self.metagraph.hotkeys[uid]}: {post_count} posts vs consensus {consensus_count:.1f} "
                                    f"({underperformance_ratio:.1%} underperformance, {mult_factor:.2f} penalty)")
-                    
+
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
+                    ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_volume_underperformance_consensus").inc()
         
         bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
         return penalized_miners
@@ -419,6 +424,7 @@ class OrganicQueryProcessor:
             for uid in empty_uids:
                 bt.logging.info(f"Applying delayed penalty to empty miner {uid}:{self.metagraph.hotkeys[uid]} - data was available")
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_empty_when_data_exists").inc()
             return empty_uids
         else:
             bt.logging.info(f"No penalties for {len(empty_uids)} empty miners - no data was actually available")
@@ -474,16 +480,18 @@ class OrganicQueryProcessor:
                 if verification_count < synapse.limit and miner_count > verification_count:
                         bt.logging.info(f"Miner {uid}:{self.metagraph.hotkeys[uid]}: fake data padding detected - {miner_count} posts vs {verification_count} verified, applying full penalty")
                         self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                        ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_fake_data_padding").inc()
                         continue
                 
                 # Apply scaled penalties based on underperformance
                 underperformance_ratio = max(0, (verification_count - miner_count) / verification_count)
                 mult_factor = min(underperformance_ratio, 1.0)
-                
+
                 if mult_factor > 0.1:  # Only penalize underperformance of > 10%
                     bt.logging.info(f"Miner {uid}:{self.metagraph.hotkeys[uid]}: {miner_count} posts vs {verification_count} verified "
                                    f"({underperformance_ratio:.1%} underperformance, {mult_factor:.2f} penalty)")
                     self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=mult_factor)
+                    ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_volume_underperformance_verification").inc()
         
         # Return verification data as response
         processed_data = [self._create_entity_dictionary(item) for item in verification_data]
@@ -929,7 +937,11 @@ class OrganicQueryProcessor:
                 miner_scores[uid] = 0
                 failed_miners.append(uid)
                 self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
-        
+                ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_content_validation").inc()
+            else:
+                # Miner passed validation - track success
+                ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="success").inc()
+
         bt.logging.info(f"Final miner scores: {miner_scores}")
         bt.logging.info(f"Failed validation miners: {failed_miners}")
         return miner_scores, failed_miners
