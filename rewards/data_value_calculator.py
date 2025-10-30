@@ -25,16 +25,22 @@ class DataValueCalculator:
         time_bucket_id = scorable_data_entity_bucket.time_bucket_id
         label = scorable_data_entity_bucket.label
         source = scorable_data_entity_bucket.source
-        
+
+        # Apply YouTube byte size reduction (10x less reward for large transcripts)
+        # This prevents YouTube transcripts from dominating rewards due to their large size
+        effective_scorable_bytes = scorable_data_entity_bucket.scorable_bytes
+        if source == DataSource.YOUTUBE:
+            effective_scorable_bytes = scorable_data_entity_bucket.scorable_bytes / 3.0
+
         # Calculate time scalar
         time_scalar = self._scale_factor_for_age(time_bucket_id, current_time_bucket.id)
-        
+
         # Find matching jobs directly using time bucket ID
         # Currently only finds matching jobs where keyword is None.
         matching_jobs = self.model.find_matching_jobs(source, None, label, time_bucket_id)
-        
+
         # Rest of method remains the same...
-        
+
         data_source_weight = self.model.get_data_source_weight(scorable_data_entity_bucket.source)
         
         if matching_jobs:
@@ -57,9 +63,9 @@ class DataValueCalculator:
                     )
                 
                 # Add this job's contribution to total score
-                contribution = data_source_weight * job_weight * time_scalar * scorable_data_entity_bucket.scorable_bytes
+                contribution = data_source_weight * job_weight * time_scalar * effective_scorable_bytes
                 total_score += contribution
-            
+
             return total_score
         else:
             # No matching jobs - use default scale factor
@@ -73,7 +79,7 @@ class DataValueCalculator:
                 data_source_weight
                 * default_scale_factor
                 * time_scalar
-                * scorable_data_entity_bucket.scorable_bytes
+                * effective_scorable_bytes
             )
     
     
