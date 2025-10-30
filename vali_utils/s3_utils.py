@@ -169,13 +169,19 @@ class S3Validator:
                 recent_data_analysis['recent_job_files'], expected_jobs
             )
 
-            # Step 7: Calculate final validation result
+            # Step 7: Calculate job completion rate for reward scaling
+            num_expected_jobs = len(expected_jobs)
+            num_active_jobs = len(active_job_folders)
+            job_completion_rate = (num_active_jobs / num_expected_jobs * 100) if num_expected_jobs > 0 else 100.0
+
+            # Step 8: Calculate final validation result with job completion multiplier
             return self._calculate_final_result(
                 len(active_job_folders),
                 recent_data_analysis,
                 duplicate_analysis,
                 job_match_analysis,
-                scraper_validation
+                scraper_validation,
+                job_completion_rate
             )
             
         except Exception as e:
@@ -561,9 +567,7 @@ class S3Validator:
                         total_passed += 1
                         sample_results.append(f"✅ {platform} ({job_id}): {result.reason}")
                     else:
-                        bt.logging.warning(
-                            f"Scraper validation failed for {platform} (job: {job_id}): {result.reason}"
-                        )
+                        # Only log failures - successes are tracked in summary
                         sample_results.append(f"❌ {platform} ({job_id}): {result.reason}")
                         
             except Exception as e:
@@ -588,7 +592,8 @@ class S3Validator:
     
     def _calculate_final_result(
         self, total_active_jobs: int, recent_data_analysis: Dict,
-        duplicate_analysis: Dict, job_match_analysis: Dict, scraper_validation: Dict
+        duplicate_analysis: Dict, job_match_analysis: Dict, scraper_validation: Dict,
+        job_completion_rate: float
     ) -> S3ValidationResultDetailed:
         """Calculate final validation result based on all analyses"""
 
@@ -627,7 +632,7 @@ class S3Validator:
         duplicate_pct = duplicate_analysis['duplicate_percentage']
         duplicate_score = max(0, 30.0 * (1 - duplicate_pct / 10.0))
 
-        # Calculate overall validation percentage (including size bonus)
+        # Calculate base validation percentage WITHOUT size bonus
         # Base: 30% duplicates (proportional) + 30% job matching + 40% scraper = 100%
         base_validation_percentage = (
             duplicate_score +
@@ -635,8 +640,24 @@ class S3Validator:
             (scraper_validation['success_rate'] * 0.4)
         )
 
-        # Apply size bonus to base validation (no cap on final score)
-        validation_percentage = base_validation_percentage + size_bonus
+        # Only apply size bonus if validation passed all checks
+        # Size bonus should reward volume AFTER quality is proven
+        if is_valid:
+            validation_percentage = base_validation_percentage + size_bonus
+        else:
+            # Failed validation = no bonus from size
+            validation_percentage = 0.0
+
+        # Apply job completion rate multiplier to reward miners with more complete job coverage
+        # 100% jobs = 1.0x, 50% jobs = 0.5x, 10% jobs = 0.1x
+        # This prevents "1 job gets 100M boost" exploit
+        job_completion_multiplier = job_completion_rate / 100.0
+        validation_percentage *= job_completion_multiplier
+
+        bt.logging.info(
+            f"Job completion rate: {job_completion_rate:.1f}% ({total_active_jobs} jobs), "
+            f"applied {job_completion_multiplier:.2f}x multiplier to validation score"
+        )
 
         # Collect validation issues
         issues = []
@@ -922,7 +943,8 @@ class S3Validator:
             if not all([username, body, url, reddit_id]):
                 return None
             
-            # Get datetime from row or use current time
+            # Get datetime from row - use as-is without rounding
+            # The parquet already contains obfuscated datetime, and to_data_entity expects unrounded datetime
             datetime_val = row.get('datetime', row.get('createdAt', ''))
             if datetime_val and pd.notna(datetime_val):
                 try:
@@ -933,9 +955,6 @@ class S3Validator:
                     created_at = dt.datetime.now(dt.timezone.utc)
             else:
                 created_at = dt.datetime.now(dt.timezone.utc)
-            
-            # Obfuscate timestamp to minute for Reddit validation
-            created_at = created_at.replace(second=0, microsecond=0)
             
             # Create RedditContent object with ALL uploaded fields
             reddit_content = RedditContent(
@@ -1330,8 +1349,26 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
 
 
 def get_s3_validation_summary(result: S3ValidationResult) -> str:
-    """Generate a summary string for S3 validation result"""
+    """Generate a summary string for S3 validation result with detailed breakdown"""
+
+    # Get quality metrics if available
+    dup_rate = result.quality_metrics.get('duplicate_percentage', 0)
+    job_match = result.quality_metrics.get('job_match_rate', 0)
+    scraper_rate = result.quality_metrics.get('scraper_success_rate', 0)
+
+    size_mb = result.total_size_bytes / (1024 * 1024)
+
     if result.is_valid:
-        return f"✅ S3 Valid ({result.validation_percentage:.1f}%): {result.job_count} jobs, {result.total_files} files"
+        return (
+            f"✅ S3 PASSED ({result.validation_percentage:.1f}%): "
+            f"{result.job_count} jobs, {result.total_files} files ({size_mb:.1f}MB) | "
+            f"Dup: {dup_rate:.1f}%, JobMatch: {job_match:.1f}%, Scraper: {scraper_rate:.1f}%"
+        )
     else:
-        return f"❌ S3 Invalid ({result.validation_percentage:.1f}%): {', '.join(result.issues[:2])}"
+        # Show breakdown even on failure so miners know what to fix
+        return (
+            f"❌ S3 FAILED ({result.validation_percentage:.1f}%): "
+            f"{result.job_count} jobs, {result.total_files} files ({size_mb:.1f}MB) | "
+            f"Dup: {dup_rate:.1f}%, JobMatch: {job_match:.1f}%, Scraper: {scraper_rate:.1f}% | "
+            f"Issues: {', '.join(result.issues[:3])}"
+        )

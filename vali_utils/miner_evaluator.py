@@ -267,10 +267,12 @@ class MinerEvaluator:
                     f"Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}"
                     f"{job_match_info}"
                 )
+                # Only award boost if validation passed
+                self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage)
             else:
                 bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. Reason: {s3_validation_result.reason}")
-
-            self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage)
+                # Failed validation = 0% boost
+                self.scorer.update_s3_boost_and_cred(uid, 0.0)
 
     async def _perform_s3_validation(
         self, uid: int, hotkey: str, current_block: int
@@ -322,7 +324,6 @@ class MinerEvaluator:
             self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
 
         return s3_validation_result
-
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
