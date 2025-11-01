@@ -16,7 +16,7 @@ import duckdb
 import datetime as dt
 import math
 import bittensor as bt
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Any
 from dataclasses import dataclass
 
 from scraping.provider import ScraperProvider
@@ -100,6 +100,16 @@ class S3Validator:
     
     def __init__(self):
         self.scraper_provider = ScraperProvider()
+
+    @staticmethod
+    def _add_qs(url: str, **params) -> str:
+        """Merge query params into URL (URL-encoded) without mutating original."""
+        u = urllib.parse.urlparse(url)
+        q = dict(urllib.parse.parse_qsl(u.query, keep_blank_values=True))
+        for k, v in params.items():
+            if v is not None:
+                q[k] = str(v)
+        return urllib.parse.urlunparse(u._replace(query=urllib.parse.urlencode(q)))
     
     async def validate_miner_s3_data(
         self, 
@@ -760,40 +770,118 @@ class S3Validator:
     
     # Additional helper methods
     async def _get_job_files(self, presigned_url: str) -> List[Dict]:
-        """Get parquet files from job using proven XML parsing"""
+        """List ALL .parquet files in a job folder with robust pagination.
+
+        Tries ListObjectsV2 (continuation-token) first; falls back to start-after if needed.
+        Returns: [{'key': str, 'size': int, 'last_modified': str}, ...]
+        """
         try:
-            response = requests.get(presigned_url, timeout=30)
-            if response.status_code != 200:
-                return []
-            
-            root = ET.fromstring(response.text)
+            loop = asyncio.get_event_loop()
+            files: List[Dict[str, Any]] = []
             namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
-            
-            files = []
-            for content in root.findall('.//s3:Contents', namespaces):
-                try:
-                    key_elem = content.find('s3:Key', namespaces)
-                    size_elem = content.find('s3:Size', namespaces)
-                    modified_elem = content.find('s3:LastModified', namespaces)
-                    
-                    if key_elem is not None and key_elem.text:
-                        key = urllib.parse.unquote(key_elem.text)
-                        size = int(size_elem.text) if size_elem is not None and size_elem.text else 0
-                        last_modified = modified_elem.text if modified_elem is not None else ""
-                        
-                        if key.endswith('.parquet'):
-                            files.append({
-                                'key': key,
-                                'size': size,
-                                'last_modified': last_modified
-                            })
-                except Exception:
-                    continue
-            
+
+            # paging state
+            mode: Optional[str] = None            # 'v2' | 'start_after'
+            next_token: Optional[str] = None
+            last_key: Optional[str] = None
+            prev_last_key: Optional[str] = None
+            max_pages = 1000                        # safety cap <-- This a problem since miners can upload small files (recheck a job and then find 10 new rows and uploads)
+
+            def _get(url: str):
+                return requests.get(url, timeout=30)
+
+            url = presigned_url
+
+            for page in range(1, max_pages + 1):
+                resp = await loop.run_in_executor(None, lambda: _get(url))
+                if resp.status_code != 200:
+                    self._debug_print(f"Job list page {page} failed: {resp.status_code}")
+                    break
+
+                root = ET.fromstring(resp.text)
+
+                # collect this page’s parquet objects
+                page_count = 0
+                new_last_key = last_key
+                for content in root.findall('.//s3:Contents', namespaces):
+                    k_el = content.find('s3:Key', namespaces)
+                    s_el = content.find('s3:Size', namespaces)
+                    lm_el = content.find('s3:LastModified', namespaces)
+                    if not (k_el is not None and k_el.text):
+                        continue
+                    key_dec = urllib.parse.unquote(k_el.text)
+                    new_last_key = key_dec  # remember last key on this page
+                    if key_dec.endswith('.parquet'):
+                        files.append({
+                            'key': key_dec,
+                            'size': int(s_el.text) if (s_el is not None and s_el.text) else 0,
+                            'last_modified': lm_el.text if lm_el is not None else ''
+                        })
+                        page_count += 1
+
+                self._debug_print(f"Job list page {page}: +{page_count} parquet (total={len(files)})")
+
+                # stop if no progress on key space (defensive)
+                if new_last_key == prev_last_key:
+                    self._debug_print("No progress in paging (same last_key); stopping.")
+                    break
+                prev_last_key = new_last_key
+
+                # truncated?
+                trunc_el = root.find('.//s3:IsTruncated', namespaces)
+                is_truncated = (trunc_el is not None and str(trunc_el.text).lower() == 'true')
+                if not is_truncated:
+                    break
+
+                # token (if v2)
+                token_el = root.find('.//s3:NextContinuationToken', namespaces)
+                got_token = (token_el is not None and token_el.text)
+
+                # decide or update mode
+                if mode is None:
+                    if got_token:
+                        mode = 'v2'
+                        next_token = token_el.text
+                    else:
+                        mode = 'start_after'
+                        last_key = new_last_key
+                else:
+                    if mode == 'v2' and got_token:
+                        next_token = token_el.text
+                    elif mode == 'start_after':
+                        last_key = new_last_key
+
+                # build next URL
+                if mode == 'v2':
+                    url_candidate = self._add_qs(presigned_url, **{"list-type": "2", "continuation-token": next_token})
+                    probe = await loop.run_in_executor(None, lambda: _get(url_candidate))
+                    if probe.status_code == 200:
+                        url = url_candidate
+                        continue
+                    else:
+                        self._debug_print(f"V2 continuation rejected ({probe.status_code}); falling back to start-after.")
+                        mode = 'start_after'
+                        last_key = new_last_key
+
+                if mode == 'start_after':
+                    if not last_key:
+                        self._debug_print("start-after mode but no last_key; stopping.")
+                        break
+                    url_candidate = self._add_qs(presigned_url, **{"start-after": last_key})
+                    probe = await loop.run_in_executor(None, lambda: _get(url_candidate))
+                    if probe.status_code == 200:
+                        url = url_candidate
+                        continue
+                    else:
+                        self._debug_print(f"start-after rejected ({probe.status_code}); stopping.")
+                        break
+
             return files
-            
-        except Exception:
+
+        except Exception as e:
+            self._debug_print(f"Exception in _get_job_files: {str(e)}")
             return []
+
     
     def _is_file_recent(self, last_modified_str: str, threshold_time: dt.datetime) -> bool:
         """Check if file was modified after threshold time"""
