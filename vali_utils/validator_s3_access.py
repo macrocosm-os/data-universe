@@ -241,7 +241,7 @@ class ValidatorS3Access:
             next_token: Optional[str] = None
             last_key: Optional[str] = None
             prev_last_key: Optional[str] = None
-            max_pages = 200                        # safety cap - Fine tune later
+            max_pages = 1000                        # safety cap - # safety cap <-- This a problem since miners can upload small files (recheck a job and then find 10 new rows and uploads)
 
             self._debug_print("Starting to collect all S3 files...")
 
