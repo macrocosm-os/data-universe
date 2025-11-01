@@ -23,6 +23,16 @@ class ValidatorS3Access:
         self._cached_all_files = None
         self._cache_expiry = 0
 
+    @staticmethod
+    def _add_qs(url: str, **params) -> str:
+        """Merge query params into URL (URL-encoded) without mutating original."""
+        u = urllib.parse.urlparse(url)
+        q = dict(urllib.parse.parse_qsl(u.query, keep_blank_values=True))
+        for k, v in params.items():
+            if v is not None:
+                q[k] = str(v)
+        return urllib.parse.urlunparse(u._replace(query=urllib.parse.urlencode(q)))
+
     def _debug_print(self, message: str):
         """Print debug message if debug mode is enabled"""
         if self.debug:
@@ -205,12 +215,11 @@ class ValidatorS3Access:
             return []
 
     async def _get_all_s3_data(self) -> List[str]:
-        """Get ALL S3 data once and cache it (handles pagination properly)"""
+        """Get ALL S3 keys (global) with robust pagination; cache for 10 minutes."""
         current_time = time.time()
 
-        # Check if cache is still valid (10 minutes)
-        if (self._cached_all_files and
-                current_time < self._cache_expiry):
+        # cache hit?
+        if (self._cached_all_files and current_time < self._cache_expiry):
             self._debug_print("Using cached S3 file list")
             return self._cached_all_files
 
@@ -221,77 +230,114 @@ class ValidatorS3Access:
             urls = self.access_data.get('urls', {})
             global_urls = urls.get('global', {})
             base_url = global_urls.get('list_all_data', '')
-
             if not base_url:
                 return []
 
-            all_files = []
-            page = 1
-            max_pages = 20  # Safety limit
+            keys: List[str] = []
+            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+
+            # paging state
+            mode: Optional[str] = None            # 'v2' | 'start_after'
+            next_token: Optional[str] = None
+            last_key: Optional[str] = None
+            prev_last_key: Optional[str] = None
+            max_pages = 200                        # safety cap - Fine tune later
 
             self._debug_print("Starting to collect all S3 files...")
 
-            # Get first page
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: requests.get(base_url))
+            def _get(url: str):
+                return requests.get(url, timeout=60)
 
-            if response.status_code != 200:
-                self._debug_print(f"Failed to get S3 data: {response.status_code}")
-                return []
+            url = base_url
+            page = 1
 
             while page <= max_pages:
-                root = ET.fromstring(response.text)
-                namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                resp = await loop.run_in_executor(None, lambda: _get(url))
+                if resp.status_code != 200:
+                    self._debug_print(f"Global list page {page} failed: {resp.status_code}")
+                    break
 
-                # Collect files from this page
+                root = ET.fromstring(resp.text)
+
+                # collect this page
                 page_files = 0
+                new_last_key = last_key
                 for content in root.findall('.//s3:Contents', namespaces):
-                    key = content.find('s3:Key', namespaces).text
-                    if key:
-                        decoded_key = urllib.parse.unquote(key)
-                        all_files.append(decoded_key)
-                        page_files += 1
+                    k_el = content.find('s3:Key', namespaces)
+                    if not (k_el is not None and k_el.text):
+                        continue
+                    key_dec = urllib.parse.unquote(k_el.text)
+                    keys.append(key_dec)
+                    page_files += 1
+                    new_last_key = key_dec
 
-                self._debug_print(f"Page {page}: collected {page_files} files (total: {len(all_files)})")
+                self._debug_print(f"Page {page}: collected {page_files} files (total: {len(keys)})")
 
-                # Check if there are more pages
-                is_truncated = root.find('.//s3:IsTruncated', namespaces)
-                if is_truncated is None or is_truncated.text.lower() != 'true':
+                # stop if no progress (defensive)
+                if new_last_key == prev_last_key:
+                    self._debug_print("No progress in paging (same last_key); stopping.")
+                    break
+                prev_last_key = new_last_key
+
+                # truncated?
+                trunc_el = root.find('.//s3:IsTruncated', namespaces)
+                is_truncated = (trunc_el is not None and str(trunc_el.text).lower() == 'true')
+                if not is_truncated:
                     self._debug_print("No more pages available")
                     break
 
-                # For S3 pagination, we need the LastKey to continue
-                # This is simpler than continuation tokens
-                if all_files:
-                    last_key = all_files[-1]
-                    # Create new URL with start-after parameter
-                    encoded_key = urllib.parse.quote(last_key, safe='')
-                    if '?' in base_url:
-                        next_url = f"{base_url}&start-after={encoded_key}"
+                # token (if v2)
+                token_el = root.find('.//s3:NextContinuationToken', namespaces)
+                got_token = (token_el is not None and token_el.text)
+
+                # decide/update mode
+                if mode is None:
+                    if got_token:
+                        mode = 'v2'
+                        next_token = token_el.text
                     else:
-                        next_url = f"{base_url}?start-after={encoded_key}"
-
-                    # Get next page (this might fail due to presigned URL, but let's try)
-                    try:
-                        response = await loop.run_in_executor(None, lambda: requests.get(next_url))
-                        if response.status_code != 200:
-                            self._debug_print(f"Page {page + 1} failed: {response.status_code} - stopping pagination")
-                            break
-                    except Exception as e:
-                        self._debug_print(f"Pagination failed: {str(e)} - using current data")
-                        break
+                        mode = 'start_after'
+                        last_key = new_last_key
                 else:
-                    break
+                    if mode == 'v2' and got_token:
+                        next_token = token_el.text
+                    elif mode == 'start_after':
+                        last_key = new_last_key
 
-                page += 1
+                # build next URL
+                if mode == 'v2':
+                    url_candidate = self._add_qs(base_url, **{"list-type": "2", "continuation-token": next_token})
+                    probe = await loop.run_in_executor(None, lambda: _get(url_candidate))
+                    if probe.status_code == 200:
+                        url = url_candidate
+                        page += 1
+                        continue
+                    else:
+                        self._debug_print(f"V2 continuation rejected ({probe.status_code}); falling back to start-after.")
+                        mode = 'start_after'
+                        last_key = new_last_key
 
-            self._debug_print(f"Total files collected across {page} pages: {len(all_files)}")
+                if mode == 'start_after':
+                    if not last_key:
+                        self._debug_print("start-after mode but no last_key; stopping.")
+                        break
+                    url_candidate = self._add_qs(base_url, **{"start-after": last_key})
+                    probe = await loop.run_in_executor(None, lambda: _get(url_candidate))
+                    if probe.status_code == 200:
+                        url = url_candidate
+                        page += 1
+                        continue
+                    else:
+                        self._debug_print(f"start-after rejected ({probe.status_code}); stopping.")
+                        break
 
-            # Cache the results for 10 minutes
-            self._cached_all_files = all_files
-            self._cache_expiry = current_time + 600  # 10 minutes
+            self._debug_print(f"Total files collected across {page} pages: {len(keys)}")
 
-            return all_files
+            # cache the results (10 min)
+            self._cached_all_files = keys
+            self._cache_expiry = current_time + 600
+            return keys
 
         except Exception as e:
             self._debug_print(f"Exception getting all S3 data: {str(e)}")
