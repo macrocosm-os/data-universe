@@ -31,7 +31,7 @@ class MinerScorer:
         num_neurons: int,
         value_calculator: DataValueCalculator,
         cred_alpha: float = 0.15,
-        s3_cred_alpha: float = 0.20
+        s3_cred_alpha: float = 0.30
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
@@ -155,7 +155,14 @@ class MinerScorer:
         """Applies a fixed boost to the scaled score if the miner has passed S3 validation."""
         max_boost = 120 * 10**6  # Increased 3x from 40M to incentivize S3 uploads
         self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
-        self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
+
+        # If validation failed (0%), immediately reset credibility to 0 (no EMA)
+        # Otherwise, use EMA to update credibility
+        if s3_vali_percentage == 0:
+            self.s3_credibility[uid] = 0.0
+        else:
+            self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
+
         bt.logging.info(
             f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
         )

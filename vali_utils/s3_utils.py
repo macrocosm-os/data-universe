@@ -434,10 +434,13 @@ class S3Validator:
                                     entity_label.removeprefix('r/') == job_label_normalized.removeprefix('r/')
                                 )
                             elif platform == 'youtube':
-                                # For YouTube: check channel labels
+                                # For YouTube: check channel labels, removing @ prefix if present
+                                label_without_at = job_label_normalized.lstrip('@')
                                 matches_job = (
                                     entity_label == job_label_normalized or
-                                    job_label_normalized in entity_label
+                                    entity_label == label_without_at or
+                                    job_label_normalized in entity_label or
+                                    label_without_at in entity_label
                                 )
                             else:
                                 matches_job = (entity_label == job_label_normalized)
@@ -605,13 +608,13 @@ class S3Validator:
         duplicate_validation_passed = not has_duplicates
 
         # Determine if job content matching passed
-        min_job_match_rate = 80.0  # Require 80% of data to match job requirements
+        min_job_match_rate = 100.0  # Require 100% of data to match job requirements
         job_match_validation_passed = (
             job_match_analysis['match_rate'] >= min_job_match_rate
         )
 
         # Determine if scraper validation passed
-        min_scraper_success_rate = 60.0  # min_scraper_success_rate = 60.0
+        min_scraper_success_rate = 80.0  # min_scraper_success_rate = 80.0
         scraper_validation_passed = (
             scraper_validation['success_rate'] >= min_scraper_success_rate
         )
