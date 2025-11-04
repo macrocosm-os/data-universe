@@ -639,8 +639,7 @@ class S3Validator:
         # Base: 30% duplicates (proportional) + 30% job matching + 40% scraper = 100%
         base_validation_percentage = (
             duplicate_score +
-            (job_match_analysis['match_rate'] * 0.3) +
-            (scraper_validation['success_rate'] * 0.4)
+            (scraper_validation['success_rate'] * 0.7)
         )
 
         # Only apply size bonus if validation passed all checks

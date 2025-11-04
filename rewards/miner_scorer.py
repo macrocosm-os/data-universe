@@ -151,14 +151,15 @@ class MinerScorer:
                 ]
             )
 
-    def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float) -> None:
+    def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float, job_match_failure = False) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed S3 validation."""
-        max_boost = 120 * 10**6  # Increased 3x from 40M to incentivize S3 uploads
+        max_boost = 200 * 10**6  # Increased to 200M from 120M
         self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
 
-        # If validation failed (0%), immediately reset credibility to 0 (no EMA)
+        # If miners fail job match validation, immediately reset credibility to 0 (no EMA)
         # Otherwise, use EMA to update credibility
-        if s3_vali_percentage == 0:
+        if job_match_failure:
+            bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0. S3 uploads must match their respective job request params.")
             self.s3_credibility[uid] = 0.0
         else:
             self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
