@@ -51,4 +51,4 @@ ENHANCED_METADATA_REQUIRED_DATE = dt.datetime(2025, 9, 23, tzinfo=dt.timezone.ut
 EVALUATION_ON_STARTUP = 15
 
 # Emission Control / Burn Configuration
-EMISSION_CONTROL_PERCENTAGE = 0.30  # 20% of emissions redirected to subnet owner (burn)
+EMISSION_CONTROL_PERCENTAGE = 0.60  # 60% of emissions redirected to subnet owner (burn)

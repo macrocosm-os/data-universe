@@ -45,9 +45,8 @@ class YouTubeMultiActorScraper(Scraper):
 
     def _get_ordered_scrapers(self, video_id: str) -> List[tuple]:
         """Get scrapers in order: randomly select from primary scrapers, then invideoiq as fallback."""
-        # Use consistent hashing to randomly select between crawlmaster and starvibe
         video_hash = int(hashlib.md5(video_id.encode()).hexdigest(), 16)
-        primary_index = video_hash % len(self.primary_scrapers)
+        primary_index = 0 if (video_hash % 100) >= 70 else 1
         selected_primary = self.primary_scrapers[primary_index]
 
         # Other primary scraper
