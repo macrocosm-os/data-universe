@@ -395,7 +395,11 @@ class S3Validator:
                         matches_job = False
 
                         # Check if data matches job requirements
-                        if job_label:
+                        # Evaluate both label and keyword - match if either passes
+                        label_matches = False
+                        keyword_matches = False
+
+                        if job_label and job_label.strip():  # Only check if non-empty after strip
                             # Label-based job: check if entity label matches
                             entity_label = str(row.get('label', '')).lower().strip()
                             job_label_normalized = job_label.lower().strip()
@@ -411,7 +415,7 @@ class S3Validator:
                                     label_with_hash = f"#{label_without_hash}"
 
                                     # Check if job label is in the hashtags array
-                                    matches_job = (
+                                    label_matches = (
                                         label_with_hash in hashtags_lower or
                                         label_without_hash in hashtags_lower or
                                         # Fallback: check main label field
@@ -422,13 +426,13 @@ class S3Validator:
                                     # Fallback if tweet_hashtags is not a list
                                     label_without_hash = job_label_normalized.lstrip('#')
                                     label_with_hash = f"#{label_without_hash}"
-                                    matches_job = (
+                                    label_matches = (
                                         entity_label == label_with_hash or
                                         entity_label == label_without_hash
                                     )
                             elif platform == 'reddit':
                                 # For Reddit: check with and without r/ prefix
-                                matches_job = (
+                                label_matches = (
                                     entity_label == job_label_normalized or
                                     entity_label == f"r/{job_label_normalized.removeprefix('r/')}" or
                                     entity_label.removeprefix('r/') == job_label_normalized.removeprefix('r/')
@@ -436,16 +440,16 @@ class S3Validator:
                             elif platform == 'youtube':
                                 # For YouTube: check channel labels, removing @ prefix if present
                                 label_without_at = job_label_normalized.lstrip('@')
-                                matches_job = (
+                                label_matches = (
                                     entity_label == job_label_normalized or
                                     entity_label == label_without_at or
                                     job_label_normalized in entity_label or
                                     label_without_at in entity_label
                                 )
                             else:
-                                matches_job = (entity_label == job_label_normalized)
+                                label_matches = (entity_label == job_label_normalized)
 
-                        elif job_keyword:
+                        if job_keyword and job_keyword.strip():  # Only check if non-empty after strip
                             # Keyword-based job: check if content contains keyword
                             job_keyword_normalized = job_keyword.lower().strip()
 
@@ -453,13 +457,15 @@ class S3Validator:
                             if platform == 'reddit':
                                 body = str(row.get('body', '')).lower()
                                 title = str(row.get('title', '')).lower()
-                                matches_job = (job_keyword_normalized in body or job_keyword_normalized in title)
+                                keyword_matches = (job_keyword_normalized in body or job_keyword_normalized in title)
                             elif platform == 'youtube':
                                 title = str(row.get('title', '')).lower()
-                                matches_job = job_keyword_normalized in title
+                                keyword_matches = job_keyword_normalized in title
                             else:  # X/Twitter
                                 text = str(row.get('text', '')).lower()
-                                matches_job = job_keyword_normalized in text
+                                keyword_matches = job_keyword_normalized in text
+
+                        matches_job = label_matches or keyword_matches
 
                         if matches_job:
                             total_matched += 1
@@ -636,7 +642,7 @@ class S3Validator:
         duplicate_score = max(0, 30.0 * (1 - duplicate_pct / 10.0))
 
         # Calculate base validation percentage WITHOUT size bonus
-        # Base: 30% duplicates (proportional) + 30% job matching + 40% scraper = 100%
+        # Base: 30% duplicates (proportional) + 70% scraper = 100%
         base_validation_percentage = (
             duplicate_score +
             (scraper_validation['success_rate'] * 0.7)
