@@ -257,6 +257,7 @@ class MinerEvaluator:
         metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
+            job_match_failure = (s3_validation_result.quality_metrics.get('job_match_rate', 0) < 100)
             if s3_validation_result.is_valid:
                 job_match_info = ""
                 if 'job_match_rate' in s3_validation_result.quality_metrics:
@@ -268,11 +269,11 @@ class MinerEvaluator:
                     f"{job_match_info}"
                 )
                 # Only award boost if validation passed
-                self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage)
+                self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage, job_match_failure)
             else:
                 bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. Reason: {s3_validation_result.reason}")
                 # Failed validation = 0% boost
-                self.scorer.update_s3_boost_and_cred(uid, 0.0)
+                self.scorer.update_s3_boost_and_cred(uid, 0.0, job_match_failure)
 
     async def _perform_s3_validation(
         self, uid: int, hotkey: str, current_block: int
