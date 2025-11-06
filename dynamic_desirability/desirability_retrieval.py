@@ -260,6 +260,7 @@ def to_lookup(json_path: str):
         # Create DataSourceDesirability object and add to distribution
         distribution[data_source] = DataSourceDesirability(
             weight=data_source.weight,
+            default_scale_factor=DEFAULT_SCALE_FACTOR,
             job_matcher=job_matcher
         )
     

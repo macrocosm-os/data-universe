@@ -1,12 +1,13 @@
 from common import constants
 from common.data import DataLabel, DataSource
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup
+from dynamic_desirability.constants import DEFAULT_SCALE_FACTOR
 
 #################################################################
 
-# This list is outdated and is only used as a backup to Dynamic Desirability. 
-# Please see the folder dynamic_desirability for more information on how reward 
-# scale factors are constructed. 
+# This list is outdated and is only used as a backup to Dynamic Desirability.
+# Please see the folder dynamic_desirability for more information on how reward
+# scale factors are constructed.
 
 #################################################################
 
@@ -14,7 +15,7 @@ LOOKUP = DataDesirabilityLookup(
     distribution={
         DataSource.REDDIT: DataSourceDesirability(
             weight=0.6,
-            default_scale_factor=0.15,
+            default_scale_factor=DEFAULT_SCALE_FACTOR,
             label_scale_factors={
                 DataLabel(value="r/Bitcoin"): 1.0,
                 DataLabel(value="r/BitcoinCash"): 1.0,
@@ -33,7 +34,7 @@ LOOKUP = DataDesirabilityLookup(
         ),
         DataSource.X: DataSourceDesirability(
             weight=0.4,
-            default_scale_factor=0.15,
+            default_scale_factor=DEFAULT_SCALE_FACTOR,
             label_scale_factors={
                 DataLabel(value="#bitcoin"): 1.0,
                 DataLabel(value="#bitcoincharts"): 1.0,
