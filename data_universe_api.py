@@ -48,6 +48,7 @@ class OnDemandJobPayloadX(BaseModel):
 
     usernames: Optional[List[str]] = None
     keywords: Optional[List[str]] = None
+    url: Optional[str] = None
 
 
 class OnDemandJobPayloadReddit(BaseModel):

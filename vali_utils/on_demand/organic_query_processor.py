@@ -55,7 +55,8 @@ class OrganicQueryProcessor:
         Main entry point for processing organic queries
         """
         request_start_time = dt.datetime.now(dt.timezone.utc)
-        bt.logging.info(f"Processing organic query for source: {synapse.source}")
+        request_type = "URL" if synapse.url else "username/keyword"
+        bt.logging.info(f"Processing organic query for source: {synapse.source} (type: {request_type})")
         
         try:
             # Step 1: Select miners for querying
@@ -168,6 +169,7 @@ class OrganicQueryProcessor:
             source=DataSource[synapse.source.upper()],
             usernames=synapse.usernames,
             keywords=synapse.keywords,
+            url=synapse.url,
             keyword_mode=synapse.keyword_mode,
             start_date=synapse.start_date,
             end_date=synapse.end_date,
@@ -588,6 +590,7 @@ class OrganicQueryProcessor:
             if synapse.source.upper() == 'X':
                 verification_data = await scraper.on_demand_scrape(usernames=synapse.usernames,
                                                                    keywords=synapse.keywords,
+                                                                   url=synapse.url,
                                                                    keyword_mode=synapse.keyword_mode,
                                                                    start_datetime=start_date,
                                                                    end_datetime=end_date,
@@ -751,11 +754,25 @@ class OrganicQueryProcessor:
         """X request field validation with the X DataEntity"""
         hotkey = self.metagraph.hotkeys[miner_uid]
         x_content_dict = json.loads(x_entity.content.decode('utf-8'))
-        
+
+        # URL validation - if URL is provided, validate that the returned post matches
+        if synapse.url:
+            from scraping.x import utils
+            post_url = x_content_dict.get("url", "")
+            # Normalize both URLs for comparison
+            if utils.normalize_url(post_url) != utils.normalize_url(synapse.url):
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} URL mismatch: {post_url} != {synapse.url}")
+                return False
+            # For URL mode, validate the URL matches and time range
+            if not self._validate_time_range(synapse, x_entity.datetime):
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
+                return False
+            return True
+
         # Username validation - handle both nested and flat formats
         if synapse.usernames:
             requested_usernames = [u.strip('@').lower() for u in synapse.usernames]
-            
+
             # Check if this is nested format (backward compatibility)
             if 'user' in x_content_dict:
                 # Nested format
@@ -764,11 +781,11 @@ class OrganicQueryProcessor:
             else:
                 # Flat format (current)
                 post_username = x_content_dict.get("username", "").strip('@').lower()
-                
+
             if not post_username or post_username not in requested_usernames:
                 bt.logging.debug(f"Miner {miner_uid}:{hotkey} username mismatch: {post_username} not in: {requested_usernames}")
                 return False
-        
+
         # Keyword validation - text is at top level in both formats
         if synapse.keywords:
             post_text = x_content_dict.get("text", "")
@@ -784,12 +801,12 @@ class OrganicQueryProcessor:
                 if not any(keyword.lower() in post_text for keyword in synapse.keywords):
                     bt.logging.debug(f"Miner {miner_uid}:{hotkey} none of the keywords ({synapse.keywords}) found in post: {post_text}")
                     return False
-        
+
         # Time range validation
         if not self._validate_time_range(synapse, x_entity.datetime):
             bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
-        
+
         return True
     
 

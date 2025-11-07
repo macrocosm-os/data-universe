@@ -449,6 +449,7 @@ class Miner:
             # map job request to existing synapse on demand
             usernames: typing.Optional[typing.List[str]] = []
             keywords: typing.Optional[typing.List[str]] = []
+            url: typing.Optional[str] = None
 
             data_source: DataSource
             if job_request.job.platform == "x":
@@ -456,6 +457,8 @@ class Miner:
                 x_job: OnDemandJobPayloadX = job_request.job
                 usernames = x_job.usernames
                 keywords = x_job.keywords
+                # Support url field if it exists in the job payload
+                url = getattr(x_job, 'url', None)
 
             if job_request.job.platform == "youtube":
                 data_source = DataSource.YOUTUBE
@@ -489,6 +492,7 @@ class Miner:
                     keyword_mode=job_request.keyword_mode,
                     usernames=usernames if usernames is not None else [],
                     keywords=keywords if keywords is not None else [],
+                    url=url,
                     data=[],
                 ),
                 reraise_instead_of_return_empty=True
@@ -712,6 +716,7 @@ class Miner:
                 data_entities = await scraper.on_demand_scrape(
                     usernames=synapse.usernames,
                     keywords=synapse.keywords,
+                    url=synapse.url,
                     keyword_mode=synapse.keyword_mode,
                     start_datetime=start_dt,
                     end_datetime=end_dt,

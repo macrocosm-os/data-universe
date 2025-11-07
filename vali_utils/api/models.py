@@ -28,6 +28,10 @@ class QueryRequest(StrictBaseModel):
         description="List of keywords to search for",
         max_length=5
     )
+    url: Optional[str] = Field(
+        default=None,
+        description="Single URL for URL search mode (X or YouTube). Mutually exclusive with usernames and keywords fields." #TODO: MOVE YT KEYWORD SEARCH TO "URL" FIELD
+    )
     # Change to optional strings for ISO format
     start_date: Optional[str] = Field(
         default=None,
@@ -76,12 +80,22 @@ class QueryRequest(StrictBaseModel):
     def validate_source_requirements(self):
         """Validate source-specific requirements"""
         source = self.source.upper()
-        
+
+        # Check for url field usage
+        has_url = self.url is not None and self.url.strip() != ""
+        has_usernames = self.usernames and len(self.usernames) > 0
+        has_keywords = self.keywords and len(self.keywords) > 0
+
         if source == 'X':
-            # X requires either usernames or keywords (or both)
-            if not self.usernames and not self.keywords:
-                raise ValueError("X requests must have either usernames or keywords (or both)")
-        
+            if has_url:
+                # URL search mode: url must be alone
+                if has_usernames or has_keywords:
+                    raise ValueError("X requests with 'url' field cannot have 'usernames' or 'keywords' fields")
+            else:
+                # Standard mode: requires either usernames or keywords (or both)
+                if not has_usernames and not has_keywords:
+                    raise ValueError("X requests must have either 'usernames', 'keywords', or 'url' field")
+
         elif source == 'YOUTUBE':
             # YouTube requires either one username (channel) OR one keyword (video URL), not both
             has_username = len(self.usernames) == 1
