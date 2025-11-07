@@ -294,7 +294,7 @@ def _apply_channel_label_conversion(job_params: Dict[str, Any]) -> Dict[str, Any
     return converted_params
 
 def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
-    """Gets the unscaled JSON submisson for a specified validator hotkey. 
+    """Gets the unscaled JSON submission for a specified validator hotkey. 
        If no hotkey is specified, returns the current aggregate desirability list. """
     try:
         if not hotkey:

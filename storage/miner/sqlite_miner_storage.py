@@ -131,7 +131,7 @@ class SqliteMinerStorage(MinerStorage):
         for data_entity in data_entities:
             added_content_size += data_entity.content_size_bytes
 
-        # If the total size of the store is larger than our maximum configured stored content size then ecept.
+        # If the total size of the store is larger than our maximum configured stored content size then except.
         if added_content_size > self.database_max_content_size_bytes:
             raise ValueError(
                 "Content size to store: "

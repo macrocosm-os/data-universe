@@ -150,7 +150,7 @@ class RedditCustomScraper(Scraper):
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
         bt.logging.trace(
-            f"Reddit custom scraper peforming scrape with config: {scrape_config}."
+            f"Reddit custom scraper performing scrape with config: {scrape_config}."
         )
 
         assert (

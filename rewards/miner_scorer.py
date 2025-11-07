@@ -287,6 +287,6 @@ class MinerScorer:
         )
 
         bt.logging.trace(
-            f"""Evaluated Miner {uid}. Percent of bytes validated succesfully this attempt={credibility * 100}. 
+            f"""Evaluated Miner {uid}. Percent of bytes validated successfully this attempt={credibility * 100}. 
                 Previous Credibility={previous_credibility}. New Credibility={self.miner_credibility[uid].item()}."""
         )

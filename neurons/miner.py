@@ -590,7 +590,7 @@ class Miner:
         with self.lock:
             self.metagraph = new_metagraph
 
-        bt.logging.success("Successfuly resynced the metagraph.")
+        bt.logging.success("Successfully resynced the metagraph.")
 
     def _log_status(self, step: int):
         """Logs a summary of the miner status in the subnet."""

@@ -238,7 +238,7 @@ def validate_reddit_content(
 
 
 def get_time_input(datetime: dt.datetime) -> str:
-    """Returns the value of the 'time' key for a run input based on the targetted scrape time"""
+    """Returns the value of the 'time' key for a run input based on the targeted scrape time"""
     now = dt.datetime.now(tz=dt.timezone.utc)
     # For scraping requests that are almost in the past hour, look in the past 1 hour.
     if now - datetime < dt.timedelta(minutes=90):
@@ -256,7 +256,7 @@ def get_sort_input(datetime: dt.datetime) -> str:
     """Returns the sort to use for a scrape query based on the targeted timestamp."""
     # We are unable to scrape reddit with any date filters.
     # So instead, we'll use the "sort" field to help increase the chances that we get some data
-    # from our targetted time window.
+    # from our targeted time window.
     now = dt.datetime.now(tz=dt.timezone.utc)
     if now - datetime < dt.timedelta(minutes=90):
         return "new"
@@ -270,7 +270,7 @@ def get_custom_sort_input(datetime: dt.datetime) -> str:
     """Returns the sort to use for a scrape query based on the targeted timestamp."""
     # We are unable to scrape reddit with any date filters.
     # So instead, we'll use the "sort" field to help increase the chances that we get some data
-    # from our targetted time window.
+    # from our targeted time window.
     now = dt.datetime.now(tz=dt.timezone.utc)
     if now - datetime < dt.timedelta(minutes=90):
         return "new"
