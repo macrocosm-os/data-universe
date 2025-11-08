@@ -606,8 +606,7 @@ class OrganicQueryProcessor:
             elif synapse.source.upper() == 'YOUTUBE':
                 # Determine YouTube scraping mode: channel or video URL
                 valid_usernames = [u.strip() for u in synapse.usernames if u and u.strip()]
-                valid_keywords = [k.strip() for k in synapse.keywords if k and k.strip()]
-                
+
                 if valid_usernames:
                     # Channel mode
                     channel_identifier = valid_usernames[0]
@@ -619,16 +618,15 @@ class OrganicQueryProcessor:
                         end_date=end_date.isoformat(),
                         language="en"
                     )
-                elif valid_keywords:
+                elif synapse.url:
                     # Video URL mode
-                    youtube_url = valid_keywords[0]
-                    bt.logging.info(f"YouTube verification: video URL scraping {youtube_url}")
+                    bt.logging.info(f"YouTube verification: video URL scraping {synapse.url}")
                     verification_data = await scraper.scrape(
-                        youtube_url=youtube_url,
+                        youtube_url=synapse.url,
                         language="en"
                     )
                 else:
-                    bt.logging.error("YouTube verification needs either username (channel) or keyword (video URL)")
+                    bt.logging.error("YouTube verification needs either username (channel) or url (video URL)")
                     return None
             
             return verification_data if verification_data else None
@@ -862,7 +860,20 @@ class OrganicQueryProcessor:
         bt.logging.debug(f"Miner {miner_uid}:{hotkey} - Starting YouTube request field validation")
         youtube_content_dict = json.loads(youtube_entity.content.decode('utf-8'))
 
-        # Username validation
+        # URL validation - if URL is provided, validate that the returned video matches
+        if synapse.url:
+            video_url = youtube_content_dict.get("video_url", "")
+            # Normalize both URLs for comparison
+            if on_demand_utils.normalize_youtube_url(video_url) != on_demand_utils.normalize_youtube_url(synapse.url):
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} YouTube URL mismatch: {video_url} != {synapse.url}")
+                return False
+            # For URL mode, we only validate the URL matches and time range
+            if not self._validate_time_range(synapse, youtube_entity.datetime):
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
+                return False
+            return True
+
+        # Username (channel) validation
         if synapse.usernames:
             requested_channels = [u.strip('@').lower() for u in synapse.usernames]
             requested_channel = requested_channels[0]   # take only the first requested channel
@@ -870,12 +881,12 @@ class OrganicQueryProcessor:
             if not channel_name or channel_name.lower() != requested_channel.lower():
                 bt.logging.debug(f"Miner {miner_uid}:{hotkey} Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
                 return False
-            
+
         # Time range validation
         if not self._validate_time_range(synapse, youtube_entity.datetime):
             bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
-        
+
         return True
 
 

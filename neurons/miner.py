@@ -457,13 +457,13 @@ class Miner:
                 x_job: OnDemandJobPayloadX = job_request.job
                 usernames = x_job.usernames
                 keywords = x_job.keywords
-                # Support url field if it exists in the job payload
-                url = getattr(x_job, 'url', None)
+                url = x_job.url
 
             if job_request.job.platform == "youtube":
                 data_source = DataSource.YOUTUBE
                 yt_job: OnDemandJobPayloadYoutube = job_request.job
                 usernames = yt_job.channels
+                url = yt_job.url
 
             if job_request.job.platform == "reddit":
                 data_source = DataSource.REDDIT
@@ -766,7 +766,7 @@ class Miner:
 
                 # Determine scraping mode: channel or video URL
                 if synapse.usernames:
-                    # Channel mode (existing logic)
+                    # Channel mode
                     channel_identifier = synapse.usernames[0]
                     bt.logging.info(f"YouTube channel scraping: @{channel_identifier}")
                     data_entities = await scraper.scrape(
@@ -776,16 +776,15 @@ class Miner:
                         end_date=end_dt.isoformat(),
                         language="en"
                     )
-                elif synapse.keywords:
+                elif synapse.url:
                     # Video URL mode
-                    youtube_url = synapse.keywords[0]
-                    bt.logging.info(f"YouTube video URL scraping: {youtube_url}")
+                    bt.logging.info(f"YouTube video URL scraping: {synapse.url}")
                     data_entities = await scraper.scrape(
-                        youtube_url=youtube_url,
+                        youtube_url=synapse.url,
                         language="en"
                     )
                 else:
-                    bt.logging.error("YouTube request needs either username (channel) or keyword (video URL)")
+                    bt.logging.error("YouTube request needs either username (channel) or url (video URL)")
                     synapse.data = []
                     return synapse
                 

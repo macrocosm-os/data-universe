@@ -68,6 +68,7 @@ class OnDemandJobPayloadYoutube(BaseModel):
     platform: Literal["youtube"] = "youtube"
 
     channels: Optional[List[str]] = None
+    url: Optional[str] = None
 
 
 class OnDemandJob(BaseModel):

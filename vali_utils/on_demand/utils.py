@@ -7,6 +7,7 @@ to facilitate the EnhancedXContent to XContent transition for OnDemand.
 
 import datetime as dt
 import json
+import re
 from typing import Optional, List
 from common.data import DataEntity
 
@@ -84,7 +85,7 @@ def extract_media_urls(media_data) -> Optional[List[str]]:
     """Extract media URLs from nested format media data."""
     if not media_data:
         return None
-        
+
     media_urls = []
     if isinstance(media_data, list):
         for item in media_data:
@@ -94,5 +95,29 @@ def extract_media_urls(media_data) -> Optional[List[str]]:
             elif isinstance(item, str):
                 # Already a URL string
                 media_urls.append(item)
-    
+
     return media_urls if media_urls else None
+
+
+def normalize_youtube_url(url: str) -> str:
+    """
+    Normalize YouTube URL by extracting the video ID.
+
+    Supports various YouTube URL formats:
+    - https://www.youtube.com/watch?v=VIDEO_ID
+    - https://youtu.be/VIDEO_ID
+    - https://www.youtube.com/embed/VIDEO_ID
+    - https://www.youtube.com/v/VIDEO_ID
+
+    Args:
+        url: YouTube URL to normalize
+
+    Returns:
+        Normalized video ID or lowercase stripped URL if no ID found
+    """
+    if not url:
+        return ""
+
+    # Extract video ID from various YouTube URL formats
+    video_id_match = re.search(r'(?:v=|youtu\.be/|embed/|v/)([a-zA-Z0-9_-]{11})', url)
+    return video_id_match.group(1) if video_id_match else url.lower().strip()
