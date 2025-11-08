@@ -167,7 +167,7 @@ class Validator:
         if hasattr(job.job, 'subreddit') and job.job.subreddit:
             keywords.insert(0, job.job.subreddit)
 
-        # Extract URL if present (for X platform)
+        # Extract URL if present (for X or YouTube platforms)
         url = None
         if hasattr(job.job, 'url') and job.job.url:
             url = job.job.url
