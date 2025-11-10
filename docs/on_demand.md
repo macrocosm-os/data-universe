@@ -3,6 +3,41 @@
 ## Overview
 On-demand data retrieval is ALREADY IMPLEMENTED in both validator and miner templates. The unified XContent model now provides richer metadata for X/Twitter content while maintaining compatibility with the original Reddit implementation.
 
+## Request Modes
+
+### X/Twitter Request Types
+X/Twitter on-demand requests support three modes:
+1. **Username/Keyword Mode**: Search tweets from specific users and/or tweets containing specific keywords/hashtags
+2. **URL Mode**: Fetch a specific tweet by its URL (mutually exclusive with username/keyword modes)
+
+### Request Examples
+
+**Username/Keyword Mode:**
+```python
+OnDemandRequest(
+    source="X",
+    usernames=["elonmusk", "naval"],
+    keywords=["bitcoin", "crypto"],
+    keyword_mode="any",
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T23:59:59Z",
+    limit=100
+)
+```
+
+**URL Mode (Direct Tweet Lookup):**
+```python
+OnDemandRequest(
+    source="X",
+    url="https://x.com/elonmusk/status/1234567890",
+    start_date="2024-01-01T00:00:00Z",
+    end_date="2024-12-31T23:59:59Z",
+    limit=10
+)
+```
+
+**Note**: URL mode is mutually exclusive with `usernames` and `keywords` fields. If `url` is provided, `usernames` and `keywords` must be empty or omitted.
+
 ## For Miners
 
 ### X/Twitter Scraping (Unified XContent)
