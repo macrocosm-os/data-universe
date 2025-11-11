@@ -245,7 +245,7 @@ class Miner:
                 # Check if it's a new day and we haven't updated yet
                 if last_update is None or current_datetime.date() > last_update.date():
                     bt.logging.info("Retrieving the latest dynamic lookup...")
-                    sync_run_retrieval(self.config)
+                    sync_run_retrieval(self._data_universe_api_client(), mode='miner')
                     bt.logging.info(
                         f"New desirable data list has been written to total.json"
                     )
@@ -255,13 +255,13 @@ class Miner:
                     bt.logging.info("No update needed at this time.")
 
                 # Sleep for 5 minutes before checking again
-                bt.logging.info("Sleeping for 5 minutes...")
-                time.sleep(300)
+                bt.logging.info("Sleeping for 30 seconds...")
+                time.sleep(30)
 
             except Exception as e:
                 bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
                 bt.logging.exception("Exception details:")
-                time.sleep(300)  # Wait 5 minutes before trying again
+                time.sleep(30)  # Wait 30 seconds before trying again
 
     def upload_s3_partitioned(self):
         """Upload DD data to S3 in partitioned format"""
@@ -365,7 +365,7 @@ class Miner:
             except Exception as e:
                 bt.logging.error(traceback.format_exc())
 
-    def _on_demand_client(self) -> DataUniverseApiClient:
+    def _data_universe_api_client(self) -> DataUniverseApiClient:
         return DataUniverseApiClient(
             base_url=self.data_universe_api_base_url,
             verify_ssl=self.verify_ssl,
@@ -380,7 +380,7 @@ class Miner:
                     f"Pulling latest active jobs since {since.strftime("%d/%m/%Y, %H:%M:%S")} UTC"
                 )
 
-                async with self._on_demand_client() as client:
+                async with self._data_universe_api_client() as client:
                     active_jobs_response = await client.miner_list_active_jobs(
                         req=ListActiveJobsRequest(since=since)
                     )
@@ -508,7 +508,7 @@ class Miner:
                 f"Submitting and uploading data for job with id: {job_request.id}"
             )
             try:
-                async with self._on_demand_client() as client:
+                async with self._data_universe_api_client() as client:
                     await client.miner_submit_and_upload(job_id=job_request.id, data=miner_upload)
             except:
                 bt.logging.exception(f"Failed to submit and upload data for job with {job_request.id}")

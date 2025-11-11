@@ -15,7 +15,27 @@ import httpx
 
 import bittensor as bt
 
+
+class DynamicDesirabilityListEntry(BaseModel):
+    id: str
+    platform: str
+    weight: Optional[float] = 1.0
+    label: Optional[str] = None
+    keyword: Optional[str] = None
+    post_start_datetime: Optional[datetime] = None
+    post_end_datetime: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class DynamicDesirabilityList(BaseModel):
+    version: str
+    generated_at: datetime
+
+    entries: List[DynamicDesirabilityListEntry]
+
+
 TEN_MB_BYTES = 10 * 1_000_000
+
 
 class OnDemandMinerUpload(BaseModel):
     data_entities: List[DataEntity]
@@ -26,7 +46,7 @@ class OnDemandMinerUpload(BaseModel):
         for each DataEntity object.
         """
 
-        base_dump = {} # super().model_dump(**kwargs)
+        base_dump = {}  # super().model_dump(**kwargs)
 
         base_dump["data_entities"] = [
             entity.to_json_dict() for entity in self.data_entities
@@ -38,7 +58,12 @@ class OnDemandMinerUpload(BaseModel):
 
     @classmethod
     def model_validate(cls, obj, **kwargs) -> "OnDemandMinerUpload":
-        return OnDemandMinerUpload(data_entities=[DataEntity.from_json_dict(entity_dict) for entity_dict in obj['data_entities']])
+        return OnDemandMinerUpload(
+            data_entities=[
+                DataEntity.from_json_dict(entity_dict)
+                for entity_dict in obj["data_entities"]
+            ]
+        )
 
 
 class OnDemandJobPayloadX(BaseModel):
@@ -245,6 +270,19 @@ class DataUniverseApiClient:
         headers = signer.headers(body=body_bytes)
         return await client.post(path, content=body_bytes, headers=headers)
 
+    async def _get_signed(
+        self, path: str, signer: TaoSigner, body: Optional[bytes] = b""
+    ) -> httpx.Response:
+        """
+        Sends a signed GET request using Tao v2 auth headers.
+
+        Even though GET usually has no body, we sign the empty string (b"")
+        for consistency with server-side expectation (sha256 of empty body).
+        """
+        client = self._ensure_client()
+        headers = signer.headers(body=body or b"")
+        return await client.get(path, headers=headers)
+
     async def miner_list_active_jobs(
         self, req: ListActiveJobsRequest
     ) -> ListActiveJobsResponse:
@@ -296,7 +334,9 @@ class DataUniverseApiClient:
         submit_resp = await self.miner_submit_job(submit_req)
         presigned = submit_resp.presigned_post_upload_data
         if not presigned or "url" not in presigned or "fields" not in presigned:
-            raise RuntimeError("Server did not return a valid presigned_post_upload_data (missing url/fields).")
+            raise RuntimeError(
+                "Server did not return a valid presigned_post_upload_data (missing url/fields)."
+            )
 
         # Build the multipart request:
         # - All fields from the signer must be included as regular form fields
@@ -314,10 +354,11 @@ class DataUniverseApiClient:
 
         # S3 presigned POST usually returns 204; some setups return 201/200
         if post_resp.status_code not in (204, 201, 200):
-            raise RuntimeError(f"Upload failed: {post_resp.status_code} {post_resp.text}")
+            raise RuntimeError(
+                f"Upload failed: {post_resp.status_code} {post_resp.text}"
+            )
 
         return submit_resp
-
 
     async def validator_list_jobs_with_submissions(
         self, req: ListJobsWithSubmissionsForValidationRequest
@@ -327,7 +368,9 @@ class DataUniverseApiClient:
             raise RuntimeError("validator_keypair was not provided.")
 
         payload_json = req.model_dump_json()
-        bt.logging.debug(f"validator_list_jobs_with_submissions payload: {payload_json}")
+        bt.logging.debug(
+            f"validator_list_jobs_with_submissions payload: {payload_json}"
+        )
         resp = await self._post_signed_json(
             "/on-demand/validator/jobs", self._signer, payload_json
         )
@@ -362,7 +405,13 @@ class DataUniverseApiClient:
             length = getattr(sub, "s3_content_length", None)
             url = getattr(sub, "s3_presigned_url", None)
 
-            def base(ok: bool, status: int = 0, error: str | None = None, data=None, url_out=None):
+            def base(
+                ok: bool,
+                status: int = 0,
+                error: str | None = None,
+                data=None,
+                url_out=None,
+            ):
                 return {
                     "job_id": job_id,
                     "miner_hotkey": miner_hotkey,
@@ -398,7 +447,7 @@ class DataUniverseApiClient:
                         except Exception:
                             data = json.loads(r.text)
                         return base(True, status=status, data=data, url_out=str(r.url))
-                    
+
                     body_snip = r.text[:500]
                     return base(False, status=status, error=body_snip)
                 except Exception as e:
@@ -417,6 +466,29 @@ class DataUniverseApiClient:
                 downloads.append(await coro)
 
         return validator_resp, downloads
+
+    async def validator_get_latest_dd_list(self) -> DynamicDesirabilityList:
+        if not self._signer:
+            raise RuntimeError("validator_keypair was not provided.")
+
+        bt.logging.debug(f"validator_get_latest_dd_list")
+        resp = await self._get_signed(
+            "/dynamic-desirability/validator/get-latest-list", self._signer
+        )
+        _raise_for_status(resp)
+        return DynamicDesirabilityList.model_validate_json(resp.text)
+
+    async def miner_get_latest_dd_list(self) -> DynamicDesirabilityList:
+        if not self._signer:
+            raise RuntimeError("miner_keypair was not provided.")
+
+        bt.logging.debug(f"miner_get_latest_dd_list")
+        resp = await self._get_signed(
+            "/dynamic-desirability/validator/get-latest-list", self._signer
+        )
+        _raise_for_status(resp)
+        return DynamicDesirabilityList.model_validate_json(resp.text)
+
 
 def _raise_for_status(resp: httpx.Response) -> None:
     if 200 <= resp.status_code < 300:

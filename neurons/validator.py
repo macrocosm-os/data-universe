@@ -235,7 +235,7 @@ class Validator:
 
         self.is_setup = True
 
-    def _on_demand_client(self) -> DataUniverseApiClient:
+    def _data_universe_api_client(self) -> DataUniverseApiClient:
         return DataUniverseApiClient(
             base_url=self.data_universe_api_base_url,
             verify_ssl=self.verify_ssl,
@@ -247,7 +247,7 @@ class Validator:
         try:
             t_start = time.perf_counter()
             bt.logging.info("Retrieving the latest dynamic lookup...")
-            model = sync_run_retrieval(self.config)
+            model = sync_run_retrieval(self._data_universe_api_client(), mode='validator')
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
@@ -327,7 +327,7 @@ class Validator:
             bt.logging.info("Pulling on demand jobs with submissions")
 
             try:
-                async with self._on_demand_client() as client:
+                async with self._data_universe_api_client() as client:
                     jobs_with_submissions_downloaded_response = (
                         await client.validator_list_and_download_submission_json(
                             req=ListJobsWithSubmissionsForValidationRequest(
