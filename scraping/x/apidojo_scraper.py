@@ -235,6 +235,7 @@ class ApiDojoTwitterScraper(Scraper):
         self,
         usernames: List[str] = None,
         keywords: List[str] = None,
+        url: str = None,
         keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
@@ -242,24 +243,70 @@ class ApiDojoTwitterScraper(Scraper):
     ) -> List[DataEntity]:
         """
         Scrapes Twitter/X data based on specific search criteria, including low-engagement posts.
-        
+
         Args:
             usernames: List of target usernames (without @, OR logic between them)
             keywords: List of keywords to search for
+            url: Single tweet URL for direct tweet lookup
             keyword_mode: "any" (OR logic) or "all" (AND logic) for keyword matching
             start_datetime: Earliest datetime for content (UTC)
             end_datetime: Latest datetime for content (UTC)
             limit: Maximum number of items to return
-        
+
         Returns:
             List of DataEntity objects matching the criteria
         """
-        
+
+        # Handle URL-based search (single tweet lookup)
+        if url:
+            bt.logging.trace(f"On-demand X scrape for URL: {url}")
+
+            # Validate URL format
+            if not utils.is_valid_twitter_url(url):
+                bt.logging.error(f"Invalid Twitter URL: {url}")
+                return []
+
+            # Use startUrls approach similar to validation method
+            run_input = {
+                **ApiDojoTwitterScraper.BASE_RUN_INPUT,
+                "startUrls": [url],
+                "maxItems": limit,
+            }
+            run_config = RunConfig(
+                actor_id=ApiDojoTwitterScraper.ACTOR_ID,
+                debug_info=f"On-demand scrape URL {url}",
+                max_data_entities=limit,
+                timeout_secs=ApiDojoTwitterScraper.SCRAPE_TIMEOUT_SECS,
+            )
+
+            bt.logging.success(f"Performing on-demand Twitter scrape for URL: {url}")
+
+            # Run the Actor and retrieve the scraped data
+            try:
+                dataset: List[dict] = await self.runner.run(run_config, run_input)
+            except Exception as e:
+                bt.logging.exception(f"Failed to scrape tweet from URL {url}: {str(e)}")
+                return []
+
+            # Parse the results - ALLOW LOW ENGAGEMENT POSTS
+            x_contents, _, _, _ = self._best_effort_parse_dataset(dataset=dataset, check_engagement=False)
+
+            bt.logging.success(
+                f"Completed on-demand scrape for URL {url}. Scraped {len(x_contents)} items."
+            )
+
+            # Convert to DataEntity objects
+            data_entities = []
+            for x_content in x_contents:
+                data_entities.append(XContent.to_data_entity(content=x_content))
+
+            return data_entities
+
         # Return empty list if all key search parameters are None
         if all(param is None for param in [usernames, keywords, start_datetime, end_datetime]):
             bt.logging.trace("All search parameters are None, returning empty list")
             return []
-        
+
         bt.logging.trace(
             f"On-demand X scrape with usernames={usernames}, keywords={keywords}, "
             f"keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"

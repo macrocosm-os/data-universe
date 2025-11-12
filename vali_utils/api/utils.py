@@ -40,6 +40,7 @@ async def query_validator(
     source: str,
     keywords: list = [],
     usernames: list = [],
+    url: str = None,
     keyword_mode: KeywordMode = "all",
     start_date: str = None,
     end_date: str = None,
@@ -47,7 +48,7 @@ async def query_validator(
 ):
     """
     Query a validator using the OrganicRequest protocol
-    
+
     Args:
         wallet: Bittensor wallet for signing the request
         validator_host: Validator IP address or hostname
@@ -56,32 +57,34 @@ async def query_validator(
         source: Data source (X or REDDIT)
         keywords: List of keywords to search for
         usernames: List of usernames to search for
+        url: Single URL for URL search mode (X or YouTube)
         keyword_mode: Keyword matching mode ('any' or 'all')
         start_date: ISO-formatted start date
         end_date: ISO-formatted end date
         limit: Maximum number of results to return
-        
+
     Returns:
         OrganicRequest response with data or error information
     """
     bt.logging.info(f"Querying validator at {validator_host}:{validator_port} for {source} data")
-    
+
     # Create an AxonInfo with required fields
     axon_info = bt.AxonInfo(
-        ip=validator_host, 
+        ip=validator_host,
         port=validator_port,
         ip_type=0,  # v4
-        hotkey=validator_hotkey, 
+        hotkey=validator_hotkey,
         coldkey="",  # Not needed
         protocol=0,
         version=1
     )
-    
+
     # Prepare the OrganicRequest synapse
     synapse = OrganicRequest(
         source=source.upper(),
         usernames=usernames,
         keywords=keywords,
+        url=url,
         keyword_mode=keyword_mode,
         start_date=start_date,
         end_date=end_date,

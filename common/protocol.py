@@ -117,6 +117,11 @@ class OnDemandRequest(BaseProtocol):
         max_length=5
     )
 
+    url: Optional[str] = Field(
+        default=None,
+        description="Single URL for URL search mode (X or YouTube)"
+    )
+
     keyword_mode: KeywordMode = Field(
         default="all",
         description="Keyword matching mode: 'any' or 'all'"

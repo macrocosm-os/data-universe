@@ -152,25 +152,31 @@ class Validator:
     def _create_validation_context_from_job(self, job):
         """Convert OnDemandJob to OrganicRequest for validation purposes"""
         from common.organic_protocol import OrganicRequest
-        
+
         # Extract usernames based on job platform
         usernames = []
         if hasattr(job.job, 'usernames') and job.job.usernames:
             usernames = job.job.usernames
         elif hasattr(job.job, 'channels') and job.job.channels:
             usernames = job.job.channels
-            
+
         # Extract keywords based on job platform
         keywords = []
         if hasattr(job.job, 'keywords') and job.job.keywords:
             keywords = job.job.keywords
         if hasattr(job.job, 'subreddit') and job.job.subreddit:
             keywords.insert(0, job.job.subreddit)
-            
+
+        # Extract URL if present (for X or YouTube platforms)
+        url = None
+        if hasattr(job.job, 'url') and job.job.url:
+            url = job.job.url
+
         return OrganicRequest(
             source=job.job.platform,
             usernames=usernames,
             keywords=keywords,
+            url=url,
             keyword_mode=job.keyword_mode,
             start_date=job.start_date.isoformat() if job.start_date else None,
             end_date=job.end_date.isoformat() if job.end_date else None,

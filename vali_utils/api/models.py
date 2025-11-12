@@ -28,6 +28,10 @@ class QueryRequest(StrictBaseModel):
         description="List of keywords to search for",
         max_length=5
     )
+    url: Optional[str] = Field(
+        default=None,
+        description="Single URL for URL search mode (X or YouTube). For X: tweet URL. For YouTube: video URL. Mutually exclusive with usernames and keywords fields."
+    )
     # Change to optional strings for ISO format
     start_date: Optional[str] = Field(
         default=None,
@@ -76,32 +80,46 @@ class QueryRequest(StrictBaseModel):
     def validate_source_requirements(self):
         """Validate source-specific requirements"""
         source = self.source.upper()
-        
+
+        # Check for url field usage
+        has_url = self.url is not None and self.url.strip() != ""
+        has_usernames = self.usernames and len(self.usernames) > 0
+        has_keywords = self.keywords and len(self.keywords) > 0
+
         if source == 'X':
-            # X requires either usernames or keywords (or both)
-            if not self.usernames and not self.keywords:
-                raise ValueError("X requests must have either usernames or keywords (or both)")
-        
-        elif source == 'YOUTUBE':
-            # YouTube requires either one username (channel) OR one keyword (video URL), not both
-            has_username = len(self.usernames) == 1
-            has_keyword = len(self.keywords) == 1
-            
-            if has_username and has_keyword:
-                raise ValueError("YouTube requests cannot have both username and keyword - use either username (channel) OR keyword (video URL)")
-            elif has_username and not self.keywords:
-                # Channel mode - valid
-                pass
-            elif not self.usernames and has_keyword:
-                # Video URL mode - basic validation for user experience
-                if not self._is_youtube_domain(self.keywords[0]):
-                    raise ValueError("YouTube keyword must be a YouTube URL (youtube.com, youtu.be, etc.)")
-            elif len(self.usernames) > 1:
-                raise ValueError("YouTube requests can have at most one username (channel identifier)")
-            elif len(self.keywords) > 1:
-                raise ValueError("YouTube requests can have at most one keyword (video URL)")
+            if has_url:
+                # URL search mode: url must be alone
+                if has_usernames or has_keywords:
+                    raise ValueError("X requests with 'url' field cannot have 'usernames' or 'keywords' fields")
             else:
-                raise ValueError("YouTube requests must have either one username (channel) OR one keyword (video URL)")
+                # Standard mode: requires either usernames or keywords (or both)
+                if not has_usernames and not has_keywords:
+                    raise ValueError("X requests must have either 'usernames', 'keywords', or 'url' field")
+
+        elif source == 'YOUTUBE':
+            # YouTube requires either one username (channel) OR one url (video URL), not both
+            has_username = len(self.usernames) == 1
+            has_multiple_usernames = len(self.usernames) > 1
+            has_keywords = self.keywords and len(self.keywords) > 0
+
+            # Count how many search modes are active
+            search_modes_count = sum([has_url, has_username or has_multiple_usernames])
+
+            # Keywords are not allowed for YouTube
+            if has_keywords:
+                raise ValueError("YouTube requests do not support 'keywords' field - use 'url' for video URLs or 'usernames' for channels")
+
+            if search_modes_count > 1:
+                raise ValueError("YouTube requests can only use ONE of: username (channel) or url (video URL)")
+            elif search_modes_count == 0:
+                raise ValueError("YouTube requests must have either one username (channel) or one url (video URL)")
+            elif has_url:
+                # Video URL mode - basic validation for user experience
+                if not self._is_youtube_domain(self.url):
+                    raise ValueError("YouTube url must be a YouTube URL (youtube.com, youtu.be, etc.)")
+            elif has_multiple_usernames:
+                raise ValueError("YouTube requests can have at most one username (channel identifier)")
+            # If has_username and not has_url: Channel mode - valid
         
         return self
     
