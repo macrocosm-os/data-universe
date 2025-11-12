@@ -488,12 +488,12 @@ class S3Validator:
 
         # Log job match check details (same style as regular validation)
         bt.logging.info(
-            f"S3 job match validation: Checked {total_checked} entities, {total_matched} matched job requirements ({match_rate:.1f}%)"
+            f"{miner_hotkey}: S3 job match validation: Checked {total_checked} entities, {total_matched} matched job requirements ({match_rate:.1f}%)"
         )
         if checked_uris:
-            bt.logging.info(f"S3 job match: Sample URIs checked: {checked_uris[:5]}")
+            bt.logging.info(f"{miner_hotkey}: S3 job match: Sample URIs checked: {checked_uris[:5]}")
         if mismatch_samples:
-            bt.logging.warning(f"S3 job match failures: {mismatch_samples[:3]}")
+            bt.logging.warning(f"{miner_hotkey}: S3 job match failures: {mismatch_samples[:3]}")
 
         return {
             'total_checked': total_checked,
@@ -561,7 +561,7 @@ class S3Validator:
         # Log URIs being validated (same style as regular validation)
         entity_uris = [entity[0].uri for entity in entities_to_validate]
         bt.logging.info(
-            f"S3 validation passed basic checks. Validating uris from S3: {entity_uris}"
+            f"{miner_hotkey}: S3 validation passed basic checks. Validating uris from S3: {entity_uris}"
         )
 
         # Group by platform for efficient validation
@@ -616,10 +616,10 @@ class S3Validator:
 
         # Log results in same style as regular validation
         bt.logging.success(
-            f"S3 data validation on selected entities finished with results: {all_validation_results}"
+            f"{miner_hotkey}: S3 data validation on selected entities finished with results: {all_validation_results}"
         )
         bt.logging.info(
-            f"S3 scraper validation summary: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
+            f"{miner_hotkey}: S3 scraper validation summary: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
         )
 
         return {
