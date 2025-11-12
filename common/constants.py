@@ -19,7 +19,7 @@ BULK_CONTENTS_COUNT_LIMIT = 200_000
 BULK_BUCKETS_COUNT_LIMIT = 100
 
 # How old a data entity bucket can be before the validators do not assign any value for them.
-DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS = 30
+DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS = 90
 
 # The maximum number of characters a label can have.
 MAX_LABEL_LENGTH = 140
