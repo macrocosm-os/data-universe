@@ -151,6 +151,15 @@ class S3Validator:
                     "No recent data found in last 3 hours"
                 )
 
+            # Log EMA decay statistics
+            raw_size_mb = recent_data_analysis['raw_size_bytes'] / (1024 * 1024)
+            weighted_size_mb = recent_data_analysis['total_size_bytes'] / (1024 * 1024)
+            decay_factor = (weighted_size_mb / raw_size_mb * 100) if raw_size_mb > 0 else 0
+            bt.logging.info(
+                f"{miner_hotkey}: EMA decay applied - Raw: {raw_size_mb:.1f}MB, "
+                f"Weighted: {weighted_size_mb:.1f}MB ({decay_factor:.1f}% effective)"
+            )
+
             # Step 4: Check for duplicates
             duplicate_analysis = await self._check_for_duplicates(
                 wallet, s3_auth_url, miner_hotkey, recent_data_analysis['recent_job_files']
@@ -225,13 +234,24 @@ class S3Validator:
     async def _analyze_recent_data(
         self, wallet, s3_auth_url: str, miner_hotkey: str, job_folders: List[Dict]
     ) -> Dict:
-        """Analyze data uploaded in the recent time window"""
+        """
+        Analyze data with EMA decay scoring.
+        - Activity filter: Job must have at least 1 file uploaded in last 3 hours
+        - Scoring: All files scored with 3.5-day (84-hour) half-life exponential decay
+        """
         now = dt.datetime.now(dt.timezone.utc)
-        threshold_time = now - dt.timedelta(hours=3)  # 3 hour window
+        activity_threshold = now - dt.timedelta(hours=3)  # 3 hour activity check
+
+        # EMA decay: half-life = 3.5 days (84 hours)
+        # Formula: weight = e^(-λ * age_hours), where λ = ln(2) / half_life
+        # Rationale: Jobs typically last 7 days, so data is worth 50% at mid-job, 25% at expiry
+        half_life_hours = 84.0  # 3.5 days
+        decay_lambda = 0.693147 / half_life_hours  # ln(2) / 84
 
         recent_job_files = {}
-        total_recent_files = 0
-        total_size_bytes = 0
+        total_files = 0
+        total_size_bytes = 0  # Raw total size
+        weighted_size_bytes = 0  # EMA weighted size
         recent_jobs_count = 0
 
         # Sample jobs to avoid overwhelming analysis
@@ -248,34 +268,69 @@ class S3Validator:
             if not job_files:
                 continue
 
-            # Check if any file in the job is recent - if so, include entire job
-            has_recent_file = False
+            # Activity check: Job must have at least 1 file uploaded in last 3 hours
+            has_recent_activity = False
             for file_info in job_files:
                 try:
                     last_modified_str = file_info.get('last_modified', '')
-                    if self._is_file_recent(last_modified_str, threshold_time):
-                        has_recent_file = True
+                    if self._is_file_recent(last_modified_str, activity_threshold):
+                        has_recent_activity = True
                         break
                 except Exception:
                     continue
 
-            # If any file is recent, include the entire job for validation
-            if has_recent_file:
+            # Only include jobs with recent activity
+            if has_recent_activity:
+                # Calculate weighted size for ALL files using EMA decay
                 for file_info in job_files:
-                    total_size_bytes += file_info.get('size', 0)
+                    try:
+                        file_size = file_info.get('size', 0)
+                        last_modified_str = file_info.get('last_modified', '')
+
+                        # Parse file age
+                        if last_modified_str and 'T' in last_modified_str:
+                            if last_modified_str.endswith('Z'):
+                                parsed_time = dt.datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
+                            else:
+                                parsed_time = dt.datetime.fromisoformat(last_modified_str)
+
+                            if parsed_time.tzinfo is None:
+                                parsed_time = parsed_time.replace(tzinfo=dt.timezone.utc)
+
+                            # Calculate age in hours
+                            age_hours = (now - parsed_time).total_seconds() / 3600.0
+
+                            # Apply exponential decay: weight = e^(-λ * age)
+                            weight = math.exp(-decay_lambda * age_hours)
+
+                            # Accumulate weighted size
+                            weighted_size_bytes += file_size * weight
+                        else:
+                            # No timestamp - give minimal weight (assume old)
+                            weighted_size_bytes += file_size * 0.01
+
+                        # Always count raw size for statistics
+                        total_size_bytes += file_size
+
+                    except Exception as e:
+                        bt.logging.debug(f"Error calculating file weight: {str(e)}")
+                        # On error, count raw size only
+                        total_size_bytes += file_info.get('size', 0)
+                        continue
 
                 recent_job_files[job_id] = {
-                    'files': job_files,  # Include ALL files in the job
+                    'files': job_files,  # Include ALL files for validation sampling
                     'presigned_url': presigned_url
                 }
-                total_recent_files += len(job_files)  # Count all files
+                total_files += len(job_files)
                 recent_jobs_count += 1
 
         return {
-            'has_recent_data': total_recent_files > 0,
+            'has_recent_data': total_files > 0,
             'recent_jobs_count': recent_jobs_count,
-            'recent_files_count': total_recent_files,
-            'total_size_bytes': total_size_bytes,
+            'recent_files_count': total_files,
+            'total_size_bytes': int(weighted_size_bytes),  # Use weighted size for scoring
+            'raw_size_bytes': total_size_bytes,  # Keep raw size for logging
             'recent_job_files': recent_job_files
         }
 
@@ -365,6 +420,8 @@ class S3Validator:
             platform = params.get('platform', '').lower()
             job_label = params.get('label')
             job_keyword = params.get('keyword')
+            job_start_date = params.get('post_start_datetime')
+            job_end_date = params.get('post_end_datetime')
 
             # Sample files to check (2 files per job)
             sample_files = random.sample(files, min(2, len(files)))
@@ -395,11 +452,15 @@ class S3Validator:
                         matches_job = False
 
                         # Check if data matches job requirements
-                        # Evaluate both label and keyword - match if either passes
-                        label_matches = False
-                        keyword_matches = False
+                        # If BOTH label and keyword are specified, BOTH must match (AND logic)
+                        # If only one is specified, only that one must match
+                        label_matches = None  # None = not checked, True/False = checked result
+                        keyword_matches = None
 
-                        if job_label and job_label.strip():  # Only check if non-empty after strip
+                        has_label_requirement = bool(job_label and job_label.strip())
+                        has_keyword_requirement = bool(job_keyword and job_keyword.strip())
+
+                        if has_label_requirement:
                             # Label-based job: check if entity label matches
                             entity_label = str(row.get('label', '')).lower().strip()
                             job_label_normalized = job_label.lower().strip()
@@ -408,22 +469,35 @@ class S3Validator:
                             if platform in ['x', 'twitter']:
                                 # For X: check if label is in tweet_hashtags array (handles multiple hashtags)
                                 tweet_hashtags = row.get('tweet_hashtags', [])
-                                if isinstance(tweet_hashtags, list):
-                                    # Normalize hashtags to lowercase
-                                    hashtags_lower = [str(h).lower().strip() for h in tweet_hashtags]
-                                    label_without_hash = job_label_normalized.lstrip('#')
-                                    label_with_hash = f"#{label_without_hash}"
 
-                                    # Check if job label is in the hashtags array
-                                    label_matches = (
-                                        label_with_hash in hashtags_lower or
-                                        label_without_hash in hashtags_lower or
-                                        # Fallback: check main label field
-                                        entity_label == label_with_hash or
-                                        entity_label == label_without_hash
-                                    )
+                                # Handle pandas types - tweet_hashtags might be a list, numpy array, or Series
+                                if pd.notna(tweet_hashtags) and hasattr(tweet_hashtags, '__iter__') and not isinstance(tweet_hashtags, str):
+                                    # Convert to list if it's array-like (handles pandas Series, numpy arrays, lists)
+                                    try:
+                                        hashtags_list = list(tweet_hashtags) if not isinstance(tweet_hashtags, list) else tweet_hashtags
+                                        # Normalize hashtags to lowercase
+                                        hashtags_lower = [str(h).lower().strip() for h in hashtags_list]
+                                        label_without_hash = job_label_normalized.lstrip('#')
+                                        label_with_hash = f"#{label_without_hash}"
+
+                                        # Check if job label is in the hashtags array
+                                        label_matches = (
+                                            label_with_hash in hashtags_lower or
+                                            label_without_hash in hashtags_lower or
+                                            # Fallback: check main label field
+                                            entity_label == label_with_hash or
+                                            entity_label == label_without_hash
+                                        )
+                                    except (TypeError, ValueError):
+                                        # If conversion fails, fall back to label field check
+                                        label_without_hash = job_label_normalized.lstrip('#')
+                                        label_with_hash = f"#{label_without_hash}"
+                                        label_matches = (
+                                            entity_label == label_with_hash or
+                                            entity_label == label_without_hash
+                                        )
                                 else:
-                                    # Fallback if tweet_hashtags is not a list
+                                    # Fallback if tweet_hashtags is not iterable or is null
                                     label_without_hash = job_label_normalized.lstrip('#')
                                     label_with_hash = f"#{label_without_hash}"
                                     label_matches = (
@@ -449,7 +523,7 @@ class S3Validator:
                             else:
                                 label_matches = (entity_label == job_label_normalized)
 
-                        if job_keyword and job_keyword.strip():  # Only check if non-empty after strip
+                        if has_keyword_requirement:
                             # Keyword-based job: check if content contains keyword
                             job_keyword_normalized = job_keyword.lower().strip()
 
@@ -465,7 +539,21 @@ class S3Validator:
                                 text = str(row.get('text', '')).lower()
                                 keyword_matches = job_keyword_normalized in text
 
-                        matches_job = label_matches or keyword_matches
+                        # Determine if job requirements are met
+                        # If BOTH label and keyword required: BOTH must pass (AND logic)
+                        # If only one required: that one must pass
+                        if has_label_requirement and has_keyword_requirement:
+                            # BOTH required - use AND logic
+                            matches_job = (label_matches is True) and (keyword_matches is True)
+                        elif has_label_requirement:
+                            # Only label required
+                            matches_job = (label_matches is True)
+                        elif has_keyword_requirement:
+                            # Only keyword required
+                            matches_job = (keyword_matches is True)
+                        else:
+                            # No requirements (shouldn't happen, but handle gracefully)
+                            matches_job = False
 
                         uri = self._get_uri_value(row)
                         if uri and len(checked_uris) < 20:
