@@ -150,7 +150,7 @@ class DataSourceDesirability(StrictBaseModel):
     default_scale_factor: float = Field(
         ge=-1,
         le=1,
-        default=0.3,
+        default=0.075,
         description="The scaling factor used for data that doesn't match any jobs.",
     )
 

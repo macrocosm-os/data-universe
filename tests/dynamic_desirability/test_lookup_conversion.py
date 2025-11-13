@@ -152,7 +152,7 @@ class TestDataDesirabilityLookupConversion(unittest.TestCase):
         
         # Check default scale factors
         default_reddit = primitive_lookup.get_default_scale_factor(DataSource.REDDIT)
-        self.assertEqual(default_reddit, 0.3)  # Default value from the code
+        self.assertEqual(default_reddit, 0.075)  # Updated to match DEFAULT_SCALE_FACTOR constant
         
         # Test source weight retrieval
         weight_reddit = primitive_lookup.get_data_source_weight(DataSource.REDDIT)

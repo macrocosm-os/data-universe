@@ -13,8 +13,7 @@ class DataValueCalculator:
     def __init__(self, model: DataDesirabilityLookup = data_desirability_lookup.LOOKUP):
         # Convert to primitive version for performance optimization
         self.model = model.to_primitive_data_desirability_lookup()
-    
-    
+
     def get_score_for_data_entity_bucket(
         self,
         scorable_data_entity_bucket: ScorableDataEntityBucket,
