@@ -565,7 +565,7 @@ class S3Validator:
                             # Record mismatch sample
                             if len(mismatch_samples) < 10:
                                 mismatch_samples.append(
-                                    f"Job {job_id[:8]}: Expected {job_label or job_keyword}, got label='{row.get('label', 'N/A')}' in {uri[:50] if uri else 'unknown'}"
+                                    f"Job {job_id[:8]}: Required label={job_label or 'any'} keyword={job_keyword or 'any'}, label_matched={label_matches} keyword_matched={keyword_matches} - {uri or 'unknown'}"
                                 )
 
                 except Exception as e:
