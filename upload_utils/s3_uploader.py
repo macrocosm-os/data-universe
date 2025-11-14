@@ -147,7 +147,17 @@ class S3PartitionedUploader:
                         continue
 
                     # Store job configuration by job_id
-                    if params.get('label') and params.get('keyword') is None:
+                    if params.get('label') and params.get('keyword'):
+                        # Both label and keyword required
+                        result[job_id] = {
+                            "source": source_int,
+                            "type": "label_and_keyword",
+                            "label": params['label'],
+                            "keyword": params['keyword'],
+                            "weight": weight
+                        }
+                    elif params.get('label'):
+                        # Label only
                         result[job_id] = {
                             "source": source_int,
                             "type": "label",
@@ -155,6 +165,7 @@ class S3PartitionedUploader:
                             "weight": weight
                         }
                     elif params.get('keyword'):
+                        # Keyword only
                         result[job_id] = {
                             "source": source_int,
                             "type": "keyword",
@@ -273,6 +284,86 @@ class S3PartitionedUploader:
 
         except Exception as e:
             bt.logging.error(f"Error querying keyword data for {source}/{keyword}: {e}")
+            return pd.DataFrame()
+
+    def _get_label_and_keyword_data(self, source: int, label: str, keyword: str, offset: int = 0) -> pd.DataFrame:
+        """Get data where BOTH label matches AND keyword appears in text content (AND logic)"""
+        # Normalize inputs
+        normalized_label = label.lower().strip()
+        normalized_keyword = keyword.lower().strip()
+
+        # Build label conditions based on source (same as _get_label_data)
+        if source == DataSource.REDDIT.value:
+            # For Reddit: check both with and without r/ prefix
+            label_conditions = [
+                f"LOWER(label) = '{normalized_label}'",
+                f"LOWER(label) = 'r/{normalized_label.removeprefix('r/')}'",
+            ]
+        elif source == DataSource.YOUTUBE.value:
+            # For YouTube: check channel labels with #ytc_c_ prefix
+            label_conditions = [
+                f"LOWER(label) = '{normalized_label}'",
+                f"LOWER(label) = '#ytc_c_{normalized_label.removeprefix('#ytc_c_')}'",
+            ]
+        else:
+            # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
+            label_without_hash = normalized_label.lstrip('#')
+            label_with_hash = f"#{label_without_hash}"
+
+            label_conditions = [
+                # Check if hashtag (with #) appears in the tweet_hashtags JSON array inside content
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_with_hash}')",
+                # Check if hashtag (without #) appears in the tweet_hashtags JSON array
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_without_hash}')",
+                # Fallback: check main label field (stores first hashtag)
+                f"LOWER(label) = '{label_with_hash}'",
+                f"LOWER(label) = '{label_without_hash}'",
+            ]
+
+        label_condition_sql = " OR ".join(label_conditions)
+
+        # Build content search conditions based on source (same as _get_keyword_data_chunk)
+        if source == DataSource.REDDIT.value:
+            # Search Reddit body field specifically
+            content_conditions = [
+                f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
+                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
+            ]
+        elif source == DataSource.YOUTUBE.value:
+            # Search YouTube title and description fields
+            content_conditions = [
+                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'",
+                f"LOWER(JSON_EXTRACT(content, '$.description')) LIKE '%{normalized_keyword}%'"
+            ]
+        else:
+            # Search X text field specifically
+            content_conditions = [
+                f"LOWER(JSON_EXTRACT(content, '$.text')) LIKE '%{normalized_keyword}%'"
+            ]
+
+        content_condition_sql = " OR ".join(content_conditions)
+
+        # Combine with AND logic: (label conditions) AND (keyword conditions)
+        query = f"""
+            SELECT uri, datetime, label, content
+            FROM DataEntity
+            WHERE source = ?
+                AND ({label_condition_sql})
+                AND ({content_condition_sql})
+            ORDER BY datetime ASC
+            LIMIT ? OFFSET ?
+        """
+        params = [source, self.chunk_size, offset]
+
+        try:
+            with self.get_db_connection() as conn:
+                df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
+
+            bt.logging.debug(f"Found {len(df)} records for label '{label}' AND keyword '{keyword}' in source {source} (offset: {offset})")
+            return df
+
+        except Exception as e:
+            bt.logging.error(f"Error querying label+keyword data for {source}/{label}/{keyword}: {e}")
             return pd.DataFrame()
 
     def _create_raw_dataframe(self, df: pd.DataFrame, source: int) -> pd.DataFrame:
@@ -427,11 +518,19 @@ class S3PartitionedUploader:
         """Process a single job using exact job_id as folder name"""
         source = job_config["source"]
         search_type = job_config["type"]
-        value = job_config["value"]
+
+        # Extract value(s) based on search type
+        if search_type == "label_and_keyword":
+            label = job_config["label"]
+            keyword = job_config["keyword"]
+            log_msg = f"label='{label}' AND keyword='{keyword}'"
+        else:
+            value = job_config["value"]
+            log_msg = f"{search_type}: {value}"
 
         offset = self._get_last_processed_offset(job_id)
 
-        bt.logging.info(f"Processing job {job_id} ({search_type}: {value}), starting from offset: {offset}")
+        bt.logging.info(f"Processing job {job_id} ({log_msg}), starting from offset: {offset}")
 
         total_processed = 0
 
@@ -439,8 +538,13 @@ class S3PartitionedUploader:
             # Get next chunk based on search type
             if search_type == "label":
                 chunk_df = self._get_label_data(source, value, offset)
-            else:  # keyword
+            elif search_type == "keyword":
                 chunk_df = self._get_keyword_data_chunk(source, value, offset)
+            elif search_type == "label_and_keyword":
+                chunk_df = self._get_label_and_keyword_data(source, label, keyword, offset)
+            else:
+                bt.logging.error(f"Unknown search type: {search_type}")
+                return False
 
             if chunk_df.empty:
                 bt.logging.info(f"No new data for job {job_id}, total processed this run: {total_processed}")
