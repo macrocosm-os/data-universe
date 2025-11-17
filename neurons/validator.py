@@ -392,7 +392,7 @@ class Validator:
                         # constructed from create_organic_output_dict
                         miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data'] 
 
-                        bt.logging.debug(miner_uploaded_raw_json)
+                        bt.logging.trace(miner_uploaded_raw_json.get('data_entities', [])[:2])
                         miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
 
                         # validate miner data
