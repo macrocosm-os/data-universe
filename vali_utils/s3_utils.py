@@ -1332,31 +1332,32 @@ def load_expected_jobs_from_gravity() -> Dict:
 
 
 async def validate_s3_miner_data(
-    wallet, s3_auth_url: str, miner_hotkey: str, 
-    use_enhanced_validation: bool = False, config=None
+    wallet, s3_auth_url: str, miner_hotkey: str,
+    use_enhanced_validation: bool = False, config=None, s3_reader=None
 ) -> S3ValidationResult:
     """
     Comprehensive S3 validation using metadata analysis and statistical methods.
     Validates file structure, job alignment, and data quality indicators.
-    
+
     Args:
         wallet: Validator wallet for S3 authentication
         s3_auth_url: S3 authentication service URL
         miner_hotkey: Target miner's hotkey
         use_enhanced_validation: If True, performs enhanced validation with real scrapers
         config: Configuration object with enhanced validation settings
-    
+        s3_reader: Optional ValidatorS3Access instance for efficient file listing
+
     Returns:
         S3ValidationResult with validation metrics
     """
-    
+
     # Load expected jobs
     expected_jobs = load_expected_jobs_from_gravity()
-    
+
     if use_enhanced_validation:
         # Use enhanced validation with real scrapers
         try:
-            validator = S3Validator()
+            validator = S3Validator(s3_reader=s3_reader)
             enhanced_result = await validator.validate_miner_s3_data(
                 wallet, s3_auth_url, miner_hotkey, expected_jobs
             )
