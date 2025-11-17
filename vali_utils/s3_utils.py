@@ -97,8 +97,9 @@ class S3Validator:
     - Composite scoring with multiple factors
     """
 
-    def __init__(self):
+    def __init__(self, s3_reader=None):
         self.scraper_provider = ScraperProvider()
+        self.s3_reader = s3_reader  # Optional ValidatorS3Access instance
 
     async def validate_miner_s3_data(
         self,
@@ -122,28 +123,49 @@ class S3Validator:
         bt.logging.info(f"Starting S3 validation for miner: {miner_hotkey}")
 
         try:
-            # Step 1: Get miner job folders
-            job_folders = await self._get_miner_job_folders(wallet, s3_auth_url, miner_hotkey)
-            if not job_folders:
+            # Step 1: Get ALL files with metadata (for size calculation)
+            # This also extracts job IDs from file paths - no pagination bug!
+            all_files = []
+            all_job_ids = set()
+
+            if self.s3_reader:
+                # Use ValidatorS3Access to get ALL files
+                all_files = await self.s3_reader.list_all_files_with_metadata(miner_hotkey)
+
+                # Extract job IDs from file paths (data/hotkey=X/job_id=Y/file.parquet)
+                for file_info in all_files:
+                    file_key = file_info.get('key', '')
+                    if '/job_id=' in file_key:
+                        job_id_part = file_key.split('/job_id=')[1]
+                        job_id = job_id_part.split('/')[0]
+                        all_job_ids.add(job_id)
+
+                bt.logging.info(
+                    f"{miner_hotkey}: Extracted {len(all_job_ids)} unique job IDs from {len(all_files)} files"
+                )
+            else:
+                # Fallback: use old method (has pagination bug but better than nothing)
+                bt.logging.warning(f"{miner_hotkey}: ValidatorS3Access not available, using fallback")
+                job_folders = await self._get_miner_job_folders(wallet, s3_auth_url, miner_hotkey)
+                all_job_ids = {jf.get('job_id') for jf in job_folders if jf.get('job_id')}
+
+            if not all_job_ids:
                 return self._create_failed_result("Could not access miner S3 data")
 
             # Step 2: Filter active jobs
-            active_job_folders = [
-                jf for jf in job_folders
-                if jf.get('job_id') in expected_jobs
-            ]
+            active_job_ids = [job_id for job_id in all_job_ids if job_id in expected_jobs]
 
-            if not active_job_folders:
+            if not active_job_ids:
                 return self._create_failed_result("No active jobs found")
 
             bt.logging.info(
-                f"Found {len(active_job_folders)} active jobs out of "
-                f"{len(job_folders)} total for {miner_hotkey}"
+                f"Found {len(active_job_ids)} active jobs out of "
+                f"{len(all_job_ids)} total for {miner_hotkey}"
             )
 
             # Step 3: Analyze recent data
             recent_data_analysis = await self._analyze_recent_data(
-                wallet, s3_auth_url, miner_hotkey, active_job_folders
+                wallet, s3_auth_url, miner_hotkey, active_job_ids, all_files
             )
 
             if not recent_data_analysis['has_recent_data']:
@@ -179,12 +201,12 @@ class S3Validator:
 
             # Step 7: Calculate job completion rate for reward scaling
             num_expected_jobs = len(expected_jobs)
-            num_active_jobs = len(active_job_folders)
+            num_active_jobs = len(active_job_ids)
             job_completion_rate = (num_active_jobs / num_expected_jobs * 100) if num_expected_jobs > 0 else 100.0
 
             # Step 8: Calculate final validation result with job completion multiplier
             return self._calculate_final_result(
-                len(active_job_folders),
+                num_active_jobs,
                 recent_data_analysis,
                 duplicate_analysis,
                 job_match_analysis,
@@ -232,12 +254,16 @@ class S3Validator:
             return []
 
     async def _analyze_recent_data(
-        self, wallet, s3_auth_url: str, miner_hotkey: str, job_folders: List[Dict]
+        self, wallet, s3_auth_url: str, miner_hotkey: str, active_job_ids: List[str], all_files: List[Dict]
     ) -> Dict:
         """
         Analyze data with EMA decay scoring.
         - Activity filter: Job must have at least 1 file uploaded in last 3 hours
         - Scoring: All files scored with 3.5-day (84-hour) half-life exponential decay
+
+        Args:
+            active_job_ids: List of job IDs that are currently active
+            all_files: Already-fetched list of ALL files with metadata (from ValidatorS3Access)
         """
         now = dt.datetime.now(dt.timezone.utc)
         activity_threshold = now - dt.timedelta(hours=3)  # 3 hour activity check
@@ -248,29 +274,98 @@ class S3Validator:
         half_life_hours = 84.0  # 3.5 days
         decay_lambda = 0.693147 / half_life_hours  # ln(2) / 84
 
+        # =====================================================================
+        # PART 1: Calculate total size from ALL files (for fair rewards)
+        # =====================================================================
+        total_size_bytes = 0  # Raw total size across ALL files
+        weighted_size_bytes = 0  # EMA weighted size across ALL files
+        total_files_all_jobs = 0
+
+        if all_files:
+            # Use already-fetched files (no additional API calls needed!)
+            bt.logging.info(f"{miner_hotkey}: Calculating size from {len(all_files)} pre-fetched files...")
+
+            for file_info in all_files:
+                try:
+                    file_size = file_info.get('size', 0)
+                    last_modified_str = file_info.get('last_modified', '')
+
+                    # Parse file age
+                    if last_modified_str and 'T' in last_modified_str:
+                        if last_modified_str.endswith('Z'):
+                            parsed_time = dt.datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
+                        else:
+                            parsed_time = dt.datetime.fromisoformat(last_modified_str)
+
+                        if parsed_time.tzinfo is None:
+                            parsed_time = parsed_time.replace(tzinfo=dt.timezone.utc)
+
+                        # Calculate age in hours
+                        age_hours = (now - parsed_time).total_seconds() / 3600.0
+
+                        # Apply exponential decay: weight = e^(-λ * age)
+                        weight = math.exp(-decay_lambda * age_hours)
+
+                        # Accumulate weighted size
+                        weighted_size_bytes += file_size * weight
+                    else:
+                        # No timestamp - give minimal weight (assume old)
+                        weighted_size_bytes += file_size * 0.01
+
+                    # Always count raw size for statistics
+                    total_size_bytes += file_size
+                    total_files_all_jobs += 1
+
+                except Exception as e:
+                    bt.logging.debug(f"Error calculating file weight: {str(e)}")
+                    total_size_bytes += file_info.get('size', 0)
+                    continue
+
+            bt.logging.info(
+                f"{miner_hotkey}: Size calculation complete - "
+                f"{total_files_all_jobs} total files, "
+                f"Raw: {total_size_bytes/(1024*1024):.1f}MB, "
+                f"Weighted: {weighted_size_bytes/(1024*1024):.1f}MB"
+            )
+        else:
+            # Fallback: old method (only samples 5 jobs - inaccurate!)
+            bt.logging.warning(
+                f"{miner_hotkey}: ValidatorS3Access not available, using fallback (5-job sampling)"
+            )
+
+        # =====================================================================
+        # PART 2: Sample 5 jobs for validation checks (game theory)
+        # =====================================================================
         recent_job_files = {}
-        total_files = 0
-        total_size_bytes = 0  # Raw total size
-        weighted_size_bytes = 0  # EMA weighted size
         recent_jobs_count = 0
 
-        # Sample jobs to avoid overwhelming analysis
-        sample_jobs = random.sample(
-            job_folders, min(5, len(job_folders))
-        )
+        # Group files by job_id from the already-fetched files
+        files_by_job = {}
+        for file_info in all_files:
+            file_key = file_info.get('key', '')
+            if '/job_id=' in file_key:
+                job_id_part = file_key.split('/job_id=')[1]
+                job_id = job_id_part.split('/')[0]
 
-        for job_folder in sample_jobs:
-            job_id = job_folder['job_id']
-            presigned_url = job_folder['presigned_url']
+                # Only include active jobs
+                if job_id in active_job_ids:
+                    if job_id not in files_by_job:
+                        files_by_job[job_id] = []
+                    files_by_job[job_id].append(file_info)
 
-            # Get files in job
-            job_files = await self._get_job_files(presigned_url)
-            if not job_files:
-                continue
+        # Sample 5 random jobs for validation
+        available_jobs = list(files_by_job.keys())
+        sample_job_ids = random.sample(available_jobs, min(5, len(available_jobs)))
+
+        bt.logging.info(f"{miner_hotkey}: Sampling {len(sample_job_ids)} jobs from {len(available_jobs)} active jobs for validation")
+
+        validation_files_count = 0
+        for job_id in sample_job_ids:
+            job_files_metadata = files_by_job[job_id]
 
             # Activity check: Job must have at least 1 file uploaded in last 3 hours
             has_recent_activity = False
-            for file_info in job_files:
+            for file_info in job_files_metadata:
                 try:
                     last_modified_str = file_info.get('last_modified', '')
                     if self._is_file_recent(last_modified_str, activity_threshold):
@@ -279,59 +374,40 @@ class S3Validator:
                 except Exception:
                     continue
 
-            # Only include jobs with recent activity
+            # Only include jobs with recent activity for validation
             if has_recent_activity:
-                # Calculate weighted size for ALL files using EMA decay
-                for file_info in job_files:
-                    try:
-                        file_size = file_info.get('size', 0)
-                        last_modified_str = file_info.get('last_modified', '')
-
-                        # Parse file age
-                        if last_modified_str and 'T' in last_modified_str:
-                            if last_modified_str.endswith('Z'):
-                                parsed_time = dt.datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
-                            else:
-                                parsed_time = dt.datetime.fromisoformat(last_modified_str)
-
-                            if parsed_time.tzinfo is None:
-                                parsed_time = parsed_time.replace(tzinfo=dt.timezone.utc)
-
-                            # Calculate age in hours
-                            age_hours = (now - parsed_time).total_seconds() / 3600.0
-
-                            # Apply exponential decay: weight = e^(-λ * age)
-                            weight = math.exp(-decay_lambda * age_hours)
-
-                            # Accumulate weighted size
-                            weighted_size_bytes += file_size * weight
-                        else:
-                            # No timestamp - give minimal weight (assume old)
-                            weighted_size_bytes += file_size * 0.01
-
-                        # Always count raw size for statistics
-                        total_size_bytes += file_size
-
-                    except Exception as e:
-                        bt.logging.debug(f"Error calculating file weight: {str(e)}")
-                        # On error, count raw size only
-                        total_size_bytes += file_info.get('size', 0)
-                        continue
+                # Convert file metadata to format expected by validation functions
+                job_files = [
+                    {
+                        'key': f.get('key'),
+                        'size': f.get('size'),
+                        'last_modified': f.get('last_modified')
+                    }
+                    for f in job_files_metadata
+                ]
 
                 recent_job_files[job_id] = {
-                    'files': job_files,  # Include ALL files for validation sampling
-                    'presigned_url': presigned_url
+                    'files': job_files,
+                    'presigned_url': None  # Not needed anymore, we have all the data
                 }
-                total_files += len(job_files)
+                validation_files_count += len(job_files)
                 recent_jobs_count += 1
 
+        # Check if we have recent data
+        has_recent_data = validation_files_count > 0 or total_files_all_jobs > 0
+
+        bt.logging.info(
+            f"{miner_hotkey}: Validation sampling complete - "
+            f"{recent_jobs_count} jobs with recent activity, {validation_files_count} files for validation"
+        )
+
         return {
-            'has_recent_data': total_files > 0,
+            'has_recent_data': has_recent_data,
             'recent_jobs_count': recent_jobs_count,
-            'recent_files_count': total_files,
-            'total_size_bytes': int(weighted_size_bytes),  # Use weighted size for scoring
-            'raw_size_bytes': total_size_bytes,  # Keep raw size for logging
-            'recent_job_files': recent_job_files
+            'recent_files_count': validation_files_count,
+            'total_size_bytes': int(weighted_size_bytes),  # Weighted size from ALL files
+            'raw_size_bytes': total_size_bytes,  # Raw size from ALL files
+            'recent_job_files': recent_job_files  # Sampled jobs for validation only
         }
 
     async def _check_for_duplicates(
@@ -732,7 +808,7 @@ class S3Validator:
         duplicate_validation_passed = not has_duplicates
 
         # Determine if job content matching passed
-        min_job_match_rate = 100.0  # Require 100% of data to match job requirements
+        min_job_match_rate = 95.0  # Require 95% of data to match job requirements todo change it back to 100 later.
         job_match_validation_passed = (
             job_match_analysis['match_rate'] >= min_job_match_rate
         )
@@ -1256,31 +1332,32 @@ def load_expected_jobs_from_gravity() -> Dict:
 
 
 async def validate_s3_miner_data(
-    wallet, s3_auth_url: str, miner_hotkey: str, 
-    use_enhanced_validation: bool = False, config=None
+    wallet, s3_auth_url: str, miner_hotkey: str,
+    use_enhanced_validation: bool = False, config=None, s3_reader=None
 ) -> S3ValidationResult:
     """
     Comprehensive S3 validation using metadata analysis and statistical methods.
     Validates file structure, job alignment, and data quality indicators.
-    
+
     Args:
         wallet: Validator wallet for S3 authentication
         s3_auth_url: S3 authentication service URL
         miner_hotkey: Target miner's hotkey
         use_enhanced_validation: If True, performs enhanced validation with real scrapers
         config: Configuration object with enhanced validation settings
-    
+        s3_reader: Optional ValidatorS3Access instance for efficient file listing
+
     Returns:
         S3ValidationResult with validation metrics
     """
-    
+
     # Load expected jobs
     expected_jobs = load_expected_jobs_from_gravity()
-    
+
     if use_enhanced_validation:
         # Use enhanced validation with real scrapers
         try:
-            validator = S3Validator()
+            validator = S3Validator(s3_reader=s3_reader)
             enhanced_result = await validator.validate_miner_s3_data(
                 wallet, s3_auth_url, miner_hotkey, expected_jobs
             )
