@@ -197,6 +197,81 @@ class ValidatorS3Access:
             self._debug_print(f"Exception getting miner-specific access: {str(e)}")
             return ""
 
+    async def list_all_files_with_metadata(self, miner_hotkey: str) -> List[Dict[str, Any]]:
+        """
+        List ALL files for specific miner with metadata (size, last_modified) using pagination.
+        This is used for accurate size calculation across ALL jobs.
+
+        Returns:
+            List of dicts with keys: 'key', 'size', 'last_modified'
+        """
+        try:
+            target_prefix = f"data/hotkey={miner_hotkey}/"
+            self._debug_print(f"Listing ALL files with metadata for miner: {miner_hotkey}")
+
+            all_files = []
+            continuation_token = None
+            page = 1
+            max_pages = 200
+
+            loop = asyncio.get_event_loop()
+
+            while page <= max_pages:
+                presigned_url = await self._request_presigned_list_url(miner_hotkey, continuation_token)
+                if not presigned_url:
+                    break
+
+                response = await loop.run_in_executor(None, lambda: requests.get(presigned_url, timeout=60))
+                if response.status_code != 200:
+                    break
+
+                try:
+                    root = ET.fromstring(response.text)
+                except:
+                    break
+
+                namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+
+                # Extract ALL files with metadata
+                page_files = 0
+                for content in root.findall('.//s3:Contents', namespaces):
+                    key_elem = content.find('s3:Key', namespaces)
+                    size_elem = content.find('s3:Size', namespaces)
+                    modified_elem = content.find('s3:LastModified', namespaces)
+
+                    if key_elem is not None and key_elem.text:
+                        decoded_key = urllib.parse.unquote(key_elem.text)
+
+                        # Only include .parquet files for the target miner
+                        if decoded_key.startswith(target_prefix) and decoded_key.endswith('.parquet'):
+                            all_files.append({
+                                'key': decoded_key,
+                                'size': int(size_elem.text) if size_elem is not None and size_elem.text else 0,
+                                'last_modified': modified_elem.text if modified_elem is not None else ''
+                            })
+                            page_files += 1
+
+                self._debug_print(f"Page {page}: collected {page_files} files (total: {len(all_files)})")
+
+                # Check for more pages
+                is_trunc = root.find('.//s3:IsTruncated', namespaces)
+                if is_trunc is None or str(is_trunc.text).lower() != 'true':
+                    break
+
+                token_elem = root.find('.//s3:NextContinuationToken', namespaces)
+                if token_elem is None or not token_elem.text:
+                    break
+
+                continuation_token = token_elem.text
+                page += 1
+
+            self._debug_print(f"Found {len(all_files)} total files across {page} pages for {miner_hotkey}")
+            return all_files
+
+        except Exception as e:
+            self._debug_print(f"Exception in list_all_files_with_metadata: {str(e)}")
+            return []
+
     async def list_jobs_direct(self, miner_hotkey: str) -> List[str]:
         """List jobs for specific miner with pagination support"""
         try:
