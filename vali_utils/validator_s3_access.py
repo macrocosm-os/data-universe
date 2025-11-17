@@ -28,6 +28,45 @@ class ValidatorS3Access:
         if self.debug:
             print(f"DEBUG S3: {message}")
 
+    async def _request_presigned_list_url(self, miner_hotkey: str, continuation_token: Optional[str] = None) -> Optional[str]:
+        """Request fresh presigned URL from /get-miner-list endpoint for specific miner"""
+        try:
+            hotkey = self.wallet.hotkey.ss58_address
+            timestamp = int(time.time())
+            commitment = f"s3:validator:miner:{miner_hotkey}:{timestamp}"
+            signature = self.wallet.hotkey.sign(commitment.encode()).hex()
+
+            payload = {
+                "hotkey": hotkey,
+                "timestamp": timestamp,
+                "signature": signature,
+                "miner_hotkey": miner_hotkey,
+            }
+
+            if continuation_token:
+                payload["continuation_token"] = continuation_token
+
+            loop = asyncio.get_event_loop()
+            response = await loop.run_in_executor(
+                None,
+                lambda: requests.post(
+                    f"{self.s3_auth_url.rstrip('/')}/get-miner-list",
+                    json=payload,
+                    timeout=30
+                )
+            )
+
+            if response.status_code != 200:
+                self._debug_print(f"get-miner-list failed: {response.status_code}")
+                return None
+
+            data = response.json()
+            return data.get("list_url", "")
+
+        except Exception as e:
+            self._debug_print(f"get-miner-list exception: {e}")
+            return None
+
     async def ensure_access(self) -> bool:
         """Ensure valid S3 access is available, refreshing if needed"""
         with self.lock:
@@ -159,53 +198,63 @@ class ValidatorS3Access:
             return ""
 
     async def list_jobs_direct(self, miner_hotkey: str) -> List[str]:
-        """List jobs using direct miner-specific URL (bypasses pagination)"""
+        """List jobs for specific miner with pagination support"""
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/"
-            self._debug_print(f"Direct search for jobs with prefix: {target_prefix}")
+            self._debug_print(f"Listing jobs for miner with pagination: {miner_hotkey}")
 
-            # Get miner-specific presigned URL
-            miner_url = await self.get_miner_specific_access(miner_hotkey)
-
-            if not miner_url:
-                self._debug_print("Failed to get miner-specific URL")
-                return []
-
-            # Make request to miner-specific URL
-            loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: requests.get(miner_url))
-
-            if response.status_code != 200:
-                self._debug_print(f"Miner-specific request failed: {response.status_code}")
-                return []
-
-            root = ET.fromstring(response.text)
-            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
             jobs = set()
+            continuation_token = None
+            page = 1
+            max_pages = 200
 
-            # Process all files for this specific miner
-            for content in root.findall('.//s3:Contents', namespaces):
-                key = content.find('s3:Key', namespaces).text
-                if key:
-                    decoded_key = urllib.parse.unquote(key)
+            loop = asyncio.get_event_loop()
 
-                    # Extract job from file path
-                    if decoded_key.startswith(target_prefix) and '/job_id=' in decoded_key:
-                        job_part_full = decoded_key[len(target_prefix):]
-                        if job_part_full.startswith('job_id='):
-                            job_part = job_part_full.split('/')[0][7:]
-                            jobs.add(job_part)
+            while page <= max_pages:
+                presigned_url = await self._request_presigned_list_url(miner_hotkey, continuation_token)
+                if not presigned_url:
+                    break
 
-            jobs_list = list(jobs)
-            self._debug_print(f"DIRECT: Found {len(jobs_list)} jobs for {miner_hotkey}")
-            return jobs_list
+                response = await loop.run_in_executor(None, lambda: requests.get(presigned_url, timeout=60))
+                if response.status_code != 200:
+                    break
+
+                try:
+                    root = ET.fromstring(response.text)
+                except:
+                    break
+
+                namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+
+                for content in root.findall('.//s3:Contents', namespaces):
+                    key_elem = content.find('s3:Key', namespaces)
+                    if key_elem is not None and key_elem.text:
+                        decoded_key = urllib.parse.unquote(key_elem.text)
+                        if decoded_key.startswith(target_prefix) and '/job_id=' in decoded_key:
+                            job_part_full = decoded_key[len(target_prefix):]
+                            if job_part_full.startswith('job_id='):
+                                jobs.add(job_part_full.split('/')[0][7:])
+
+                is_trunc = root.find('.//s3:IsTruncated', namespaces)
+                if is_trunc is None or str(is_trunc.text).lower() != 'true':
+                    break
+
+                token_elem = root.find('.//s3:NextContinuationToken', namespaces)
+                if token_elem is None or not token_elem.text:
+                    break
+
+                continuation_token = token_elem.text
+                page += 1
+
+            self._debug_print(f"Found {len(jobs)} jobs across {page} pages")
+            return list(jobs)
 
         except Exception as e:
             self._debug_print(f"Exception in list_jobs_direct: {str(e)}")
             return []
 
     async def _get_all_s3_data(self) -> List[str]:
-        """Get ALL S3 data once and cache it (handles pagination properly)"""
+        """Get ALL S3 data with proper pagination support"""
         current_time = time.time()
 
         # Check if cache is still valid (10 minutes)
@@ -218,71 +267,63 @@ class ValidatorS3Access:
             return []
 
         try:
-            urls = self.access_data.get('urls', {})
-            global_urls = urls.get('global', {})
-            base_url = global_urls.get('list_all_data', '')
-
-            if not base_url:
-                return []
-
             all_files = []
+            continuation_token = None
             page = 1
-            max_pages = 20  # Safety limit
+            max_pages = 200  # Safety limit
 
-            self._debug_print("Starting to collect all S3 files...")
+            self._debug_print("Starting to collect all S3 files with pagination...")
 
-            # Get first page
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: requests.get(base_url))
-
-            if response.status_code != 200:
-                self._debug_print(f"Failed to get S3 data: {response.status_code}")
-                return []
 
             while page <= max_pages:
-                root = ET.fromstring(response.text)
+                # Request fresh presigned URL for this page
+                presigned_url = await self._request_presigned_list_url(continuation_token)
+
+                if not presigned_url:
+                    self._debug_print(f"Failed to get presigned URL for page {page}")
+                    break
+
+                # Fetch this page
+                response = await loop.run_in_executor(None, lambda: requests.get(presigned_url, timeout=60))
+
+                if response.status_code != 200:
+                    self._debug_print(f"Page {page} failed: {response.status_code}")
+                    break
+
+                # Parse XML
+                try:
+                    root = ET.fromstring(response.text)
+                except Exception as e:
+                    self._debug_print(f"XML parse error on page {page}: {e}")
+                    break
+
                 namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
 
                 # Collect files from this page
                 page_files = 0
                 for content in root.findall('.//s3:Contents', namespaces):
-                    key = content.find('s3:Key', namespaces).text
-                    if key:
-                        decoded_key = urllib.parse.unquote(key)
-                        all_files.append(decoded_key)
+                    key_elem = content.find('s3:Key', namespaces)
+                    if key_elem is not None and key_elem.text:
+                        decoded = urllib.parse.unquote(key_elem.text)
+                        all_files.append(decoded)
                         page_files += 1
 
                 self._debug_print(f"Page {page}: collected {page_files} files (total: {len(all_files)})")
 
-                # Check if there are more pages
-                is_truncated = root.find('.//s3:IsTruncated', namespaces)
-                if is_truncated is None or is_truncated.text.lower() != 'true':
-                    self._debug_print("No more pages available")
+                # Check if more pages exist
+                is_trunc = root.find('.//s3:IsTruncated', namespaces)
+                if is_trunc is None or str(is_trunc.text).lower() != 'true':
+                    self._debug_print("No more pages")
                     break
 
-                # For S3 pagination, we need the LastKey to continue
-                # This is simpler than continuation tokens
-                if all_files:
-                    last_key = all_files[-1]
-                    # Create new URL with start-after parameter
-                    encoded_key = urllib.parse.quote(last_key, safe='')
-                    if '?' in base_url:
-                        next_url = f"{base_url}&start-after={encoded_key}"
-                    else:
-                        next_url = f"{base_url}?start-after={encoded_key}"
-
-                    # Get next page (this might fail due to presigned URL, but let's try)
-                    try:
-                        response = await loop.run_in_executor(None, lambda: requests.get(next_url))
-                        if response.status_code != 200:
-                            self._debug_print(f"Page {page + 1} failed: {response.status_code} - stopping pagination")
-                            break
-                    except Exception as e:
-                        self._debug_print(f"Pagination failed: {str(e)} - using current data")
-                        break
-                else:
+                # Get continuation token for next page
+                token_elem = root.find('.//s3:NextContinuationToken', namespaces)
+                if token_elem is None or not token_elem.text:
+                    self._debug_print("IsTruncated=true but no NextContinuationToken")
                     break
 
+                continuation_token = token_elem.text
                 page += 1
 
             self._debug_print(f"Total files collected across {page} pages: {len(all_files)}")
