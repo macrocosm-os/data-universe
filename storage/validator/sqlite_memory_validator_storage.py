@@ -182,57 +182,125 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def upsert_compressed_miner_index(
         self, index: CompressedMinerIndex, hotkey: str, credibility: float
     ):
-        """Stores the index for all of the data that a specific miner promises to provide."""
+        """
+        Stores the index for all of the data that a specific miner promises to provide,
+        with strict validation to avoid silent undercounting.
 
-        bt.logging.trace(
-            f"{hotkey}: Upserting miner index with {CompressedMinerIndex.bucket_count(index)} buckets"
-        )
+        Changes vs. old implementation:
+        - NO zip() truncation: assert equal lengths for time_bucket_ids and sizes_bytes.
+        - NO silent drops: any per-row failure logs + raises
+        - ATOMIC delete+insert within a single transaction - either all changes become visible, or none do.
+        """
+        # Informational trace (safe if bucket_count raises)
+        try:
+            claimed = CompressedMinerIndex.bucket_count(index)
+            bt.logging.trace(f"{hotkey}: Upserting miner index with {claimed} buckets")
+        except Exception:
+            bt.logging.trace(f"{hotkey}: Upserting miner index")
 
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
-        # Upsert this Validator's minerId for the specified hotkey.
+        # Ensure Miner row exists / updated; get minerId
         miner_id = self._upsert_miner(hotkey, now_str, credibility)
 
-        # Parse every DataEntityBucket from the index into a list of values to insert.
+        # Build rows with strict validation
         values = []
+        expected_rows = 0
+
         for source, compressed_buckets in index.sources.items():
-            for compressed_bucket in compressed_buckets:
-                for time_bucket_id, size_bytes in zip(
-                    compressed_bucket.time_bucket_ids, compressed_bucket.sizes_bytes
-                ):
+            src_int = int(source)
+            for cb in compressed_buckets:
+                tids  = list(cb.time_bucket_ids or [])
+                sizes = list(cb.sizes_bytes or [])
+
+                n_ids   = len(tids)
+                n_sizes = len(sizes)
+
+                # Refuse to truncate: lengths must match exactly
+                if n_ids != n_sizes:
+                    bt.logging.error(
+                        f"{hotkey}: length mismatch for label={cb.label}, source={src_int} - "
+                        f"len(time_bucket_ids)={n_ids} != len(sizes_bytes)={n_sizes}"
+                    )
+                    raise ValueError("Compressed index arrays have different lengths")
+
+                expected_rows += n_ids
+
+                # Resolve label id once per compressed bucket
+                try:
+                    label_val = self._label_value_parse_str(cb.label)
+                    label_id = self.label_dict.get_or_insert(label_val)
+                except Exception as e:
+                    bt.logging.error(
+                        f"{hotkey}: failed to resolve label id for label={cb.label}, source={src_int}: {e}"
+                    )
+                    raise
+
+                # Materialize rows
+                for i in range(n_ids):
                     try:
-                        values.append(
-                            [
-                                miner_id,
-                                int(source),
-                                self.label_dict.get_or_insert(
-                                    self._label_value_parse_str(compressed_bucket.label)
-                                ),
-                                time_bucket_id,
-                                size_bytes,
-                            ]
+                        time_bucket_id = int(tids[i])
+                        size_bytes     = int(sizes[i])
+                    except Exception as e:
+                        bt.logging.error(
+                            f"{hotkey}: type conversion error for source={src_int}, "
+                            f"label={cb.label}, i={i}: {e}"
                         )
-                    except:
-                        # In the case that we fail to get a label (due to unsupported characters) we drop just that one bucket.
-                        pass
+                        raise
 
+                    if size_bytes < 0:
+                        bt.logging.error(
+                            f"{hotkey}: negative size_bytes detected (label={cb.label}, "
+                            f"source={src_int}, timeBucketId={time_bucket_id}, size={size_bytes})"
+                        )
+                        raise ValueError("contentSizeBytes must be >= 0")
+
+                    values.append([
+                        miner_id,
+                        src_int,
+                        label_id,
+                        time_bucket_id,
+                        size_bytes,
+                    ])
+
+        # Helpful pre-insert log
+        bt.logging.info(f"{hotkey}: prepared {len(values)} rows for insert; expected={expected_rows}")
+
+        # Atomic delete + insert
         with self.lock:
-            # Clear the previous keys for this miner.
-            self._delete_miner_index(hotkey)
-
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
-                # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
-                # Batch in groups of 1m if necessary to avoid congestion issues.
-                value_subsets = [
-                    values[x : x + 1_000_000] for x in range(0, len(values), 1_000_000)
-                ]
-                for value_subset in value_subsets:
-                    cursor.executemany(
-                        """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
-                        value_subset,
+                try:
+                    cursor.execute("BEGIN IMMEDIATE")
+
+                    # Remove previous rows for this miner within the same transaction
+                    cursor.execute("DELETE FROM MinerIndex WHERE minerId = ?", [miner_id])
+
+                    # Batch insert to avoid giant statements
+                    if values:
+                        for start in range(0, len(values), 1_000_000):
+                            chunk = values[start:start + 1_000_000]
+                            cursor.executemany(
+                                """
+                                INSERT OR IGNORE INTO MinerIndex
+                                (minerId, source, labelId, timeBucketId, contentSizeBytes)
+                                VALUES (?, ?, ?, ?, ?)
+                                """,
+                                chunk,
+                            )
+
+                    connection.commit()
+                except Exception as e:
+                    try:
+                        connection.rollback()
+                    except Exception:
+                        pass
+                    bt.logging.error(
+                        f"{hotkey}: upsert_compressed_miner_index failed; rolled back. Reason: {e}"
                     )
-                connection.commit()
+                    raise
+
+        bt.logging.success(f"{hotkey}: upserted miner index rows={len(values)} (expected={expected_rows})")
 
     def read_miner_index(
         self,
