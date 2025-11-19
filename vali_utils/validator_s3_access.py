@@ -327,100 +327,116 @@ class ValidatorS3Access:
         except Exception as e:
             self._debug_print(f"Exception in list_jobs_direct: {str(e)}")
             return []
-
-    async def _get_all_s3_data(self) -> List[str]:
-        """Get ALL S3 data with proper pagination support"""
-        current_time = time.time()
-
-        # Check if cache is still valid (10 minutes)
-        if (self._cached_all_files and
-                current_time < self._cache_expiry):
-            self._debug_print("Using cached S3 file list")
-            return self._cached_all_files
-
-        if not await self.ensure_access():
-            return []
+        
+    async def _get_all_s3_data(self, miner_hotkey: str) -> List[str]:
 
         try:
-            all_files = []
-            continuation_token = None
+            all_files: List[str] = []
+            continuation_token: Optional[str] = None
             page = 1
             max_pages = 200  # Safety limit
 
-            self._debug_print("Starting to collect all S3 files with pagination...")
+            self._debug_print(
+                f"Starting to collect all S3 files with pagination for miner {miner_hotkey}..."
+            )
 
             loop = asyncio.get_event_loop()
 
             while page <= max_pages:
-                # Request fresh presigned URL for this page
-                presigned_url = await self._request_presigned_list_url(continuation_token)
+                # Correct: pass miner_hotkey AND continuation_token explicitly.
+                #    Previously, we mistakenly did:
+                #        _request_presigned_list_url(continuation_token)
+                #    which treated `continuation_token` as the miner_hotkey and never sent a
+                #    real continuation token to the auth server.
+                presigned_url = await self._request_presigned_list_url(
+                    miner_hotkey=miner_hotkey,
+                    continuation_token=continuation_token,
+                )
 
                 if not presigned_url:
-                    self._debug_print(f"Failed to get presigned URL for page {page}")
+                    self._debug_print(
+                        f"Failed to get presigned URL for page {page} (miner {miner_hotkey})"
+                    )
                     break
 
-                # Fetch this page
-                response = await loop.run_in_executor(None, lambda: requests.get(presigned_url, timeout=60))
+                # Fetch this page from S3 using the presigned URL
+                response = await loop.run_in_executor(
+                    None, lambda: requests.get(presigned_url, timeout=60)
+                )
 
                 if response.status_code != 200:
-                    self._debug_print(f"Page {page} failed: {response.status_code}")
+                    self._debug_print(
+                        f"Page {page} failed for {miner_hotkey}: {response.status_code}"
+                    )
                     break
 
-                # Parse XML
+                # Parse the S3 XML listing
                 try:
                     root = ET.fromstring(response.text)
                 except Exception as e:
-                    self._debug_print(f"XML parse error on page {page}: {e}")
+                    self._debug_print(
+                        f"XML parse error on page {page} for {miner_hotkey}: {e}"
+                    )
                     break
 
-                namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                namespaces = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
-                # Collect files from this page
+                # Collect file keys from this page
                 page_files = 0
-                for content in root.findall('.//s3:Contents', namespaces):
-                    key_elem = content.find('s3:Key', namespaces)
+                for content in root.findall(".//s3:Contents", namespaces):
+                    key_elem = content.find("s3:Key", namespaces)
                     if key_elem is not None and key_elem.text:
                         decoded = urllib.parse.unquote(key_elem.text)
                         all_files.append(decoded)
                         page_files += 1
 
-                self._debug_print(f"Page {page}: collected {page_files} files (total: {len(all_files)})")
+                self._debug_print(
+                    f"Page {page} (miner {miner_hotkey}): collected "
+                    f"{page_files} files (total: {len(all_files)})"
+                )
 
                 # Check if more pages exist
-                is_trunc = root.find('.//s3:IsTruncated', namespaces)
-                if is_trunc is None or str(is_trunc.text).lower() != 'true':
-                    self._debug_print("No more pages")
+                is_trunc = root.find(".//s3:IsTruncated", namespaces)
+                if is_trunc is None or str(is_trunc.text).lower() != "true":
+                    self._debug_print(f"No more pages for {miner_hotkey}")
                     break
 
-                # Get continuation token for next page
-                token_elem = root.find('.//s3:NextContinuationToken', namespaces)
+                # Extract NextContinuationToken for the next page
+                token_elem = root.find(".//s3:NextContinuationToken", namespaces)
                 if token_elem is None or not token_elem.text:
-                    self._debug_print("IsTruncated=true but no NextContinuationToken")
+                    self._debug_print(
+                        f"IsTruncated=true but no NextContinuationToken for {miner_hotkey}"
+                    )
                     break
 
                 continuation_token = token_elem.text
                 page += 1
 
-            self._debug_print(f"Total files collected across {page} pages: {len(all_files)}")
-
-            # Cache the results for 10 minutes
-            self._cached_all_files = all_files
-            self._cache_expiry = current_time + 600  # 10 minutes
-
+            self._debug_print(
+                f"Total files collected across {page} pages for {miner_hotkey}: "
+                f"{len(all_files)}"
+            )
             return all_files
 
         except Exception as e:
-            self._debug_print(f"Exception getting all S3 data: {str(e)}")
+            self._debug_print(
+                f"Exception getting all S3 data for {miner_hotkey}: {str(e)}"
+            )
+            bt.logging.error(
+                f"S3 list all data error for {miner_hotkey}: {str(e)}"
+            )
             return []
 
     async def _list_jobs_cached(self, miner_hotkey: str) -> List[str]:
-        """Original cached method - renamed"""
+
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/"
             self._debug_print(f"Looking for jobs with prefix: {target_prefix}")
 
-            # Get all S3 data (cached if available)
-            all_files = await self._get_all_s3_data()
+            # Get all S3 keys for this miner and then derive job_ids from them.
+            # Previously this used a global cached listing and a buggy call into
+            # _request_presigned_list_url; now it's correctly keyed by miner_hotkey.
+            all_files = await self._get_all_s3_data(miner_hotkey)
 
             if not all_files:
                 self._debug_print("No S3 data available")
@@ -429,19 +445,22 @@ class ValidatorS3Access:
             jobs = set()
             files_found = 0
 
-            # Filter for our specific miner
+            # Filter keys for this miner and extract job_id from the path:
+            # data/hotkey={hotkey}/job_id={job_id}/filename.parquet
             for file_path in all_files:
-                if file_path.startswith(target_prefix) and '/job_id=' in file_path:
+                if file_path.startswith(target_prefix) and "/job_id=" in file_path:
                     files_found += 1
-                    # Extract job_id from path: data/hotkey=XXXX/job_id=YYYY/file
-                    job_part_full = file_path[len(target_prefix):]  # Remove prefix
-                    if job_part_full.startswith('job_id='):
-                        job_part = job_part_full.split('/')[0][7:]  # Remove 'job_id=' and get first part
+                    job_part_full = file_path[len(target_prefix):]  # strip "data/hotkey=.../"
+                    if job_part_full.startswith("job_id="):
+                        # remove "job_id=" and take the first segment before '/'
+                        job_part = job_part_full.split("/")[0][7:]
                         jobs.add(job_part)
 
             self._debug_print(f"Found {files_found} files for {miner_hotkey}")
             jobs_list = list(jobs)
-            self._debug_print(f"Extracted {len(jobs_list)} unique jobs: {jobs_list}")
+            self._debug_print(
+                f"Extracted {len(jobs_list)} unique jobs: {jobs_list}"
+            )
             return jobs_list
 
         except Exception as e:
@@ -463,72 +482,86 @@ class ValidatorS3Access:
         # Fallback to cached method (for miners in first 1000)
         self._debug_print(f"Using cached method for {miner_hotkey}")
         return await self._list_jobs_cached(miner_hotkey)
-
+   
     async def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
-        """List files for a specific miner and job using cached S3 data"""
+
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/job_id={job_id}/"
             self._debug_print(f"Looking for files with prefix: {target_prefix}")
 
-            # Get all S3 data (cached if available)
-            all_files = await self._get_all_s3_data()
+            # Get all S3 keys for this miner.
+            all_files = await self._get_all_s3_data(miner_hotkey)
 
             if not all_files:
                 return []
 
-            # We need file metadata (size, last modified), so we still need to make an S3 API call
-            # But we can optimize by checking if files exist first
+            # Quickly check if any keys exist for this job_id for this miner.
             matching_files = [f for f in all_files if f.startswith(target_prefix)]
 
             if not matching_files:
                 self._debug_print(f"No files found with prefix {target_prefix}")
                 return []
 
-            self._debug_print(f"Found {len(matching_files)} matching files, getting metadata...")
+            self._debug_print(
+                f"Found {len(matching_files)} matching files, getting metadata..."
+            )
 
-            # Get file metadata from S3 API
+            # Ensure we have current validator-level access for global listing
             if not await self.ensure_access():
                 return []
 
-            urls = self.access_data.get('urls', {})
-            global_urls = urls.get('global', {})
-            list_url = global_urls.get('list_all_data', '')
+            urls = self.access_data.get("urls", {})
+            global_urls = urls.get("global", {})
+            list_url = global_urls.get("list_all_data", "")
 
             if not list_url:
                 return []
 
-            # Make API call to get metadata
+            # Use the global list_all_data URL to fetch metadata for *all* objects,
+            # then filter down to the ones under our target_prefix.
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(None, lambda: requests.get(list_url))
+            response = await loop.run_in_executor(
+                None, lambda: requests.get(list_url)
+            )
 
             if response.status_code != 200:
-                self._debug_print(f"Failed files response: {response.status_code}")
+                self._debug_print(
+                    f"Failed files response: {response.status_code}"
+                )
                 return []
 
             root = ET.fromstring(response.text)
-            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
-            files = []
+            namespaces = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+            files: List[Dict[str, Any]] = []
 
-            # Extract metadata for matching files
-            for content in root.findall('.//s3:Contents', namespaces):
-                key = content.find('s3:Key', namespaces).text
-                size = content.find('s3:Size', namespaces).text
-                last_modified = content.find('s3:LastModified', namespaces).text
+            # Extract metadata for each object whose key starts with target_prefix
+            for content in root.findall(".//s3:Contents", namespaces):
+                key = content.find("s3:Key", namespaces).text
+                size = content.find("s3:Size", namespaces).text
+                last_modified = content.find("s3:LastModified", namespaces).text
 
                 if key:
                     decoded_key = urllib.parse.unquote(key)
                     if decoded_key.startswith(target_prefix):
-                        files.append({
-                            'Key': decoded_key,
-                            'Size': int(size) if size else 0,
-                            'LastModified': last_modified
-                        })
-                        self._debug_print(f"Found file: {os.path.basename(decoded_key)}")
+                        files.append(
+                            {
+                                "Key": decoded_key,
+                                "Size": int(size) if size else 0,
+                                "LastModified": last_modified,
+                            }
+                        )
+                        self._debug_print(
+                            f"Found file: {os.path.basename(decoded_key)}"
+                        )
 
-            self._debug_print(f"Found {len(files)} files in {miner_hotkey}/{job_id}")
+            self._debug_print(
+                f"Found {len(files)} files in {miner_hotkey}/{job_id}"
+            )
             return files
 
         except Exception as e:
             self._debug_print(f"Exception in list_files: {str(e)}")
-            bt.logging.error(f"S3 list files error for {miner_hotkey}/{job_id}: {str(e)}")
+            bt.logging.error(
+                f"S3 list files error for {miner_hotkey}/{job_id}: {str(e)}"
+            )
             return []
