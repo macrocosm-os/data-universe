@@ -83,7 +83,7 @@ class S3ValidationResultDetailed:
 # Mapping of scrapers to use based on the data source to validate
 PREFERRED_SCRAPERS = {
     DataSource.X: ScraperId.X_APIDOJO,
-    DataSource.REDDIT: ScraperId.REDDIT_CUSTOM,
+    DataSource.REDDIT: ScraperId.REDDIT_JSON,
     DataSource.YOUTUBE: ScraperId.YOUTUBE_APIFY_TRANSCRIPT
 }
 

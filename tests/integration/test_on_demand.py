@@ -6,7 +6,7 @@ import random
 from common.data import DataSource, DataEntity
 from common.protocol import OnDemandRequest
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
-from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
+from scraping.reddit.reddit_json_scraper import RedditJsonScraper
 from scraping.youtube.youtube_multi_actor_scraper import YouTubeMultiActorScraper
 
 
@@ -77,7 +77,7 @@ class TestOnDemandProtocol(unittest.TestCase):
             )
 
             # Set up Reddit scraper
-            scraper = RedditCustomScraper()
+            scraper = RedditJsonScraper()
 
             try:
                 # Use on_demand_scrape method for Reddit

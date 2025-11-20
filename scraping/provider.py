@@ -3,6 +3,7 @@ from typing import Callable, Dict
 from common.data import DataSource
 from scraping.reddit.reddit_lite_scraper import RedditLiteScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
+from scraping.reddit.reddit_json_scraper import RedditJsonScraper
 from scraping.scraper import Scraper, ScraperId
 from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
@@ -19,6 +20,7 @@ DEFAULT_FACTORIES = {
     # For backwards compatibility with old configs, remap x.flash to x.apidojo.
     ScraperId.X_FLASH: MicroworldsTwitterScraper,
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
+    ScraperId.REDDIT_JSON: RedditJsonScraper,
     ScraperId.X_MICROWORLDS: MicroworldsTwitterScraper,
     ScraperId.X_APIDOJO: ApiDojoTwitterScraper,
     ScraperId.X_QUACKER: QuackerUrlScraper,
