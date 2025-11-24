@@ -26,7 +26,7 @@ class TestScraperCoordinator(unittest.TestCase):
         # Create a CoordinatorConfig with two DataSourceScrapingConfig objects
         config = CoordinatorConfig(
             scraper_configs={
-                ScraperId.REDDIT_LITE: ScraperConfig(
+                ScraperId.REDDIT_JSON: ScraperConfig(
                     cadence_seconds=60,
                     labels_to_scrape=[],
                 ),
@@ -50,10 +50,10 @@ class TestScraperCoordinator(unittest.TestCase):
         # Advance the clock by 60 seconds, and make sure only the first source is returned.
         now += dt.timedelta(seconds=60)
         self.assertEqual(
-            [ScraperId.REDDIT_LITE], tracker.get_scraper_ids_ready_to_scrape(now)
+            [ScraperId.REDDIT_JSON], tracker.get_scraper_ids_ready_to_scrape(now)
         )
 
-        tracker.on_scrape_scheduled(ScraperId.REDDIT_LITE, now)
+        tracker.on_scrape_scheduled(ScraperId.REDDIT_JSON, now)
 
         # Advance the clock by 15 seconds, and make sure nothing is returned.
         now += dt.timedelta(seconds=15)
@@ -62,7 +62,7 @@ class TestScraperCoordinator(unittest.TestCase):
         # Advance the clock by 45 seconds, and make sure both sources are returned.
         now += dt.timedelta(seconds=45)
         self.assertEqual(
-            [ScraperId.REDDIT_LITE, ScraperId.X_MICROWORLDS],
+            [ScraperId.REDDIT_JSON, ScraperId.X_MICROWORLDS],
             tracker.get_scraper_ids_ready_to_scrape(now),
         )
 
@@ -71,7 +71,7 @@ class TestScraperCoordinator(unittest.TestCase):
 
         config = CoordinatorConfig(
             scraper_configs={
-                ScraperId.REDDIT_LITE: ScraperConfig(
+                ScraperId.REDDIT_JSON: ScraperConfig(
                     cadence_seconds=60,
                     labels_to_scrape=[
                         LabelScrapingConfig(
@@ -102,7 +102,7 @@ class TestScraperCoordinator(unittest.TestCase):
         time_counts = defaultdict(int)
         runs = 20000
         for _ in range(runs):
-            scrape_configs = _choose_scrape_configs(ScraperId.REDDIT_LITE, config, now)
+            scrape_configs = _choose_scrape_configs(ScraperId.REDDIT_JSON, config, now)
 
             self.assertEqual(2, len(scrape_configs))
 
@@ -184,12 +184,12 @@ class TestScraperCoordinator(unittest.TestCase):
 
         # Create a ScraperProvider that uses the Mock Scraper
         provider = ScraperProvider(
-            factories={ScraperId.REDDIT_LITE: lambda: mock_scraper}
+            factories={ScraperId.REDDIT_JSON: lambda: mock_scraper}
         )
 
         config = CoordinatorConfig(
             scraper_configs={
-                ScraperId.REDDIT_LITE: ScraperConfig(
+                ScraperId.REDDIT_JSON: ScraperConfig(
                     # Use a small cadence because the Coordinator will wait this amount of time
                     # before performing the first scrape.
                     cadence_seconds=1,
