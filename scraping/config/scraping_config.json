@@ -28,8 +28,8 @@
             ]
         },
         {
-            "scraper_id": "Reddit.custom",
-            "cadence_seconds": 60,
+            "scraper_id": "Reddit.json",
+            "cadence_seconds": 10,
             "labels_to_scrape": [
                 {
                     "label_choices": [

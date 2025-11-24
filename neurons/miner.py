@@ -59,6 +59,7 @@ from scraping.scraper import ScrapeConfig, ScraperId
 
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
+from scraping.reddit.reddit_json_scraper import RedditJsonScraper
 import json
 
 from vali_utils.on_demand.output_models import create_organic_output_dict
@@ -729,12 +730,13 @@ class Miner:
                 )
 
             elif synapse.source == DataSource.REDDIT:
-                # Create a new scraper provider and get the appropriate scraper
-                scraper = RedditCustomScraper()
+                # Use RedditJsonScraper (no API keys required)
+                bt.logging.info("Using RedditJsonScraper (no API keys)")
+                scraper = RedditJsonScraper()
 
                 if not scraper:
                     bt.logging.error(
-                        f"No scraper available for ID: {ScraperId.REDDIT_CUSTOM}"
+                        f"No scraper available for ID: {ScraperId.REDDIT_JSON}"
                     )
                     synapse.data = []
                     return synapse
