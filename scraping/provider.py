@@ -1,7 +1,6 @@
 import threading
 from typing import Callable, Dict
 from common.data import DataSource
-from scraping.reddit.reddit_lite_scraper import RedditLiteScraper
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.reddit.reddit_json_scraper import RedditJsonScraper
 from scraping.scraper import Scraper, ScraperId
@@ -16,8 +15,6 @@ from scraping.youtube.youtube_multi_actor_scraper import YouTubeMultiActorScrape
 
 
 DEFAULT_FACTORIES = {
-    ScraperId.REDDIT_LITE: RedditLiteScraper,
-    # For backwards compatibility with old configs, remap x.flash to x.apidojo.
     ScraperId.X_FLASH: MicroworldsTwitterScraper,
     ScraperId.REDDIT_CUSTOM: RedditCustomScraper,
     ScraperId.REDDIT_JSON: RedditJsonScraper,

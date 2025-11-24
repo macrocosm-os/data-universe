@@ -11,7 +11,6 @@ from storage.miner.miner_storage import MinerStorage
 class ScraperId(str, Enum):
     """The id for each of the scrapers."""
 
-    REDDIT_LITE = "Reddit.lite"
     X_FLASH = "X.flash"
     REDDIT_CUSTOM = "Reddit.custom"
     REDDIT_JSON = "Reddit.json"

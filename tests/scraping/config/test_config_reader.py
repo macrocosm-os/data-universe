@@ -36,7 +36,7 @@ class TestConfigReader(unittest.TestCase):
                         ),
                     ],
                 ),
-                ScraperId.REDDIT_LITE: ScraperConfig(
+                ScraperId.REDDIT_JSON: ScraperConfig(
                     cadence_seconds=900,
                     labels_to_scrape=[
                         LabelScrapingConfig(
