@@ -33,6 +33,7 @@ from vali_utils import metrics, utils as vali_utils
 from typing import List, Optional, Tuple
 from vali_utils.validator_s3_access import ValidatorS3Access
 from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
+from vali_utils.s3_logging_utils import log_s3_validation_table, log_s3_validation_compact
 
 from rewards.miner_scorer import MinerScorer
 
@@ -298,10 +299,21 @@ class MinerEvaluator:
                 use_enhanced_validation=True, config=self.config, s3_reader=self.s3_reader
             )
             
-            # Log results
+            # Log results with rich table
             summary = get_s3_validation_summary(s3_validation_result)
             bt.logging.info(f"{hotkey}: {summary}")
-            
+
+            # Display rich table with detailed metrics
+            try:
+                log_s3_validation_table(
+                    result=s3_validation_result,
+                    uid=uid,
+                    hotkey=hotkey,
+                    pagination_stats=None  # Could add pagination stats if available
+                )
+            except Exception as e:
+                bt.logging.debug(f"Error displaying S3 validation table: {e}")
+
             if not s3_validation_result.is_valid and s3_validation_result.issues:
                 bt.logging.debug(f"{hotkey}: S3 validation issues: {', '.join(s3_validation_result.issues[:3])}")
 

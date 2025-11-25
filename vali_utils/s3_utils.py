@@ -24,6 +24,8 @@ from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from scraping.youtube.model import YouTubeContent
 from common.data import DataEntity, DataSource
+from common.constants import FILENAME_FORMAT_REQUIRED_DATE
+import re
 
 
 @dataclass
@@ -88,6 +90,47 @@ PREFERRED_SCRAPERS = {
 }
 
 
+def extract_count_from_filename(file_path: str) -> int:
+    """
+    Extract claimed record count from miner filename for dashboard metrics
+
+    Filename format: data_{YYYYMMDD_HHMMSS}_{record_count}_{16_char_hex}.parquet
+    Example: data_20250804_150058_9999_4yk9nu3ghiqjmv6c.parquet -> 9999
+
+    Args:
+        file_path: Full S3 path or just filename
+
+    Returns:
+        Record count as integer, or 0 if invalid format
+    """
+    # Case-insensitive hex pattern to handle both upper and lowercase
+    match = re.search(r'data_\d{8}_\d{6}_(\d+)_[a-fA-F0-9]{16}\.parquet', file_path)
+    return int(match.group(1)) if match else 0
+
+
+def is_valid_filename_format(file_path: str) -> bool:
+    """
+    Check if filename matches required format
+
+    Enforced after FILENAME_FORMAT_REQUIRED_DATE
+
+    Args:
+        file_path: Full S3 path or just filename
+
+    Returns:
+        True if valid format or before enforcement date, False otherwise
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+
+    # Before enforcement date, all filenames are "valid" (no enforcement)
+    if now < FILENAME_FORMAT_REQUIRED_DATE:
+        return True
+
+    # After enforcement date, check format strictly
+    pattern = r'data_\d{8}_\d{6}_\d+_[a-fA-F0-9]{16}\.parquet$'
+    return bool(re.search(pattern, file_path))
+
+
 class S3Validator:
     """
     S3 validator that performs comprehensive validation including:
@@ -140,8 +183,30 @@ class S3Validator:
                         job_id = job_id_part.split('/')[0]
                         all_job_ids.add(job_id)
 
+                # Validate filename formats (enforced after FILENAME_FORMAT_REQUIRED_DATE)
+                invalid_filenames = [f['key'] for f in all_files if not is_valid_filename_format(f['key'])]
+
+                if invalid_filenames:
+                    bt.logging.warning(
+                        f"{miner_hotkey}: Found {len(invalid_filenames)} files with invalid filename format"
+                    )
+
+                    # After enforcement date, reject validation if any invalid filenames found
+                    now = dt.datetime.now(dt.timezone.utc)
+                    if now >= FILENAME_FORMAT_REQUIRED_DATE:
+                        return self._create_failed_result(
+                            f"Invalid filename format: {len(invalid_filenames)} files don't match required pattern "
+                            f"(data_YYYYMMDD_HHMMSS_count_16hex.parquet)"
+                        )
+
+                # Extract claimed record counts from filenames for dashboard metrics
+                total_claimed_records = sum(extract_count_from_filename(f['key']) for f in all_files)
+
                 bt.logging.info(
                     f"{miner_hotkey}: Extracted {len(all_job_ids)} unique job IDs from {len(all_files)} files"
+                )
+                bt.logging.info(
+                    f"{miner_hotkey}: Total claimed records from filenames: {total_claimed_records:,} across {len(all_files)} files"
                 )
             else:
                 # Fallback: use old method (has pagination bug but better than nothing)
@@ -186,6 +251,16 @@ class S3Validator:
             duplicate_analysis = await self._check_for_duplicates(
                 wallet, s3_auth_url, miner_hotkey, recent_data_analysis['recent_job_files']
             )
+
+            # Check for filename count mismatches (enforced after FILENAME_FORMAT_REQUIRED_DATE)
+            now = dt.datetime.now(dt.timezone.utc)
+            if now >= FILENAME_FORMAT_REQUIRED_DATE and 'count_mismatches' in duplicate_analysis:
+                count_mismatches = duplicate_analysis['count_mismatches']
+                if count_mismatches:
+                    return self._create_failed_result(
+                        f"Record count validation failed: {len(count_mismatches)} files have mismatched counts "
+                        f"(claimed vs actual records)"
+                    )
 
             # Step 5: Validate job content matching
             job_match_analysis = await self._check_job_content_match(
@@ -353,17 +428,12 @@ class S3Validator:
                         files_by_job[job_id] = []
                     files_by_job[job_id].append(file_info)
 
-        # Sample 5 random jobs for validation
-        available_jobs = list(files_by_job.keys())
-        sample_job_ids = random.sample(available_jobs, min(5, len(available_jobs)))
+        # First, identify jobs with recent activity (uploaded files in last 3 hours)
+        # This ensures we prioritize sampling from active jobs instead of relying on random luck
+        jobs_with_recent_activity = []
+        jobs_without_recent_activity = []
 
-        bt.logging.info(f"{miner_hotkey}: Sampling {len(sample_job_ids)} jobs from {len(available_jobs)} active jobs for validation")
-
-        validation_files_count = 0
-        for job_id in sample_job_ids:
-            job_files_metadata = files_by_job[job_id]
-
-            # Activity check: Job must have at least 1 file uploaded in last 3 hours
+        for job_id, job_files_metadata in files_by_job.items():
             has_recent_activity = False
             for file_info in job_files_metadata:
                 try:
@@ -373,6 +443,46 @@ class S3Validator:
                         break
                 except Exception:
                     continue
+
+            if has_recent_activity:
+                jobs_with_recent_activity.append(job_id)
+            else:
+                jobs_without_recent_activity.append(job_id)
+
+        # Prioritize sampling from jobs with recent activity
+        # If we have enough jobs with recent activity, sample only from those
+        # Otherwise, sample from all available jobs
+        if len(jobs_with_recent_activity) >= 5:
+            sample_job_ids = random.sample(jobs_with_recent_activity, 5)
+            bt.logging.info(
+                f"{miner_hotkey}: Sampling 5 jobs from {len(jobs_with_recent_activity)} jobs with recent activity "
+                f"(out of {len(files_by_job)} total active jobs)"
+            )
+        elif len(jobs_with_recent_activity) > 0:
+            # Take all jobs with recent activity, plus some random ones to reach 5
+            sample_job_ids = jobs_with_recent_activity.copy()
+            remaining_needed = min(5 - len(sample_job_ids), len(jobs_without_recent_activity))
+            if remaining_needed > 0:
+                sample_job_ids.extend(random.sample(jobs_without_recent_activity, remaining_needed))
+            bt.logging.info(
+                f"{miner_hotkey}: Sampling {len(sample_job_ids)} jobs: {len(jobs_with_recent_activity)} with recent activity + "
+                f"{len(sample_job_ids) - len(jobs_with_recent_activity)} without recent activity"
+            )
+        else:
+            # No jobs with recent activity, sample randomly from all
+            available_jobs = list(files_by_job.keys())
+            sample_job_ids = random.sample(available_jobs, min(5, len(available_jobs)))
+            bt.logging.warning(
+                f"{miner_hotkey}: No jobs with recent activity found! Sampling {len(sample_job_ids)} random jobs from "
+                f"{len(available_jobs)} active jobs"
+            )
+
+        validation_files_count = 0
+        for job_id in sample_job_ids:
+            job_files_metadata = files_by_job[job_id]
+
+            # Check if this job has recent activity
+            has_recent_activity = job_id in jobs_with_recent_activity
 
             # Only include jobs with recent activity for validation
             if has_recent_activity:
@@ -443,6 +553,26 @@ class S3Validator:
                         continue
 
                     df = pd.read_parquet(presigned_url)
+
+                    # Validate filename record count matches actual
+                    claimed_count = extract_count_from_filename(file_key)
+                    actual_count = len(df)
+                    if claimed_count > 0 and claimed_count != actual_count:
+                        bt.logging.warning(
+                            f"{miner_hotkey}: Record count mismatch found: "
+                            f"claimed={claimed_count}, actual={actual_count}"
+                        )
+
+                        # After enforcement date, count mismatches are validation failures
+                        now = dt.datetime.now(dt.timezone.utc)
+                        if now >= FILENAME_FORMAT_REQUIRED_DATE:
+                            # Track mismatch for final validation decision
+                            if 'count_mismatches' not in duplicate_analysis:
+                                duplicate_analysis['count_mismatches'] = []
+                            duplicate_analysis['count_mismatches'].append({
+                                'claimed': claimed_count,
+                                'actual': actual_count
+                            })
 
                     # Sample rows to check for duplicates
                     sample_size = min(20, len(df))  # rows_per_file_sample = 20
@@ -544,42 +674,43 @@ class S3Validator:
                             # Handle different label formats
                             if platform in ['x', 'twitter']:
                                 # For X: check if label is in tweet_hashtags array (handles multiple hashtags)
-                                tweet_hashtags = row.get('tweet_hashtags', [])
+                                tweet_hashtags_raw = row.get('tweet_hashtags', None)
 
-                                # Handle pandas types - tweet_hashtags might be a list, numpy array, or Series
-                                if pd.notna(tweet_hashtags) and hasattr(tweet_hashtags, '__iter__') and not isinstance(tweet_hashtags, str):
-                                    # Convert to list if it's array-like (handles pandas Series, numpy arrays, lists)
-                                    try:
-                                        hashtags_list = list(tweet_hashtags) if not isinstance(tweet_hashtags, list) else tweet_hashtags
-                                        # Normalize hashtags to lowercase
-                                        hashtags_lower = [str(h).lower().strip() for h in hashtags_list]
-                                        label_without_hash = job_label_normalized.lstrip('#')
-                                        label_with_hash = f"#{label_without_hash}"
+                                hashtags_list = []
+                                if tweet_hashtags_raw is not None:
+                                    # If it's an iterable (list / array / Series), but not a string
+                                    if hasattr(tweet_hashtags_raw, '__iter__') and not isinstance(tweet_hashtags_raw, str):
+                                        try:
+                                            hashtags_list = list(tweet_hashtags_raw)
+                                        except TypeError:
+                                            hashtags_list = []
+                                    else:
+                                        # Scalar value: drop NaN/NA if possible
+                                        try:
+                                            if not pd.isna(tweet_hashtags_raw):
+                                                hashtags_list = [tweet_hashtags_raw]
+                                        except Exception:
+                                            hashtags_list = [tweet_hashtags_raw]
 
-                                        # Check if job label is in the hashtags array
-                                        label_matches = (
-                                            label_with_hash in hashtags_lower or
-                                            label_without_hash in hashtags_lower or
-                                            # Fallback: check main label field
-                                            entity_label == label_with_hash or
-                                            entity_label == label_without_hash
-                                        )
-                                    except (TypeError, ValueError):
-                                        # If conversion fails, fall back to label field check
-                                        label_without_hash = job_label_normalized.lstrip('#')
-                                        label_with_hash = f"#{label_without_hash}"
-                                        label_matches = (
-                                            entity_label == label_with_hash or
-                                            entity_label == label_without_hash
-                                        )
-                                else:
-                                    # Fallback if tweet_hashtags is not iterable or is null
-                                    label_without_hash = job_label_normalized.lstrip('#')
-                                    label_with_hash = f"#{label_without_hash}"
-                                    label_matches = (
-                                        entity_label == label_with_hash or
-                                        entity_label == label_without_hash
-                                    )
+                                # Normalize hashtags to lowercase
+                                hashtags_lower = [
+                                    str(h).lower().strip()
+                                    for h in hashtags_list
+                                    if h is not None and str(h).strip() != ''
+                                ]
+
+                                label_without_hash = job_label_normalized.lstrip('#')
+                                label_with_hash = f"#{label_without_hash}"
+
+                                # Check if job label is in the hashtags array
+                                label_matches = (
+                                    label_with_hash in hashtags_lower or
+                                    label_without_hash in hashtags_lower or
+                                    # Fallback: check main label field
+                                    entity_label == label_with_hash or
+                                    entity_label == label_without_hash
+                                )
+
                             elif platform == 'reddit':
                                 # For Reddit: check with and without r/ prefix
                                 label_matches = (
@@ -641,7 +772,10 @@ class S3Validator:
                             # Record mismatch sample
                             if len(mismatch_samples) < 10:
                                 mismatch_samples.append(
-                                    f"Job {job_id[:8]}: Required label={job_label or 'any'} keyword={job_keyword or 'any'}, label_matched={label_matches} keyword_matched={keyword_matches} - {uri or 'unknown'}"
+                                    f"Job {job_id[:8]}: Required label={job_label or 'any'} "
+                                    f"keyword={job_keyword or 'any'}, "
+                                    f"label_matched={label_matches} keyword_matched={keyword_matches} "
+                                    f"- {uri or 'unknown'}"
                                 )
 
                 except Exception as e:
@@ -652,7 +786,8 @@ class S3Validator:
 
         # Log job match check details (same style as regular validation)
         bt.logging.info(
-            f"{miner_hotkey}: S3 job match validation: Checked {total_checked} entities, {total_matched} matched job requirements ({match_rate:.1f}%)"
+            f"{miner_hotkey}: S3 job match validation: Checked {total_checked} entities, "
+            f"{total_matched} matched job requirements ({match_rate:.1f}%)"
         )
         if checked_uris:
             bt.logging.info(f"{miner_hotkey}: S3 job match: Sample URIs checked: {checked_uris[:5]}")
@@ -1077,10 +1212,10 @@ class S3Validator:
             username = row.get('username', '')
             text = row.get('text', '')
             url = row.get('url', row.get('uri', ''))
-            
+
             if not all([username, text, url]):
                 return None
-            
+
             # Get datetime from row or use current time
             datetime_val = row.get('datetime', row.get('timestamp', ''))
             if datetime_val and pd.notna(datetime_val):
@@ -1092,17 +1227,45 @@ class S3Validator:
                     timestamp = dt.datetime.now(dt.timezone.utc)
             else:
                 timestamp = dt.datetime.now(dt.timezone.utc)
-            
+
+            # ---- SAFE NORMALIZATION FOR ARRAY-LIKE FIELDS ----
+            # tweet_hashtags can be list/array/Series or scalar/NaN
+            raw_hashtags = row.get('tweet_hashtags', None)
+            if raw_hashtags is None:
+                tweet_hashtags = []
+            elif hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
+                # Iterable (list, numpy array, Series, etc.)
+                try:
+                    tweet_hashtags = list(raw_hashtags)
+                except TypeError:
+                    tweet_hashtags = []
+            else:
+                # Scalar: drop NaN/NA if possible
+                try:
+                    tweet_hashtags = [] if pd.isna(raw_hashtags) else [raw_hashtags]
+                except Exception:
+                    tweet_hashtags = [raw_hashtags]
+
+            # media can also be non-scalar; we only want to clear obvious NaN
+            raw_media = row.get('media', None)
+            if isinstance(raw_media, float):
+                # Handle float("nan") specially
+                media_value = None if math.isnan(raw_media) else raw_media
+            else:
+                media_value = raw_media
+            # ---------------------------------------------------
+
             # Create XContent object with ALL uploaded fields
             x_content = XContent(
                 username=str(username),
                 text=str(text),
                 url=str(url),
                 timestamp=timestamp,
-                tweet_hashtags=row.get('tweet_hashtags', []) if pd.notna(row.get('tweet_hashtags')) else [],
-                media=row.get('media', None) if pd.notna(row.get('media')) else None,
+                tweet_hashtags=tweet_hashtags,
+                media=media_value,
                 user_id=str(row.get('user_id', '')),
-                user_display_name=str(row.get('user_display_name', username)),
+                # user_display_name is OPTIONAL (None when NaN/missing)
+                user_display_name=str(row.get('user_display_name', '')) if pd.notna(row.get('user_display_name', None)) else None,
                 user_verified=bool(row.get('user_verified', False)),
                 tweet_id=str(row.get('tweet_id', '')),
                 is_reply=bool(row.get('is_reply', False)),
@@ -1110,29 +1273,30 @@ class S3Validator:
                 conversation_id=str(row.get('conversation_id', '')),
                 in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')),
                 # Add missing engagement metrics that miners upload
-                language=str(row.get('language', '')) if pd.notna(row.get('language')) else None,
-                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username')) else None,
-                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id')) else None,
-                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count')) else None,
-                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count')) else None,
-                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count')) else None,
-                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count')) else None,
-                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count')) else None,
-                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count')) else None,
+                language=str(row.get('language', '')) if pd.notna(row.get('language', None)) else None,
+                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username', None)) else None,
+                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id', None)) else None,
+                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count', None)) else None,
+                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count', None)) else None,
+                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count', None)) else None,
+                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count', None)) else None,
+                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count', None)) else None,
+                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count', None)) else None,
                 # Add missing user profile data that miners upload
-                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified')) else None,
-                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description')) else None,
-                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location')) else None,
-                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url')) else None,
-                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url')) else None,
-                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count')) else None,
-                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count')) else None
+                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified', None)) else None,
+                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description', None)) else None,
+                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location', None)) else None,
+                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url', None)) else None,
+                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url', None)) else None,
+                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count', None)) else None,
+                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count', None)) else None
             )
-            
+
             return XContent.to_data_entity(x_content)
         except Exception:
             return None
-    
+
+
     def _create_reddit_data_entity(self, row) -> Optional[DataEntity]:
         """Create Reddit DataEntity from parquet row"""
         try:
