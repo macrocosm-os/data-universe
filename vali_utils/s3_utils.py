@@ -428,17 +428,12 @@ class S3Validator:
                         files_by_job[job_id] = []
                     files_by_job[job_id].append(file_info)
 
-        # Sample 5 random jobs for validation
-        available_jobs = list(files_by_job.keys())
-        sample_job_ids = random.sample(available_jobs, min(5, len(available_jobs)))
+        # First, identify jobs with recent activity (uploaded files in last 3 hours)
+        # This ensures we prioritize sampling from active jobs instead of relying on random luck
+        jobs_with_recent_activity = []
+        jobs_without_recent_activity = []
 
-        bt.logging.info(f"{miner_hotkey}: Sampling {len(sample_job_ids)} jobs from {len(available_jobs)} active jobs for validation")
-
-        validation_files_count = 0
-        for job_id in sample_job_ids:
-            job_files_metadata = files_by_job[job_id]
-
-            # Activity check: Job must have at least 1 file uploaded in last 3 hours
+        for job_id, job_files_metadata in files_by_job.items():
             has_recent_activity = False
             for file_info in job_files_metadata:
                 try:
@@ -448,6 +443,46 @@ class S3Validator:
                         break
                 except Exception:
                     continue
+
+            if has_recent_activity:
+                jobs_with_recent_activity.append(job_id)
+            else:
+                jobs_without_recent_activity.append(job_id)
+
+        # Prioritize sampling from jobs with recent activity
+        # If we have enough jobs with recent activity, sample only from those
+        # Otherwise, sample from all available jobs
+        if len(jobs_with_recent_activity) >= 5:
+            sample_job_ids = random.sample(jobs_with_recent_activity, 5)
+            bt.logging.info(
+                f"{miner_hotkey}: Sampling 5 jobs from {len(jobs_with_recent_activity)} jobs with recent activity "
+                f"(out of {len(files_by_job)} total active jobs)"
+            )
+        elif len(jobs_with_recent_activity) > 0:
+            # Take all jobs with recent activity, plus some random ones to reach 5
+            sample_job_ids = jobs_with_recent_activity.copy()
+            remaining_needed = min(5 - len(sample_job_ids), len(jobs_without_recent_activity))
+            if remaining_needed > 0:
+                sample_job_ids.extend(random.sample(jobs_without_recent_activity, remaining_needed))
+            bt.logging.info(
+                f"{miner_hotkey}: Sampling {len(sample_job_ids)} jobs: {len(jobs_with_recent_activity)} with recent activity + "
+                f"{len(sample_job_ids) - len(jobs_with_recent_activity)} without recent activity"
+            )
+        else:
+            # No jobs with recent activity, sample randomly from all
+            available_jobs = list(files_by_job.keys())
+            sample_job_ids = random.sample(available_jobs, min(5, len(available_jobs)))
+            bt.logging.warning(
+                f"{miner_hotkey}: No jobs with recent activity found! Sampling {len(sample_job_ids)} random jobs from "
+                f"{len(available_jobs)} active jobs"
+            )
+
+        validation_files_count = 0
+        for job_id in sample_job_ids:
+            job_files_metadata = files_by_job[job_id]
+
+            # Check if this job has recent activity
+            has_recent_activity = job_id in jobs_with_recent_activity
 
             # Only include jobs with recent activity for validation
             if has_recent_activity:
