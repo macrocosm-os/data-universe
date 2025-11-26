@@ -608,11 +608,23 @@ class S3Validator:
         self, wallet, s3_auth_url: str, miner_hotkey: str,
         recent_job_files: Dict, expected_jobs: Dict
     ) -> Dict:
-        """Validate that uploaded data actually matches the job requirements (labels/keywords)"""
+        """Validate that uploaded data matches job requirements (label/keyword AND time window via DataEntity.datetime)."""
         total_checked = 0
         total_matched = 0
         mismatch_samples = []
         checked_uris = []  # Track URIs being checked
+
+        def _parse_job_dt(raw):
+            """Parse job datetime from Gravity; treat null-ish values as no constraint."""
+            if raw is None:
+                return None
+            if isinstance(raw, str) and raw.strip().lower() in ("", "null", "none"):
+                return None
+            try:
+                return pd.to_datetime(raw, utc=True)
+            except Exception as e:
+                bt.logging.warning(f"{miner_hotkey}: Failed to parse job datetime '{raw}': {e}")
+                return None
 
         for job_id, job_data in recent_job_files.items():
             files = job_data['files']
@@ -628,6 +640,13 @@ class S3Validator:
             job_keyword = params.get('keyword')
             job_start_date = params.get('post_start_datetime')
             job_end_date = params.get('post_end_datetime')
+
+            # -----------------------------
+            # Parse job time window (UTC)
+            # -----------------------------
+            job_start_dt = _parse_job_dt(job_start_date)
+            job_end_dt = _parse_job_dt(job_end_date)
+            has_time_requirement = bool(job_start_dt or job_end_dt)
 
             # Sample files to check (2 files per job)
             sample_files = random.sample(files, min(2, len(files)))
@@ -657,42 +676,39 @@ class S3Validator:
                         total_checked += 1
                         matches_job = False
 
-                        # Check if data matches job requirements
-                        # If BOTH label and keyword are specified, BOTH must match (AND logic)
-                        # If only one is specified, only that one must match
-                        label_matches = None  # None = not checked, True/False = checked result
+                        label_matches = None
                         keyword_matches = None
+                        time_matches = None
+                        entity_dt_str = None
 
                         has_label_requirement = bool(job_label and job_label.strip())
                         has_keyword_requirement = bool(job_keyword and job_keyword.strip())
 
+                        # -----------------------------
+                        # Label requirement
+                        # -----------------------------
                         if has_label_requirement:
-                            # Label-based job: check if entity label matches
                             entity_label = str(row.get('label', '')).lower().strip()
                             job_label_normalized = job_label.lower().strip()
 
-                            # Handle different label formats
                             if platform in ['x', 'twitter']:
-                                # For X: check if label is in tweet_hashtags array (handles multiple hashtags)
+                                # For X: check hashtags array + label
                                 tweet_hashtags_raw = row.get('tweet_hashtags', None)
 
                                 hashtags_list = []
                                 if tweet_hashtags_raw is not None:
-                                    # If it's an iterable (list / array / Series), but not a string
                                     if hasattr(tweet_hashtags_raw, '__iter__') and not isinstance(tweet_hashtags_raw, str):
                                         try:
                                             hashtags_list = list(tweet_hashtags_raw)
                                         except TypeError:
                                             hashtags_list = []
                                     else:
-                                        # Scalar value: drop NaN/NA if possible
                                         try:
                                             if not pd.isna(tweet_hashtags_raw):
                                                 hashtags_list = [tweet_hashtags_raw]
                                         except Exception:
                                             hashtags_list = [tweet_hashtags_raw]
 
-                                # Normalize hashtags to lowercase
                                 hashtags_lower = [
                                     str(h).lower().strip()
                                     for h in hashtags_list
@@ -702,24 +718,23 @@ class S3Validator:
                                 label_without_hash = job_label_normalized.lstrip('#')
                                 label_with_hash = f"#{label_without_hash}"
 
-                                # Check if job label is in the hashtags array
                                 label_matches = (
                                     label_with_hash in hashtags_lower or
                                     label_without_hash in hashtags_lower or
-                                    # Fallback: check main label field
                                     entity_label == label_with_hash or
                                     entity_label == label_without_hash
                                 )
 
                             elif platform == 'reddit':
-                                # For Reddit: check with and without r/ prefix
+                                # Reddit community label, with/without r/
                                 label_matches = (
                                     entity_label == job_label_normalized or
                                     entity_label == f"r/{job_label_normalized.removeprefix('r/')}" or
                                     entity_label.removeprefix('r/') == job_label_normalized.removeprefix('r/')
                                 )
+
                             elif platform == 'youtube':
-                                # For YouTube: check channel labels, removing @ prefix if present
+                                # YouTube channel labels, allow @ and substring
                                 label_without_at = job_label_normalized.lstrip('@')
                                 label_matches = (
                                     entity_label == job_label_normalized or
@@ -727,40 +742,88 @@ class S3Validator:
                                     job_label_normalized in entity_label or
                                     label_without_at in entity_label
                                 )
+
                             else:
                                 label_matches = (entity_label == job_label_normalized)
 
+                        # -----------------------------
+                        # Keyword requirement
+                        # -----------------------------
                         if has_keyword_requirement:
-                            # Keyword-based job: check if content contains keyword
                             job_keyword_normalized = job_keyword.lower().strip()
 
-                            # Check in relevant content fields based on platform
                             if platform == 'reddit':
                                 body = str(row.get('body', '')).lower()
                                 title = str(row.get('title', '')).lower()
-                                keyword_matches = (job_keyword_normalized in body or job_keyword_normalized in title)
+                                keyword_matches = (
+                                    job_keyword_normalized in body or
+                                    job_keyword_normalized in title
+                                )
+
                             elif platform == 'youtube':
-                                title = str(row.get('title', '')).lower()
-                                keyword_matches = job_keyword_normalized in title
+                                # IMPORTANT: match miner behavior -> title OR description
+                                title_val = row.get('title', '')
+                                desc_val = row.get('description', '')
+
+                                if isinstance(title_val, float) and pd.isna(title_val):
+                                    title = ''
+                                else:
+                                    title = str(title_val).lower()
+
+                                if isinstance(desc_val, float) and pd.isna(desc_val):
+                                    description = ''
+                                else:
+                                    description = str(desc_val).lower()
+
+                                keyword_matches = (
+                                    job_keyword_normalized in title or
+                                    job_keyword_normalized in description
+                                )
+
                             else:  # X/Twitter
                                 text = str(row.get('text', '')).lower()
                                 keyword_matches = job_keyword_normalized in text
 
-                        # Determine if job requirements are met
-                        # If BOTH label and keyword required: BOTH must pass (AND logic)
-                        # If only one required: that one must pass
-                        if has_label_requirement and has_keyword_requirement:
-                            # BOTH required - use AND logic
-                            matches_job = (label_matches is True) and (keyword_matches is True)
-                        elif has_label_requirement:
-                            # Only label required
-                            matches_job = (label_matches is True)
-                        elif has_keyword_requirement:
-                            # Only keyword required
-                            matches_job = (keyword_matches is True)
+                        # -----------------------------
+                        # Time window requirement (DataEntity.datetime only)
+                        # -----------------------------
+                        if has_time_requirement:
+                            raw_dt = row.get('datetime', None)
+
+                            if raw_dt is not None and not pd.isna(raw_dt):
+                                try:
+                                    entity_dt = pd.to_datetime(raw_dt, utc=True)
+                                    entity_dt_str = entity_dt.isoformat()
+                                    time_ok = True
+                                    if job_start_dt is not None and entity_dt < job_start_dt:
+                                        time_ok = False
+                                    if job_end_dt is not None and entity_dt > job_end_dt:
+                                        time_ok = False
+                                    time_matches = time_ok
+                                except Exception:
+                                    time_matches = False
+                            else:
+                                # No datetime but job has time requirement --> mismatch
+                                time_matches = False
                         else:
-                            # No requirements (shouldn't happen, but handle gracefully)
-                            matches_job = False
+                            time_matches = True  # No time constraint when both start/end are null-ish
+
+                        # -----------------------------
+                        # Combine requirements
+                        # -----------------------------
+                        if has_label_requirement and has_keyword_requirement:
+                            cond_ok = (label_matches is True) and (keyword_matches is True)
+                        elif has_label_requirement:
+                            cond_ok = (label_matches is True)
+                        elif has_keyword_requirement:
+                            cond_ok = (keyword_matches is True)
+                        else:
+                            # No label/keyword requirement: rely purely on time window if present
+                            cond_ok = True
+
+                        matches_job = cond_ok
+                        if has_time_requirement:
+                            matches_job = matches_job and (time_matches is True)
 
                         uri = self._get_uri_value(row)
                         if uri and len(checked_uris) < 20:
@@ -769,12 +832,17 @@ class S3Validator:
                         if matches_job:
                             total_matched += 1
                         else:
-                            # Record mismatch sample
                             if len(mismatch_samples) < 10:
                                 mismatch_samples.append(
-                                    f"Job {job_id[:8]}: Required label={job_label or 'any'} "
-                                    f"keyword={job_keyword or 'any'}, "
-                                    f"label_matched={label_matches} keyword_matched={keyword_matches} "
+                                    f"Job {job_id[:8]}: "
+                                    f"label={job_label or 'any'} "
+                                    f"keyword={job_keyword or 'any'} "
+                                    f"start={job_start_dt.isoformat() if job_start_dt else 'any'} "
+                                    f"end={job_end_dt.isoformat() if job_end_dt else 'any'} "
+                                    f"label_matched={label_matches} "
+                                    f"keyword_matched={keyword_matches} "
+                                    f"time_matched={time_matches} "
+                                    f"entity_dt={entity_dt_str or 'unknown'} "
                                     f"- {uri or 'unknown'}"
                                 )
 
@@ -784,7 +852,7 @@ class S3Validator:
 
         match_rate = (total_matched / total_checked * 100) if total_checked > 0 else 0
 
-        # Log job match check details (same style as regular validation)
+        # Log job match check details
         bt.logging.info(
             f"{miner_hotkey}: S3 job match validation: Checked {total_checked} entities, "
             f"{total_matched} matched job requirements ({match_rate:.1f}%)"
@@ -792,7 +860,7 @@ class S3Validator:
         if checked_uris:
             bt.logging.info(f"{miner_hotkey}: S3 job match: Sample URIs checked: {checked_uris[:5]}")
         if mismatch_samples:
-            bt.logging.warning(f"{miner_hotkey}: S3 job match failures: {mismatch_samples[:3]}")
+            bt.logging.warning(f"{miner_hotkey}: S3 job match failures (incl. time window): {mismatch_samples[:3]}")
 
         return {
             'total_checked': total_checked,
