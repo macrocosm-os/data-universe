@@ -54,6 +54,7 @@ class S3ValidationResultDetailed:
 
     # Job and file metrics
     total_active_jobs: int
+    expected_jobs_count: int  # Total number of expected jobs from Gravity
     recent_jobs_analyzed: int
     recent_files_count: int
     total_size_bytes: int
@@ -282,6 +283,7 @@ class S3Validator:
             # Step 8: Calculate final validation result with job completion multiplier
             return self._calculate_final_result(
                 num_active_jobs,
+                num_expected_jobs,
                 recent_data_analysis,
                 duplicate_analysis,
                 job_match_analysis,
@@ -604,11 +606,23 @@ class S3Validator:
             'sample_duplicates': duplicate_uris[:10]
         }
 
+    def _parse_job_datetime(self, raw, miner_hotkey: str) -> Optional[dt.datetime]:
+        """Parse job datetime from Gravity; treat null-ish values as no constraint."""
+        if raw is None:
+            return None
+        if isinstance(raw, str) and raw.strip().lower() in ("", "null", "none"):
+            return None
+        try:
+            return pd.to_datetime(raw, utc=True)
+        except Exception as e:
+            bt.logging.warning(f"{miner_hotkey}: Failed to parse job datetime '{raw}': {e}")
+            return None
+
     async def _check_job_content_match(
         self, wallet, s3_auth_url: str, miner_hotkey: str,
         recent_job_files: Dict, expected_jobs: Dict
     ) -> Dict:
-        """Validate that uploaded data actually matches the job requirements (labels/keywords)"""
+        """Validate that uploaded data matches job requirements (label/keyword AND time window via DataEntity.datetime)."""
         total_checked = 0
         total_matched = 0
         mismatch_samples = []
@@ -628,6 +642,11 @@ class S3Validator:
             job_keyword = params.get('keyword')
             job_start_date = params.get('post_start_datetime')
             job_end_date = params.get('post_end_datetime')
+
+            # Parse job time window (UTC)
+            job_start_dt = self._parse_job_datetime(job_start_date, miner_hotkey)
+            job_end_dt = self._parse_job_datetime(job_end_date, miner_hotkey)
+            has_time_requirement = bool(job_start_dt or job_end_dt)
 
             # Sample files to check (2 files per job)
             sample_files = random.sample(files, min(2, len(files)))
@@ -657,11 +676,10 @@ class S3Validator:
                         total_checked += 1
                         matches_job = False
 
-                        # Check if data matches job requirements
-                        # If BOTH label and keyword are specified, BOTH must match (AND logic)
-                        # If only one is specified, only that one must match
-                        label_matches = None  # None = not checked, True/False = checked result
+                        label_matches = None
                         keyword_matches = None
+                        time_matches = None
+                        entity_dt_str = None
 
                         has_label_requirement = bool(job_label and job_label.strip())
                         has_keyword_requirement = bool(job_keyword and job_keyword.strip())
@@ -740,26 +758,51 @@ class S3Validator:
                                 title = str(row.get('title', '')).lower()
                                 keyword_matches = (job_keyword_normalized in body or job_keyword_normalized in title)
                             elif platform == 'youtube':
-                                title = str(row.get('title', '')).lower()
-                                keyword_matches = job_keyword_normalized in title
+                                # IMPORTANT: match miner behavior -> title OR description
+                                title_val = row.get('title', '')
+                                desc_val = row.get('description', '')
+
+                                if isinstance(title_val, float) and pd.isna(title_val):
+                                    title = ''
+                                else:
+                                    title = str(title_val).lower()
+
+                                if isinstance(desc_val, float) and pd.isna(desc_val):
+                                    description = ''
+                                else:
+                                    description = str(desc_val).lower()
+
+                                keyword_matches = (
+                                    job_keyword_normalized in title or
+                                    job_keyword_normalized in description
+                                )
                             else:  # X/Twitter
                                 text = str(row.get('text', '')).lower()
                                 keyword_matches = job_keyword_normalized in text
 
-                        # Determine if job requirements are met
-                        # If BOTH label and keyword required: BOTH must pass (AND logic)
-                        # If only one required: that one must pass
-                        if has_label_requirement and has_keyword_requirement:
-                            # BOTH required - use AND logic
-                            matches_job = (label_matches is True) and (keyword_matches is True)
-                        elif has_label_requirement:
-                            # Only label required
-                            matches_job = (label_matches is True)
-                        elif has_keyword_requirement:
-                            # Only keyword required
-                            matches_job = (keyword_matches is True)
+                        # Time window validation
+                        if has_time_requirement:
+                            entity_dt = row.get('datetime')
+                            if entity_dt is not None and not pd.isna(entity_dt):
+                                entity_dt = pd.to_datetime(entity_dt, utc=True)
+                                entity_dt_str = entity_dt.isoformat()
+                                time_matches = True
+                                if job_start_dt and entity_dt < job_start_dt:
+                                    time_matches = False
+                                if job_end_dt and entity_dt > job_end_dt:
+                                    time_matches = False
+                            else:
+                                time_matches = False
                         else:
-                            # No requirements (shouldn't happen, but handle gracefully)
+                            time_matches = True
+
+                        # Combine all requirements
+                        matches_job = True
+                        if has_label_requirement and not label_matches:
+                            matches_job = False
+                        if has_keyword_requirement and not keyword_matches:
+                            matches_job = False
+                        if has_time_requirement and not time_matches:
                             matches_job = False
 
                         uri = self._get_uri_value(row)
@@ -769,14 +812,16 @@ class S3Validator:
                         if matches_job:
                             total_matched += 1
                         else:
-                            # Record mismatch sample
+                            # Record mismatch sample with time window info
                             if len(mismatch_samples) < 10:
-                                mismatch_samples.append(
-                                    f"Job {job_id[:8]}: Required label={job_label or 'any'} "
-                                    f"keyword={job_keyword or 'any'}, "
-                                    f"label_matched={label_matches} keyword_matched={keyword_matches} "
-                                    f"- {uri or 'unknown'}"
-                                )
+                                msg = f"Job {job_id[:8]}: label={job_label or 'any'} keyword={job_keyword or 'any'}"
+                                if has_time_requirement:
+                                    msg += f" time=[{job_start_dt.isoformat() if job_start_dt else 'any'} to {job_end_dt.isoformat() if job_end_dt else 'any'}]"
+                                msg += f" | matched: label={label_matches} keyword={keyword_matches} time={time_matches}"
+                                if entity_dt_str:
+                                    msg += f" entity_dt={entity_dt_str}"
+                                msg += f" - {uri or 'unknown'}"
+                                mismatch_samples.append(msg)
 
                 except Exception as e:
                     bt.logging.debug(f"Error checking job content match: {str(e)}")
@@ -929,7 +974,7 @@ class S3Validator:
         }
     
     def _calculate_final_result(
-        self, total_active_jobs: int, recent_data_analysis: Dict,
+        self, total_active_jobs: int, expected_jobs_count: int, recent_data_analysis: Dict,
         duplicate_analysis: Dict, job_match_analysis: Dict, scraper_validation: Dict,
         job_completion_rate: float
     ) -> S3ValidationResultDetailed:
@@ -1022,6 +1067,7 @@ class S3Validator:
             is_valid=is_valid,
             validation_percentage=validation_percentage,
             total_active_jobs=total_active_jobs,
+            expected_jobs_count=expected_jobs_count,
             recent_jobs_analyzed=recent_data_analysis['recent_jobs_count'],
             recent_files_count=recent_data_analysis['recent_files_count'],
             total_size_bytes=recent_data_analysis['total_size_bytes'],
@@ -1077,6 +1123,7 @@ class S3Validator:
             is_valid=False,
             validation_percentage=0.0,
             total_active_jobs=0,
+            expected_jobs_count=0,
             recent_jobs_analyzed=0,
             recent_files_count=0,
             total_size_bytes=0,
