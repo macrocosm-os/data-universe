@@ -112,11 +112,12 @@ def log_s3_validation_table(
     if hasattr(result, 'enhanced_validation') and result.enhanced_validation:
         enhanced = result.enhanced_validation
         total_jobs = enhanced.total_active_jobs
-        # Get expected jobs count if available (approximate from validation percentage)
-        job_completion_pct = (total_jobs / 15 * 100) if total_jobs > 0 else 0  # Assuming ~15 expected jobs
+        expected_jobs = enhanced.expected_jobs_count
+        # Calculate correct job completion percentage
+        job_completion_pct = (total_jobs / expected_jobs * 100) if expected_jobs > 0 else 0
         table.add_row(
             "Jobs Found",
-            f"{total_jobs} active jobs ({job_completion_pct:.0f}% completion)"
+            f"{total_jobs} active jobs ({job_completion_pct:.0f}% completion, {expected_jobs} expected)"
         )
     else:
         table.add_row("Jobs Found", f"{result.job_count} jobs")
