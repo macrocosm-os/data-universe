@@ -54,6 +54,7 @@ class S3ValidationResultDetailed:
 
     # Job and file metrics
     total_active_jobs: int
+    expected_jobs_count: int  # Total number of expected jobs from Gravity
     recent_jobs_analyzed: int
     recent_files_count: int
     total_size_bytes: int
@@ -282,6 +283,7 @@ class S3Validator:
             # Step 8: Calculate final validation result with job completion multiplier
             return self._calculate_final_result(
                 num_active_jobs,
+                num_expected_jobs,
                 recent_data_analysis,
                 duplicate_analysis,
                 job_match_analysis,
@@ -929,7 +931,7 @@ class S3Validator:
         }
     
     def _calculate_final_result(
-        self, total_active_jobs: int, recent_data_analysis: Dict,
+        self, total_active_jobs: int, expected_jobs_count: int, recent_data_analysis: Dict,
         duplicate_analysis: Dict, job_match_analysis: Dict, scraper_validation: Dict,
         job_completion_rate: float
     ) -> S3ValidationResultDetailed:
@@ -1022,6 +1024,7 @@ class S3Validator:
             is_valid=is_valid,
             validation_percentage=validation_percentage,
             total_active_jobs=total_active_jobs,
+            expected_jobs_count=expected_jobs_count,
             recent_jobs_analyzed=recent_data_analysis['recent_jobs_count'],
             recent_files_count=recent_data_analysis['recent_files_count'],
             total_size_bytes=recent_data_analysis['total_size_bytes'],
@@ -1077,6 +1080,7 @@ class S3Validator:
             is_valid=False,
             validation_percentage=0.0,
             total_active_jobs=0,
+            expected_jobs_count=0,
             recent_jobs_analyzed=0,
             recent_files_count=0,
             total_size_bytes=0,
