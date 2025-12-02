@@ -44,11 +44,28 @@ class OrganicQueryProcessor:
         self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
     
 
-    def update_metagraph(self, metagraph = bt.metagraph):
-        """Updates metagraph for the Organic Query Processor."""
-        bt.logging.info("Updating metagraph for OrganicQueryProcessor.")
-        self.metagraph = metagraph
+    def update_metagraph(self, metagraph: bt.metagraph) -> None:
+        """
+        Updates the metagraph reference used by OrganicQueryProcessor.
 
+        WHY:
+        - OrganicQueryProcessor stores its own copy of the metagraph and uses it
+          for UID -> hotkey lookups in logs and penalties.
+        - When validators deregister / re-register, UIDs can get new hotkeys.
+        - If we don't refresh this reference, all logs like:
+              self.metagraph.hotkeys[uid]
+          will show STALE hotkeys.
+
+        This method is called by the validator before using any of the
+        OrganicQueryProcessor methods, so UID/hotkey mapping is always fresh.
+        """
+        # Optional: log some lightweight info to help debugging
+        bt.logging.info(
+            f"Updating metagraph for OrganicQueryProcessor "
+            f"(block={getattr(metagraph, 'block', 'unknown')}, "
+            f"n={len(getattr(metagraph, 'hotkeys', []))})"
+        )
+        self.metagraph = metagraph
 
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
         """
