@@ -327,7 +327,6 @@ class DataUniverseApiClient:
             raise RuntimeError("validator_keypair was not provided.")
 
         payload_json = req.model_dump_json()
-        bt.logging.debug(f"validator_list_jobs_with_submissions payload: {payload_json}")
         resp = await self._post_signed_json(
             "/on-demand/validator/jobs", self._signer, payload_json
         )
@@ -347,7 +346,6 @@ class DataUniverseApiClient:
         job_ids_to_skip_downloading = job_ids_to_skip_downloading or set()
 
         validator_resp = await self.validator_list_jobs_with_submissions(req)
-        bt.logging.debug(f"Validator job list with submissions:\n\n{validator_resp}")
 
         client = self._ensure_client()
         sem = asyncio.Semaphore(max_parallelism)
