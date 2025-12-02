@@ -321,50 +321,74 @@ class Validator:
 
     async def loop_poll_on_demand_jobs_with_submissions(self):
         use_cache = True
-        use_cache = False # for dev
+        use_cache = False  # for dev
 
         while not self.should_exit:
             bt.logging.info("Pulling on demand jobs with submissions")
+
+            # FIX: Keep OrganicQueryProcessor's metagraph in sync with the
+            # latest evaluator.metagraph so UID -> hotkey mappings are correct
+            # during on-demand validation (especially after dereg/re-reg).
+            if self.organic_processor is not None:
+                self.organic_processor.update_metagraph(self.evaluator.metagraph)
 
             try:
                 async with self._on_demand_client() as client:
                     jobs_with_submissions_downloaded_response = (
                         await client.validator_list_and_download_submission_json(
                             req=ListJobsWithSubmissionsForValidationRequest(
-                                expired_since=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=45),
-                                expired_until=dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2),
-                                limit=10, 
+                                expired_since=dt.datetime.now(dt.timezone.utc)
+                                - dt.timedelta(minutes=45),
+                                expired_until=dt.datetime.now(dt.timezone.utc)
+                                - dt.timedelta(minutes=2),
+                                limit=10,
                             ),
-                            job_ids_to_skip_downloading=set(self.processed_job_ids_cache.data.keys())
+                            job_ids_to_skip_downloading=set(
+                                self.processed_job_ids_cache.data.keys()
+                            ),
                         )
                     )
-            except:
-                bt.logging.exception("Failed to pull on demand jobs with submissions")
+            except Exception:
+                bt.logging.exception(
+                    "Failed to pull on demand jobs with submissions"
+                )
                 await asyncio.sleep(20.0)
                 continue
-            
+
             try:
                 # co locate each job id and miner hotkey
                 job_list_with_submissions_resp, downloads = (
                     jobs_with_submissions_downloaded_response
                 )
 
-                job_data_per_job_id_and_miner_hotkey : Dict[str, Dict[str, Dict]]= {} # d[job id][miner hotkey]{download data}
+                # d[job id][miner hotkey] -> {download data}
+                job_data_per_job_id_and_miner_hotkey: Dict[str, Dict[str, Dict]] = {}
 
-                for job_with_submissions in job_list_with_submissions_resp.jobs_with_submissions:
-                    job_data_per_job_id_and_miner_hotkey[job_with_submissions.job.id] = {} # job id -> hotkey
+                for (
+                    job_with_submissions
+                ) in job_list_with_submissions_resp.jobs_with_submissions:
+                    # initialize mapping for this job id
+                    job_data_per_job_id_and_miner_hotkey[
+                        job_with_submissions.job.id
+                    ] = {}
 
                 for download in downloads:
                     job_id = download["job_id"]
                     miner_hotkey = download["miner_hotkey"]
 
-                    job_data_per_job_id_and_miner_hotkey[job_id][miner_hotkey] = download
+                    job_data_per_job_id_and_miner_hotkey[job_id][
+                        miner_hotkey
+                    ] = download
 
                 bt.logging.info(
-                    f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
+                    f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs "
+                    f"with {sum(len(v) for v in job_data_per_job_id_and_miner_hotkey.values())} total submissions"
                 )
 
-                bt.logging.debug(f"job_data_per_job_id_and_miner_hotkey:\n\n {job_data_per_job_id_and_miner_hotkey}")
+                bt.logging.debug(
+                    "job_data_per_job_id_and_miner_hotkey:\n\n "
+                    f"{job_data_per_job_id_and_miner_hotkey}"
+                )
 
                 # validate
                 for (
@@ -377,95 +401,165 @@ class Validator:
 
                     submissions = job_with_submission.submissions
                     submissions_with_valid_downloads = [
-                        sub for sub in submissions 
-                        if sub.miner_hotkey in job_data_per_job_id_and_miner_hotkey[job.id] 
-                        and job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['error'] is None
+                        sub
+                        for sub in submissions
+                        if sub.miner_hotkey
+                        in job_data_per_job_id_and_miner_hotkey[job.id]
+                        and job_data_per_job_id_and_miner_hotkey[job.id][
+                            sub.miner_hotkey
+                        ]["error"]
+                        is None
                     ]
 
-                    if len(submissions_with_valid_downloads) > 5: # amount of miners to validate per job id
+                    # Limit number of miners we validate per job id
+                    if len(submissions_with_valid_downloads) > 5:
                         random.shuffle(submissions_with_valid_downloads)
-                        submissions_with_valid_downloads = submissions_with_valid_downloads[:5]
-                    
+                        submissions_with_valid_downloads = (
+                            submissions_with_valid_downloads[:5]
+                        )
+
                     for sub in submissions_with_valid_downloads:
-                        # job.id
                         miner_hotkey = sub.miner_hotkey
+
                         # constructed from create_organic_output_dict
-                        miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data'] 
+                        miner_uploaded_raw_json = (
+                            job_data_per_job_id_and_miner_hotkey[job.id][
+                                miner_hotkey
+                            ]["data"]
+                        )
 
-                        bt.logging.trace(miner_uploaded_raw_json.get('data_entities', [])[:2])
-                        miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
+                        bt.logging.trace(
+                            miner_uploaded_raw_json.get("data_entities", [])[:2]
+                        )
+                        miner_upload = OnDemandMinerUpload.model_validate(
+                            miner_uploaded_raw_json
+                        )
 
-                        # validate miner data
+                        # Build an OrganicRequest-style context for reuse of
+                        # OrganicQueryProcessor logic.
+                        validation_context = self._create_validation_context_from_job(
+                            job
+                        )
 
-                        validation_context = self._create_validation_context_from_job(job)
+                        # Prepare miner responses in the format expected by
+                        # OrganicQueryProcessor's validation methods:
+                        #   Dict[uid, List[DataEntity]]
+                        miner_responses: Dict[int, list] = {}
+                        miner_data_counts: Dict[int, int] = {}
 
-                        # Prepare miner responses in the format expected by validation methods
-                        miner_responses = {}
-                        miner_data_counts = {}
-
-                        for sub in submissions_with_valid_downloads:
-                            miner_hotkey = sub.miner_hotkey
+                        for sub2 in submissions_with_valid_downloads:
+                            miner_hotkey2 = sub2.miner_hotkey
                             try:
-                                # Convert hotkey to UID
-                                uid = self.metagraph.hotkeys.index(miner_hotkey)
-                                
-                                # Get uploaded data
-                                miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][miner_hotkey]['data']
-                                miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
-                                
+                                # Convert hotkey to UID using the *validator's* current metagraph.
+                                uid = self.metagraph.hotkeys.index(miner_hotkey2)
+
+                                # Get uploaded data for this miner
+                                miner_uploaded_raw_json2 = (
+                                    job_data_per_job_id_and_miner_hotkey[job.id][
+                                        miner_hotkey2
+                                    ]["data"]
+                                )
+                                miner_upload2 = (
+                                    OnDemandMinerUpload.model_validate(
+                                        miner_uploaded_raw_json2
+                                    )
+                                )
+
                                 # Store in format expected by validation methods
-                                miner_responses[uid] = miner_upload.data_entities
-                                miner_data_counts[uid] = len(miner_upload.data_entities)
-                                
+                                miner_responses[uid] = (
+                                    miner_upload2.data_entities
+                                )
+                                miner_data_counts[uid] = len(
+                                    miner_upload2.data_entities
+                                )
+
                             except ValueError:
-                                bt.logging.warning(f"Miner hotkey {miner_hotkey} not found in metagraph")
+                                # hotkey not (any longer) present in metagraph
+                                bt.logging.warning(
+                                    f"Miner hotkey {miner_hotkey2} not found in metagraph"
+                                )
                                 continue
 
                         # Step 1: Format validation (reuse from OrganicQueryProcessor)
                         for uid, data in miner_responses.items():
-                            if data and not self.organic_processor._validate_miner_data_format(validation_context, data, uid):
-                                bt.logging.info(f"Miner {uid} failed format validation")
-                                miner_responses[uid] = []  # Treat as empty
+                            if data and not self.organic_processor._validate_miner_data_format(
+                                validation_context, data, uid
+                            ):
+                                bt.logging.info(
+                                    f"Miner {uid} failed format validation"
+                                )
+                                # Treat as empty if format invalid
+                                miner_responses[uid] = []
                                 miner_data_counts[uid] = 0
 
-                        # Step 2: Perform detailed validation on sample posts (reuse from OrganicQueryProcessor) 
-                        validation_results = {}
+                        # Step 2: Perform detailed validation on sample posts
+                        # (reuse from OrganicQueryProcessor logic: 2 posts per miner)
+                        validation_results: Dict[str, bool] = {}
                         for uid, posts in miner_responses.items():
                             if not posts:
                                 continue
-                            
-                            # Sample posts for validation (similar to _perform_validation)
-                            num_to_validate = min(2, len(posts))  # Same as PER_MINER_VALIDATION_SAMPLE_SIZE
+
+                            num_to_validate = min(2, len(posts))
                             selected_posts = random.sample(posts, num_to_validate)
-                            
+
                             for post in selected_posts:
                                 post_id = self.organic_processor._get_post_id(post)
-                                
-                                # Use the 3-phase validation from OrganicQueryProcessor
-                                is_valid = await self.organic_processor._validate_entity(validation_context, post, post_id, uid)
+
+                                # Use the full 3-phase validation
+                                is_valid = await self.organic_processor._validate_entity(
+                                    validation_context, post, post_id, uid
+                                )
                                 validation_results[post_id] = is_valid
 
                         # Step 3: Apply validation penalties (reuse from OrganicQueryProcessor)
-                        miner_scores, failed_miners = self.organic_processor._apply_validation_penalties(miner_responses, validation_results)
+                        (
+                            miner_scores,
+                            failed_miners,
+                        ) = self.organic_processor._apply_validation_penalties(
+                            miner_responses, validation_results
+                        )
 
                         # Step 4: Volume consensus validation (reuse from OrganicQueryProcessor)
-                        consensus_count = self.organic_processor._calculate_volume_consensus(miner_data_counts)
-                        if consensus_count:
-                            penalized_miners = self.organic_processor._apply_consensus_volume_penalties(
-                                miner_data_counts, job.limit, consensus_count
+                        consensus_count = (
+                            self.organic_processor._calculate_volume_consensus(
+                                miner_data_counts
                             )
-                            bt.logging.info(f"Applied volume penalties to {len(penalized_miners)} miners")
+                        )
+                        if consensus_count:
+                            penalized_miners = (
+                                self.organic_processor._apply_consensus_volume_penalties(
+                                    miner_data_counts,
+                                    job.limit,
+                                    consensus_count,
+                                )
+                            )
+                            bt.logging.info(
+                                f"Applied volume penalties to {len(penalized_miners)} miners"
+                            )
 
-                        bt.logging.info(f"Job {job.id} validation complete: {len(failed_miners)} miners failed validation")
+                        bt.logging.info(
+                            f"Job {job.id} validation complete: {len(failed_miners)} miners failed validation"
+                        )
 
                 if use_cache:
-                    job_ids_processed_in_this_loop_not_already_in_cache = set([ job_id for job_id in set(job_data_per_job_id_and_miner_hotkey.keys()) if job_id not in self.processed_job_ids_cache])
-                    bt.logging.info(f"Adding processed on demand job ids to cache: {job_ids_processed_in_this_loop_not_already_in_cache}")
-                    for job_id in job_ids_processed_in_this_loop_not_already_in_cache:
+                    job_ids_processed_in_this_loop_not_already_in_cache = {
+                        job_id
+                        for job_id in job_data_per_job_id_and_miner_hotkey.keys()
+                        if job_id not in self.processed_job_ids_cache
+                    }
+                    bt.logging.info(
+                        "Adding processed on demand job ids to cache: "
+                        f"{job_ids_processed_in_this_loop_not_already_in_cache}"
+                    )
+                    for job_id in (
+                        job_ids_processed_in_this_loop_not_already_in_cache
+                    ):
                         if job_id not in self.processed_job_ids_cache:
                             self.processed_job_ids_cache.add(job_id)
-            except:
-                bt.logging.exception("Error while validating on demand jobs and submissions")
+            except Exception:
+                bt.logging.exception(
+                    "Error while validating on demand jobs and submissions"
+                )
 
             await asyncio.sleep(20.0)
 
