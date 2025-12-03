@@ -980,59 +980,79 @@ class S3Validator:
     ) -> S3ValidationResultDetailed:
         """Calculate final validation result based on all analyses"""
 
-        # Allow up to 10% duplicates (accidents happen during uploads)
-        duplicate_threshold = 10.0  # Allow 10% duplicates, penalize proportionally
-        has_duplicates = (
-            duplicate_analysis['duplicate_percentage'] > duplicate_threshold
-        )
+        # ---------------- THRESHOLDS ----------------
+        duplicate_threshold = 10.0  # Allow up to 10% duplicates
+        min_job_match_rate = 95.0   # Require 95% job match
+        min_scraper_success_rate = 80.0  # Require 80% scraper success
+
+        duplicate_pct = duplicate_analysis['duplicate_percentage']
+        has_duplicates = duplicate_pct > duplicate_threshold
         duplicate_validation_passed = not has_duplicates
 
-        # Determine if job content matching passed
-        min_job_match_rate = 95.0  # Require 95% of data to match job requirements todo change it back to 100 later.
         job_match_validation_passed = (
             job_match_analysis['match_rate'] >= min_job_match_rate
         )
-
-        # Determine if scraper validation passed
-        min_scraper_success_rate = 80.0  # min_scraper_success_rate = 80.0
         scraper_validation_passed = (
             scraper_validation['success_rate'] >= min_scraper_success_rate
         )
 
-        # Calculate size bonus (logarithmic scaling - bigger uploads = better scores with diminishing returns)
-        size_bytes = recent_data_analysis['total_size_bytes']
-        min_size_for_bonus = 10 * 1024 * 1024  # 10MB minimum for any bonus
-        if size_bytes >= min_size_for_bonus:
-            size_bonus = math.log10(size_bytes / min_size_for_bonus) * 20  # Log base 10 scaling
-        else:
-            size_bonus = 0
-
-        # Final validation decision - must pass ALL checks
-        is_valid = duplicate_validation_passed and job_match_validation_passed and scraper_validation_passed
-
-        # Calculate duplicate score (proportional penalty)
-        # 0% duplicates = 30 points, 10% duplicates = 0 points, linear scale
-        duplicate_pct = duplicate_analysis['duplicate_percentage']
-        duplicate_score = max(0, 30.0 * (1 - duplicate_pct / 10.0))
-
-        # Calculate base validation percentage WITHOUT size bonus
-        # Base: 30% duplicates (proportional) + 70% scraper = 100%
-        base_validation_percentage = (
-            duplicate_score +
-            (scraper_validation['success_rate'] * 0.7)
+        # Miner passes quality gates only if all three are OK
+        is_valid = (
+            duplicate_validation_passed
+            and job_match_validation_passed
+            and scraper_validation_passed
         )
 
-        # Only apply size bonus if validation passed all checks
-        # Size bonus should reward volume AFTER quality is proven
-        if is_valid:
-            validation_percentage = base_validation_percentage + size_bonus
+        # ---------------- SIZE -> S3 SCORE ----------------
+        # We define a pure S3 size score (for a miner that passes quality gates):
+        #
+        #   size <= 100MB        -> 0
+        #   100MB -> 10GB        -> linear  0  -> 320
+        #   10GB  -> 100GB       -> linear 320 -> 360
+        #
+        # Later this is scaled by job_completion_rate.
+        size_bytes = recent_data_analysis['total_size_bytes']
+
+        BYTES_PER_MB = 1024 ** 2
+        BYTES_PER_GB = 1024 ** 3
+
+        MIN_BYTES_FOR_BONUS = 100 * BYTES_PER_MB      # 100 MB
+        MID_BYTES            = 10 * BYTES_PER_GB      # 10 GB  (target 320M)
+        MAX_BYTES            = 100 * BYTES_PER_GB     # 100 GB (target 360M)
+
+        # Clamp to [0, MAX_BYTES]
+        if size_bytes < 0:
+            size_bytes_clamped = 0
         else:
-            # Failed validation = no bonus from size
+            size_bytes_clamped = min(size_bytes, MAX_BYTES)
+
+        # Piecewise linear S3 size score (before job_completion multiplier)
+        if size_bytes_clamped <= MIN_BYTES_FOR_BONUS:
+            size_score = 0.0
+        elif size_bytes_clamped <= MID_BYTES:
+            # 100MB -> 10GB: 0 -> 320
+            frac_low = (
+                (size_bytes_clamped - MIN_BYTES_FOR_BONUS)
+                / (MID_BYTES - MIN_BYTES_FOR_BONUS)
+            )
+            size_score = frac_low * 320.0
+        else:
+            # 10GB -> 100GB: 320 -> 360
+            frac_high = (
+                (size_bytes_clamped - MID_BYTES)
+                / (MAX_BYTES - MID_BYTES)
+            )
+            size_score = 320.0 + frac_high * 40.0
+
+        # ---------------- FINAL VALIDATION % ----------------
+        # If quality gates fail -> S3 term is 0 regardless of size.
+        if is_valid:
+            validation_percentage = size_score
+        else:
             validation_percentage = 0.0
 
-        # Apply job completion rate multiplier to reward miners with more complete job coverage
-        # 100% jobs = 1.0x, 50% jobs = 0.5x, 10% jobs = 0.1x
-        # This prevents "1 job gets 100M boost" exploit
+        # Apply job completion rate multiplier:
+        # 100% jobs -> 1.0x, 50% jobs -> 0.5x, etc.
         job_completion_multiplier = job_completion_rate / 100.0
         validation_percentage *= job_completion_multiplier
 
@@ -1041,11 +1061,11 @@ class S3Validator:
             f"applied {job_completion_multiplier:.2f}x multiplier to validation score"
         )
 
-        # Collect validation issues
+        # ---------------- ISSUE MESSAGES ----------------
         issues = []
         if has_duplicates:
             issues.append(
-                f"Too many duplicates: {duplicate_analysis['duplicate_percentage']:.1f}% (max 10% allowed)"
+                f"Too many duplicates: {duplicate_pct:.1f}% (max 10% allowed)"
             )
         if not job_match_validation_passed:
             issues.append(
@@ -1058,7 +1078,7 @@ class S3Validator:
 
         reason = (
             f"S3 validation: {'PASSED' if is_valid else 'FAILED'} - "
-            f"Duplicates: {duplicate_analysis['duplicate_percentage']:.1f}%, "
+            f"Duplicates: {duplicate_pct:.1f}%, "
             f"Job match: {job_match_analysis['match_rate']:.1f}%, "
             f"Scraper: {scraper_validation['success_rate']:.1f}%"
         )
@@ -1072,7 +1092,7 @@ class S3Validator:
             recent_files_count=recent_data_analysis['recent_files_count'],
             total_size_bytes=recent_data_analysis['total_size_bytes'],
             has_duplicates=has_duplicates,
-            duplicate_percentage=duplicate_analysis['duplicate_percentage'],
+            duplicate_percentage=duplicate_pct,
             entities_validated=scraper_validation['entities_validated'],
             entities_passed_scraper=scraper_validation['entities_passed'],
             scraper_success_rate=scraper_validation['success_rate'],
@@ -1085,7 +1105,7 @@ class S3Validator:
             sample_validation_results=scraper_validation['sample_results'][:5],
             sample_job_mismatches=job_match_analysis['mismatch_samples'][:5]
         )
-    
+
     async def _validate_entities_with_scraper(
         self, entities: List[DataEntity], platform: str
     ) -> List[ValidationResult]:
