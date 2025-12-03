@@ -361,6 +361,50 @@ def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> Optional[st
         return None
 
 
+def normalize_weights_excluding_owner(
+    scores: torch.Tensor,
+    metagraph: bt.metagraph,
+    subtensor: bt.subtensor,
+    netuid: int
+) -> torch.Tensor:
+    """Normalize scores to weights, excluding subnet owner from normalization.
+    
+    Args:
+        scores: Raw score tensor for all UIDs
+        metagraph: The Bittensor metagraph
+        subtensor: Bittensor subtensor connection
+        netuid: Network UID
+    
+    Returns:
+        Normalized weight tensor with owner UID excluded from normalization
+    """
+    # Get subnet owner UID
+    owner_hotkey = get_subnet_owner_hotkey(subtensor, netuid)
+    owner_uid = None
+    if owner_hotkey and owner_hotkey in metagraph.hotkeys:
+        owner_uid = metagraph.hotkeys.index(owner_hotkey)
+        bt.logging.debug(f"Excluding owner UID {owner_uid} from weight normalization")
+    
+    # Normalize excluding owner
+    if owner_uid is not None:
+        # Create mask excluding owner
+        non_owner_mask = torch.arange(len(scores)) != owner_uid
+        # Normalize only non-owner scores
+        raw_weights = torch.zeros_like(scores)
+        if torch.sum(scores[non_owner_mask]) > 0:
+            raw_weights[non_owner_mask] = torch.nn.functional.normalize(
+                scores[non_owner_mask], p=1, dim=0
+            )
+        else:
+            bt.logging.warning("All non-owner scores are zero, skipping normalization")
+    else:
+        # Fallback if owner not found - normalize all scores
+        bt.logging.warning("Subnet owner not found, normalizing all scores")
+        raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
+    
+    return raw_weights
+
+
 def apply_burn_to_weights(
     raw_weights: torch.Tensor,
     metagraph: bt.metagraph,

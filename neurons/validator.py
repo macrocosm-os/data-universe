@@ -847,7 +847,12 @@ class Validator:
 
         # Calculate the average reward for each uid across non-zero values.
         # Replace any NaN values with 0.
-        raw_weights = torch.nn.functional.normalize(scores, p=1, dim=0)
+        raw_weights = utils.normalize_weights_excluding_owner(
+            scores=scores,
+            metagraph=self.metagraph,
+            subtensor=self.subtensor,
+            netuid=self.config.netuid
+        )
 
         # Apply burn mechanism - redirect percentage to subnet owner
         raw_weights = utils.apply_burn_to_weights(
