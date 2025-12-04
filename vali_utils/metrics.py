@@ -152,6 +152,15 @@ METAGRAPH_LAST_UPDATE_TS = Gauge(
     unit="seconds",
 )
 
+## Organic Miner Results
+ORGANIC_MINER_RESULTS = Counter(
+    "organic_miner_results",
+    "Total number of organic query miner results (successes and failures)",
+    labelnames=["miner_uid", "result_type"],
+    **_params,
+    unit="results",
+)
+
 ## Miner Evaluator
 COMMON_EVALUATION_HIST_DURATION_BUCKET = tuple(
     x * 60 for x in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,20,30,60)
