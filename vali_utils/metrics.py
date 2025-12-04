@@ -103,42 +103,6 @@ SET_WEIGHTS_SUBTENSOR_DURATION = Histogram(
     unit="seconds",
 )
 
-## Organic Query - Synapse Handler
-ORGANIC_QUERY_PROCESS_DURATION = Histogram(
-    "organic_query_process_duration",
-    "Duration of Validator.process_organic_query synapse",
-    labelnames=["request_source", "response_status"],
-    buckets=COMMON_LIVE_REQUEST_HIST_DURATION_BUCKET,
-    **_params,
-    unit="seconds",
-)
-
-ORGANIC_QUERY_RESPONSE_SIZE = Histogram(
-    "organic_query_response_size",
-    "Data size in bytes (json dump) of Validator.process_organic_query synapse response",
-    labelnames=["request_source", "response_status"],
-    buckets=[0, 200, 400, 600, 800, 1000, 1200, 1500, 2000, 5000, 10000],
-    **_params,
-    unit="bytes",
-)
-
-ORGANIC_QUERY_REQUESTS_TOTAL = Counter(
-    "organic_query_requests_total",
-    "Total number of organic query requests",
-    labelnames=["request_source", "response_status"],
-    **_params,
-    unit="requests",
-)
-
-ORGANIC_MINER_RESULTS = Counter(
-    "organic_miner_results",
-    "Total number of organic query miner results (successes and failures)",
-    labelnames=["miner_uid", "result_type"],
-    **_params,
-    unit="results",
-)
-
-
 ## Dynamic Desirability
 DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS = Gauge(
     "dynamic_desirability_last_successful_ts",
@@ -150,7 +114,7 @@ DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS = Gauge(
 
 DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION = Gauge(
     "dynamic_desirability_retrieval_process_duration",
-    "Duration of Validator.process_organic_query synapse",
+    "Duration of dynamic desirability retrieval process",
     labelnames=["hotkey"],
     **_params,
     unit="seconds",
@@ -188,22 +152,13 @@ METAGRAPH_LAST_UPDATE_TS = Gauge(
     unit="seconds",
 )
 
-## API - OnDemand
-ON_DEMAND_VALIDATOR_QUERY_ATTEMPTS = Histogram(
-    "on_demand_validator_query_attempts",
-    "Amount of validator query attempts (per request)",
-    buckets=(1, 2, 3, 4, 5, 10, 20, 50, 100, 200),
+## Organic Miner Results
+ORGANIC_MINER_RESULTS = Counter(
+    "organic_miner_results",
+    "Total number of organic query miner results (successes and failures)",
+    labelnames=["miner_uid", "result_type"],
     **_params,
-    unit="attempts",
-)
-
-ON_DEMAND_VALIDATOR_QUERY_DURATION = Histogram(
-    "on_demand_validator_query_duration",
-    "Validator query latency (multiple attempts per request)",
-    labelnames=["hotkey", "status"],
-    buckets=COMMON_LIVE_REQUEST_HIST_DURATION_BUCKET,
-    **_params,
-    unit="seconds",
+    unit="results",
 )
 
 ## Miner Evaluator

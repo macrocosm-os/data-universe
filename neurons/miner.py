@@ -133,10 +133,6 @@ class Miner:
                 forward_fn=self.get_contents_by_buckets,
                 blacklist_fn=self.get_contents_by_buckets_blacklist,
                 priority_fn=self.get_contents_by_buckets_priority,
-            ).attach(
-                forward_fn=self.loop_poll_on_demand_active_jobs,
-                blacklist_fn=self.handle_on_demand_blacklist,
-                priority_fn=self.handle_on_demand_priority,
             )
 
             bt.logging.success(f"Axon created: {self.axon}.")
@@ -378,7 +374,7 @@ class Miner:
             try:
                 since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
                 bt.logging.info(
-                    f"Pulling latest active jobs since {since.strftime("%d/%m/%Y, %H:%M:%S")} UTC"
+                    f"Pulling latest active jobs"
                 )
 
                 async with self._on_demand_client() as client:
@@ -809,16 +805,6 @@ class Miner:
 
 
         return synapse
-
-    async def handle_on_demand_blacklist(
-        self, synapse: OnDemandRequest
-    ) -> typing.Tuple[bool, str]:
-        """Blacklist function for on-demand requests"""
-        return self.default_blacklist(synapse)
-
-    async def handle_on_demand_priority(self, synapse: OnDemandRequest) -> float:
-        """Priority function for on-demand requests"""
-        return self.default_priority(synapse)
 
     async def get_contents_by_buckets(
         self, synapse: GetContentsByBuckets

@@ -159,21 +159,6 @@ def add_args(neuron_type: NeuronType, parser):
             default=8000,
         )
 
-        parser.add_argument(
-            "--organic_whitelist",
-            nargs="+",
-            help="Whitelist of hotkeys allowed for organic requests",
-            default=['5CzCCUzF3h5Eq3fNAr696YGRZvETYTnUHDcL16C3c9cpmbtE',
-                     '5HEU7ksVSKoCHY3SVcRkJYyGRKTUtKEfCDk5m5QgJUBA4F3F'], #uids 89 and 232
-        )
-
-        parser.add_argument(
-            "--organic_min_stake",
-            type=float,
-            help="Minimum stake required for organic requests",
-            default=10000.0,
-        )
-
     elif neuron_type == NeuronType.MINER:
         parser.add_argument(
             "--neuron.database_name",

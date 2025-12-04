@@ -1,25 +1,13 @@
 from fastapi import APIRouter, HTTPException, Depends
 import bittensor as bt
 import datetime as dt
-from pathlib import Path
-import pandas as pd
-import time
-import json
-from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel, DataEntity
+from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel
 from common import constants
-from common.protocol import OnDemandRequest, GetDataEntityBucket
-from common.organic_protocol import OrganicRequest
-from common import utils  # Import your utils
-from vali_utils import metrics
-from vali_utils.api.models import QueryRequest, QueryResponse, HealthResponse, LabelSize, AgeSize, LabelBytes, \
-    DesirabilityRequest
+from common.protocol import GetDataEntityBucket
+from common import utils
+from vali_utils.api.models import HealthResponse, LabelSize, AgeSize, LabelBytes, DesirabilityRequest
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
-from vali_utils.api.utils import endpoint_error_handler, query_validator
-from scraping.scraper import ScrapeConfig
-from common.date_range import DateRange
-from scraping.provider import ScraperProvider
-from scraping.scraper import ValidationResult
-from vali_utils.miner_evaluator import MinerEvaluator
+from vali_utils.api.utils import endpoint_error_handler
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
@@ -32,151 +20,6 @@ def get_validator():
     if not hasattr(get_validator, 'api'):
         raise HTTPException(503, "API server not initialized")
     return get_validator.api.validator
-
-
-@router.post("/on_demand_data_request", response_model=QueryResponse)
-@endpoint_error_handler
-async def query_data(
-    request: QueryRequest,
-    validator=Depends(get_validator),
-    api_key: str = Depends(verify_api_key)
-):
-    """
-    Handle data queries targeting validators with fallback support.
-    
-    This endpoint:
-    1. Gets available validators from the registry
-    2. Tries each validator in turn until a successful response is received
-    3. Updates validator status based on response (success/failure)
-    4. Returns processed data or error information
-    """
-    bt.logging.info(f"Processing on-demand data request for source: {request.source}")
-    
-    # Get validator registry from the manager
-    validator_registry = validator.validator_registry
-    
-    # Get available validators
-    available_validators = validator_registry.get_available_validators()
-    
-    if not available_validators:
-        bt.logging.error("No validators available to process request")
-        raise HTTPException(
-            status_code=503,
-            detail="Service unavailable: No validators are currently available."
-        )
-    
-    # Prepare the OrganicRequest from the QueryRequest
-    try:
-        organic_request = OrganicRequest(
-            source=request.source.upper(),
-            usernames=request.usernames or [],
-            keywords=request.keywords or [],
-            url=request.url,
-            keyword_mode=request.keyword_mode,
-            start_date=request.start_date,
-            end_date=request.end_date,
-            limit=request.limit or 100 # default request is 100 items
-        )
-    except Exception as e:
-        bt.logging.error(f"Error creating OrganicRequest: {str(e)}")
-        raise HTTPException(status_code=400, detail=f"Invalid request parameters: {str(e)}")
-    
-    # Go through validators until successful response received
-    response = None
-    last_error = None
-    status = None
-    
-    for attempt_i, uid in enumerate(available_validators):
-        queried_validator = validator_registry.validators[uid]
-        
-        bt.logging.info(f"Querying validator {queried_validator.uid} at {queried_validator.axon}")
-        
-        try:
-            # Parse host and port from axon string
-            if ':' in queried_validator.axon:
-                host, port_str = queried_validator.axon.rsplit(':', 1)
-                port = int(port_str)
-            else:
-                host = queried_validator.axon
-                port = 8091  # Default port
-            
-            wallet = validator.wallet
-            
-            t_start = time.perf_counter()
-            # Query the validator
-            response = await query_validator(
-                wallet=wallet,
-                validator_host=host,
-                validator_port=port,
-                validator_hotkey=queried_validator.hotkey,
-                source=request.source,
-                keywords=request.keywords or [],
-                usernames=request.usernames or [],
-                url=request.url,
-                keyword_mode=request.keyword_mode,
-                start_date=request.start_date,
-                end_date=request.end_date,
-                limit=request.limit or 100
-            )
-            duration = time.perf_counter() - t_start
-
-            status = response.get('status') if isinstance(response, dict) else getattr(response, 'status', 'unknown')
-
-            metric_status_to_log = status if response and status else 'error'      
-            metrics.ON_DEMAND_VALIDATOR_QUERY_DURATION.labels(hotkey=queried_validator.hotkey, status=metric_status_to_log).observe(duration)
-
-            # Check if we got a valid response
-            if response and status:
-                # Update validator status based on response
-                validator_registry.update_validators(uid, status)
-                
-                # If successful, break the loop
-                if status == "success" or status == "warning":
-                    bt.logging.info(f"Validator {uid} returned successful response")
-                    break
-                else:
-                    bt.logging.warning(f"Validator {uid} returned error response: {status}")
-                    last_error = f"Validator error: {response.meta.get('error', 'Unknown error')}" if hasattr(response, 'meta') else "Unknown validator error"
-            else:
-                validator_registry.update_validators(uid, "error")
-                bt.logging.warning(f"Invalid response from validator {uid}")
-                last_error = f"Invalid response from validator: {response}"
-                
-        except Exception as e:
-            validator_registry.update_validators(uid, "error")
-            bt.logging.error(f"Error querying validator {uid}: {str(e)}")
-            last_error = str(e)
-    
-    metrics.ON_DEMAND_VALIDATOR_QUERY_ATTEMPTS.observe(attempt_i + 1)
-
-    # If we didn't get a successful response from any validator
-    if not response or not status or status not in ["success", "warning"]:
-        bt.logging.error(f"All validators failed to process request. Status: {status}")
-        raise HTTPException(
-            status_code=502,
-            detail=f"Failed to get valid response from any validator. Last error: {last_error}"
-        )
-    
-    # Process the successful response
-    try:
-        # Extract data and metadata
-        data = response.get('data', []) if isinstance(response, dict) else getattr(response, 'data', [])
-        meta = response.get('meta', {}) if isinstance(response, dict) else getattr(response, 'meta', {})
-        
-        # Construct and return the response
-        return QueryResponse(
-            status=status,
-            data=data,
-            meta={
-                **meta,
-                "processing_time_ms": time.time() * 1000 - time.time() * 1000,  # Replace with actual timing logic
-                "api_version": "1.0"
-            }
-        )
-        
-    except Exception as e:
-        bt.logging.error(f"Error processing validator response: {str(e)}")
-        raise HTTPException(status_code=500, detail=f"Error processing response: {str(e)}")
 
 
 @router.get("/query_bucket/{source}")

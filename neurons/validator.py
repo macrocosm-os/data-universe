@@ -45,12 +45,11 @@ import warnings
 import requests
 from dotenv import load_dotenv
 import bittensor as bt
-from typing import Dict, Tuple
+from typing import Dict
 from common.organic_protocol import OrganicRequest
 from common import constants
 from common import utils
 from vali_utils.miner_evaluator import MinerEvaluator
-from vali_utils.load_balancer.validator_registry import ValidatorRegistry
 from vali_utils.on_demand.organic_query_processor import OrganicQueryProcessor
 
 from vali_utils import metrics
@@ -121,9 +120,6 @@ class Validator:
         )
         bt.logging.info(f"Metagraph: {self.metagraph}.")
 
-        self.validator_registry = ValidatorRegistry(
-            metagraph=self.metagraph, organic_whitelist=self.config.organic_whitelist
-        )
         self.organic_processor = None
 
         # Create asyncio event loop to manage async tasks.
@@ -647,12 +643,6 @@ class Validator:
 
         try:
             self.axon = bt.axon(wallet=self.wallet, config=self.config)
-            # Import and attach organic synapse
-            self.axon.attach(
-                forward_fn=self.process_organic_query,
-                blacklist_fn=self.organic_blacklist,
-                priority_fn=self.organic_priority,
-            )
 
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
             if self.config.neuron.api_on:
@@ -931,64 +921,6 @@ class Validator:
         bt.logging.info("Loading validator state.")
 
         self.evaluator.load_state()
-
-    async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
-        """
-        Process organic queries through the validator axon.
-        Delegates to OrganicQueryProcessor for actual processing.
-        """
-        if not self.organic_processor:
-            synapse.status = "error"
-            synapse.meta = {"error": "Organic query processor not initialized"}
-            synapse.data = []
-            return synapse
-
-        t_start = time.perf_counter()
-        self.organic_processor.update_metagraph(self.evaluator.metagraph)
-        synapse_resp = await self.organic_processor.process_organic_query(synapse)
-
-        metrics.ORGANIC_QUERY_PROCESS_DURATION.labels(
-            request_source=synapse.source, response_status=synapse_resp.status
-        ).observe(time.perf_counter() - t_start)
-
-        try:
-            json_str = json.dumps(synapse_resp.data)
-            size_bytes = len(json_str.encode("utf-8"))
-
-            metrics.ORGANIC_QUERY_RESPONSE_SIZE.labels(
-                request_source=synapse.source, response_status=synapse_resp.status
-            ).observe(size_bytes)
-        except (TypeError, ValueError) as e:  # JSON serialization errors
-            bt.logging.debug(
-                "Failed to serialize synapse response data to JSON. Skipping metrics.ORGANIC_QUERY_RESPONSE_BYTES observation"
-            )
-
-        metrics.ORGANIC_QUERY_REQUESTS_TOTAL.labels(
-            request_source=synapse.source, response_status=synapse_resp.status
-        ).inc()
-        return synapse_resp
-
-    async def organic_blacklist(self, synapse: OrganicRequest) -> Tuple[bool, str]:
-        """
-        Simplified blacklist function that only checks whitelist membership
-        """
-        # Only allow hotkeys in the whitelist
-        if hasattr(self.config, "organic_whitelist") and self.config.organic_whitelist:
-            if synapse.dendrite.hotkey in self.config.organic_whitelist:
-                return False, "Request accepted from whitelisted hotkey"
-            else:
-                return True, f"Sender {synapse.dendrite.hotkey} not in whitelist"
-
-        # If no whitelist is defined, reject all requests
-        return True, "No whitelist configured"
-
-    def organic_priority(self, synapse: OrganicRequest) -> float:
-        caller_uid = self.metagraph.hotkeys.index(synapse.dendrite.hotkey)
-        priority = float(self.metagraph.S[caller_uid])
-        bt.logging.trace(
-            f"Prioritizing {synapse.dendrite.hotkey} with value: {priority}.",
-        )
-        return priority
 
 
 def main():

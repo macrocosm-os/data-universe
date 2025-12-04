@@ -69,9 +69,15 @@ We welcome the following types of contributions:
 
 ## Pull Request Process
 
+### Target Branch
+
+**All pull requests should target the `dev` branch, not `main`.**
+
+The `dev` branch is our integration branch where new features and fixes are tested before being merged to `main`. This helps maintain stability in the production branch.
+
 ### 1. Prepare Your Changes
 
-- Create a feature branch: `git checkout -b feature/your-feature-name`
+- Create a feature branch from `dev`: `git checkout dev && git pull && git checkout -b feature/your-feature-name`
 - Make your changes following our [code standards](#code-standards)
 - Add tests for new functionality
 - Update documentation as needed
