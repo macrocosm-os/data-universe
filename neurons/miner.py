@@ -378,7 +378,7 @@ class Miner:
             try:
                 since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
                 bt.logging.info(
-                    f"Pulling latest active jobs since {since.strftime("%d/%m/%Y, %H:%M:%S")} UTC"
+                    f"Pulling latest active jobs since"
                 )
 
                 async with self._on_demand_client() as client:
