@@ -3,6 +3,7 @@ import datetime as dt
 import re
 from typing import List, Dict, Any, Optional
 
+from apify_client import ApifyClientAsync
 import bittensor as bt
 import httpx
 from dotenv import load_dotenv
@@ -156,6 +157,14 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             results = []
             for meta_data in result:
+                # Check if kv_ref exists and fetch full transcript if needed
+                if 'kv_ref' in meta_data and meta_data['kv_ref']:
+                    bt.logging.info(f"Detected kv_ref for video {meta_data.get('video_id')}, fetching full transcript from KV store")
+                    meta_data = await self._fetch_transcript_from_kv(meta_data, run_config)
+                    if not meta_data:
+                        bt.logging.warning(f"Failed to fetch transcript from KV store for video {meta_data.get('video_id')}")
+                        continue
+
                 # Get upload date
                 published_at = meta_data.get('upload_date')
                 if not published_at:
@@ -326,10 +335,70 @@ class YouTubeChannelTranscriptScraper(Scraper):
 
             # Assume result is list of dict, take first if available
             if result and isinstance(result, list) and len(result) > 0:
-                return result[0]
+                meta_data = result[0]
+                
+                # Check if kv_ref exists and fetch full transcript if needed
+                if 'kv_ref' in meta_data and meta_data['kv_ref']:
+                    bt.logging.info(f"Detected kv_ref for video {video_id}, fetching full transcript from KV store")
+                    meta_data = await self._fetch_transcript_from_kv(meta_data, run_config)
+                
+                return meta_data
             return None
         except ActorRunError as e:
             bt.logging.error(f"Actor run error for video {video_id}: {str(e)}")
+            return None
+        
+    async def _fetch_transcript_from_kv(self, meta_data: Dict[str, Any], run_config: RunConfig) -> Optional[Dict[str, Any]]:
+        """
+        Fetch full transcript from Apify Key-Value store when kv_ref is present.
+        
+        Args:
+            meta_data: The metadata dict containing kv_ref
+            run_config: The run configuration with API key
+            
+        Returns:
+            Updated meta_data with full transcript, or None if fetch fails
+        """
+        try:
+            kv_ref = meta_data.get('kv_ref')
+            if not kv_ref:
+                return meta_data
+            
+            store_id = kv_ref.get('store', 'default')
+            kv_key = kv_ref.get('kv_key')
+            
+            if not kv_key:
+                bt.logging.error(f"No kv_key found in kv_ref: {kv_ref}")
+                return None
+            
+            bt.logging.info(f"Fetching transcript from KV store '{store_id}' with key '{kv_key}'")
+            
+            # Create Apify client and fetch from key-value store
+            client = ApifyClientAsync(run_config.api_key)
+            
+            # Access the key-value store and get the record
+            kv_store_client = client.key_value_store(store_id)
+            record = await kv_store_client.get_record(kv_key)
+            
+            if not record or 'value' not in record:
+                bt.logging.error(f"Failed to fetch record from KV store for key '{kv_key}'")
+                return None
+            
+            # The record value should contain the full transcript array
+            full_transcript = record['value']
+            
+            if isinstance(full_transcript, list):
+                # Replace the transcript preview with the full transcript
+                meta_data['transcript'] = full_transcript
+                bt.logging.info(f"Successfully fetched full transcript with {len(full_transcript)} segments from KV store")
+            else:
+                bt.logging.warning(f"Unexpected transcript format from KV store: {type(full_transcript)}")
+                return None
+            
+            return meta_data
+            
+        except Exception as e:
+            bt.logging.error(f"Error fetching transcript from KV store: {str(e)}")
             return None
 
 async def test_scrape_video():
