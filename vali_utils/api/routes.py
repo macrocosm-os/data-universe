@@ -1,6 +1,9 @@
 from fastapi import APIRouter, HTTPException, Depends
 import bittensor as bt
 import datetime as dt
+import asyncio
+import time
+import sqlite3
 from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel
 from common import constants
 from common.protocol import GetDataEntityBucket
@@ -11,8 +14,13 @@ from vali_utils.api.utils import endpoint_error_handler
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
-from typing import List, Optional
+from typing import List, Optional, Dict, Tuple
 router = APIRouter()
+
+# Cache for expensive aggregation queries (24-hour TTL)
+_label_size_cache: Dict[str, Tuple[float, List]] = {}  # source -> (timestamp, results)
+_age_size_cache: Dict[str, Tuple[float, List]] = {}  # source -> (timestamp, results)
+CACHE_TTL = 86400  # 24 hours in seconds
 
 
 def get_validator():
@@ -172,6 +180,40 @@ async def health_check(validator=Depends(get_validator),
     }
 
 
+def _fetch_label_sizes_sync(source_id: int, storage) -> List[Tuple]:
+    """Synchronous read-only DB query - runs without holding the main lock.
+
+    Uses a separate connection with read-only intent. SQLite shared cache
+    allows concurrent readers, so this won't block validator writes.
+    The 120s timeout on connection handles any brief lock contention.
+    """
+
+    connection = storage._create_connection()
+    try:
+        cursor = connection.cursor()
+        # Set a shorter busy timeout for this read-only query
+        cursor.execute("PRAGMA busy_timeout = 5000")  # 5 seconds max wait
+        cursor.execute("""
+            SELECT
+                labelId,
+                SUM(contentSizeBytes) as contentSizeBytes,
+                SUM(contentSizeBytes * credibility) as adjContentSizeBytes
+            FROM MinerIndex
+            JOIN Miner USING (minerId)
+            WHERE source = ?
+            GROUP BY labelId
+            ORDER BY adjContentSizeBytes DESC
+            LIMIT 1000
+        """, [source_id])
+        results = cursor.fetchall()
+    except sqlite3.OperationalError as e:
+        bt.logging.warning(f"DB contention in get_top_labels_by_source: {e}")
+        raise
+    finally:
+        connection.close()
+    return results
+
+
 @router.get("/get_top_labels_by_source/{source}", response_model=List[LabelSize])
 @endpoint_error_handler
 async def get_label_sizes(
@@ -186,40 +228,72 @@ async def get_label_sizes(
         except KeyError:
             raise HTTPException(400, f"Invalid source: {source}")
 
-        with validator.evaluator.storage.lock:
-            connection = validator.evaluator.storage._create_connection()
-            cursor = connection.cursor()
+        cache_key = source.upper()
+        now = time.time()
 
-            # Direct query from MinerIndex and Miner tables
-            cursor.execute("""
-                SELECT 
-                    labelId,
-                    SUM(contentSizeBytes) as contentSizeBytes,
-                    SUM(contentSizeBytes * credibility) as adjContentSizeBytes
-                FROM MinerIndex
-                JOIN Miner USING (minerId)
-                WHERE source = ?
-                GROUP BY labelId
-                ORDER BY adjContentSizeBytes DESC
-                LIMIT 1000
-            """, [source_id])
+        # Check cache first
+        if cache_key in _label_size_cache:
+            cached_time, cached_results = _label_size_cache[cache_key]
+            if now - cached_time < CACHE_TTL:
+                bt.logging.debug(f"Cache hit for get_top_labels_by_source/{source}")
+                return cached_results
 
-            # Translate labelIds to label values using label_dict
-            labels = [
-                LabelSize(
-                    label_value=validator.evaluator.storage.label_dict.get_by_id(row[0]),
-                    content_size_bytes=int(row[1]),
-                    adj_content_size_bytes=int(row[2])
-                )
-                for row in cursor.fetchall()
-            ]
+        # Cache miss - run expensive query in thread pool to not block event loop
+        bt.logging.info(f"Cache miss for get_top_labels_by_source/{source}, running query...")
+        loop = asyncio.get_event_loop()
+        raw_results = await loop.run_in_executor(
+            None,
+            _fetch_label_sizes_sync,
+            source_id,
+            validator.evaluator.storage
+        )
 
-            connection.close()
-            return labels
+        # Translate labelIds to label values (fast, no lock needed)
+        labels = [
+            LabelSize(
+                label_value=validator.evaluator.storage.label_dict.get_by_id(row[0]),
+                content_size_bytes=int(row[1]),
+                adj_content_size_bytes=int(row[2])
+            )
+            for row in raw_results
+        ]
+
+        # Update cache
+        _label_size_cache[cache_key] = (now, labels)
+        bt.logging.info(f"Cached {len(labels)} labels for source {source}")
+
+        return labels
 
     except Exception as e:
         bt.logging.error(f"Error getting label sizes: {str(e)}")
         raise HTTPException(500, str(e))
+
+
+def _fetch_age_sizes_sync(source_id: int, storage) -> List[Tuple]:
+    """Synchronous read-only DB query - runs without holding the main lock."""
+    connection = storage._create_connection()
+    try:
+        cursor = connection.cursor()
+        cursor.execute("PRAGMA busy_timeout = 5000")
+        cursor.execute("""
+            SELECT
+                timeBucketId,
+                SUM(contentSizeBytes) as contentSizeBytes,
+                SUM(contentSizeBytes * credibility) as adjContentSizeBytes
+            FROM Miner
+            JOIN MinerIndex USING (minerId)
+            WHERE source = ?
+            GROUP BY timeBucketId
+            ORDER BY timeBucketId DESC
+            LIMIT 1000
+        """, [source_id])
+        results = cursor.fetchall()
+    except sqlite3.OperationalError as e:
+        bt.logging.warning(f"DB contention in get_age_sizes: {e}")
+        raise
+    finally:
+        connection.close()
+    return results
 
 
 @router.get("/ages", response_model=List[AgeSize])
@@ -228,7 +302,6 @@ async def get_age_sizes(
         source: str,
         validator=Depends(get_validator),
         api_key: str = Depends(verify_api_key)
-
 ):
     """Get content size information by age bucket for a specific source from Miner and MinerIndex validator tables"""
     try:
@@ -238,34 +311,43 @@ async def get_age_sizes(
         except KeyError:
             raise HTTPException(400, f"Invalid source: {source}")
 
-        with validator.evaluator.storage.lock:
-            connection = validator.evaluator.storage._create_connection()
-            cursor = connection.cursor()
+        cache_key = source.upper()
+        now = time.time()
 
-            cursor.execute("""
-                SELECT 
-                    timeBucketId,
-                    SUM(contentSizeBytes) as contentSizeBytes,
-                    SUM(contentSizeBytes * credibility) as adjContentSizeBytes
-                FROM Miner
-                JOIN MinerIndex USING (minerId)
-                WHERE source = ?
-                GROUP BY timeBucketId
-                ORDER BY timeBucketId DESC
-                LIMIT 1000
-            """, [source_id])
+        # Check cache first
+        if cache_key in _age_size_cache:
+            cached_time, cached_results = _age_size_cache[cache_key]
+            if now - cached_time < CACHE_TTL:
+                bt.logging.debug(f"Cache hit for ages/{source}")
+                return cached_results
 
-            ages = [
-                AgeSize(
-                    time_bucket_id=row[0],
-                    content_size_bytes=int(row[1]),
-                    adj_content_size_bytes=int(row[2])
-                )
-                for row in cursor.fetchall()
-            ]
-            connection.close()
-            return ages
+        # Cache miss - run expensive query in thread pool
+        bt.logging.info(f"Cache miss for ages/{source}, running query...")
+        loop = asyncio.get_event_loop()
+        raw_results = await loop.run_in_executor(
+            None,
+            _fetch_age_sizes_sync,
+            source_id,
+            validator.evaluator.storage
+        )
+
+        ages = [
+            AgeSize(
+                time_bucket_id=row[0],
+                content_size_bytes=int(row[1]),
+                adj_content_size_bytes=int(row[2])
+            )
+            for row in raw_results
+        ]
+
+        # Update cache
+        _age_size_cache[cache_key] = (now, ages)
+        bt.logging.info(f"Cached {len(ages)} age buckets for source {source}")
+
+        return ages
+
     except Exception as e:
+        bt.logging.error(f"Error getting age sizes: {str(e)}")
         raise HTTPException(500, f"Error retrieving age sizes: {str(e)}")
 
 
