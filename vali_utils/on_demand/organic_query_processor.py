@@ -44,7 +44,7 @@ class OrganicQueryProcessor:
         self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
     
 
-    def update_metagraph(self, metagraph = bt.metagraph):
+    def update_metagraph(self, metagraph: bt.metagraph) -> None:
         """Updates metagraph for the Organic Query Processor."""
         bt.logging.info("Updating metagraph for OrganicQueryProcessor.")
         self.metagraph = metagraph
