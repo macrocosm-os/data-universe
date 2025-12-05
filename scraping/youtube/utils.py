@@ -429,8 +429,18 @@ def validate_youtube_data_entities(
             'datetime': utils.obfuscate_datetime_to_minute(actual_entity.datetime)
         })
 
-        # Step 7: Use DataEntity field equality check (like X and Reddit)
-        if not DataEntity.are_non_content_fields_equal(actual_entity_obfuscated, entity_to_validate_obfuscated):
+        # Step 7: Use DataEntity field equality check with backwards-compatible label comparison
+        # Check non-label fields first
+        uri_match = actual_entity_obfuscated.uri == entity_to_validate_obfuscated.uri
+        datetime_match = actual_entity_obfuscated.datetime == entity_to_validate_obfuscated.datetime
+        source_match = actual_entity_obfuscated.source == entity_to_validate_obfuscated.source
+
+        # For labels, use backwards-compatible comparison (handles underscore vs hyphen)
+        actual_label = actual_entity_obfuscated.label.value if actual_entity_obfuscated.label else ""
+        expected_label = entity_to_validate_obfuscated.label.value if entity_to_validate_obfuscated.label else ""
+        label_match = YouTubeContent.labels_match(actual_label, expected_label)
+
+        if not (uri_match and datetime_match and source_match and label_match):
             bt.logging.info(f"DataEntity field mismatch detected")
             bt.logging.info(f"Actual: URI={actual_entity_obfuscated.uri}, DateTime={actual_entity_obfuscated.datetime}, Source={actual_entity_obfuscated.source}, Label={actual_entity_obfuscated.label}")
             bt.logging.info(f"Expected: URI={entity_to_validate_obfuscated.uri}, DateTime={entity_to_validate_obfuscated.datetime}, Source={entity_to_validate_obfuscated.source}, Label={entity_to_validate_obfuscated.label}")

@@ -41,7 +41,8 @@ def normalize_channel_name(name: str, max_len: int = 50) -> str:
     # Create ASCII slug from available ASCII characters
     ascii_slug = ascii_text.lower()
     ascii_slug = re.sub(r"[^\w\s-]", "", ascii_slug)
-    ascii_slug = re.sub(r"\s+", "-", ascii_slug).strip("-")
+    # Convert both spaces AND hyphens to underscores for consistency
+    ascii_slug = re.sub(r"[\s-]+", "_", ascii_slug).strip("_")
     
     # If we have a good ASCII slug (3+ chars), use it
     if ascii_slug and len(ascii_slug) >= 3:
@@ -130,6 +131,36 @@ class YouTubeContent(BaseModel):
         if match:
             return match.group(1)
         return None
+
+    @staticmethod
+    def normalize_label_for_comparison(label_value: str) -> str:
+        """Normalize a YouTube channel label for backwards-compatible comparison.
+
+        Converts hyphens to underscores so that labels created with either
+        separator will match. This ensures miners with old hyphen-based
+        labels won't fail validation.
+
+        Example:
+            '#ytc_c_wicked-tuna' -> '#ytc_c_wicked_tuna'
+            '#ytc_c_wicked_tuna' -> '#ytc_c_wicked_tuna'
+        """
+        if label_value and label_value.startswith('#ytc_c_'):
+            # Extract the channel slug part after the prefix
+            prefix = '#ytc_c_'
+            slug = label_value[len(prefix):]
+            # Normalize hyphens to underscores in the slug
+            normalized_slug = slug.replace('-', '_')
+            return f"{prefix}{normalized_slug}"
+        return label_value
+
+    @staticmethod
+    def labels_match(label1: str, label2: str) -> bool:
+        """Check if two YouTube channel labels match, accounting for underscore/hyphen differences.
+
+        This provides backwards compatibility for miners who have labels with
+        underscores vs hyphens.
+        """
+        return YouTubeContent.normalize_label_for_comparison(label1) == YouTubeContent.normalize_label_for_comparison(label2)
 
     def get_transcript_text(self) -> str:
         """Extract the full transcript text."""
