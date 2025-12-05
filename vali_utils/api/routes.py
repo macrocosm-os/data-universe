@@ -8,13 +8,20 @@ from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel
 from common import constants
 from common.protocol import GetDataEntityBucket
 from common import utils
-from vali_utils.api.models import HealthResponse, LabelSize, AgeSize, LabelBytes, DesirabilityRequest
+from vali_utils.api.models import (
+    HealthResponse,
+    LabelSize,
+    AgeSize,
+    LabelBytes,
+    DesirabilityRequest,
+)
 from vali_utils.api.auth.auth import require_master_key, verify_api_key
 from vali_utils.api.utils import endpoint_error_handler
 
 from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
 from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
 from typing import List, Optional, Dict, Tuple
+
 router = APIRouter()
 
 # Cache for expensive aggregation queries (24-hour TTL)
@@ -25,7 +32,7 @@ CACHE_TTL = 86400  # 24 hours in seconds
 
 def get_validator():
     """Dependency to get validator instance"""
-    if not hasattr(get_validator, 'api'):
+    if not hasattr(get_validator, "api"):
         raise HTTPException(503, "API server not initialized")
     return get_validator.api.validator
 
@@ -33,12 +40,12 @@ def get_validator():
 @router.get("/query_bucket/{source}")
 @endpoint_error_handler
 async def query_bucket(
-        source: str,
-        label: Optional[str] = None,
-        start_bucket: Optional[int] = None,
-        end_bucket: Optional[int] = None,
-        validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)
+    source: str,
+    label: Optional[str] = None,
+    start_bucket: Optional[int] = None,
+    end_bucket: Optional[int] = None,
+    validator=Depends(get_validator),
+    api_key: str = Depends(verify_api_key),
 ):
     try:
         # Validate source
@@ -56,7 +63,9 @@ async def query_bucket(
         if not end_bucket:
             end_bucket = current_bucket.id - 1
         if not start_bucket:
-            start_bucket = end_bucket - 24  # Just look back 24 buckets instead of converting to hours
+            start_bucket = (
+                end_bucket - 24
+            )  # Just look back 24 buckets instead of converting to hours
 
         bt.logging.info(f"Querying buckets {start_bucket} to {end_bucket}")
 
@@ -80,7 +89,9 @@ async def query_bucket(
 
         if label:
             query += " AND mi.labelId = ?"
-            label_id = validator.evaluator.storage.label_dict.get_or_insert(label.strip().casefold())
+            label_id = validator.evaluator.storage.label_dict.get_or_insert(
+                label.strip().casefold()
+            )
             params.append(label_id)
 
         query += " ORDER BY m.credibility DESC LIMIT 1"
@@ -97,7 +108,7 @@ async def query_bucket(
             if not result:
                 return {
                     "status": "error",
-                    "message": "No data found in specified time range"
+                    "message": "No data found in specified time range",
                 }
 
             target_hotkey, credibility, expected_size, latest_bucket = result
@@ -111,7 +122,7 @@ async def query_bucket(
             bucket_id = DataEntityBucketId(
                 time_bucket=TimeBucket(id=latest_bucket),
                 source=DataSource(source_id),
-                label=DataLabel(value=label) if label else None
+                label=DataLabel(value=label) if label else None,
             )
 
             # Query miner
@@ -123,40 +134,40 @@ async def query_bucket(
                         data_entity_bucket_id=bucket_id,
                         version=constants.PROTOCOL_VERSION,
                     ),
-                    timeout=30
+                    timeout=30,
                 )
 
             if not response:
-                return {
-                    "status": "error",
-                    "message": "No response from miner"
-                }
+                return {"status": "error", "message": "No response from miner"}
 
             data = []
             for entity in response[0].data_entities:
-                data.append({
-                    'uri': entity.uri,
-                    'datetime': entity.datetime.isoformat(),
-                    'source': DataSource(entity.source).name,
-                    'label': entity.label.value if entity.label else None,
-                    'content': entity.content.decode('utf-8')
-                })
+                data.append(
+                    {
+                        "uri": entity.uri,
+                        "datetime": entity.datetime.isoformat(),
+                        "source": DataSource(entity.source).name,
+                        "label": entity.label.value if entity.label else None,
+                        "content": entity.content.decode("utf-8"),
+                    }
+                )
 
             return {
                 "status": "success",
-                "miner": {
-                    "hotkey": target_hotkey,
-                    "uid": uid
-                },
+                "miner": {"hotkey": target_hotkey, "uid": uid},
                 "bucket": {
                     "id": latest_bucket,
-                    "start": TimeBucket.to_date_range(TimeBucket(id=latest_bucket)).start.isoformat(),
-                    "end": TimeBucket.to_date_range(TimeBucket(id=latest_bucket)).end.isoformat(),
+                    "start": TimeBucket.to_date_range(
+                        TimeBucket(id=latest_bucket)
+                    ).start.isoformat(),
+                    "end": TimeBucket.to_date_range(
+                        TimeBucket(id=latest_bucket)
+                    ).end.isoformat(),
                     "source": source.upper(),
                     "label": label,
-                    "expected_size": expected_size
+                    "expected_size": expected_size,
                 },
-                "data": data
+                "data": data,
             }
 
     except Exception as e:
@@ -166,17 +177,20 @@ async def query_bucket(
 
 @router.get("/health", response_model=HealthResponse)
 @endpoint_error_handler
-async def health_check(validator=Depends(get_validator),
-                       api_key: str = Depends(verify_api_key)):
+async def health_check(
+    validator=Depends(get_validator), api_key: str = Depends(verify_api_key)
+):
     """Health check endpoint"""
-    miner_uids = utils.get_miner_uids(validator.metagraph, validator.config.vpermit_rao_limit)
+    miner_uids = utils.get_miner_uids(
+        validator.metagraph, validator.config.vpermit_rao_limit
+    )
     return {
         "status": "healthy" if validator.is_healthy() else "unhealthy",
         "timestamp": dt.datetime.utcnow(),
         "miners_available": len(miner_uids),
         "netuid": validator.config.netuid,
         "hotkey": validator.wallet.hotkey.ss58_address,
-        "version": "1.0.0"
+        "version": "1.0.0",
     }
 
 
@@ -193,7 +207,8 @@ def _fetch_label_sizes_sync(source_id: int, storage) -> List[Tuple]:
         cursor = connection.cursor()
         # Set a shorter busy timeout for this read-only query
         cursor.execute("PRAGMA busy_timeout = 5000")  # 5 seconds max wait
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 labelId,
                 SUM(contentSizeBytes) as contentSizeBytes,
@@ -204,7 +219,9 @@ def _fetch_label_sizes_sync(source_id: int, storage) -> List[Tuple]:
             GROUP BY labelId
             ORDER BY adjContentSizeBytes DESC
             LIMIT 1000
-        """, [source_id])
+        """,
+            [source_id],
+        )
         results = cursor.fetchall()
     except sqlite3.OperationalError as e:
         bt.logging.warning(f"DB contention in get_top_labels_by_source: {e}")
@@ -217,9 +234,10 @@ def _fetch_label_sizes_sync(source_id: int, storage) -> List[Tuple]:
 @router.get("/get_top_labels_by_source/{source}", response_model=List[LabelSize])
 @endpoint_error_handler
 async def get_label_sizes(
-        source: str,
-        validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)):
+    source: str,
+    validator=Depends(get_validator),
+    api_key: str = Depends(verify_api_key),
+):
     """Get content size information by label for a specific source"""
     try:
         # Validate source
@@ -239,13 +257,12 @@ async def get_label_sizes(
                 return cached_results
 
         # Cache miss - run expensive query in thread pool to not block event loop
-        bt.logging.info(f"Cache miss for get_top_labels_by_source/{source}, running query...")
+        bt.logging.info(
+            f"Cache miss for get_top_labels_by_source/{source}, running query..."
+        )
         loop = asyncio.get_event_loop()
         raw_results = await loop.run_in_executor(
-            None,
-            _fetch_label_sizes_sync,
-            source_id,
-            validator.evaluator.storage
+            None, _fetch_label_sizes_sync, source_id, validator.evaluator.storage
         )
 
         # Translate labelIds to label values (fast, no lock needed)
@@ -253,7 +270,7 @@ async def get_label_sizes(
             LabelSize(
                 label_value=validator.evaluator.storage.label_dict.get_by_id(row[0]),
                 content_size_bytes=int(row[1]),
-                adj_content_size_bytes=int(row[2])
+                adj_content_size_bytes=int(row[2]),
             )
             for row in raw_results
         ]
@@ -275,7 +292,8 @@ def _fetch_age_sizes_sync(source_id: int, storage) -> List[Tuple]:
     try:
         cursor = connection.cursor()
         cursor.execute("PRAGMA busy_timeout = 5000")
-        cursor.execute("""
+        cursor.execute(
+            """
             SELECT
                 timeBucketId,
                 SUM(contentSizeBytes) as contentSizeBytes,
@@ -286,7 +304,9 @@ def _fetch_age_sizes_sync(source_id: int, storage) -> List[Tuple]:
             GROUP BY timeBucketId
             ORDER BY timeBucketId DESC
             LIMIT 1000
-        """, [source_id])
+        """,
+            [source_id],
+        )
         results = cursor.fetchall()
     except sqlite3.OperationalError as e:
         bt.logging.warning(f"DB contention in get_age_sizes: {e}")
@@ -299,9 +319,9 @@ def _fetch_age_sizes_sync(source_id: int, storage) -> List[Tuple]:
 @router.get("/ages", response_model=List[AgeSize])
 @endpoint_error_handler
 async def get_age_sizes(
-        source: str,
-        validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)
+    source: str,
+    validator=Depends(get_validator),
+    api_key: str = Depends(verify_api_key),
 ):
     """Get content size information by age bucket for a specific source from Miner and MinerIndex validator tables"""
     try:
@@ -325,17 +345,14 @@ async def get_age_sizes(
         bt.logging.info(f"Cache miss for ages/{source}, running query...")
         loop = asyncio.get_event_loop()
         raw_results = await loop.run_in_executor(
-            None,
-            _fetch_age_sizes_sync,
-            source_id,
-            validator.evaluator.storage
+            None, _fetch_age_sizes_sync, source_id, validator.evaluator.storage
         )
 
         ages = [
             AgeSize(
                 time_bucket_id=row[0],
                 content_size_bytes=int(row[1]),
-                adj_content_size_bytes=int(row[2])
+                adj_content_size_bytes=int(row[2]),
             )
             for row in raw_results
         ]
@@ -354,11 +371,14 @@ async def get_age_sizes(
 @router.post("/set_desirabilities")
 @endpoint_error_handler
 async def set_desirabilities(
-        request: DesirabilityRequest,
-        validator=Depends(get_validator),
-        api_key: str = Depends(require_master_key)):
+    request: DesirabilityRequest,
+    validator=Depends(get_validator),
+    api_key: str = Depends(require_master_key),
+):
     try:
-        success, message = run_uploader_from_gravity(validator.config, request.desirabilities)
+        success, message = run_uploader_from_gravity(
+            validator.config, request.desirabilities
+        )
         if not success:
             bt.logging.error(f"Could not set desirabilities error message\n: {message}")
             raise HTTPException(status_code=400, detail=message)
@@ -373,17 +393,19 @@ async def set_desirabilities(
 @router.get("/get_desirabilities")
 @endpoint_error_handler
 async def get_desirability_list(
-        hotkey: str = None,
-        validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)
+    hotkey: str = None,
+    validator=Depends(get_validator),
+    api_key: str = Depends(verify_api_key),
 ):
-    """If hotkey specified, return the current unscaled json submission for a specific validator hotkey. 
-       Otherwise, return the current aggregate desirability list."""
+    """If hotkey specified, return the current unscaled json submission for a specific validator hotkey.
+    Otherwise, return the current aggregate desirability list."""
     try:
         subtensor = validator.subtensor
         netuid = validator.evaluator.config.netuid
         metagraph = validator.evaluator.metagraph
-        return get_hotkey_json_submission(subtensor=subtensor, netuid=netuid, metagraph=metagraph, hotkey=hotkey)
+        return get_hotkey_json_submission(
+            subtensor=subtensor, netuid=netuid, metagraph=metagraph, hotkey=hotkey
+        )
     except Exception as e:
         bt.logging.error(f"Error getting desirabilities: {str(e)}")
         raise HTTPException(500, f"Error retrieving desirabilities: {str(e)}")
@@ -392,9 +414,8 @@ async def get_desirability_list(
 @router.get("/get_bytes_by_label", response_model=LabelBytes)
 @endpoint_error_handler
 async def get_bytes_by_label(
-        label: str,
-        validator=Depends(get_validator),
-        api_key: str = Depends(verify_api_key)):
+    label: str, validator=Depends(get_validator), api_key: str = Depends(verify_api_key)
+):
     """
     Returns the total sum of contentSizeBytes and adjusted bytes for the given label.
     """
@@ -409,17 +430,22 @@ async def get_bytes_by_label(
             cursor = connection.cursor()
 
             # Get label ID from label dictionary
-            label_id = validator.evaluator.storage.label_dict.get_or_insert(normalized_label)
+            label_id = validator.evaluator.storage.label_dict.get_or_insert(
+                normalized_label
+            )
 
             # Query both raw bytes and adjusted bytes (weighted by credibility)
-            cursor.execute("""
+            cursor.execute(
+                """
                 SELECT 
                     SUM(contentSizeBytes) as total_bytes,
                     SUM(contentSizeBytes * credibility) as adj_total_bytes
                 FROM MinerIndex
                 JOIN Miner USING (minerId)
                 WHERE labelId = ?
-            """, [label_id])
+            """,
+                [label_id],
+            )
 
             row = cursor.fetchone()
             total_bytes = row[0] if row and row[0] is not None else 0
@@ -430,7 +456,7 @@ async def get_bytes_by_label(
             return LabelBytes(
                 label=label,
                 total_bytes=int(total_bytes),
-                adj_total_bytes=int(adj_total_bytes)
+                adj_total_bytes=int(adj_total_bytes),
             )
 
     except Exception as e:
@@ -440,8 +466,6 @@ async def get_bytes_by_label(
 
 @router.get("/monitoring/system-status")
 @endpoint_error_handler
-async def system_health_check(
-    _: bool = Depends(require_master_key)
-):
+async def system_health_check(_: bool = Depends(require_master_key)):
     """Internal health check endpoint for monitoring"""
     return {"status": "healthy", "timestamp": dt.datetime.utcnow().isoformat()}
