@@ -46,7 +46,7 @@ YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE = dt.datetime(2025, 9, 5, tzinfo=dt.
 X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
 
 # Date after which filename format validation is enforced (data_{YYYYMMDD_HHMMSS}_{count}_{16hex}.parquet)
-FILENAME_FORMAT_REQUIRED_DATE = dt.datetime(2025, 12, 9, tzinfo=dt.timezone.utc) # December 9, 2025 UTC (1 week from Nov 25, 2025)
+FILENAME_FORMAT_REQUIRED_DATE = dt.datetime(2025, 12, 15, tzinfo=dt.timezone.utc) # December 15, 2025 UTC (1 week from Nov 25, 2025)
 
 EVALUATION_ON_STARTUP = 15
 
