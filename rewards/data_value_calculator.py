@@ -1,15 +1,12 @@
-import datetime as dt
-from typing import Optional, List, Dict, Tuple
-from common.data import DataSource, TimeBucket, DateRange
+from common.data import DataSource, TimeBucket
 from common.data_v2 import ScorableDataEntityBucket
 from rewards.data import DataDesirabilityLookup
 from rewards import data_desirability_lookup
-from common import utils
 
 
 class DataValueCalculator:
     """Calculates how rewards are distributed across DataSources and DataLabels."""
-    
+
     def __init__(self, model: DataDesirabilityLookup = data_desirability_lookup.LOOKUP):
         # Convert to primitive version for performance optimization
         self.model = model.to_primitive_data_desirability_lookup()
@@ -17,7 +14,7 @@ class DataValueCalculator:
     def get_score_for_data_entity_bucket(
         self,
         scorable_data_entity_bucket: ScorableDataEntityBucket,
-        current_time_bucket: TimeBucket
+        current_time_bucket: TimeBucket,
     ) -> float:
         """Returns the score for the given data entity bucket."""
         # Extract frequently used values
@@ -29,26 +26,30 @@ class DataValueCalculator:
         # This prevents YouTube transcripts from dominating rewards due to their large size
         effective_scorable_bytes = scorable_data_entity_bucket.scorable_bytes
         if source == DataSource.YOUTUBE:
-            effective_scorable_bytes = scorable_data_entity_bucket.scorable_bytes / 6.0
+            effective_scorable_bytes = scorable_data_entity_bucket.scorable_bytes / 8.0
 
         # Calculate time scalar
         time_scalar = self._scale_factor_for_age(time_bucket_id, current_time_bucket.id)
 
         # Find matching jobs directly using time bucket ID
         # Currently only finds matching jobs where keyword is None.
-        matching_jobs = self.model.find_matching_jobs(source, None, label, time_bucket_id)
+        matching_jobs = self.model.find_matching_jobs(
+            source, None, label, time_bucket_id
+        )
 
         # Rest of method remains the same...
 
-        data_source_weight = self.model.get_data_source_weight(scorable_data_entity_bucket.source)
-        
+        data_source_weight = self.model.get_data_source_weight(
+            scorable_data_entity_bucket.source
+        )
+
         if matching_jobs:
             # Calculate score based on matching jobs
             total_score = 0.0
             for job in matching_jobs:
                 # Get job weight
                 job_weight = job["job_weight"]
-                
+
                 # Calculate time scalar
                 if job["start_timebucket"] or job["end_timebucket"]:
                     # For jobs with date constraints, if we've reached here, the time bucket
@@ -57,36 +58,41 @@ class DataValueCalculator:
                 else:
                     # For jobs without date constraints, use linear depreciation
                     time_scalar = self._scale_factor_for_age(
-                        scorable_data_entity_bucket.time_bucket_id, 
-                        current_time_bucket.id
+                        scorable_data_entity_bucket.time_bucket_id,
+                        current_time_bucket.id,
                     )
-                
+
                 # Add this job's contribution to total score
-                contribution = data_source_weight * job_weight * time_scalar * effective_scorable_bytes
+                contribution = (
+                    data_source_weight
+                    * job_weight
+                    * time_scalar
+                    * effective_scorable_bytes
+                )
                 total_score += contribution
 
             return total_score
         else:
             # No matching jobs - use default scale factor
-            default_scale_factor = self.model.get_default_scale_factor(scorable_data_entity_bucket.source)
-            time_scalar = self._scale_factor_for_age(
-                scorable_data_entity_bucket.time_bucket_id, 
-                current_time_bucket.id
+            default_scale_factor = self.model.get_default_scale_factor(
+                scorable_data_entity_bucket.source
             )
-            
+            time_scalar = self._scale_factor_for_age(
+                scorable_data_entity_bucket.time_bucket_id, current_time_bucket.id
+            )
+
             return (
                 data_source_weight
                 * default_scale_factor
                 * time_scalar
                 * effective_scorable_bytes
             )
-    
-    
+
     def _scale_factor_for_age(
         self, time_bucket_id: int, current_time_bucket_id: int
     ) -> float:
         """Returns the score scalar for data age.
-        
+
         Uses a linear depreciation function:
         - Current data is scored 1.0
         - Data at max_age_in_hours is scored 0.5
@@ -107,4 +113,3 @@ class DataValueCalculator:
         if data_age_in_hours > self.model.max_age_in_hours:
             return 0.0
         return 1.0 - (data_age_in_hours / (2 * self.model.max_age_in_hours))
-    
