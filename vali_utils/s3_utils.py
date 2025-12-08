@@ -737,14 +737,17 @@ class S3Validator:
                                     entity_label.removeprefix('r/') == job_label_normalized.removeprefix('r/')
                                 )
                             elif platform == 'youtube':
-                                # For YouTube: check channel labels, removing @ prefix if present
-                                label_without_at = job_label_normalized.lstrip('@')
-                                label_matches = (
-                                    entity_label == job_label_normalized or
-                                    entity_label == label_without_at or
-                                    job_label_normalized in entity_label or
-                                    label_without_at in entity_label
-                                )
+                                # For YouTube: use backwards-compatible label matching
+                                # This handles underscore vs hyphen differences in channel labels
+                                label_matches = YouTubeContent.labels_match(entity_label, job_label_normalized)
+                                if not label_matches:
+                                    # Fallback: check without @ prefix
+                                    label_without_at = job_label_normalized.lstrip('@')
+                                    label_matches = (
+                                        YouTubeContent.labels_match(entity_label, label_without_at) or
+                                        job_label_normalized in entity_label or
+                                        label_without_at in entity_label
+                                    )
                             else:
                                 label_matches = (entity_label == job_label_normalized)
 
