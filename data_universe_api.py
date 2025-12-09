@@ -86,7 +86,7 @@ class OnDemandJob(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
 
-    limit: int = Field(default=100, ge=1, le=1000)
+    limit: Optional[int] = Field(default=100, ge=1, le=1000)
     keyword_mode: Literal["any"] | Literal["all"] = "any"
 
 

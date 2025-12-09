@@ -316,8 +316,7 @@ class Validator:
         bt.logging.debug(f"Started a new wandb run: {name}")
 
     async def loop_poll_on_demand_jobs_with_submissions(self):
-        use_cache = True
-        use_cache = False # for dev
+        use_cache = True    # change to false for dev testing
 
         while not self.should_exit:
             bt.logging.info("Pulling on demand jobs with submissions")
@@ -381,78 +380,104 @@ class Validator:
                     if len(submissions_with_valid_downloads) > 5: # amount of miners to validate per job id
                         random.shuffle(submissions_with_valid_downloads)
                         submissions_with_valid_downloads = submissions_with_valid_downloads[:5]
-                    
+
+                    # validate miner data
+                    validation_context = self._create_validation_context_from_job(job)
+
+                    # Prepare miner responses in the format expected by validation methods
+                    miner_responses = {}
+                    miner_data_counts = {}
+                    miner_submission_metadata = {}
+
                     for sub in submissions_with_valid_downloads:
-                        # job.id
                         miner_hotkey = sub.miner_hotkey
-                        # constructed from create_organic_output_dict
-                        miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][sub.miner_hotkey]['data'] 
+                        try:
+                            # Convert hotkey to UID
+                            uid = self.metagraph.hotkeys.index(miner_hotkey)
 
-                        bt.logging.trace(miner_uploaded_raw_json.get('data_entities', [])[:2])
-                        miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
+                            # Get uploaded data
+                            miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][miner_hotkey]['data']
+                            miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
 
-                        # validate miner data
+                            # Store in format expected by validation methods
+                            miner_responses[uid] = miner_upload.data_entities
+                            miner_data_counts[uid] = len(miner_upload.data_entities)
 
-                        validation_context = self._create_validation_context_from_job(job)
+                            # Track submission metadata for reward calculation
+                            miner_submission_metadata[uid] = {
+                                'submitted_at': sub.submitted_at,
+                                'row_count': len(miner_upload.data_entities)
+                            }
 
-                        # Prepare miner responses in the format expected by validation methods
-                        miner_responses = {}
-                        miner_data_counts = {}
+                        except ValueError:
+                            bt.logging.warning(f"Miner hotkey {miner_hotkey} not found in metagraph")
+                            continue
 
-                        for sub in submissions_with_valid_downloads:
-                            miner_hotkey = sub.miner_hotkey
-                            try:
-                                # Convert hotkey to UID
-                                uid = self.metagraph.hotkeys.index(miner_hotkey)
-                                
-                                # Get uploaded data
-                                miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][miner_hotkey]['data']
-                                miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
-                                
-                                # Store in format expected by validation methods
-                                miner_responses[uid] = miner_upload.data_entities
-                                miner_data_counts[uid] = len(miner_upload.data_entities)
-                                
-                            except ValueError:
-                                bt.logging.warning(f"Miner hotkey {miner_hotkey} not found in metagraph")
-                                continue
+                    # Step 1: Format validation (reuse from OrganicQueryProcessor)
+                    for uid, data in miner_responses.items():
+                        if data and not self.organic_processor._validate_miner_data_format(validation_context, data, uid):
+                            bt.logging.info(f"Miner {uid} failed format validation")
+                            miner_responses[uid] = []  # Treat as empty
+                            miner_data_counts[uid] = 0
 
-                        # Step 1: Format validation (reuse from OrganicQueryProcessor)
-                        for uid, data in miner_responses.items():
-                            if data and not self.organic_processor._validate_miner_data_format(validation_context, data, uid):
-                                bt.logging.info(f"Miner {uid} failed format validation")
-                                miner_responses[uid] = []  # Treat as empty
-                                miner_data_counts[uid] = 0
+                    # Step 2: Perform detailed validation on sample posts (reuse from OrganicQueryProcessor)
+                    validation_results = {}
+                    for uid, posts in miner_responses.items():
+                        if not posts:
+                            continue
 
-                        # Step 2: Perform detailed validation on sample posts (reuse from OrganicQueryProcessor) 
-                        validation_results = {}
-                        for uid, posts in miner_responses.items():
-                            if not posts:
-                                continue
-                            
-                            # Sample posts for validation (similar to _perform_validation)
-                            num_to_validate = min(2, len(posts))  # Same as PER_MINER_VALIDATION_SAMPLE_SIZE
-                            selected_posts = random.sample(posts, num_to_validate)
-                            
-                            for post in selected_posts:
-                                post_id = self.organic_processor._get_post_id(post)
-                                
-                                # Use the 3-phase validation from OrganicQueryProcessor
-                                is_valid = await self.organic_processor._validate_entity(validation_context, post, post_id, uid)
-                                validation_results[post_id] = is_valid
+                        # Sample posts for validation (similar to _perform_validation)
+                        num_to_validate = min(2, len(posts))
+                        selected_posts = random.sample(posts, num_to_validate)
 
-                        # Step 3: Apply validation penalties (reuse from OrganicQueryProcessor)
-                        miner_scores, failed_miners = self.organic_processor._apply_validation_penalties(miner_responses, validation_results)
+                        for post in selected_posts:
+                            post_id = self.organic_processor._get_post_id(post)
 
-                        # Step 4: Volume consensus validation (reuse from OrganicQueryProcessor)
-                        consensus_count = self.organic_processor._calculate_volume_consensus(miner_data_counts)
-                        if consensus_count:
-                            penalized_miners = self.organic_processor._apply_consensus_volume_penalties(
-                                miner_data_counts, job.limit, consensus_count
-                            )
-                            bt.logging.info(f"Applied volume penalties to {len(penalized_miners)} miners")
+                            # Use the 3-phase validation from OrganicQueryProcessor
+                            is_valid = await self.organic_processor._validate_entity(validation_context, post, post_id, uid)
+                            validation_results[post_id] = is_valid
 
-                        bt.logging.info(f"Job {job.id} validation complete: {len(failed_miners)} miners failed validation")
+                    # Step 3: Apply validation penalties and get successful miners
+                    miner_scores, failed_miners, successful_miners = self.organic_processor._apply_validation_penalties(miner_responses, validation_results)
+
+                    # Step 4: Volume consensus validation (reuse from OrganicQueryProcessor)
+                    consensus_count = self.organic_processor._calculate_volume_consensus(miner_data_counts)
+                    if consensus_count:
+                        penalized_miners = self.organic_processor._apply_consensus_volume_penalties(
+                            miner_data_counts, job.limit, consensus_count
+                        )
+                        bt.logging.info(f"Applied volume penalties to {len(penalized_miners)} miners")
+                        # Remove consensus-penalized miners from successful list
+                        successful_miners = [uid for uid in successful_miners if uid not in penalized_miners]
+
+                    # Step 5: Apply rewards to successful miners
+                    for uid in successful_miners:
+                        if uid not in miner_submission_metadata:
+                            bt.logging.warning(f"Missing metadata for successful miner {uid}")
+                            continue
+
+                        metadata = miner_submission_metadata[uid]
+
+                        # Calculate reward multipliers
+                        speed_mult, volume_mult = self.organic_processor.calculate_ondemand_reward_multipliers(
+                            job_created_at=job.created_at,
+                            submission_timestamp=metadata['submitted_at'],
+                            returned_count=metadata['row_count'],
+                            requested_limit=job.limit
+                        )
+
+                        # Apply reward (scaled by existing credibility internally)
+                        self.organic_processor.evaluator.scorer.apply_ondemand_reward(
+                            uid=uid,
+                            speed_multiplier=speed_mult,
+                            volume_multiplier=volume_mult
+                        )
+
+                    bt.logging.info(
+                        f"Job {job.id} validation complete: "
+                        f"{len(successful_miners)} miners rewarded, "
+                        f"{len(failed_miners)} miners failed validation"
+                    )
 
                 if use_cache:
                     job_ids_processed_in_this_loop_not_already_in_cache = set([ job_id for job_id in set(job_data_per_job_id_and_miner_hotkey.keys()) if job_id not in self.processed_job_ids_cache])

@@ -15,7 +15,7 @@ class OrganicRequest(bt.Synapse):
     keyword_mode: KeywordMode = "all"
     start_date: Optional[str] = None
     end_date: Optional[str] = None
-    limit: int = 100
+    limit: Optional[int] = 100
 
     # Output fields
     data: List[Dict[str, Any]] = []
