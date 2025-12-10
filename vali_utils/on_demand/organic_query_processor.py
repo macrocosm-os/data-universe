@@ -984,19 +984,22 @@ class OrganicQueryProcessor:
         job_created_at: dt.datetime,
         submission_timestamp: dt.datetime,
         returned_count: int,
-        requested_limit: Optional[int]
+        requested_limit: Optional[int],
+        consensus_count: Optional[float] = None
     ) -> Tuple[float, float]:
         """
         Calculate speed and volume multipliers for on-demand rewards.
 
         Speed: Linear scale 0-2 minutes (1.0 → 0.1)
-        Volume: Simple ratio rows_returned / limit (capped at 1.0), or 1.0 if limit is None
+        Volume: rows_returned / limit (capped at 1.0), or
+                consensus-relative ratio if limit is None
 
         Args:
             job_created_at: When the job was created
             submission_timestamp: When the miner submitted
             returned_count: Number of rows returned
             requested_limit: Number of rows requested (None means no limit)
+            consensus_count: Consensus count from peers (used for unlimited requests)
 
         Returns:
             (speed_multiplier, volume_multiplier)
@@ -1009,26 +1012,40 @@ class OrganicQueryProcessor:
             upload_time_seconds = (submission_timestamp - job_created_at).total_seconds()
             upload_time_minutes = upload_time_seconds / 60.0
 
-            if upload_time_minutes <= 2.0:
-                # Linear scale: 1.0 at 0 min → 0.0 at 2 min, floored at 0.1
-                speed_multiplier = max(0.1, 1.0 - (upload_time_minutes / 2.0))
+            # User history requests get longer speed window (4 min) to match their expiry
+            # Regular requests use standard 2-minute window
+            speed_window_minutes = 4.0 if requested_limit is None else 2.0
+
+            if upload_time_minutes <= speed_window_minutes:
+                # Linear scale: 1.0 at 0 min → 0.1 at window end
+                speed_multiplier = max(0.1, 1.0 - (upload_time_minutes / speed_window_minutes))
             else:
-                # Floor at 0.1 for any response >2 minutes
+                # Floor at 0.1
                 speed_multiplier = 0.1
 
             bt.logging.trace(
                 f"Upload time: {upload_time_minutes:.2f} minutes "
-                f"({upload_time_seconds:.0f}s) -> speed multiplier: {speed_multiplier:.3f}"
+                f"({upload_time_seconds:.0f}s), window: {speed_window_minutes:.0f} min "
+                f"-> speed multiplier: {speed_multiplier:.3f}"
             )
 
         # Calculate volume multiplier
         if requested_limit is None:
-            # No limit specified - reward full volume multiplier
-            volume_multiplier = 1.0
-            bt.logging.trace(
-                f"Returned {returned_count} rows (no limit) "
-                f"-> volume multiplier: {volume_multiplier:.3f}"
-            )
+            # No limit specified - use consensus-relative volume multiplier
+            if consensus_count and consensus_count > 0:
+                # Scale based on consensus: at consensus = 1.0, below = proportional
+                volume_multiplier = min(1.0, returned_count / consensus_count)
+                bt.logging.trace(
+                    f"Returned {returned_count} rows vs consensus {consensus_count:.0f} (no limit) "
+                    f"-> volume multiplier: {volume_multiplier:.3f}"
+                )
+            else:
+                # No consensus available, use default full multiplier
+                volume_multiplier = 1.0
+                bt.logging.trace(
+                    f"Returned {returned_count} rows (no limit, no consensus) "
+                    f"-> volume multiplier: {volume_multiplier:.3f}"
+                )
         elif returned_count == 0:
             volume_multiplier = 0.0
             bt.logging.trace(
