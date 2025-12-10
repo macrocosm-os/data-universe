@@ -24,7 +24,8 @@ class MinerScorer:
     # The exponent used to scale the miner's score by its credibility.
     _CREDIBILITY_EXP = 2.5
 
-    ONDEMAND_MAX_CRED_PENALTY = 0.075   # 7.5% 
+    ONDEMAND_MAX_CRED_PENALTY = 0.0075   # 0.75%
+    ONDEMAND_BASE_REWARD = 200_000_000  # 200M 
 
     def __init__(
         self,
@@ -50,6 +51,10 @@ class MinerScorer:
         )
         self.s3_cred_alpha = s3_cred_alpha
 
+        # Keeps track of the miner's OnDemand boost (EMA of recent OnDemand rewards)
+        self.ondemand_boosts = torch.zeros(num_neurons, dtype=torch.float32)
+        self.ondemand_alpha = 0.3
+
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
         self.lock = threading.Lock()
@@ -64,6 +69,7 @@ class MinerScorer:
                     "s3_boosts": self.s3_boosts,
                     "s3_credibility": self.s3_credibility,
                     "scorable_bytes": self.scorable_bytes,
+                    "ondemand_boosts": self.ondemand_boosts,
                 },
                 filepath,
             )
@@ -74,11 +80,11 @@ class MinerScorer:
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
-            # Handle backward compatibility for S3 fields
             self.s3_boosts = state.get("s3_boosts", torch.zeros_like(self.scores))
             self.s3_credibility = state.get("s3_credibility", torch.full(
                 (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
             ))
+            self.ondemand_boosts = state.get("ondemand_boosts", torch.zeros_like(self.scores))
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -99,6 +105,7 @@ class MinerScorer:
             self.miner_credibility[uid] = MinerScorer.STARTING_CREDIBILITY
             self.s3_boosts[uid] = 0.0
             self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
+            self.ondemand_boosts[uid] = 0.0
 
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
@@ -150,6 +157,9 @@ class MinerScorer:
                     ),
                 ]
             )
+            self.ondemand_boosts = torch.cat(
+                [self.ondemand_boosts, torch.zeros(to_add, dtype=torch.float32)]
+            )
 
     def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float, job_match_failure = False) -> None:
         """Applies a fixed boost to the scaled score if the miner has passed S3 validation."""
@@ -173,24 +183,72 @@ class MinerScorer:
         with self.lock:
             cred_penalty = MinerScorer.ONDEMAND_MAX_CRED_PENALTY * mult_factor
             old_cred = float(self.miner_credibility[uid])
-            
+
             # Apply credibility penalty
             self.miner_credibility[uid] = max(self.miner_credibility[uid] - cred_penalty, 0)
             new_cred = float(self.miner_credibility[uid])
-            
+
+            # EMA the ondemand boost with 0 reward for failures
+            old_boost = float(self.ondemand_boosts[uid])
+            failure_reward = 0
+            self.ondemand_boosts[uid] = (
+                self.ondemand_alpha * failure_reward +
+                (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
+            )
+            new_boost = float(self.ondemand_boosts[uid])
+
             # Adjust score based on the credibility ratio change
             if old_cred > 0:
                 cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
                 old_score = float(self.scores[uid])
                 self.scores[uid] *= cred_ratio
-                
+
                 bt.logging.info(
                     f"OnDemand penalty for Miner {uid}: "
                     f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
+                    f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
                     f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
                 )
             else:
-                bt.logging.info(f"OnDemand penalty for Miner {uid}: Credibility already at 0")
+                bt.logging.info(
+                    f"OnDemand penalty for Miner {uid}: Credibility already at 0, "
+                    f"Boost {old_boost:.2f} -> {new_boost:.2f}"
+                )
+
+    def apply_ondemand_reward(
+        self,
+        uid: int,
+        speed_multiplier: float,
+        volume_multiplier: float
+    ):
+        """
+        Updates the miner's OnDemand boost based on their latest on-demand performance.
+        The boost is EMA'd with alpha=0.3 and will be applied (scaled by credibility^2.5)
+        during regular evaluation in on_miner_evaluated().
+
+        Args:
+            uid: Miner UID
+            speed_multiplier: 0.1-1.0 based on upload speed (linear from 0-2 min)
+            volume_multiplier: 0.0-1.0 based on rows_returned/limit
+        """
+        with self.lock:
+            # Calculate raw reward for this on-demand job
+            raw_reward = MinerScorer.ONDEMAND_BASE_REWARD * speed_multiplier * volume_multiplier
+
+            # Update OnDemand boost using EMA (alpha=0.3)
+            old_boost = float(self.ondemand_boosts[uid])
+            self.ondemand_boosts[uid] = (
+                self.ondemand_alpha * raw_reward +
+                (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
+            )
+            new_boost = float(self.ondemand_boosts[uid])
+
+            bt.logging.info(
+                f"OnDemand reward for Miner {uid}: "
+                f"Speed={speed_multiplier:.3f}, Volume={volume_multiplier:.3f}, "
+                f"Raw reward={raw_reward:.0f}, "
+                f"OnDemand boost (EMA'd): {old_boost:.0f} -> {new_boost:.0f}"
+            )
 
     def on_miner_evaluated(
         self,
@@ -243,6 +301,11 @@ class MinerScorer:
                 s3_boost = self.s3_boosts[uid] * self.s3_credibility[uid]
                 score += s3_boost
                 bt.logging.info(f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}.")
+
+                # Awarding the miner their OnDemand boost based on recent on-demand performance.
+                ondemand_boost = float(self.ondemand_boosts[uid])
+                score += ondemand_boost
+                bt.logging.info(f"Awarded Miner {uid} an OnDemand boost of {ondemand_boost:.0f} based on recent on-demand performance, adjusting the score to {float(score)}.")
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)

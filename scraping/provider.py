@@ -13,6 +13,7 @@ from scraping.youtube.invideoiq_transcript_scraper import YouTubeChannelTranscri
 from scraping.youtube.crawlmaster_transcript_scraper import YouTubeChannelTranscriptScraper as CrawlmasterScraper
 from scraping.youtube.starvibe_transcript_scraper import YouTubeChannelTranscriptScraper as StarvibeScraper
 from scraping.youtube.youtube_multi_actor_scraper import YouTubeMultiActorScraper
+from scraping.youtube.youtube_mc_scraper import YouTubeMCScraper
 
 
 DEFAULT_FACTORIES = {
@@ -27,7 +28,8 @@ DEFAULT_FACTORIES = {
     ScraperId.YOUTUBE_APIFY_TRANSCRIPT: YouTubeChannelTranscriptScraper,
     ScraperId.YOUTUBE_CRAWLMASTER_TRANSCRIPT: CrawlmasterScraper,
     ScraperId.YOUTUBE_STARVIBE_TRANSCRIPT: StarvibeScraper,
-    ScraperId.YOUTUBE_MULTI_ACTOR: YouTubeMultiActorScraper
+    ScraperId.YOUTUBE_MULTI_ACTOR: YouTubeMultiActorScraper,
+    ScraperId.YOUTUBE_MC: YouTubeMCScraper
 }
 
 
