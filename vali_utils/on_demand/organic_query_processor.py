@@ -84,7 +84,7 @@ class OrganicQueryProcessor:
             validation_results = await self._perform_validation(synapse, miner_responses)
             
             # Step 6: Calculate final scores with all penalties applied
-            miner_scores, failed_miners = self._apply_validation_penalties(miner_responses, validation_results)
+            miner_scores, failed_miners, successful_miners = self._apply_validation_penalties(miner_responses, validation_results)
             
             # Step 7: Pool only valid responses (excludes failed miners)
             pooled_data = self._pool_valid_responses(miner_responses, failed_miners)
@@ -364,19 +364,21 @@ class OrganicQueryProcessor:
         return consensus_count
 
 
-    def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: int, consensus_count: Optional[float]) -> List[int]:
+    def _apply_consensus_volume_penalties(self, miner_data_counts: Dict[int, int], requested_limit: Optional[int], consensus_count: Optional[float]) -> List[int]:
         """
         Apply consensus volume penalties when verification is not triggered.
         """
         if consensus_count is None:
             bt.logging.info("Not enough miners with data for consensus - skipping volume penalties")
             return []
-        
+
         # Only apply penalties if consensus shows meaningful data availability
-        min_consensus_threshold = requested_limit * self.MIN_CONSENSUS  # At least 30% of request
-        if consensus_count < min_consensus_threshold:
-            bt.logging.info("Consensus shows limited data available - skipping volume penalties")
-            return []
+        # Skip this check if requested_limit is None (no limit specified)
+        if requested_limit is not None:
+            min_consensus_threshold = requested_limit * self.MIN_CONSENSUS  # At least 30% of request
+            if consensus_count < min_consensus_threshold:
+                bt.logging.info("Consensus shows limited data available - skipping volume penalties")
+                return []
         
         penalized_miners = []
         
@@ -935,10 +937,11 @@ class OrganicQueryProcessor:
         return None
     
 
-    def _apply_validation_penalties(self, miner_responses: Dict[int, List], validation_results: Dict[str, bool]) -> Tuple[Dict[int, int], List[int]]:
-        """Calculate final scores incorporating all penalties and return failed miners"""
+    def _apply_validation_penalties(self, miner_responses: Dict[int, List], validation_results: Dict[str, bool]) -> Tuple[Dict[int, int], List[int], List[int]]:
+        """Calculate final scores incorporating all penalties and return failed/successful miners"""
         miner_scores = {}
         failed_miners = []
+        successful_miners = []
         
         for uid in miner_responses.keys():
             if not miner_responses[uid]:
@@ -968,12 +971,95 @@ class OrganicQueryProcessor:
                 ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_content_validation").inc()
             else:
                 # Miner passed validation - track success
+                successful_miners.append(uid)
                 ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="success").inc()
 
         bt.logging.info(f"Final miner scores: {miner_scores}")
         bt.logging.info(f"Failed validation miners: {failed_miners}")
-        return miner_scores, failed_miners
-    
+        bt.logging.info(f"Successful validation miners: {successful_miners}")
+        return miner_scores, failed_miners, successful_miners
+
+    def calculate_ondemand_reward_multipliers(
+        self,
+        job_created_at: dt.datetime,
+        submission_timestamp: dt.datetime,
+        returned_count: int,
+        requested_limit: Optional[int],
+        consensus_count: Optional[float] = None
+    ) -> Tuple[float, float]:
+        """
+        Calculate speed and volume multipliers for on-demand rewards.
+
+        Speed: Linear scale 0-2 minutes (1.0 → 0.1)
+        Volume: rows_returned / limit (capped at 1.0), or
+                consensus-relative ratio if limit is None
+
+        Args:
+            job_created_at: When the job was created
+            submission_timestamp: When the miner submitted
+            returned_count: Number of rows returned
+            requested_limit: Number of rows requested (None means no limit)
+            consensus_count: Consensus count from peers (used for unlimited requests)
+
+        Returns:
+            (speed_multiplier, volume_multiplier)
+        """
+        # Calculate speed multiplier
+        if submission_timestamp is None or job_created_at is None:
+            bt.logging.warning("Missing timestamp data for reward calculation, using default speed=0.5")
+            speed_multiplier = 0.5
+        else:
+            upload_time_seconds = (submission_timestamp - job_created_at).total_seconds()
+            upload_time_minutes = upload_time_seconds / 60.0
+
+            # User history requests get longer speed window (4 min) to match their expiry
+            # Regular requests use standard 2-minute window
+            speed_window_minutes = 4.0 if requested_limit is None else 2.0
+
+            if upload_time_minutes <= speed_window_minutes:
+                # Linear scale: 1.0 at 0 min → 0.1 at window end
+                speed_multiplier = max(0.1, 1.0 - (upload_time_minutes / speed_window_minutes))
+            else:
+                # Floor at 0.1
+                speed_multiplier = 0.1
+
+            bt.logging.trace(
+                f"Upload time: {upload_time_minutes:.2f} minutes "
+                f"({upload_time_seconds:.0f}s), window: {speed_window_minutes:.0f} min "
+                f"-> speed multiplier: {speed_multiplier:.3f}"
+            )
+
+        # Calculate volume multiplier
+        if requested_limit is None:
+            # No limit specified - use consensus-relative volume multiplier
+            if consensus_count and consensus_count > 0:
+                # Scale based on consensus: at consensus = 1.0, below = proportional
+                volume_multiplier = min(1.0, returned_count / consensus_count)
+                bt.logging.trace(
+                    f"Returned {returned_count} rows vs consensus {consensus_count:.0f} (no limit) "
+                    f"-> volume multiplier: {volume_multiplier:.3f}"
+                )
+            else:
+                # No consensus available, use default full multiplier
+                volume_multiplier = 1.0
+                bt.logging.trace(
+                    f"Returned {returned_count} rows (no limit, no consensus) "
+                    f"-> volume multiplier: {volume_multiplier:.3f}"
+                )
+        elif returned_count == 0:
+            volume_multiplier = 0.0
+            bt.logging.trace(
+                f"Returned {returned_count}/{requested_limit} rows "
+                f"-> volume multiplier: {volume_multiplier:.3f}"
+            )
+        else:
+            volume_multiplier = min(1.0, returned_count / requested_limit)
+            bt.logging.trace(
+                f"Returned {returned_count}/{requested_limit} rows "
+                f"-> volume multiplier: {volume_multiplier:.3f}"
+            )
+
+        return speed_multiplier, volume_multiplier
 
     def _pool_valid_responses(self, miner_responses: Dict[int, List], failed_miners: List[int]) -> List:
         """Pool only responses from miners who passed validation"""

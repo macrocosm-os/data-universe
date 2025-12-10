@@ -15,7 +15,7 @@ import httpx
 
 import bittensor as bt
 
-TEN_MB_BYTES = 10 * 1_000_000
+FIFTEEN_MB_BYTES = 15 * 1_000_000
 
 class OnDemandMinerUpload(BaseModel):
     data_entities: List[DataEntity]
@@ -86,7 +86,7 @@ class OnDemandJob(BaseModel):
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None
 
-    limit: int = Field(default=100, ge=1, le=1000)
+    limit: Optional[int] = Field(default=100, ge=1, le=1000)
     keyword_mode: Literal["any"] | Literal["all"] = "any"
 
 
@@ -341,7 +341,7 @@ class DataUniverseApiClient:
         *,
         max_parallelism: int = 8,
         job_ids_to_skip_downloading: Optional[Set[str]] = None,
-        file_size_limit_bytes: int = TEN_MB_BYTES,
+        file_size_limit_bytes: int = FIFTEEN_MB_BYTES,
     ) -> tuple[ListJobsWithSubmissionForValidationResponse, list[dict]]:
         job_ids_to_skip_downloading = job_ids_to_skip_downloading or set()
 
