@@ -432,10 +432,9 @@ class Validator:
 
                         for post in selected_posts:
                             post_id = self.organic_processor._get_post_id(post)
-
-                            # Use the 3-phase validation from OrganicQueryProcessor
+                            miner_post_key = f"{uid}:{post_id}" 
                             is_valid = await self.organic_processor._validate_entity(validation_context, post, post_id, uid)
-                            validation_results[post_id] = is_valid
+                            validation_results[miner_post_key] = is_valid
 
                     # Step 3: Apply validation penalties and get successful miners
                     miner_scores, failed_miners, successful_miners = self.organic_processor._apply_validation_penalties(miner_responses, validation_results)
@@ -463,7 +462,8 @@ class Validator:
                             job_created_at=job.created_at,
                             submission_timestamp=metadata['submitted_at'],
                             returned_count=metadata['row_count'],
-                            requested_limit=job.limit
+                            requested_limit=job.limit,
+                            consensus_count=consensus_count
                         )
 
                         # Apply reward (scaled by existing credibility internally)
