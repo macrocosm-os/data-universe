@@ -47,12 +47,12 @@ class YouTubeMultiActorScraper(Scraper):
         """Get scrapers in order: macrocosmos 95%, starvibe 5%, invideoiq fallback."""
         video_hash = int(hashlib.md5(video_id.encode()).hexdigest(), 16)
 
-        # Distribute: macrocosmos (95%), starvibe (5%)
+        # Distribute: starvibe (95%),  mc (5%)
         hash_mod = video_hash % 100
         if hash_mod < 95:
-            primary_index = 0  # macrocosmos
-        else:
             primary_index = 1  # starvibe
+        else:
+            primary_index = 0  # macrocosmos
 
         selected_primary = self.primary_scrapers[primary_index]
 
