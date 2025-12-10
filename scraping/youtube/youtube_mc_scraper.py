@@ -61,8 +61,10 @@ class YouTubeMCScraper(Scraper):
             return []
 
         # Prepare actor input
-        actor_input = {}
-        
+        actor_input = {
+            "language": language  # Pass language for transcript selection
+        }
+
         if youtube_url:
             actor_input["urls"] = [youtube_url]
         elif channel_url:
@@ -133,7 +135,7 @@ class YouTubeMCScraper(Scraper):
                 transcript=item.get('transcript', []),
                 url=item.get('url', f"https://www.youtube.com/watch?v={item.get('video_id', '')}"),
                 duration_seconds=int(item.get('duration_seconds', 0)),
-                language=item.get('language', 'en'),
+                language=item.get('language') or 'en',  # Actor returns actual language or None
                 description=item.get('description'),
                 thumbnails=item.get('thumbnails', youtube_utils.generate_thumbnails(item.get('video_id', ''))),
                 view_count=item.get('view_count', 0),
@@ -164,15 +166,16 @@ class YouTubeMCScraper(Scraper):
                 bt.logging.info(
                     f"Validating video {content_to_validate.video_id} in original language: {original_language}")
 
-                # Scrape fresh data from actor
+                # Scrape fresh data from actor (single call)
                 actual_entities = await self.scrape(
-                    youtube_url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}"
+                    youtube_url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}",
+                    language=original_language
                 )
 
                 if not actual_entities:
                     results.append(ValidationResult(
                         is_valid=False,
-                        reason="Video not available for validation",
+                        reason="Video not available for validation in original language",
                         content_size_bytes_validated=entity.content_size_bytes
                     ))
                     continue
