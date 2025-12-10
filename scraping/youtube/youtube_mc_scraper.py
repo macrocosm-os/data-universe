@@ -150,78 +150,52 @@ class YouTubeMCScraper(Scraper):
             return None
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
-        """Validate a list of DataEntity objects by scraping their URLs."""
+        """Validate YouTube transcript entities using unified validation function."""
         if not entities:
             return []
 
         results: List[ValidationResult] = []
 
         for entity in entities:
-            # Decode YouTubeContent
             try:
-                ent_content = YouTubeContent.from_data_entity(entity)
-            except Exception as e:
-                bt.logging.error(f"Failed to decode YouTubeContent: {e}")
-                results.append(
-                    ValidationResult(
+                content_to_validate = YouTubeContent.from_data_entity(entity)
+                original_language = content_to_validate.language
+
+                bt.logging.info(
+                    f"Validating video {content_to_validate.video_id} in original language: {original_language}")
+
+                # Scrape fresh data from actor
+                actual_entities = await self.scrape(
+                    youtube_url=f"https://www.youtube.com/watch?v={content_to_validate.video_id}"
+                )
+
+                if not actual_entities:
+                    results.append(ValidationResult(
                         is_valid=False,
-                        reason="Failed to decode data entity.",
-                        content_size_bytes_validated=entity.content_size_bytes,
-                    )
+                        reason="Video not available for validation",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
+
+                actual_entity = actual_entities[0]
+
+                # Validate view count (minimum engagement check) from scraped entity
+                actual_content = YouTubeContent.from_data_entity(actual_entity)
+                view_count = actual_content.view_count or 0
+                if int(view_count) < 100:
+                    results.append(ValidationResult(
+                        is_valid=False,
+                        reason=f"Video has low engagement ({view_count} views, minimum 100 required)",
+                        content_size_bytes_validated=entity.content_size_bytes
+                    ))
+                    continue
+
+                # Use unified validation function (same as starvibe/crawlmaster)
+                validation_result = youtube_utils.validate_youtube_data_entities(
+                    entity_to_validate=entity,
+                    actual_entity=actual_entity
                 )
-                continue
-
-            # Validate by fetching from Apify actor
-            actor_input = {
-                "urls": [ent_content.url]
-            }
-
-            try:
-                # Run the actor with single URL
-                run = await self.client.actor(self.ACTOR_ID).call(
-                    run_input=actor_input,
-                    timeout_secs=self.APIFY_TIMEOUT_SECS
-                )
-
-                # Check if we got results
-                dataset_client = self.client.dataset(run["defaultDatasetId"])
-                items = []
-
-                async for item in dataset_client.iterate_items():
-                    items.append(item)
-                    break  # Only need first item
-
-                if len(items) > 0:
-                    item = items[0]
-                    bt.logging.trace(f"Apify actor returned for URL {ent_content.url}")
-
-                    # Convert to YouTubeContent for validation
-                    live_entity = self._convert_to_data_entity(item)
-                    
-                    if live_entity:
-                        live_content = YouTubeContent.from_data_entity(live_entity)
-                        
-                        # Use unified YouTube validation
-                        validation_result = youtube_utils.validate_youtube_data_entity_fields(
-                            live_content, entity
-                        )
-                        results.append(validation_result)
-                    else:
-                        results.append(
-                            ValidationResult(
-                                is_valid=False,
-                                reason="Failed to parse live content from actor.",
-                                content_size_bytes_validated=entity.content_size_bytes,
-                            )
-                        )
-                else:
-                    results.append(
-                        ValidationResult(
-                            is_valid=False,
-                            reason="Video not found or inaccessible.",
-                            content_size_bytes_validated=entity.content_size_bytes,
-                        )
-                    )
+                results.append(validation_result)
 
             except Exception as e:
                 bt.logging.error(f"Validation error: {e}")
