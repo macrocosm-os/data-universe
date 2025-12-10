@@ -14,6 +14,7 @@ from scraping.youtube import utils as youtube_utils
 from scraping.youtube.crawlmaster_transcript_scraper import YouTubeChannelTranscriptScraper as CrawlmasterScraper
 from scraping.youtube.starvibe_transcript_scraper import YouTubeChannelTranscriptScraper as StarvibeScraper
 from scraping.youtube.invideoiq_transcript_scraper import YouTubeChannelTranscriptScraper as InvideoiqScraper
+from scraping.youtube.youtube_mc_scraper import YouTubeMCScraper
 
 load_dotenv()
 
@@ -28,8 +29,9 @@ class YouTubeMultiActorScraper(Scraper):
         """Initialize the Multi-Actor YouTube Transcript Scraper."""
 
         # Initialize individual scrapers
-        # Primary scrapers (randomly selected between these two)
+        # Primary scrapers (randomly selected between these three)
         self.primary_scrapers = [
+            ("macrocosmos", YouTubeMCScraper()),
             ("crawlmaster", CrawlmasterScraper()),
             ("starvibe", StarvibeScraper())
         ]
@@ -44,18 +46,27 @@ class YouTubeMultiActorScraper(Scraper):
                        ", ".join(all_scraper_names))
 
     def _get_ordered_scrapers(self, video_id: str) -> List[tuple]:
-        """Get scrapers in order: randomly select from primary scrapers, then invideoiq as fallback."""
+        """Get scrapers in order: macrocosmos 95%, others as fallback."""
         video_hash = int(hashlib.md5(video_id.encode()).hexdigest(), 16)
-        primary_index = 0 if (video_hash % 100) >= 70 else 1
+
+        # Distribute: macrocosmos (95%), crawlmaster (2.5%), starvibe (2.5%)
+        hash_mod = video_hash % 100
+        if hash_mod < 95:
+            primary_index = 0  # macrocosmos
+        elif hash_mod < 97:
+            primary_index = 1  # crawlmaster
+        else:
+            primary_index = 2  # starvibe
+
         selected_primary = self.primary_scrapers[primary_index]
 
-        # Other primary scraper
-        other_primary = self.primary_scrapers[1 - primary_index]
+        # Get other primary scrapers in order
+        other_primaries = [s for i, s in enumerate(self.primary_scrapers) if i != primary_index]
 
         bt.logging.debug(f"Selected primary scraper {selected_primary[0]} for video {video_id}")
 
-        # Order: selected primary -> other primary -> invideoiq fallback
-        return [selected_primary, other_primary, self.fallback_scraper]
+        # Order: selected primary -> other primaries -> invideoiq fallback
+        return [selected_primary] + other_primaries + [self.fallback_scraper]
 
     def _extract_video_id_from_url(self, url: str) -> Optional[str]:
         """Extract video ID from YouTube URL."""
