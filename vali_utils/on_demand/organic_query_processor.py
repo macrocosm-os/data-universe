@@ -1012,9 +1012,8 @@ class OrganicQueryProcessor:
             upload_time_seconds = (submission_timestamp - job_created_at).total_seconds()
             upload_time_minutes = upload_time_seconds / 60.0
 
-            # User history requests get longer speed window (4 min) to match their expiry
-            # Regular requests use standard 2-minute window
-            speed_window_minutes = 4.0 if requested_limit is None else 2.0
+            # Speed window matches job expiry (2 minutes for all request types)
+            speed_window_minutes = 2.0
 
             if upload_time_minutes <= speed_window_minutes:
                 # Linear scale: 1.0 at 0 min → 0.1 at window end

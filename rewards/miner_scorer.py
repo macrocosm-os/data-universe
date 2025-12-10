@@ -183,24 +183,37 @@ class MinerScorer:
         with self.lock:
             cred_penalty = MinerScorer.ONDEMAND_MAX_CRED_PENALTY * mult_factor
             old_cred = float(self.miner_credibility[uid])
-            
+
             # Apply credibility penalty
             self.miner_credibility[uid] = max(self.miner_credibility[uid] - cred_penalty, 0)
             new_cred = float(self.miner_credibility[uid])
-            
+
+            # EMA the ondemand boost with 0 reward for failures
+            old_boost = float(self.ondemand_boosts[uid])
+            failure_reward = 0
+            self.ondemand_boosts[uid] = (
+                self.ondemand_alpha * failure_reward +
+                (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
+            )
+            new_boost = float(self.ondemand_boosts[uid])
+
             # Adjust score based on the credibility ratio change
             if old_cred > 0:
                 cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
                 old_score = float(self.scores[uid])
                 self.scores[uid] *= cred_ratio
-                
+
                 bt.logging.info(
                     f"OnDemand penalty for Miner {uid}: "
                     f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
+                    f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
                     f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
                 )
             else:
-                bt.logging.info(f"OnDemand penalty for Miner {uid}: Credibility already at 0")
+                bt.logging.info(
+                    f"OnDemand penalty for Miner {uid}: Credibility already at 0, "
+                    f"Boost {old_boost:.2f} -> {new_boost:.2f}"
+                )
 
     def apply_ondemand_reward(
         self,
