@@ -19,7 +19,7 @@ load_dotenv()
 class YouTubeMCScraper(Scraper):
     """Scraper that uses the Apify macrocosmos/youtube-scraper actor."""
 
-    ACTOR_ID = "macrocosmos/youtube-scraper"
+    ACTOR_ID = "macrocosmos/macrocosmos-yt-scraper"
 
     # Timeout for Apify actor runs
     APIFY_TIMEOUT_SECS = 300
