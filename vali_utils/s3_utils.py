@@ -235,6 +235,21 @@ class S3Validator:
                 f"{len(all_job_ids)} total for {miner_hotkey}"
             )
 
+            # Step 2.5: EMPTY FILE SPOT-CHECK across ALL files (exploit detection)
+            # Sample random files from ALL jobs (not just active ones) to catch empty file exploits
+            empty_file_check = await self._spot_check_for_empty_files(
+                wallet, s3_auth_url, miner_hotkey, all_files
+            )
+            if empty_file_check.get('empty_file_detected'):
+                bt.logging.error(
+                    f"{miner_hotkey}: EXPLOIT DETECTED - Empty file found in spot-check: "
+                    f"{empty_file_check.get('empty_file_key')}"
+                )
+                return self._create_failed_result(
+                    f"Empty file detected in spot-check (0 rows): {empty_file_check.get('empty_file_key')}",
+                    empty_file_detected=True
+                )
+
             # Step 3: Analyze recent data
             recent_data_analysis = await self._analyze_recent_data(
                 wallet, s3_auth_url, miner_hotkey, active_job_ids, all_files
@@ -548,6 +563,84 @@ class S3Validator:
             'raw_size_bytes': total_size_bytes,  # Raw size from ALL files
             'recent_job_files': recent_job_files  # Sampled jobs for validation only
         }
+
+    async def _spot_check_for_empty_files(
+        self, wallet, s3_auth_url: str, miner_hotkey: str, all_files: List[Dict]
+    ) -> Dict:
+        """
+        EXPLOIT DETECTION: Sample random files from ALL jobs to detect empty files.
+
+        This check runs BEFORE filtering to active jobs, so it catches empty files
+        that exploiters hide in inactive/obsolete jobs.
+
+        Samples 10 random files from across ALL jobs (not just active ones).
+        """
+        if not all_files:
+            return {'empty_file_detected': False}
+
+        # Sample 10 random files from ALL files (regardless of job status)
+        sample_size = min(10, len(all_files))
+        sampled_files = random.sample(all_files, sample_size)
+
+        file_keys = [f['key'] for f in sampled_files]
+
+        bt.logging.info(
+            f"{miner_hotkey}: Empty file spot-check: sampling {sample_size} files "
+            f"from {len(all_files)} total files (across ALL jobs)"
+        )
+
+        # Get presigned URLs for sampled files
+        file_urls = await self._get_file_presigned_urls(
+            wallet, s3_auth_url, miner_hotkey, file_keys
+        )
+
+        if not file_urls:
+            bt.logging.warning(f"{miner_hotkey}: Could not get presigned URLs for spot-check")
+            return {'empty_file_detected': False}
+
+        # Check each file for empty content
+        files_checked = 0
+        for file_key, file_info in file_urls.items():
+            try:
+                presigned_url = file_info.get('presigned_url')
+                if not presigned_url:
+                    continue
+
+                df = pd.read_parquet(presigned_url)
+                files_checked += 1
+
+                # Check for empty files (0 rows)
+                if len(df) == 0:
+                    bt.logging.error(
+                        f"{miner_hotkey}: EMPTY FILE EXPLOIT DETECTED in spot-check: {file_key}"
+                    )
+                    return {
+                        'empty_file_detected': True,
+                        'empty_file_key': file_key
+                    }
+
+                # Also check for files with only placeholder columns (another exploit variant)
+                if len(df.columns) > 0:
+                    placeholder_cols = [c for c in df.columns if 'placeholder' in c.lower() or 'empty' in c.lower()]
+                    if len(placeholder_cols) == len(df.columns):
+                        bt.logging.error(
+                            f"{miner_hotkey}: PLACEHOLDER FILE EXPLOIT DETECTED: {file_key} "
+                            f"(columns: {list(df.columns)[:5]})"
+                        )
+                        return {
+                            'empty_file_detected': True,
+                            'empty_file_key': file_key
+                        }
+
+            except Exception as e:
+                bt.logging.debug(f"Error in spot-check for {file_key}: {str(e)}")
+                continue
+
+        bt.logging.info(
+            f"{miner_hotkey}: Empty file spot-check PASSED - checked {files_checked} files, no empty files found"
+        )
+
+        return {'empty_file_detected': False}
 
     async def _check_for_duplicates(
         self, wallet, s3_auth_url: str, miner_hotkey: str, recent_job_files: Dict
