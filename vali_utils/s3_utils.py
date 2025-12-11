@@ -45,7 +45,7 @@ class S3ValidationResult:
     # Enhanced validation fields (optional, for backward compatibility)
     enhanced_validation: Optional['S3ValidationResultDetailed'] = None
 
-    # Empty file exploit detection
+    # Empty file detection
     empty_file_detected: bool = False
 
 
@@ -85,7 +85,7 @@ class S3ValidationResultDetailed:
     sample_validation_results: List[str]
     sample_job_mismatches: List[str]
 
-    # Empty file exploit detection
+    # Empty file detection
     empty_file_detected: bool = False
 
 
@@ -235,18 +235,18 @@ class S3Validator:
                 f"{len(all_job_ids)} total for {miner_hotkey}"
             )
 
-            # Step 2.5: EMPTY FILE SPOT-CHECK across ALL files (exploit detection)
-            # Sample random files from ALL jobs (not just active ones) to catch empty file exploits
+            # Step 2.5: EMPTY FILE SPOT-CHECK across ALL files
+            # Sample random files from ALL jobs (not just active ones) to catch empty files
             empty_file_check = await self._spot_check_for_empty_files(
                 wallet, s3_auth_url, miner_hotkey, all_files
             )
             if empty_file_check.get('empty_file_detected'):
                 bt.logging.error(
-                    f"{miner_hotkey}: EXPLOIT DETECTED - Empty file found in spot-check: "
+                    f"{miner_hotkey}: Empty file found in spot-check: "
                     f"{empty_file_check.get('empty_file_key')}"
                 )
                 return self._create_failed_result(
-                    f"Empty file detected in spot-check (0 rows): {empty_file_check.get('empty_file_key')}",
+                    f"Empty file detected (0 rows): {empty_file_check.get('empty_file_key')}",
                     empty_file_detected=True
                 )
 
@@ -568,10 +568,10 @@ class S3Validator:
         self, wallet, s3_auth_url: str, miner_hotkey: str, all_files: List[Dict]
     ) -> Dict:
         """
-        EXPLOIT DETECTION: Sample random files from ALL jobs to detect empty files.
+        Sample random files from ALL jobs to detect empty files.
 
         This check runs BEFORE filtering to active jobs, so it catches empty files
-        that exploiters hide in inactive/obsolete jobs.
+        in inactive/obsolete jobs as well.
 
         Samples 10 random files from across ALL jobs (not just active ones).
         """
@@ -612,19 +612,19 @@ class S3Validator:
                 # Check for empty files (0 rows)
                 if len(df) == 0:
                     bt.logging.error(
-                        f"{miner_hotkey}: EMPTY FILE EXPLOIT DETECTED in spot-check: {file_key}"
+                        f"{miner_hotkey}: Empty file detected in spot-check: {file_key}"
                     )
                     return {
                         'empty_file_detected': True,
                         'empty_file_key': file_key
                     }
 
-                # Also check for files with only placeholder columns (another exploit variant)
+                # Also check for files with only placeholder columns
                 if len(df.columns) > 0:
                     placeholder_cols = [c for c in df.columns if 'placeholder' in c.lower() or 'empty' in c.lower()]
                     if len(placeholder_cols) == len(df.columns):
                         bt.logging.error(
-                            f"{miner_hotkey}: PLACEHOLDER FILE EXPLOIT DETECTED: {file_key} "
+                            f"{miner_hotkey}: Placeholder file detected: {file_key} "
                             f"(columns: {list(df.columns)[:5]})"
                         )
                         return {

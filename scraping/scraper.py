@@ -65,7 +65,7 @@ class S3ValidationResult(StrictBaseModel):
         default=""
     )
     empty_file_detected: bool = Field(
-        description="Whether an empty file (0 rows) exploit was detected.",
+        description="Whether an empty file (0 rows) was detected.",
         default=False
     )
     empty_file_key: str = Field(

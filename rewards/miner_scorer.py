@@ -118,7 +118,7 @@ class MinerScorer:
             self.ondemand_boosts[uid] = 0.0
 
             bt.logging.error(
-                f"EMPTY FILE EXPLOIT - UID {uid} ({hotkey}): All scores zeroed. "
+                f"EMPTY FILE DETECTED - UID {uid} ({hotkey}): All scores zeroed. "
                 f"Reason: {empty_file_reason}"
             )
 
