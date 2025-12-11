@@ -25,7 +25,10 @@ class MinerScorer:
     _CREDIBILITY_EXP = 2.5
 
     ONDEMAND_MAX_CRED_PENALTY = 0.0075   # 0.75%
-    ONDEMAND_BASE_REWARD = 200_000_000  # 200M 
+    ONDEMAND_BASE_REWARD = 200_000_000  # 200M
+
+    # Blacklisted coldkeys - all miners under these coldkeys get zero score
+    BLACKLISTED_COLDKEYS: set = set()
 
     def __init__(
         self,
@@ -106,6 +109,52 @@ class MinerScorer:
             self.s3_boosts[uid] = 0.0
             self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
             self.ondemand_boosts[uid] = 0.0
+
+    def blacklist_coldkey(self, coldkey: str, reason: str) -> None:
+        """Add a coldkey to the blacklist. All miners under this coldkey get zero score."""
+        MinerScorer.BLACKLISTED_COLDKEYS.add(coldkey)
+        bt.logging.error(f"COLDKEY BLACKLISTED: {coldkey} - Reason: {reason}")
+
+    def is_coldkey_blacklisted(self, coldkey: str) -> bool:
+        """Check if a coldkey is blacklisted."""
+        return coldkey in MinerScorer.BLACKLISTED_COLDKEYS
+
+    def zero_all_uids_for_coldkey(self, coldkey: str, metagraph, reason: str) -> List[int]:
+        """Zero scores for ALL UIDs belonging to a coldkey.
+
+        Returns list of UIDs that were zeroed.
+        """
+        zeroed_uids = []
+        with self.lock:
+            for uid in range(len(metagraph.coldkeys)):
+                if metagraph.coldkeys[uid] == coldkey:
+                    self.scores[uid] = 0.0
+                    self.miner_credibility[uid] = 0.0
+                    self.s3_boosts[uid] = 0.0
+                    self.s3_credibility[uid] = 0.0
+                    self.ondemand_boosts[uid] = 0.0
+                    zeroed_uids.append(uid)
+
+            if zeroed_uids:
+                bt.logging.error(
+                    f"ZEROED {len(zeroed_uids)} UIDs for coldkey {coldkey}: {zeroed_uids}. Reason: {reason}"
+                )
+        return zeroed_uids
+
+    def apply_empty_file_penalty(self, uid: int, coldkey: str, metagraph, empty_file_key: str) -> None:
+        """Blacklist coldkey and zero ALL miners under it for empty file exploit."""
+        reason = f"Empty file exploit detected: {empty_file_key}"
+
+        # Blacklist the coldkey
+        self.blacklist_coldkey(coldkey, reason)
+
+        # Zero all UIDs under this coldkey
+        zeroed_uids = self.zero_all_uids_for_coldkey(coldkey, metagraph, reason)
+
+        bt.logging.error(
+            f"EMPTY FILE EXPLOIT: Coldkey {coldkey} blacklisted. "
+            f"Zeroed {len(zeroed_uids)} miners: {zeroed_uids}"
+        )
 
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""

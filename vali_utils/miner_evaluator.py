@@ -100,9 +100,19 @@ class MinerEvaluator:
 
         axon_info = None
         hotkey = None
+        coldkey = None
         with self.lock:
             axon_info = self.metagraph.axons[uid]
             hotkey = self.metagraph.hotkeys[uid]
+            coldkey = self.metagraph.coldkeys[uid]
+
+        # Check if coldkey is blacklisted - zero score immediately
+        if self.scorer.is_coldkey_blacklisted(coldkey):
+            bt.logging.warning(
+                f"UID:{uid} - HOTKEY:{hotkey}: Coldkey {coldkey} is BLACKLISTED. Zeroing score."
+            )
+            self.scorer.zero_all_uids_for_coldkey(coldkey, self.metagraph, "Blacklisted coldkey")
+            return
 
         bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Evaluating miner.")
 
@@ -258,6 +268,16 @@ class MinerEvaluator:
         metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
+            # Check for empty file exploit - blacklist entire coldkey
+            if s3_validation_result.empty_file_detected:
+                coldkey = self.metagraph.coldkeys[uid]
+                bt.logging.error(
+                    f"UID:{uid} - HOTKEY:{hotkey}: EMPTY FILE EXPLOIT DETECTED. "
+                    f"Blacklisting coldkey {coldkey} and zeroing all associated miners."
+                )
+                self.scorer.apply_empty_file_penalty(uid, coldkey, self.metagraph, s3_validation_result.reason)
+                return
+
             job_match_failure = (s3_validation_result.quality_metrics.get('job_match_rate', 0) < 100)
             if s3_validation_result.is_valid:
                 job_match_info = ""
