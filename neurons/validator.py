@@ -216,7 +216,10 @@ class Validator:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
         self.organic_processor = OrganicQueryProcessor(
-            wallet=self.wallet, metagraph=self.metagraph, evaluator=self.evaluator
+            wallet=self.wallet,
+            metagraph_syncer=self.metagraph_syncer,
+            netuid=self.config.netuid,
+            evaluator=self.evaluator
         )
 
         self.data_universe_api_base_url = (
