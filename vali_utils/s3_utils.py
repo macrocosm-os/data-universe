@@ -45,6 +45,9 @@ class S3ValidationResult:
     # Enhanced validation fields (optional, for backward compatibility)
     enhanced_validation: Optional['S3ValidationResultDetailed'] = None
 
+    # Empty file detection
+    empty_file_detected: bool = False
+
 
 @dataclass
 class S3ValidationResultDetailed:
@@ -81,6 +84,9 @@ class S3ValidationResultDetailed:
     sample_duplicate_uris: List[str]
     sample_validation_results: List[str]
     sample_job_mismatches: List[str]
+
+    # Empty file detection
+    empty_file_detected: bool = False
 
 
 # Mapping of scrapers to use based on the data source to validate
@@ -229,6 +235,21 @@ class S3Validator:
                 f"{len(all_job_ids)} total for {miner_hotkey}"
             )
 
+            # Step 2.5: EMPTY FILE SPOT-CHECK across ALL files
+            # Sample random files from ALL jobs (not just active ones) to catch empty files
+            empty_file_check = await self._spot_check_for_empty_files(
+                wallet, s3_auth_url, miner_hotkey, all_files
+            )
+            if empty_file_check.get('empty_file_detected'):
+                bt.logging.error(
+                    f"{miner_hotkey}: Empty file found in spot-check: "
+                    f"{empty_file_check.get('empty_file_key')}"
+                )
+                return self._create_failed_result(
+                    f"Empty file detected (0 rows): {empty_file_check.get('empty_file_key')}",
+                    empty_file_detected=True
+                )
+
             # Step 3: Analyze recent data
             recent_data_analysis = await self._analyze_recent_data(
                 wallet, s3_auth_url, miner_hotkey, active_job_ids, all_files
@@ -253,6 +274,13 @@ class S3Validator:
                 wallet, s3_auth_url, miner_hotkey, recent_data_analysis['recent_job_files']
             )
 
+            # Check for empty files - immediate failure
+            if duplicate_analysis.get('empty_file_detected'):
+                return self._create_failed_result(
+                    "Empty file detected (0 rows)",
+                    empty_file_detected=True
+                )
+
             # Check for filename count mismatches (enforced after FILENAME_FORMAT_REQUIRED_DATE)
             now = dt.datetime.now(dt.timezone.utc)
             if now >= FILENAME_FORMAT_REQUIRED_DATE and 'count_mismatches' in duplicate_analysis:
@@ -269,11 +297,25 @@ class S3Validator:
                 recent_data_analysis['recent_job_files'], expected_jobs
             )
 
+            # Check for empty files - immediate failure
+            if job_match_analysis.get('empty_file_detected'):
+                return self._create_failed_result(
+                    "Empty file detected (0 rows)",
+                    empty_file_detected=True
+                )
+
             # Step 6: Perform scraper validation
             scraper_validation = await self._perform_scraper_validation(
                 wallet, s3_auth_url, miner_hotkey,
                 recent_data_analysis['recent_job_files'], expected_jobs
             )
+
+            # Check for empty files - immediate failure
+            if scraper_validation.get('empty_file_detected'):
+                return self._create_failed_result(
+                    "Empty file detected (0 rows)",
+                    empty_file_detected=True
+                )
 
             # Step 7: Calculate job completion rate for reward scaling
             num_expected_jobs = len(expected_jobs)
@@ -522,6 +564,93 @@ class S3Validator:
             'recent_job_files': recent_job_files  # Sampled jobs for validation only
         }
 
+    async def _spot_check_for_empty_files(
+        self, wallet, s3_auth_url: str, miner_hotkey: str, all_files: List[Dict]
+    ) -> Dict:
+        """
+        Sample random files from ALL jobs to detect empty files.
+
+        This check runs BEFORE filtering to active jobs, so it catches empty files
+        in inactive/obsolete jobs as well.
+
+        Samples 10 random files from across ALL jobs (not just active ones).
+        Files larger than 1GB are skipped to prevent memory issues.
+        """
+        if not all_files:
+            return {'empty_file_detected': False}
+
+        # Filter out files larger than 1GB to prevent memory issues
+        max_file_size = 1 * 1024 * 1024 * 1024  # 1GB
+        eligible_files = [f for f in all_files if f.get('size', 0) <= max_file_size]
+
+        if not eligible_files:
+            bt.logging.warning(f"{miner_hotkey}: No files under 1GB for empty file spot-check")
+            return {'empty_file_detected': False}
+
+        # Sample 10 random files from eligible files (regardless of job status)
+        sample_size = min(10, len(eligible_files))
+        sampled_files = random.sample(eligible_files, sample_size)
+
+        file_keys = [f['key'] for f in sampled_files]
+
+        bt.logging.info(
+            f"{miner_hotkey}: Empty file spot-check: sampling {sample_size} files "
+            f"from {len(eligible_files)} eligible files ({len(all_files)} total, excluding >1GB)"
+        )
+
+        # Get presigned URLs for sampled files
+        file_urls = await self._get_file_presigned_urls(
+            wallet, s3_auth_url, miner_hotkey, file_keys
+        )
+
+        if not file_urls:
+            bt.logging.warning(f"{miner_hotkey}: Could not get presigned URLs for spot-check")
+            return {'empty_file_detected': False}
+
+        # Check each file for empty content
+        files_checked = 0
+        for file_key, file_info in file_urls.items():
+            try:
+                presigned_url = file_info.get('presigned_url')
+                if not presigned_url:
+                    continue
+
+                df = pd.read_parquet(presigned_url)
+                files_checked += 1
+
+                # Check for empty files (0 rows)
+                if len(df) == 0:
+                    bt.logging.error(
+                        f"{miner_hotkey}: Empty file detected in spot-check: {file_key}"
+                    )
+                    return {
+                        'empty_file_detected': True,
+                        'empty_file_key': file_key
+                    }
+
+                # Also check for files with only placeholder columns
+                if len(df.columns) > 0:
+                    placeholder_cols = [c for c in df.columns if 'placeholder' in c.lower() or 'empty' in c.lower()]
+                    if len(placeholder_cols) == len(df.columns):
+                        bt.logging.error(
+                            f"{miner_hotkey}: Placeholder file detected: {file_key} "
+                            f"(columns: {list(df.columns)[:5]})"
+                        )
+                        return {
+                            'empty_file_detected': True,
+                            'empty_file_key': file_key
+                        }
+
+            except Exception as e:
+                bt.logging.debug(f"Error in spot-check for {file_key}: {str(e)}")
+                continue
+
+        bt.logging.info(
+            f"{miner_hotkey}: Empty file spot-check PASSED - checked {files_checked} files, no empty files found"
+        )
+
+        return {'empty_file_detected': False}
+
     async def _check_for_duplicates(
         self, wallet, s3_auth_url: str, miner_hotkey: str, recent_job_files: Dict
     ) -> Dict:
@@ -555,6 +684,20 @@ class S3Validator:
                         continue
 
                     df = pd.read_parquet(presigned_url)
+
+                    # Check for empty files (0 rows)
+                    if len(df) == 0:
+                        bt.logging.error(
+                            f"{miner_hotkey}: Empty file detected (0 rows): {file_key}"
+                        )
+                        return {
+                            'total_entities': 0,
+                            'duplicate_entities': 0,
+                            'duplicate_percentage': 0,
+                            'sample_duplicates': [],
+                            'empty_file_detected': True,
+                            'empty_file_key': file_key
+                        }
 
                     # Validate filename record count matches actual
                     claimed_count = extract_count_from_filename(file_key)
@@ -667,6 +810,20 @@ class S3Validator:
                         continue
 
                     df = pd.read_parquet(presigned_url)
+
+                    # Check for empty files (0 rows)
+                    if len(df) == 0:
+                        bt.logging.error(
+                            f"{miner_hotkey}: Empty file detected (0 rows): {file_key}"
+                        )
+                        return {
+                            'total_checked': 0,
+                            'total_matched': 0,
+                            'match_rate': 0,
+                            'mismatch_samples': [],
+                            'empty_file_detected': True,
+                            'empty_file_key': file_key
+                        }
 
                     # Sample rows to check (up to 10 per file)
                     sample_size = min(10, len(df))
@@ -877,6 +1034,20 @@ class S3Validator:
                             presigned_url = file_info.get('presigned_url')
                             if presigned_url:
                                 df = pd.read_parquet(presigned_url)
+
+                                # Check for empty files (0 rows)
+                                if len(df) == 0:
+                                    bt.logging.error(
+                                        f"{miner_hotkey}: Empty file detected (0 rows): {file_key}"
+                                    )
+                                    return {
+                                        'entities_validated': 0,
+                                        'entities_passed': 0,
+                                        'success_rate': 0,
+                                        'sample_results': [],
+                                        'empty_file_detected': True,
+                                        'empty_file_key': file_key
+                                    }
 
                                 # Sample rows from this file
                                 sample_size = min(3, len(df))
@@ -1120,7 +1291,7 @@ class S3Validator:
                 content_size_bytes_validated=0
             ) for _ in entities]
     
-    def _create_failed_result(self, reason: str) -> S3ValidationResultDetailed:
+    def _create_failed_result(self, reason: str, empty_file_detected: bool = False) -> S3ValidationResultDetailed:
         """Create a failed validation result"""
         return S3ValidationResultDetailed(
             is_valid=False,
@@ -1142,7 +1313,8 @@ class S3Validator:
             reason=reason,
             sample_duplicate_uris=[],
             sample_validation_results=[],
-            sample_job_mismatches=[]
+            sample_job_mismatches=[],
+            empty_file_detected=empty_file_detected
         )
     
     # Additional helper methods
@@ -1592,7 +1764,8 @@ async def validate_s3_miner_data(
                 },
                 issues=enhanced_result.validation_issues,
                 reason=enhanced_result.reason,
-                enhanced_validation=enhanced_result
+                enhanced_validation=enhanced_result,
+                empty_file_detected=enhanced_result.empty_file_detected
             )
             
         except Exception as e:

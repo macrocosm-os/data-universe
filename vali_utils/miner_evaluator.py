@@ -258,6 +258,14 @@ class MinerEvaluator:
         metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
+            # Check for empty file - penalize the miner
+            if s3_validation_result.empty_file_detected:
+                bt.logging.info(
+                    f"UID:{uid} - HOTKEY:{hotkey}: Empty file detected. Penalizing miner."
+                )
+                self.scorer.penalize_empty_file(uid, hotkey, s3_validation_result.reason)
+                return
+
             job_match_failure = (s3_validation_result.quality_metrics.get('job_match_rate', 0) < 100)
             if s3_validation_result.is_valid:
                 job_match_info = ""
