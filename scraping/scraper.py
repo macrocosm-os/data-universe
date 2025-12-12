@@ -64,6 +64,14 @@ class S3ValidationResult(StrictBaseModel):
         description="An optional reason for the validation result.",
         default=""
     )
+    empty_file_detected: bool = Field(
+        description="Whether an empty file (0 rows) was detected.",
+        default=False
+    )
+    empty_file_key: str = Field(
+        description="The S3 key of the empty file if detected.",
+        default=""
+    )
 
 
 class ScrapeConfig(StrictBaseModel):

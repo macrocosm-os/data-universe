@@ -2,6 +2,7 @@ import random
 import json
 import asyncio
 import statistics
+import math
 from typing import Dict, List, Tuple, Optional
 import bittensor as bt
 from common.data import DataSource, DataLabel, DataEntity
@@ -1004,28 +1005,22 @@ class OrganicQueryProcessor:
         Returns:
             (speed_multiplier, volume_multiplier)
         """
-        # Calculate speed multiplier
+        # Calculate speed multiplier using exponential decay
+        # This heavily rewards fast responses and penalizes slow ones
         if submission_timestamp is None or job_created_at is None:
             bt.logging.warning("Missing timestamp data for reward calculation, using default speed=0.5")
             speed_multiplier = 0.5
         else:
             upload_time_seconds = (submission_timestamp - job_created_at).total_seconds()
-            upload_time_minutes = upload_time_seconds / 60.0
 
-            # Speed window matches job expiry (2 minutes for all request types)
-            speed_window_minutes = 2.0
-
-            if upload_time_minutes <= speed_window_minutes:
-                # Linear scale: 1.0 at 0 min → 0.1 at window end
-                speed_multiplier = max(0.1, 1.0 - (upload_time_minutes / speed_window_minutes))
-            else:
-                # Floor at 0.1
-                speed_multiplier = 0.1
+            # Exponential decay: e^(-k * t)
+            # k = 0.05 means: ~0.6 at 10s, ~0.37 at 20s, ~0.22 at 30s, ~0.05 at 60s
+            decay_rate = 0.05
+            speed_multiplier = max(0.1, math.exp(-decay_rate * upload_time_seconds))
 
             bt.logging.trace(
-                f"Upload time: {upload_time_minutes:.2f} minutes "
-                f"({upload_time_seconds:.0f}s), window: {speed_window_minutes:.0f} min "
-                f"-> speed multiplier: {speed_multiplier:.3f}"
+                f"Upload time: {upload_time_seconds:.0f}s "
+                f"-> speed multiplier (exponential): {speed_multiplier:.3f}"
             )
 
         # Calculate volume multiplier
