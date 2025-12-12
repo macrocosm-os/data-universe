@@ -574,19 +574,28 @@ class S3Validator:
         in inactive/obsolete jobs as well.
 
         Samples 10 random files from across ALL jobs (not just active ones).
+        Files larger than 1GB are skipped to prevent memory issues.
         """
         if not all_files:
             return {'empty_file_detected': False}
 
-        # Sample 10 random files from ALL files (regardless of job status)
-        sample_size = min(10, len(all_files))
-        sampled_files = random.sample(all_files, sample_size)
+        # Filter out files larger than 1GB to prevent memory issues
+        max_file_size = 1 * 1024 * 1024 * 1024  # 1GB
+        eligible_files = [f for f in all_files if f.get('size', 0) <= max_file_size]
+
+        if not eligible_files:
+            bt.logging.warning(f"{miner_hotkey}: No files under 1GB for empty file spot-check")
+            return {'empty_file_detected': False}
+
+        # Sample 10 random files from eligible files (regardless of job status)
+        sample_size = min(10, len(eligible_files))
+        sampled_files = random.sample(eligible_files, sample_size)
 
         file_keys = [f['key'] for f in sampled_files]
 
         bt.logging.info(
             f"{miner_hotkey}: Empty file spot-check: sampling {sample_size} files "
-            f"from {len(all_files)} total files (across ALL jobs)"
+            f"from {len(eligible_files)} eligible files ({len(all_files)} total, excluding >1GB)"
         )
 
         # Get presigned URLs for sampled files

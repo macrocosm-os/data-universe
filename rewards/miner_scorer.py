@@ -108,17 +108,26 @@ class MinerScorer:
             self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
             self.ondemand_boosts[uid] = 0.0
 
-    def zero_score_for_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
-        """Zero all scores for a hotkey that uploaded empty files."""
+    def penalize_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
+        """
+        Penalize a miner for uploading empty files.
+
+        Sets S3 boost and S3 credibility to zero.
+        Also decreases regular miner credibility using EMA (same as regular validation failure).
+        """
         with self.lock:
-            self.scores[uid] = 0.0
-            self.miner_credibility[uid] = 0.0
+            # Set S3 boost and credibility to zero (no reward for empty files)
             self.s3_boosts[uid] = 0.0
             self.s3_credibility[uid] = 0.0
-            self.ondemand_boosts[uid] = 0.0
 
-            bt.logging.error(
-                f"EMPTY FILE DETECTED - UID {uid} ({hotkey}): All scores zeroed. "
+            # Decrease miner credibility using EMA with 0% validation score (same as regular validation failure)
+            old_cred = float(self.miner_credibility[uid])
+            self.miner_credibility[uid] = (1 - self.cred_alpha) * self.miner_credibility[uid]
+            new_cred = float(self.miner_credibility[uid])
+
+            bt.logging.info(
+                f"EMPTY FILE DETECTED - UID {uid} ({hotkey}): S3 boost and S3 credibility zeroed, "
+                f"miner credibility decreased {old_cred:.4f} -> {new_cred:.4f}. "
                 f"Reason: {empty_file_reason}"
             )
 
