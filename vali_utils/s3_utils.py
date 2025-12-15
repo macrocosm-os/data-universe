@@ -659,6 +659,7 @@ class S3Validator:
         duplicate_uris = []
         total_entities = 0
         duplicate_entities = 0
+        count_mismatches = []
 
         for job_id, job_data in recent_job_files.items():
             files = job_data['files']
@@ -712,9 +713,7 @@ class S3Validator:
                         now = dt.datetime.now(dt.timezone.utc)
                         if now >= FILENAME_FORMAT_REQUIRED_DATE:
                             # Track mismatch for final validation decision
-                            if 'count_mismatches' not in duplicate_analysis:
-                                duplicate_analysis['count_mismatches'] = []
-                            duplicate_analysis['count_mismatches'].append({
+                            count_mismatches.append({
                                 'claimed': claimed_count,
                                 'actual': actual_count
                             })
@@ -742,12 +741,15 @@ class S3Validator:
             if total_entities > 0 else 0
         )
 
-        return {
+        result = {
             'total_entities': total_entities,
             'duplicate_entities': duplicate_entities,
             'duplicate_percentage': duplicate_percentage,
             'sample_duplicates': duplicate_uris[:10]
         }
+        if count_mismatches:
+            result['count_mismatches'] = count_mismatches
+        return result
 
     def _parse_job_datetime(self, raw, miner_hotkey: str) -> Optional[dt.datetime]:
         """Parse job datetime from Gravity; treat null-ish values as no constraint."""
