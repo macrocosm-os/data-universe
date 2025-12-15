@@ -15,6 +15,7 @@ from common.data import DataEntity, DataSource
 
 class UserInfo(BaseModel):
     """User information for X posts."""
+
     # Required fields
     display_name: str
     followers_count: int
@@ -32,6 +33,7 @@ class UserInfo(BaseModel):
 
 class TweetInfo(BaseModel):
     """Tweet metadata for X posts."""
+
     # Required fields
     quote_count: int
     id: str
@@ -48,18 +50,20 @@ class TweetInfo(BaseModel):
     bookmark_count: int
     language: str
     in_reply_to_username: Optional[str] = None  # conditional field
-    quoted_tweet_id: Optional[str] = None       # conditional field
-    in_reply_to_user_id: Optional[str] = None   # conditional field
+    quoted_tweet_id: Optional[str] = None  # conditional field
+    in_reply_to_user_id: Optional[str] = None  # conditional field
 
 
 class MediaItem(BaseModel):
     """Media item for X posts."""
+
     url: str
     type: str
 
 
 class TranscriptSegment(BaseModel):
     """Transcript segment for YouTube videos."""
+
     text: str
     start: float
     end: float
@@ -67,7 +71,7 @@ class TranscriptSegment(BaseModel):
 
 class XOrganicOutput(BaseModel):
     """Output model for X (Twitter) content matching the example JSON structure."""
-    
+
     text: str
     datetime: str
     uri: str
@@ -76,14 +80,14 @@ class XOrganicOutput(BaseModel):
     content_size_bytes: int
     user: UserInfo
     label: Optional[str] = None
-    
+
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "XOrganicOutput":
         """Create XOrganicOutput from DataEntity"""
         from scraping.x.model import XContent
-        
+
         x_content = XContent.from_data_entity(data_entity)
-        
+
         # Create nested user and tweet structures
         user_info = UserInfo(
             username=x_content.username,
@@ -96,9 +100,9 @@ class XOrganicOutput(BaseModel):
             profile_image_url=x_content.profile_image_url,
             cover_picture_url=x_content.cover_picture_url,
             followers_count=int(x_content.user_followers_count or 0),
-            following_count=int(x_content.user_following_count or 0)
+            following_count=int(x_content.user_following_count or 0),
         )
-        
+
         tweet_info = TweetInfo(
             like_count=x_content.like_count,
             retweet_count=x_content.retweet_count,
@@ -114,9 +118,9 @@ class XOrganicOutput(BaseModel):
             id=x_content.tweet_id or "",
             is_reply=x_content.is_reply or False,
             is_quote=x_content.is_quote or False,
-            hashtags=x_content.tweet_hashtags or []
+            hashtags=x_content.tweet_hashtags or [],
         )
-        
+
         return cls(
             text=x_content.text or "",
             datetime=data_entity.datetime.isoformat() if data_entity.datetime else "",
@@ -125,13 +129,13 @@ class XOrganicOutput(BaseModel):
             tweet=tweet_info,
             content_size_bytes=int(data_entity.content_size_bytes or 0),
             user=user_info,
-            label=data_entity.label.value if data_entity.label else None
+            label=data_entity.label.value if data_entity.label else None,
         )
 
 
 class RedditOrganicOutput(BaseModel):
     """Output model for Reddit content matching Go RedditPost struct."""
-    
+
     uri: str
     datetime: str
     source: str
@@ -151,15 +155,15 @@ class RedditOrganicOutput(BaseModel):
     score: int
     upvote_ratio: float
     num_comments: int
-    
+
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "RedditOrganicOutput":
         """Create RedditOrganicOutput from DataEntity"""
         # Import here to avoid circular imports
         from scraping.reddit.model import RedditContent
-        
+
         reddit_content = RedditContent.from_data_entity(data_entity)
-        
+
         return cls(
             uri=data_entity.uri,
             datetime=data_entity.datetime.isoformat(),
@@ -185,7 +189,7 @@ class RedditOrganicOutput(BaseModel):
 
 class YouTubeOrganicOutput(BaseModel):
     """Output model for YouTube content matching Go YouTubePost struct."""
-    
+
     uri: str
     datetime: str
     source: str
@@ -205,26 +209,28 @@ class YouTubeOrganicOutput(BaseModel):
     like_count: Optional[int] = None
     description: Optional[str] = None
     subscriber_count: Optional[int] = None
-    
+
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "YouTubeOrganicOutput":
         """Create YouTubeOrganicOutput from DataEntity"""
         # Import here to avoid circular imports
         from scraping.youtube.model import YouTubeContent
-        
+
         youtube_content = YouTubeContent.from_data_entity(data_entity)
-        
+
         # Convert transcript data to TranscriptSegment objects
         transcript_segments = []
         if youtube_content.transcript:
             for segment_dict in youtube_content.transcript:
-                if isinstance(segment_dict, dict) and 'text' in segment_dict:
-                    transcript_segments.append(TranscriptSegment(
-                        text=segment_dict.get('text'),
-                        start=float(segment_dict.get('start')),
-                        end=float(segment_dict.get('end'))
-                    ))
-        
+                if isinstance(segment_dict, dict) and "text" in segment_dict:
+                    transcript_segments.append(
+                        TranscriptSegment(
+                            text=segment_dict.get("text"),
+                            start=float(segment_dict.get("start")),
+                            end=float(segment_dict.get("end")),
+                        )
+                    )
+
         return cls(
             uri=data_entity.uri or "",
             datetime=data_entity.datetime.isoformat(),
@@ -240,7 +246,8 @@ class YouTubeOrganicOutput(BaseModel):
             duration_seconds=youtube_content.duration_seconds,
             language=youtube_content.language,
             # New required fields
-            thumbnails=youtube_content.thumbnails or "", #TODO: remove fallback values after YT fields are required on YouTubeContent
+            thumbnails=youtube_content.thumbnails
+            or "",  # TODO: remove fallback values after YT fields are required on YouTubeContent
             view_count=youtube_content.view_count or 0,
             # Conditional fields
             like_count=youtube_content.like_count,
@@ -255,10 +262,10 @@ OrganicOutput = Union[XOrganicOutput, RedditOrganicOutput, YouTubeOrganicOutput]
 def create_organic_output_dict(data_entity: DataEntity) -> Dict:
     """
     Create output dictionary using source-specific Pydantic models.
-    
+
     Args:
         data_entity: DataEntity to convert to output format
-        
+
     Returns:
         Dictionary representation of the appropriate output model
     """
@@ -273,17 +280,19 @@ def create_organic_output_dict(data_entity: DataEntity) -> Dict:
         else:
             raise ValueError(f"Unknown source: {source}")
     except:
-        bt.logging.exception(f"Failed to parse data entity into organic output, data_entity:\n\n{data_entity}")
+        bt.logging.exception(
+            f"Failed to parse data entity into organic output, data_entity:\n\n{data_entity}"
+        )
 
 
 def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
     """
     Validate that a DataEntity has all required metadata fields for its output model.
     Uses the Pydantic output models to determine required fields automatically.
-    
+
     Args:
         data_entity: DataEntity to validate
-        
+
     Returns:
         Tuple of (is_valid, missing_fields) where:
         - is_valid: True if all required fields are present
@@ -291,7 +300,7 @@ def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[
     """
     try:
         source = DataSource(data_entity.source).name.upper()
-        
+
         if source == "X":
             return _validate_x_metadata_completeness(data_entity)
         elif source == "REDDIT":
@@ -301,146 +310,161 @@ def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[
         else:
             bt.logging.warning(f"Unknown source for metadata validation: {source}")
             return False, [f"Unknown source: {source}"]
-            
+
     except Exception as e:
         bt.logging.error(f"Error validating metadata completeness: {str(e)}")
         return False, [f"Validation error: {str(e)}"]
 
 
-def _validate_x_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+def _validate_x_metadata_completeness(
+    data_entity: DataEntity,
+) -> tuple[bool, List[str]]:
     """Validate X content metadata completeness using XOrganicOutput model."""
     try:
         from scraping.x.model import XContent
+
         x_content = XContent.from_data_entity(data_entity)
         missing_fields = []
-        
+
         # Core XOrganicOutput fields
         core_base_required_fields = [
-            ('text', x_content.text),
+            ("text", x_content.text),
         ]
-        
+
         # UserInfo fields
         user_required_fields = [
-            ('display_name', x_content.user_display_name),
-            ('followers_count', x_content.user_followers_count),
-            ('verified', x_content.user_verified),
-            ('id', x_content.user_id),
-            ('following_count', x_content.user_following_count),
-            ('username', x_content.username),
-            ('user_blue_verified', x_content.user_blue_verified),
+            ("display_name", x_content.user_display_name),
+            ("followers_count", x_content.user_followers_count),
+            ("verified", x_content.user_verified),
+            ("id", x_content.user_id),
+            ("following_count", x_content.user_following_count),
+            ("username", x_content.username),
+            ("user_blue_verified", x_content.user_blue_verified),
         ]
-        
+
         # TweetInfo fields
         tweet_required_fields = [
-            ('quote_count', x_content.quote_count),
-            ('id', x_content.tweet_id),
-            ('retweet_count', x_content.retweet_count),
-            ('like_count', x_content.like_count),
-            ('is_reply', x_content.is_reply),
-            ('hashtags', x_content.tweet_hashtags),
-            ('conversation_id', x_content.conversation_id),
-            ('is_quote', x_content.is_quote),
-            ('reply_count', x_content.reply_count),
-            ('is_retweet', getattr(x_content, 'is_retweet', False)),
-            ('view_count', x_content.view_count),
-            ('bookmark_count', x_content.bookmark_count),
-            ('language', x_content.language),
+            ("quote_count", x_content.quote_count),
+            ("id", x_content.tweet_id),
+            ("retweet_count", x_content.retweet_count),
+            ("like_count", x_content.like_count),
+            ("is_reply", x_content.is_reply),
+            ("hashtags", x_content.tweet_hashtags),
+            ("conversation_id", x_content.conversation_id),
+            ("is_quote", x_content.is_quote),
+            ("reply_count", x_content.reply_count),
+            ("is_retweet", getattr(x_content, "is_retweet", False)),
+            ("view_count", x_content.view_count),
+            ("bookmark_count", x_content.bookmark_count),
+            ("language", x_content.language),
         ]
-        
+
         # Check core base required fields
         for field_name, field_value in core_base_required_fields:
             if field_value is None:
                 missing_fields.append(field_name)
-        
+
         # Check user required fields
         for field_name, field_value in user_required_fields:
             if field_value is None:
                 missing_fields.append(f"user.{field_name}")
-        
+
         # Check tweet required fields
         for field_name, field_value in tweet_required_fields:
             if field_value is None:
                 missing_fields.append(f"tweet.{field_name}")
-        
+
         if missing_fields:
-            bt.logging.debug(f"X metadata validation failed. Missing fields: {missing_fields}")
+            bt.logging.debug(
+                f"X metadata validation failed. Missing fields: {missing_fields}"
+            )
             return False, missing_fields
-        
+
         return True, []
-        
+
     except Exception as e:
         bt.logging.error(f"Error validating X metadata: {str(e)}")
         return False, [f"X validation error: {str(e)}"]
 
 
-def _validate_reddit_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+def _validate_reddit_metadata_completeness(
+    data_entity: DataEntity,
+) -> tuple[bool, List[str]]:
     """Validate Reddit content metadata completeness using RedditOrganicOutput model."""
     try:
         from scraping.reddit.model import RedditContent
+
         reddit_content = RedditContent.from_data_entity(data_entity)
         missing_fields = []
-        
+
         # All required fields
         required_fields = [
-            ('id', reddit_content.id),
-            ('url', reddit_content.url),
-            ('username', reddit_content.username),
-            ('communityName', reddit_content.community),
-            ('body', reddit_content.body),
-            ('createdAt', reddit_content.created_at),
-            ('dataType', reddit_content.data_type),
-            ('is_nsfw', reddit_content.is_nsfw),
-            ('score', reddit_content.score),
-            ('upvote_ratio', reddit_content.upvote_ratio),
-            ('num_comments', reddit_content.num_comments),
+            ("id", reddit_content.id),
+            ("url", reddit_content.url),
+            ("username", reddit_content.username),
+            ("communityName", reddit_content.community),
+            ("body", reddit_content.body),
+            ("createdAt", reddit_content.created_at),
+            ("dataType", reddit_content.data_type),
+            ("is_nsfw", reddit_content.is_nsfw),
+            ("score", reddit_content.score),
+            ("upvote_ratio", reddit_content.upvote_ratio),
+            ("num_comments", reddit_content.num_comments),
         ]
-        
+
         # Check all required fields
         for field_name, field_value in required_fields:
             if field_value is None:
                 missing_fields.append(field_name)
-        
+
         if missing_fields:
-            bt.logging.debug(f"Reddit metadata validation failed. Missing fields: {missing_fields}")
+            bt.logging.debug(
+                f"Reddit metadata validation failed. Missing fields: {missing_fields}"
+            )
             return False, missing_fields
-        
+
         return True, []
-        
+
     except Exception as e:
         bt.logging.error(f"Error validating Reddit metadata: {str(e)}")
         return False, [f"Reddit validation error: {str(e)}"]
 
 
-def _validate_youtube_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+def _validate_youtube_metadata_completeness(
+    data_entity: DataEntity,
+) -> tuple[bool, List[str]]:
     """Validate YouTube content metadata completeness using YouTubeOrganicOutput model."""
     try:
         from scraping.youtube.model import YouTubeContent
+
         youtube_content = YouTubeContent.from_data_entity(data_entity)
         missing_fields = []
 
         required_fields = [
-            ('video_id', youtube_content.video_id),
-            ('title', youtube_content.title),
-            ('channel_name', youtube_content.channel_name),
-            ('upload_date', youtube_content.upload_date),
-            ('transcript', youtube_content.transcript),
-            ('url', youtube_content.url),
-            ('duration_seconds', youtube_content.duration_seconds),
-            ('language', youtube_content.language),
-            ('thumbnails', youtube_content.thumbnails),
-            ('view_count', youtube_content.view_count),
+            ("video_id", youtube_content.video_id),
+            ("title", youtube_content.title),
+            ("channel_name", youtube_content.channel_name),
+            ("upload_date", youtube_content.upload_date),
+            ("transcript", youtube_content.transcript),
+            ("url", youtube_content.url),
+            ("duration_seconds", youtube_content.duration_seconds),
+            ("language", youtube_content.language),
+            ("thumbnails", youtube_content.thumbnails),
+            ("view_count", youtube_content.view_count),
         ]
-        
+
         for field_name, field_value in required_fields:
             if field_value is None:
                 missing_fields.append(field_name)
-        
+
         if missing_fields:
-            bt.logging.debug(f"YouTube metadata validation failed. Missing fields: {missing_fields}")
+            bt.logging.debug(
+                f"YouTube metadata validation failed. Missing fields: {missing_fields}"
+            )
             return False, missing_fields
-        
+
         return True, []
-        
+
     except Exception as e:
         bt.logging.error(f"Error validating YouTube metadata: {str(e)}")
         return False, [f"YouTube validation error: {str(e)}"]
