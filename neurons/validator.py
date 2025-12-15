@@ -392,11 +392,14 @@ class Validator:
                     miner_data_counts = {}
                     miner_submission_metadata = {}
 
+                    # Get fresh metagraph from syncer for validation
+                    metagraph = self.metagraph_syncer.get_metagraph(self.config.netuid)
+
                     for sub in submissions_with_valid_downloads:
                         miner_hotkey = sub.miner_hotkey
                         try:
                             # Convert hotkey to UID
-                            uid = self.metagraph.hotkeys.index(miner_hotkey)
+                            uid = metagraph.hotkeys.index(miner_hotkey)
 
                             # Get uploaded data
                             miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][miner_hotkey]['data']
