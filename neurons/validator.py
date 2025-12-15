@@ -217,8 +217,7 @@ class Validator:
 
         self.organic_processor = OrganicQueryProcessor(
             wallet=self.wallet,
-            metagraph_syncer=self.metagraph_syncer,
-            netuid=self.config.netuid,
+            metagraph=self.metagraph,
             evaluator=self.evaluator
         )
 
@@ -394,27 +393,31 @@ class Validator:
 
                     for sub in submissions_with_valid_downloads:
                         miner_hotkey = sub.miner_hotkey
+
+                        # Convert hotkey to UID
                         try:
-                            # Convert hotkey to UID
                             uid = self.metagraph.hotkeys.index(miner_hotkey)
-
-                            # Get uploaded data
-                            miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][miner_hotkey]['data']
-                            miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
-
-                            # Store in format expected by validation methods
-                            miner_responses[uid] = miner_upload.data_entities
-                            miner_data_counts[uid] = len(miner_upload.data_entities)
-
-                            # Track submission metadata for reward calculation
-                            miner_submission_metadata[uid] = {
-                                'submitted_at': sub.submitted_at,
-                                'row_count': len(miner_upload.data_entities)
-                            }
-
                         except ValueError:
                             bt.logging.warning(f"Miner hotkey {miner_hotkey} not found in metagraph")
                             continue
+
+                        # Get and validate uploaded data
+                        try:
+                            miner_uploaded_raw_json = job_data_per_job_id_and_miner_hotkey[job.id][miner_hotkey]['data']
+                            miner_upload = OnDemandMinerUpload.model_validate(miner_uploaded_raw_json)
+                        except Exception as e:
+                            bt.logging.warning(f"Miner {miner_hotkey} (UID {uid}) data validation failed: {e}")
+                            continue
+
+                        # Store in format expected by validation methods
+                        miner_responses[uid] = miner_upload.data_entities
+                        miner_data_counts[uid] = len(miner_upload.data_entities)
+
+                        # Track submission metadata for reward calculation
+                        miner_submission_metadata[uid] = {
+                            'submitted_at': sub.submitted_at,
+                            'row_count': len(miner_upload.data_entities)
+                        }
 
                     # Step 1: Format validation (reuse from OrganicQueryProcessor)
                     for uid, data in miner_responses.items():

@@ -10,7 +10,6 @@ from common.protocol import OnDemandRequest
 from common.organic_protocol import OrganicRequest
 from common.constants import X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
 from common import constants, utils
-from common.metagraph_syncer import MetagraphSyncer
 from scraping.provider import ScraperProvider
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.x.model import XContent
@@ -30,12 +29,10 @@ class OrganicQueryProcessor:
 
     def __init__(self,
                  wallet: bt.wallet,
-                 metagraph_syncer: MetagraphSyncer,
-                 netuid: int,
+                 metagraph: bt.metagraph,
                  evaluator: MinerEvaluator):
         self.wallet = wallet
-        self.metagraph_syncer = metagraph_syncer
-        self.netuid = netuid
+        self.metagraph = metagraph
         self.evaluator = evaluator
 
         # constants
@@ -47,10 +44,10 @@ class OrganicQueryProcessor:
         self.VOLUME_VERIFICATION_RATE = 0.1    # 10% chance to perform volume verification rescrape
         self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
 
-    @property
-    def metagraph(self) -> bt.metagraph:
-        """Always get fresh metagraph from syncer."""
-        return self.metagraph_syncer.get_metagraph(self.netuid)
+    def update_metagraph(self, metagraph: bt.metagraph):
+        """Updates metagraph for the Organic Query Processor."""
+        bt.logging.info("Updating metagraph for OrganicQueryProcessor.")
+        self.metagraph = metagraph
 
 
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
