@@ -26,26 +26,25 @@ from vali_utils.metrics import ORGANIC_MINER_RESULTS
 
 class OrganicQueryProcessor:
     """Handles organic query processing, validation, and miner evaluation"""
-    
-    def __init__(self, 
+
+    def __init__(self,
                  wallet: bt.wallet,
-                 metagraph: bt.metagraph, 
+                 metagraph: bt.metagraph,
                  evaluator: MinerEvaluator):
         self.wallet = wallet
         self.metagraph = metagraph
         self.evaluator = evaluator
-        
+
         # constants
         self.NUM_MINERS_TO_QUERY = 5
         self.PER_MINER_VALIDATION_SAMPLE_SIZE = 2
         self.MIN_CONSENSUS = 0.3    # if consensus is <30% of request size, consensus penalties skipped
-        
+
         # Volume verification constants
         self.VOLUME_VERIFICATION_RATE = 0.1    # 10% chance to perform volume verification rescrape
         self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
-    
 
-    def update_metagraph(self, metagraph = bt.metagraph):
+    def update_metagraph(self, metagraph: bt.metagraph):
         """Updates metagraph for the Organic Query Processor."""
         bt.logging.info("Updating metagraph for OrganicQueryProcessor.")
         self.metagraph = metagraph
