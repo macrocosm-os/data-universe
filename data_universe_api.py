@@ -9,13 +9,14 @@ from hashlib import sha256
 from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, ConfigDict, Field
-from common.data import DataEntity
+from common.data import DataEntity, DataSource
 from substrateinterface.keypair import Keypair
 import httpx
 
 import bittensor as bt
 
 FIFTEEN_MB_BYTES = 15 * 1_000_000
+
 
 class OnDemandMinerUpload(BaseModel):
     data_entities: List[DataEntity]
@@ -26,7 +27,7 @@ class OnDemandMinerUpload(BaseModel):
         for each DataEntity object.
         """
 
-        base_dump = {} # super().model_dump(**kwargs)
+        base_dump = {}  # super().model_dump(**kwargs)
 
         base_dump["data_entities"] = [
             entity.to_json_dict() for entity in self.data_entities
@@ -38,7 +39,20 @@ class OnDemandMinerUpload(BaseModel):
 
     @classmethod
     def model_validate(cls, obj, **kwargs) -> "OnDemandMinerUpload":
-        return OnDemandMinerUpload(data_entities=[DataEntity.from_json_dict(entity_dict) for entity_dict in obj['data_entities']])
+        def _normalize_entity_dict(entity_dict: dict) -> dict:
+            """Convert string source to int before passing to DataEntity.from_json_dict"""
+            source = entity_dict.get("source")
+            if isinstance(source, str):
+                entity_dict = entity_dict.copy()
+                entity_dict["source"] = DataSource[source.upper()].value
+            return entity_dict
+
+        return OnDemandMinerUpload(
+            data_entities=[
+                DataEntity.from_json_dict(_normalize_entity_dict(entity_dict))
+                for entity_dict in obj["data_entities"]
+            ]
+        )
 
 
 class OnDemandJobPayloadX(BaseModel):
@@ -296,7 +310,9 @@ class DataUniverseApiClient:
         submit_resp = await self.miner_submit_job(submit_req)
         presigned = submit_resp.presigned_post_upload_data
         if not presigned or "url" not in presigned or "fields" not in presigned:
-            raise RuntimeError("Server did not return a valid presigned_post_upload_data (missing url/fields).")
+            raise RuntimeError(
+                "Server did not return a valid presigned_post_upload_data (missing url/fields)."
+            )
 
         # Build the multipart request:
         # - All fields from the signer must be included as regular form fields
@@ -314,15 +330,15 @@ class DataUniverseApiClient:
 
         # S3 presigned POST usually returns 204; some setups return 201/200
         if post_resp.status_code not in (204, 201, 200):
-            raise RuntimeError(f"Upload failed: {post_resp.status_code} {post_resp.text}")
+            raise RuntimeError(
+                f"Upload failed: {post_resp.status_code} {post_resp.text}"
+            )
 
         return submit_resp
-
 
     async def validator_list_jobs_with_submissions(
         self, req: ListJobsWithSubmissionsForValidationRequest
     ) -> ListJobsWithSubmissionForValidationResponse:
-
         if not self._signer:
             raise RuntimeError("validator_keypair was not provided.")
 
@@ -360,7 +376,13 @@ class DataUniverseApiClient:
             length = getattr(sub, "s3_content_length", None)
             url = getattr(sub, "s3_presigned_url", None)
 
-            def base(ok: bool, status: int = 0, error: str | None = None, data=None, url_out=None):
+            def base(
+                ok: bool,
+                status: int = 0,
+                error: str | None = None,
+                data=None,
+                url_out=None,
+            ):
                 return {
                     "job_id": job_id,
                     "miner_hotkey": miner_hotkey,
@@ -396,7 +418,7 @@ class DataUniverseApiClient:
                         except Exception:
                             data = json.loads(r.text)
                         return base(True, status=status, data=data, url_out=str(r.url))
-                    
+
                     body_snip = r.text[:500]
                     return base(False, status=status, error=body_snip)
                 except Exception as e:
@@ -415,6 +437,7 @@ class DataUniverseApiClient:
                 downloads.append(await coro)
 
         return validator_resp, downloads
+
 
 def _raise_for_status(resp: httpx.Response) -> None:
     if 200 <= resp.status_code < 300:
