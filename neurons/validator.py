@@ -217,8 +217,7 @@ class Validator:
 
         self.organic_processor = OrganicQueryProcessor(
             wallet=self.wallet,
-            metagraph_syncer=self.metagraph_syncer,
-            netuid=self.config.netuid,
+            metagraph=self.metagraph,
             evaluator=self.evaluator
         )
 
@@ -392,15 +391,12 @@ class Validator:
                     miner_data_counts = {}
                     miner_submission_metadata = {}
 
-                    # Get fresh metagraph from syncer for validation
-                    metagraph = self.metagraph_syncer.get_metagraph(self.config.netuid)
-
                     for sub in submissions_with_valid_downloads:
                         miner_hotkey = sub.miner_hotkey
 
                         # Convert hotkey to UID
                         try:
-                            uid = metagraph.hotkeys.index(miner_hotkey)
+                            uid = self.metagraph.hotkeys.index(miner_hotkey)
                         except ValueError:
                             bt.logging.warning(f"Miner hotkey {miner_hotkey} not found in metagraph")
                             continue
