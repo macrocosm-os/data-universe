@@ -349,15 +349,16 @@ class RedditJsonScraper(Scraper):
         """
         Fetch and parse a specific post or comment from its URL.
         """
-        # Normalize URL: strip trailing slash, remove .json if present, remove existing query params
-        clean_url = url.rstrip('/')
-        if clean_url.endswith('.json'):
-            clean_url = clean_url[:-5]
+        # Normalize URL: remove .json if present, remove existing query params
+        clean_url = url
+        if clean_url.rstrip('/').endswith('.json'):
+            clean_url = clean_url.rstrip('/')[:-5] + '/'
         if '?' in clean_url:
             clean_url = clean_url.split('?')[0]
 
         # Add .json and raw_json=1 parameter
         # raw_json=1 returns unescaped text (e.g., ">" instead of "&gt;") to match PRAW output
+        # Reddit accepts /.json format (e.g., /comments/abc/.json)
         json_url = f"{clean_url}.json?raw_json=1"
 
         try:
@@ -375,11 +376,15 @@ class RedditJsonScraper(Scraper):
                             return self._parse_post(children[0])
                 elif data_type == RedditDataType.COMMENT:
                     # For comments, we need to navigate to find the specific comment
-                    # data[1] contains the comments
+                    # data[0] contains the parent post, data[1] contains comments
                     if isinstance(data, list) and len(data) > 1:
+                        # Get parent post's NSFW status (comments inherit from parent)
+                        parent_post_data = data[0].get("data", {}).get("children", [{}])[0].get("data", {})
+                        parent_nsfw = parent_post_data.get("over_18", False)
+
                         children = data[1].get("data", {}).get("children", [])
                         if children:
-                            return self._parse_comment(children[0])
+                            return self._parse_comment(children[0], parent_nsfw=parent_nsfw)
 
         except Exception as e:
             bt.logging.error(f"Error fetching content from {url}: {e}")
@@ -436,9 +441,13 @@ class RedditJsonScraper(Scraper):
             bt.logging.trace(f"Failed to parse post: {e}")
             return None
 
-    def _parse_comment(self, comment_data: dict) -> Optional[RedditContent]:
+    def _parse_comment(self, comment_data: dict, parent_nsfw: bool = False) -> Optional[RedditContent]:
         """
         Parse a Reddit comment from JSON API response.
+
+        Args:
+            comment_data: The comment data from Reddit JSON API
+            parent_nsfw: NSFW status inherited from parent post (comments don't have their own over_18 field)
         """
         try:
             data = comment_data.get("data", {})
@@ -460,7 +469,7 @@ class RedditJsonScraper(Scraper):
                 title=None,
                 parentId=data.get("parent_id"),
                 media=None,
-                is_nsfw=data.get("over_18", False),
+                is_nsfw=parent_nsfw,  # Inherit NSFW from parent post
                 score=data.get("score"),
                 upvote_ratio=None,
                 num_comments=None,
