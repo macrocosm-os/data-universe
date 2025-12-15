@@ -24,7 +24,7 @@ class RedditJsonScraper(Scraper):
     This scraper accesses publicly available data through Reddit's .json endpoints.
     """
 
-    USER_AGENT = "data-universe-scraper/1.0 (Bittensor Subnet 13)"
+    USER_AGENT = "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko)"
     BASE_URL = "https://www.reddit.com"
 
     # Rate limiting settings
@@ -129,7 +129,9 @@ class RedditJsonScraper(Scraper):
         try:
             async with aiohttp.ClientSession(headers={"User-Agent": self.USER_AGENT}) as session:
                 # Fetch posts from the subreddit
-                url = f"{self.BASE_URL}/r/{subreddit_name}/{sort}.json?limit={limit}"
+                # IMPORTANT: raw_json=1 returns unescaped text (e.g., ">" instead of "&gt;")
+                # This matches PRAW output format for consistent validation with miners
+                url = f"{self.BASE_URL}/r/{subreddit_name}/{sort}.json?limit={limit}&raw_json=1"
                 posts = await self._fetch_posts(session, url)
 
                 for post_data in posts:
@@ -210,7 +212,8 @@ class RedditJsonScraper(Scraper):
                     for username in usernames:
                         try:
                             # Get user's posts
-                            posts_url = f"{self.BASE_URL}/user/{username}/submitted.json?limit={limit}"
+                            # raw_json=1 returns unescaped text to match PRAW output
+                            posts_url = f"{self.BASE_URL}/user/{username}/submitted.json?limit={limit}&raw_json=1"
                             posts = await self._fetch_posts(session, posts_url)
 
                             for post_data in posts:
@@ -219,7 +222,7 @@ class RedditJsonScraper(Scraper):
                                     contents.append(content)
 
                             # Get user's comments
-                            comments_url = f"{self.BASE_URL}/user/{username}/comments.json?limit={limit}"
+                            comments_url = f"{self.BASE_URL}/user/{username}/comments.json?limit={limit}&raw_json=1"
                             comments = await self._fetch_posts(session, comments_url)
 
                             for comment_data in comments:
@@ -235,16 +238,17 @@ class RedditJsonScraper(Scraper):
                     subreddit_name = subreddit.removeprefix("r/") if subreddit.startswith('r/') else subreddit
 
                     # If we have keywords, use Reddit's search functionality
+                    # raw_json=1 returns unescaped text to match PRAW output
                     if keywords:
                         if keyword_mode == "all":
                             search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
                         else:  # keyword_mode == "any"
                             search_query = ' OR '.join(f'"{keyword}"' for keyword in keywords)
 
-                        url = f"{self.BASE_URL}/r/{subreddit_name}/search.json?q={search_query}&restrict_sr=1&limit={limit}&sort=new"
+                        url = f"{self.BASE_URL}/r/{subreddit_name}/search.json?q={search_query}&restrict_sr=1&limit={limit}&sort=new&raw_json=1"
                     else:
                         # No keywords, just get recent posts
-                        url = f"{self.BASE_URL}/r/{subreddit_name}/new.json?limit={limit}"
+                        url = f"{self.BASE_URL}/r/{subreddit_name}/new.json?limit={limit}&raw_json=1"
 
                     posts = await self._fetch_posts(session, url)
 
@@ -345,7 +349,16 @@ class RedditJsonScraper(Scraper):
         """
         Fetch and parse a specific post or comment from its URL.
         """
-        json_url = url if url.endswith('.json') else f"{url}.json"
+        # Normalize URL: strip trailing slash, remove .json if present, remove existing query params
+        clean_url = url.rstrip('/')
+        if clean_url.endswith('.json'):
+            clean_url = clean_url[:-5]
+        if '?' in clean_url:
+            clean_url = clean_url.split('?')[0]
+
+        # Add .json and raw_json=1 parameter
+        # raw_json=1 returns unescaped text (e.g., ">" instead of "&gt;") to match PRAW output
+        json_url = f"{clean_url}.json?raw_json=1"
 
         try:
             async with session.get(json_url, timeout=self.REQUEST_TIMEOUT) as response:
