@@ -32,7 +32,7 @@ from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
 from dynamic_desirability.desirability_retrieval import sync_run_retrieval
 from neurons import __spec_version__ as spec_version
-from data_universe_api import (
+from common.api_client import (
     ListJobsWithSubmissionsForValidationRequest,
     DataUniverseApiClient,
     OnDemandMinerUpload,
