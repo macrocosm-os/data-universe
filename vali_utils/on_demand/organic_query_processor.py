@@ -1,3 +1,4 @@
+import copy
 import random
 import json
 import asyncio
@@ -38,6 +39,12 @@ class OrganicQueryProcessor:
         self.netuid = netuid
         self.evaluator = evaluator
 
+        # Initialize metagraph from syncer and register for updates
+        self.metagraph = self.metagraph_syncer.get_metagraph(self.netuid)
+        self.metagraph_syncer.register_listener(
+            self._on_metagraph_updated, netuids=[self.netuid]
+        )
+
         # constants
         self.NUM_MINERS_TO_QUERY = 5
         self.PER_MINER_VALIDATION_SAMPLE_SIZE = 2
@@ -47,10 +54,10 @@ class OrganicQueryProcessor:
         self.VOLUME_VERIFICATION_RATE = 0.1    # 10% chance to perform volume verification rescrape
         self.VOLUME_CONSENSUS_THRESHOLD = 0.8  # 80% of requested limit threshold
 
-    @property
-    def metagraph(self) -> bt.metagraph:
-        """Always get fresh metagraph from syncer."""
-        return self.metagraph_syncer.get_metagraph(self.netuid)
+    def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
+        """Handles an update to the metagraph."""
+        bt.logging.debug(f"OrganicQueryProcessor updating metagraph for netuid {netuid}")
+        self.metagraph = copy.deepcopy(metagraph)
 
 
     async def process_organic_query(self, synapse: OrganicRequest) -> OrganicRequest:
