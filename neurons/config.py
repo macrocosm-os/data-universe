@@ -105,14 +105,14 @@ def add_args(neuron_type: NeuronType, parser):
         "--vpermit_rao_limit",
         type=int,
         help="Set this flag to specify the minimum stake a validator needs to be recognized by a miner.",
-        default=10_000, #TODO: change based on feedback
+        default=10_000,
     )
 
     parser.add_argument(
         "--s3_auth_url",
         type=str,
         help="URL of the S3 authentication service",
-        default="https://sn13-data.api.macrocosmos.ai"
+        default="https://data-universe-api.api.macrocosmos.ai",
     )
 
     if neuron_type == NeuronType.VALIDATOR:
@@ -129,20 +129,22 @@ def add_args(neuron_type: NeuronType, parser):
             "--wandb.off",
             action="store_true",
             help="Set this flag to disable logging to wandb.",
-            default=False, # After July 15th 2025 we are moving away from wandb
+            default=False,
         )
 
         parser.add_argument(
             "--neuron.disable_set_weights",
             action="store_true",
-            help="Set this flag to disable setting the weights to network."
+            help="Set this flag to disable setting the weights to network.",
         )
 
         parser.add_argument(
             "--s3_results_path",
             action="store_true",
             help="Set this flag to select the location where you want to store your S3 validation data",
-            default=os.path.join(Path(os.path.dirname(__file__)).parent, "s3_validation.parquet"),
+            default=os.path.join(
+                Path(os.path.dirname(__file__)).parent, "s3_validation.parquet"
+            ),
         )
 
         parser.add_argument(
@@ -203,35 +205,35 @@ def add_args(neuron_type: NeuronType, parser):
             "--use_uploader",
             action="store_true",
             help="Set this flag to true to upload your data into S3 storage",
-            default=True
+            default=True,
         )
 
         parser.add_argument(
             "--gravity",
             action="store_true",
             help="Set this flag to true to retrieve updated desirabilities, stored in total.json",
-            default=False
+            default=False,
         )
 
         parser.add_argument(
             "--encoding_key_json_file",
             type=str,
             help="The location of the encoding keys JSON file to use",
-            default=encoding_default_file
+            default=encoding_default_file,
         )
 
         parser.add_argument(
             "--private_encoding_key_json_file",
             type=str,
             help="The location of the encoding keys JSON file to use",
-            default=private_encoding_default_file
+            default=private_encoding_default_file,
         )
 
         parser.add_argument(
             "--miner_upload_state_file",
             type=str,
             help="The location of the state uploading JSON file to use",
-            default=state_default_file
+            default=state_default_file,
         )
 
         parser.add_argument(
