@@ -361,8 +361,6 @@ class Validator:
                     f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
                 )
 
-                bt.logging.debug(f"job_data_per_job_id_and_miner_hotkey:\n\n {job_data_per_job_id_and_miner_hotkey}")
-
                 # validate
                 for (
                     job_with_submission
