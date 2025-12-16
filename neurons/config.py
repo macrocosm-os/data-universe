@@ -129,7 +129,7 @@ def add_args(neuron_type: NeuronType, parser):
             "--wandb.off",
             action="store_true",
             help="Set this flag to disable logging to wandb.",
-            default=False,  # After July 15th 2025 we are moving away from wandb
+            default=False,
         )
 
         parser.add_argument(
