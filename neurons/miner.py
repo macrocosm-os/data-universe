@@ -296,7 +296,6 @@ class Miner:
             loop.close()
             loop = None
 
-
     def run(self):
         """
         Initiates and manages the main loop for the miner.
@@ -373,9 +372,7 @@ class Miner:
         while not self.should_exit:
             try:
                 since = dt.datetime.now(dt.timezone.utc) - dt.timedelta(minutes=2)
-                bt.logging.info(
-                    f"Pulling latest active jobs"
-                )
+                bt.logging.info(f"Pulling latest active jobs")
 
                 async with self._on_demand_client() as client:
                     active_jobs_response = await client.miner_list_active_jobs(
@@ -387,7 +384,11 @@ class Miner:
                 continue
 
             try:
-                jobs_to_process = [job for job in active_jobs_response.jobs if job.id not in self.processed_job_ids_cache]
+                jobs_to_process = [
+                    job
+                    for job in active_jobs_response.jobs
+                    if job.id not in self.processed_job_ids_cache
+                ]
 
                 if len(jobs_to_process) > 0:
                     bt.logging.info(
@@ -415,12 +416,13 @@ class Miner:
             except Exception:
                 bt.logging.exception("Failed to get item from on_demand_job_queue")
                 continue
-            
+
             try:
                 # miner tune this on how fast you can process a job
                 process_on_demand_minimum_duration = dt.timedelta(seconds=5)
                 has_enough_time_to_process = (
-                    dt.datetime.now(dt.timezone.utc) + process_on_demand_minimum_duration
+                    dt.datetime.now(dt.timezone.utc)
+                    + process_on_demand_minimum_duration
                     >= job_request.expire_at
                 )
                 if has_enough_time_to_process:
@@ -428,7 +430,7 @@ class Miner:
                         f"Not enough time to process job that expires at {job_request.expire_at}"
                     )
                     continue
-                
+
                 task = self.scrape_on_demand_job(job_request=job_request)
                 asyncio.create_task(task)
                 # or
@@ -484,7 +486,9 @@ class Miner:
                         else None
                     ),
                     end_date=(
-                        job_request.end_date.isoformat() if job_request.end_date else None
+                        job_request.end_date.isoformat()
+                        if job_request.end_date
+                        else None
                     ),
                     keyword_mode=job_request.keyword_mode,
                     usernames=usernames if usernames is not None else [],
@@ -492,11 +496,13 @@ class Miner:
                     url=url,
                     data=[],
                 ),
-                reraise_instead_of_return_empty=True
+                reraise_instead_of_return_empty=True,
             )
 
             data = synapse_resp.data
-            bt.logging.debug(f"Scraped (through synapse) on demand data entities for job_id: {job_request.id}, payload:\n\n{data}")
+            bt.logging.debug(
+                f"Scraped (through synapse) on demand data entities for job_id: {job_request.id}, payload:\n\n{data}"
+            )
 
             miner_upload = OnDemandMinerUpload(data_entities=data)
             bt.logging.debug(f"\nprocessed data (DataContent form): {miner_upload}")
@@ -506,12 +512,15 @@ class Miner:
             )
             try:
                 async with self._on_demand_client() as client:
-                    await client.miner_submit_and_upload(job_id=job_request.id, data=miner_upload)
+                    await client.miner_submit_and_upload(
+                        job_id=job_request.id, data=miner_upload
+                    )
             except:
-                bt.logging.exception(f"Failed to submit and upload data for job with {job_request.id}")
+                bt.logging.exception(
+                    f"Failed to submit and upload data for job with {job_request.id}"
+                )
         except:
             bt.logging.exception("Failed to process scrape on demand job")
-        
 
     def run_in_background_thread(self):
         """
@@ -537,7 +546,9 @@ class Miner:
             )
             self.s3_partitioned_thread.start()
 
-            self.on_demand_thread = threading.Thread(target=self.run_on_demand, daemon=True)
+            self.on_demand_thread = threading.Thread(
+                target=self.run_on_demand, daemon=True
+            )
             self.on_demand_thread.start()
 
             self.is_running = True
@@ -677,12 +688,14 @@ class Miner:
     ) -> float:
         return self.default_priority(synapse)
 
-    async def loop_poll_on_demand_active_jobs(self, synapse: OnDemandRequest, reraise_instead_of_return_empty: bool = False) -> OnDemandRequest:
+    async def loop_poll_on_demand_active_jobs(
+        self, synapse: OnDemandRequest, reraise_instead_of_return_empty: bool = False
+    ) -> OnDemandRequest:
         """
         Handle on-demand data requests from validators.
         Uses enhanced scraper for X data while maintaining protocol compatibility.
         """
-        if hasattr(synapse, 'dendrite') and hasattr(synapse.dendrite, 'hotkey'):
+        if hasattr(synapse, "dendrite") and hasattr(synapse.dendrite, "hotkey"):
             bt.logging.info(f"Got on-demand request from {synapse.dendrite.hotkey}")
 
         try:
@@ -772,21 +785,24 @@ class Miner:
                         max_videos=synapse.limit or 10,
                         start_date=start_dt.isoformat(),
                         end_date=end_dt.isoformat(),
-                        language="en"
+                        language="en",
                     )
                 elif synapse.url:
                     # Video URL mode
                     bt.logging.info(f"YouTube video URL scraping: {synapse.url}")
                     data_entities = await scraper.scrape(
-                        youtube_url=synapse.url,
-                        language="en"
+                        youtube_url=synapse.url, language="en"
                     )
                 else:
-                    bt.logging.error("YouTube request needs either username (channel) or url (video URL)")
+                    bt.logging.error(
+                        "YouTube request needs either username (channel) or url (video URL)"
+                    )
                     synapse.data = []
                     return synapse
-                
-                synapse.data = data_entities[:synapse.limit] if synapse.limit else data_entities
+
+                synapse.data = (
+                    data_entities[: synapse.limit] if synapse.limit else data_entities
+                )
 
             synapse.version = constants.PROTOCOL_VERSION
 
@@ -802,7 +818,6 @@ class Miner:
                 raise
 
             synapse.data = []
-
 
         return synapse
 
@@ -831,7 +846,7 @@ class Miner:
         synapse.version = constants.PROTOCOL_VERSION
 
         bt.logging.success(
-            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(contents) for (_,contents) in synapse.bucket_ids_to_contents)} entities to {synapse.dendrite.hotkey}."
+            f"Returning Bucket IDs: {str(synapse.data_entity_bucket_ids)} with {sum(len(contents) for (_, contents) in synapse.bucket_ids_to_contents)} entities to {synapse.dendrite.hotkey}."
         )
 
         return synapse
