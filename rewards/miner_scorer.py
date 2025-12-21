@@ -56,6 +56,9 @@ class MinerScorer:
         self.ondemand_boosts = torch.zeros(num_neurons, dtype=torch.float32)
         self.ondemand_alpha = 0.3
 
+        # Keeps track of the last block at which S3 validation was performed for each miner (by UID)
+        self.s3_last_validation_block = torch.zeros(num_neurons, dtype=torch.int64)
+
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
         self.lock = threading.Lock()
@@ -71,6 +74,7 @@ class MinerScorer:
                     "s3_credibility": self.s3_credibility,
                     "scorable_bytes": self.scorable_bytes,
                     "ondemand_boosts": self.ondemand_boosts,
+                    "s3_last_validation_block": self.s3_last_validation_block,
                 },
                 filepath,
             )
@@ -86,6 +90,9 @@ class MinerScorer:
                 (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
             ))
             self.ondemand_boosts = state.get("ondemand_boosts", torch.zeros_like(self.scores))
+            self.s3_last_validation_block = state.get(
+                "s3_last_validation_block", torch.zeros(self.scores.size(0), dtype=torch.int64)
+            )
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -107,6 +114,7 @@ class MinerScorer:
             self.s3_boosts[uid] = 0.0
             self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
             self.ondemand_boosts[uid] = 0.0
+            self.s3_last_validation_block[uid] = 0
 
     def penalize_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
         """
@@ -135,6 +143,16 @@ class MinerScorer:
         """Returns the credibility of miner 'uid'."""
         with self.lock:
             return self.miner_credibility[uid].item()
+
+    def get_s3_last_validation_block(self, uid: int) -> int:
+        """Returns the last block at which S3 validation was performed for miner 'uid'."""
+        with self.lock:
+            return int(self.s3_last_validation_block[uid].item())
+
+    def set_s3_last_validation_block(self, uid: int, block: int) -> None:
+        """Sets the last block at which S3 validation was performed for miner 'uid'."""
+        with self.lock:
+            self.s3_last_validation_block[uid] = block
 
     def resize(self, num_neurons: int) -> None:
         """Resizes the score tensor to the new number of neurons.
@@ -183,6 +201,9 @@ class MinerScorer:
             )
             self.ondemand_boosts = torch.cat(
                 [self.ondemand_boosts, torch.zeros(to_add, dtype=torch.float32)]
+            )
+            self.s3_last_validation_block = torch.cat(
+                [self.s3_last_validation_block, torch.zeros(to_add, dtype=torch.int64)]
             )
 
     def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float, job_match_failure = False) -> None:
