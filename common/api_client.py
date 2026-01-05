@@ -18,6 +18,27 @@ import bittensor as bt
 FIFTEEN_MB_BYTES = 15 * 1_000_000
 
 
+class DynamicDesirabilityListEntry(BaseModel):
+    """A single entry in the Dynamic Desirability list."""
+
+    id: str
+    platform: str
+    weight: Optional[float] = 1.0
+    label: Optional[str] = None
+    keyword: Optional[str] = None
+    post_start_datetime: Optional[datetime] = None
+    post_end_datetime: Optional[datetime] = None
+    expires_at: Optional[datetime] = None
+
+
+class DynamicDesirabilityList(BaseModel):
+    """The aggregated Dynamic Desirability list from the API."""
+
+    version: str
+    generated_at: datetime
+    entries: List[DynamicDesirabilityListEntry]
+
+
 class OnDemandMinerUpload(BaseModel):
     data_entities: List[DataEntity]
 
@@ -437,6 +458,35 @@ class DataUniverseApiClient:
                 downloads.append(await coro)
 
         return validator_resp, downloads
+
+    async def _get_signed(self, path: str) -> httpx.Response:
+        """
+        Sends a signed GET request using Tao v2 auth headers.
+        Signs sha256 of empty body for consistency with server-side expectation.
+        """
+        if not self._signer:
+            raise RuntimeError("keypair was not provided.")
+        client = self._ensure_client()
+        headers = self._signer.headers(body=b"")
+        return await client.get(path, headers=headers)
+
+    async def validator_get_latest_dd_list(self) -> DynamicDesirabilityList:
+        """
+        GET /dynamic-desirability/validator/get-latest-list
+        Retrieves the latest Dynamic Desirability list for validators.
+        """
+        resp = await self._get_signed("/dynamic-desirability/validator/get-latest-list")
+        _raise_for_status(resp)
+        return DynamicDesirabilityList.model_validate_json(resp.text)
+
+    async def miner_get_latest_dd_list(self) -> DynamicDesirabilityList:
+        """
+        GET /dynamic-desirability/miner/get-latest-list
+        Retrieves the latest Dynamic Desirability list for miners.
+        """
+        resp = await self._get_signed("/dynamic-desirability/miner/get-latest-list")
+        _raise_for_status(resp)
+        return DynamicDesirabilityList.model_validate_json(resp.text)
 
 
 def _raise_for_status(resp: httpx.Response) -> None:

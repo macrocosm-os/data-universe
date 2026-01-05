@@ -30,7 +30,7 @@ import wandb
 import subprocess
 from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
-from dynamic_desirability.desirability_retrieval import sync_run_retrieval
+from dynamic_desirability.desirability_retrieval import run_retrieval_from_api
 from neurons import __spec_version__ as spec_version
 from common.api_client import (
     ListJobsWithSubmissionsForValidationRequest,
@@ -205,6 +205,16 @@ class Validator:
         # Load any state from previous runs.
         self.load_state()
 
+        self.data_universe_api_base_url = (
+            "https://data-universe-api-branch-main.api.macrocosmos.ai"
+            if "test" in self.config.subtensor.network
+            else "https://data-universe-api.api.macrocosmos.ai"
+        )
+        self.verify_ssl = "localhost" not in self.data_universe_api_base_url
+        bt.logging.info(
+            f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
+        )
+
         # Getting latest dynamic lookup
         self.get_updated_lookup()
 
@@ -217,16 +227,6 @@ class Validator:
 
         self.organic_processor = OrganicQueryProcessor(
             wallet=self.wallet, metagraph=self.metagraph, evaluator=self.evaluator
-        )
-
-        self.data_universe_api_base_url = (
-            "https://data-universe-api-branch-main.api.macrocosmos.ai"
-            if "test" in self.config.subtensor.network
-            else "https://data-universe-api.api.macrocosmos.ai"
-        )
-        self.verify_ssl = "localhost" not in self.data_universe_api_base_url
-        bt.logging.info(
-            f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
         )
 
         self.is_setup = True
@@ -242,8 +242,13 @@ class Validator:
     def get_updated_lookup(self):
         try:
             t_start = time.perf_counter()
-            bt.logging.info("Retrieving the latest dynamic lookup...")
-            model = sync_run_retrieval(self.config)
+            bt.logging.info("Retrieving the latest dynamic lookup from API...")
+
+            async def _fetch_dd_list():
+                async with self._on_demand_client() as client:
+                    return await run_retrieval_from_api(client, mode="validator")
+
+            model = asyncio.get_event_loop().run_until_complete(_fetch_dd_list())
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
