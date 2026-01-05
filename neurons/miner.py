@@ -50,7 +50,7 @@ from common.api_client import (
     OnDemandMinerUpload,
 )
 from upload_utils.s3_uploader import S3PartitionedUploader
-from dynamic_desirability.desirability_retrieval import sync_run_retrieval
+from dynamic_desirability.desirability_retrieval import run_retrieval_from_api
 
 from common.data import DataLabel, DataSource, DataEntity
 from common.protocol import OnDemandRequest
@@ -241,8 +241,13 @@ class Miner:
 
                 # Check if it's a new day and we haven't updated yet
                 if last_update is None or current_datetime.date() > last_update.date():
-                    bt.logging.info("Retrieving the latest dynamic lookup...")
-                    sync_run_retrieval(self.config)
+                    bt.logging.info("Retrieving the latest dynamic lookup from API...")
+
+                    async def _fetch_dd_list():
+                        async with self._on_demand_client() as client:
+                            return await run_retrieval_from_api(client, mode="miner")
+
+                    asyncio.run(_fetch_dd_list())
                     bt.logging.info(
                         f"New desirable data list has been written to total.json"
                     )
