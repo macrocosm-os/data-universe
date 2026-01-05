@@ -356,17 +356,30 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         return to_lookup(os.path.join(script_dir, DEFAULT_JSON_PATH))
 
 
-def _dd_list_to_jobs_json(dd_list: DynamicDesirabilityList) -> list:
-    """Convert DynamicDesirabilityList from API to the jobs JSON format used by to_lookup."""
+def _dd_list_to_jobs_json(dd_list: DynamicDesirabilityList, apply_floor: bool = True) -> list:
+    """Convert DynamicDesirabilityList from API to the jobs JSON format used by to_lookup.
+
+    Args:
+        dd_list: The DD list from the API
+        apply_floor: If True, applies MINIMUM_DD_SCALE floor to all weights (default: True)
+    """
     jobs = []
     for entry in dd_list.entries:
         # Convert datetime to string if present
         post_start = entry.post_start_datetime.isoformat() if entry.post_start_datetime else None
         post_end = entry.post_end_datetime.isoformat() if entry.post_end_datetime else None
 
+        # Get raw weight from API
+        weight = entry.weight or 1.0
+
+        # Apply floor weight to ensure minimum desirability score
+        # This matches the GitHub approach in calculate_total_weights()
+        if apply_floor and weight < MINIMUM_DD_SCALE:
+            weight = MINIMUM_DD_SCALE
+
         job = {
             "id": entry.id,
-            "weight": entry.weight or 1.0,
+            "weight": weight,
             "params": {
                 "keyword": entry.keyword,
                 "platform": entry.platform,
