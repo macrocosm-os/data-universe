@@ -205,6 +205,16 @@ class Validator:
         # Load any state from previous runs.
         self.load_state()
 
+        self.data_universe_api_base_url = (
+            "https://data-universe-api-branch-main.api.macrocosmos.ai"
+            if "test" in self.config.subtensor.network
+            else "https://data-universe-api.api.macrocosmos.ai"
+        )
+        self.verify_ssl = "localhost" not in self.data_universe_api_base_url
+        bt.logging.info(
+            f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
+        )
+
         # Getting latest dynamic lookup
         self.get_updated_lookup()
 
@@ -217,16 +227,6 @@ class Validator:
 
         self.organic_processor = OrganicQueryProcessor(
             wallet=self.wallet, metagraph=self.metagraph, evaluator=self.evaluator
-        )
-
-        self.data_universe_api_base_url = (
-            "https://data-universe-api-branch-main.api.macrocosmos.ai"
-            if "test" in self.config.subtensor.network
-            else "https://data-universe-api.api.macrocosmos.ai"
-        )
-        self.verify_ssl = "localhost" not in self.data_universe_api_base_url
-        bt.logging.info(
-            f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
         )
 
         self.is_setup = True
