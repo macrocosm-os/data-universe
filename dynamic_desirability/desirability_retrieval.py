@@ -3,7 +3,7 @@ import json
 import os
 import subprocess
 import time
-from typing import Dict, Optional, Any
+from typing import Dict, Literal, Optional, Any
 import logging
 import shutil
 from datetime import datetime
@@ -12,6 +12,7 @@ from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
 from common import constants
 from common.data import DataLabel, DataSource
 from common.utils import get_validator_data, is_validator, time_bucket_id_from_datetime, parse_iso_date
+from common.api_client import DataUniverseApiClient, DynamicDesirabilityList
 from rewards.data import DataSourceDesirability, DataDesirabilityLookup, Job, JobMatcher
 from scraping.youtube.model import YouTubeContent
 from dynamic_desirability.constants import (REPO_URL,
@@ -322,6 +323,7 @@ def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: 
 
 
 async def run_retrieval(config) -> DataDesirabilityLookup:
+    """Legacy GitHub-based retrieval. Use run_retrieval_from_api instead."""
     try:
         my_wallet = bt.wallet(config=config)
         subtensor = bt.subtensor(config=config)
@@ -353,8 +355,133 @@ async def run_retrieval(config) -> DataDesirabilityLookup:
         script_dir = os.path.dirname(os.path.abspath(__file__))
         return to_lookup(os.path.join(script_dir, DEFAULT_JSON_PATH))
 
+
+def _dd_list_to_jobs_json(dd_list: DynamicDesirabilityList) -> list:
+    """Convert DynamicDesirabilityList from API to the jobs JSON format used by to_lookup."""
+    jobs = []
+    for entry in dd_list.entries:
+        # Convert datetime to string if present
+        post_start = entry.post_start_datetime.isoformat() if entry.post_start_datetime else None
+        post_end = entry.post_end_datetime.isoformat() if entry.post_end_datetime else None
+
+        job = {
+            "id": entry.id,
+            "weight": entry.weight or 1.0,
+            "params": {
+                "keyword": entry.keyword,
+                "platform": entry.platform,
+                "label": entry.label,
+                "post_start_datetime": post_start,
+                "post_end_datetime": post_end,
+            }
+        }
+        jobs.append(job)
+    return jobs
+
+
+def _to_lookup_from_jobs(jobs: list) -> DataDesirabilityLookup:
+    """Convert jobs list directly to DataDesirabilityLookup without file I/O."""
+    distribution = {}
+
+    # Get all data sources with weight > 0
+    active_data_sources = [ds for ds in DataSource if ds.weight > 0]
+
+    # Process jobs for each active data source
+    for data_source in active_data_sources:
+        platform_name = data_source.name.lower()
+
+        # Filter jobs for this platform
+        platform_jobs = [job for job in jobs if job['params'].get('platform') == platform_name]
+
+        # Create JobMatcher for this platform
+        job_matcher = JobMatcher(jobs=[
+            Job(
+                id=job.get('id'),
+                keyword=job['params'].get('keyword'),
+                label=job['params'].get('label'),
+                job_weight=job['weight'],
+                start_timebucket=datetime_to_timebucket(job['params'].get('post_start_datetime')),
+                end_timebucket=datetime_to_timebucket(job['params'].get('post_end_datetime'))
+            ) for job in platform_jobs
+        ])
+
+        distribution[data_source] = DataSourceDesirability(
+            weight=data_source.weight,
+            default_scale_factor=DEFAULT_SCALE_FACTOR,
+            job_matcher=job_matcher
+        )
+
+    max_age_in_hours = constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24
+    return DataDesirabilityLookup(
+        distribution=distribution,
+        max_age_in_hours=max_age_in_hours
+    )
+
+
+async def run_retrieval_from_api(
+    client: DataUniverseApiClient,
+    mode: Literal["miner", "validator"],
+) -> DataDesirabilityLookup:
+    """
+    Retrieve Dynamic Desirability list from the Data Universe API.
+
+    Args:
+        client: DataUniverseApiClient instance (must be used within async context)
+        mode: "miner" or "validator" - determines which endpoint to use
+
+    Returns:
+        DataDesirabilityLookup object for use in scoring
+    """
+    try:
+        bt.logging.info(f"\nFetching Dynamic Desirability list from API (mode={mode})...\n")
+
+        if mode == "miner":
+            dd_list = await client.miner_get_latest_dd_list()
+        else:
+            dd_list = await client.validator_get_latest_dd_list()
+
+        bt.logging.info(f"Received DD list version={dd_list.version} with {len(dd_list.entries)} entries")
+
+        # Convert API response to jobs format
+        jobs = _dd_list_to_jobs_json(dd_list)
+
+        # Optionally save to total.json for debugging/compatibility
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        total_path = os.path.join(script_dir, AGGREGATE_JSON_PATH)
+        with open(total_path, 'w') as f:
+            json.dump(jobs, f, indent=4, default=str)
+        bt.logging.debug(f"Saved DD list to {total_path}")
+
+        # Convert to lookup
+        return _to_lookup_from_jobs(jobs)
+
+    except Exception as e:
+        bt.logging.error(f"Failed to fetch DD list from API: {str(e)}. Falling back to default.json")
+        script_dir = os.path.dirname(os.path.abspath(__file__))
+        return to_lookup(os.path.join(script_dir, DEFAULT_JSON_PATH))
+
+
 def sync_run_retrieval(config):
+    """Legacy sync wrapper for GitHub-based retrieval."""
     return asyncio.run(run_retrieval(config))
+
+
+def sync_run_retrieval_from_api(
+    client: DataUniverseApiClient,
+    mode: Literal["miner", "validator"],
+) -> DataDesirabilityLookup:
+    """
+    Synchronous wrapper for API-based DD list retrieval.
+
+    Args:
+        client: DataUniverseApiClient instance
+        mode: "miner" or "validator"
+
+    Returns:
+        DataDesirabilityLookup object
+    """
+    return asyncio.run(run_retrieval_from_api(client, mode))
+
 
 if __name__ == "__main__":
     asyncio.run(run_retrieval(config=None))

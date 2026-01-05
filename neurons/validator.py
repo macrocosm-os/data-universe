@@ -30,7 +30,7 @@ import wandb
 import subprocess
 from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
-from dynamic_desirability.desirability_retrieval import sync_run_retrieval
+from dynamic_desirability.desirability_retrieval import run_retrieval_from_api
 from neurons import __spec_version__ as spec_version
 from common.api_client import (
     ListJobsWithSubmissionsForValidationRequest,
@@ -242,8 +242,13 @@ class Validator:
     def get_updated_lookup(self):
         try:
             t_start = time.perf_counter()
-            bt.logging.info("Retrieving the latest dynamic lookup...")
-            model = sync_run_retrieval(self.config)
+            bt.logging.info("Retrieving the latest dynamic lookup from API...")
+
+            async def _fetch_dd_list():
+                async with self._on_demand_client() as client:
+                    return await run_retrieval_from_api(client, mode="validator")
+
+            model = asyncio.get_event_loop().run_until_complete(_fetch_dd_list())
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
