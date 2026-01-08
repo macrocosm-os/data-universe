@@ -14,7 +14,6 @@ from scraping.provider import ScraperProvider
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
-from scraping.youtube.model import YouTubeContent
 from scraping.scraper import ScrapeConfig
 from common.date_range import DateRange
 import datetime as dt
@@ -265,9 +264,6 @@ class OrganicQueryProcessor:
                 elif source == 'REDDIT':
                     # Parse the content JSON to validate structure
                     reddit_content = RedditContent.from_data_entity(item)
-                    
-                else:   # source == 'YOUTUBE'
-                    youtube_content = YouTubeContent.from_data_entity(item)
                     
             except Exception as e:
                 bt.logging.info(f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} format validation failed on item {i}: {str(e)}")
@@ -605,31 +601,6 @@ class OrganicQueryProcessor:
                                                                    start_datetime=start_date,
                                                                    end_datetime=end_date,
                                                                    limit=synapse.limit)
-            elif synapse.source.upper() == 'YOUTUBE':
-                # Determine YouTube scraping mode: channel or video URL
-                valid_usernames = [u.strip() for u in synapse.usernames if u and u.strip()]
-
-                if valid_usernames:
-                    # Channel mode
-                    channel_identifier = valid_usernames[0]
-                    bt.logging.info(f"YouTube verification: channel scraping @{channel_identifier}")
-                    verification_data = await scraper.scrape(
-                        channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
-                        max_videos=synapse.limit or 10,
-                        start_date=start_date.isoformat(),
-                        end_date=end_date.isoformat(),
-                        language="en"
-                    )
-                elif synapse.url:
-                    # Video URL mode
-                    bt.logging.info(f"YouTube verification: video URL scraping {synapse.url}")
-                    verification_data = await scraper.scrape(
-                        youtube_url=synapse.url,
-                        language="en"
-                    )
-                else:
-                    bt.logging.error("YouTube verification needs either username (channel) or url (video URL)")
-                    return None
             
             return verification_data if verification_data else None
             
@@ -743,8 +714,6 @@ class OrganicQueryProcessor:
                 return self._validate_x_request_fields(synapse, x_entity=entity, miner_uid=miner_uid)
             elif synapse.source.upper() == 'REDDIT':
                 return self._validate_reddit_request_fields(synapse, reddit_entity=entity, miner_uid=miner_uid)
-            elif synapse.source.upper() == 'YOUTUBE':
-                return self._validate_youtube_request_fields(synapse, youtube_entity=entity, miner_uid=miner_uid)
         except Exception as e:
             bt.logging.error(f"Error in request field validation: {str(e)}")
             return False
@@ -855,42 +824,6 @@ class OrganicQueryProcessor:
         
         return True
     
-
-    def _validate_youtube_request_fields(self, synapse: OrganicRequest, youtube_entity: DataEntity, miner_uid: int) -> bool:
-        """YouTube request field validation with the Youtube DataEntity"""
-        hotkey = self.metagraph.hotkeys[miner_uid]
-        bt.logging.debug(f"Miner {miner_uid}:{hotkey} - Starting YouTube request field validation")
-        youtube_content_dict = json.loads(youtube_entity.content.decode('utf-8'))
-
-        # URL validation - if URL is provided, validate that the returned video matches
-        if synapse.url:
-            video_url = youtube_content_dict.get("video_url", "")
-            # Normalize both URLs for comparison
-            if on_demand_utils.normalize_youtube_url(video_url) != on_demand_utils.normalize_youtube_url(synapse.url):
-                bt.logging.debug(f"Miner {miner_uid}:{hotkey} YouTube URL mismatch: {video_url} != {synapse.url}")
-                return False
-            # For URL mode, we only validate the URL matches and time range
-            if not self._validate_time_range(synapse, youtube_entity.datetime):
-                bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
-                return False
-            return True
-
-        # Username (channel) validation
-        if synapse.usernames:
-            requested_channels = [u.strip('@').lower() for u in synapse.usernames]
-            requested_channel = requested_channels[0]   # take only the first requested channel
-            channel_name = youtube_content_dict.get("channel_name")
-            if not channel_name or channel_name.lower() != requested_channel.lower():
-                bt.logging.debug(f"Miner {miner_uid}:{hotkey} Channel mismatch: {channel_name} is not the requested channel: {requested_channel}")
-                return False
-
-        # Time range validation
-        if not self._validate_time_range(synapse, youtube_entity.datetime):
-            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
-            return False
-
-        return True
-
 
     async def _validate_with_scraper(self, synapse: OrganicRequest, data_entity: DataEntity, post_id: str) -> bool:
         """

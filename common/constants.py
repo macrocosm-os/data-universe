@@ -39,9 +39,6 @@ NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # Dece
 # Date after which media content is required for Reddit posts that contain media
 REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # August 7, 2025 UTC (one month from now)
 
-# Date after which YouTube content timestamps must be obfuscated to the minute
-YOUTUBE_TIMESTAMP_OBFUSCATION_REQUIRED_DATE = dt.datetime(2025, 9, 5, tzinfo=dt.timezone.utc) # September 5, 2025 UTC (one week from August 29, 2025)
-
 # Date after which backwards compatibility for nested X content format will be removed
 X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
 

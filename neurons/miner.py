@@ -46,7 +46,6 @@ from common.api_client import (
     OnDemandJob,
     OnDemandJobPayloadReddit,
     OnDemandJobPayloadX,
-    OnDemandJobPayloadYoutube,
     OnDemandMinerUpload,
 )
 from upload_utils.s3_uploader import S3PartitionedUploader
@@ -458,12 +457,6 @@ class Miner:
                 keywords = x_job.keywords
                 url = x_job.url
 
-            if job_request.job.platform == "youtube":
-                data_source = DataSource.YOUTUBE
-                yt_job: OnDemandJobPayloadYoutube = job_request.job
-                usernames = yt_job.channels
-                url = yt_job.url
-
             if job_request.job.platform == "reddit":
                 data_source = DataSource.REDDIT
                 rd_job: OnDemandJobPayloadReddit = job_request.job
@@ -762,47 +755,6 @@ class Miner:
                     limit=synapse.limit,
                 )
                 synapse.data = data[: synapse.limit] if synapse.limit else data
-
-            elif synapse.source == DataSource.YOUTUBE:
-                # Create a new scraper provider and get the YouTube scraper
-                provider = ScraperProvider()
-                scraper = provider.get(ScraperId.YOUTUBE_MULTI_ACTOR)
-
-                if not scraper:
-                    bt.logging.error(
-                        f"No scraper available for ID {ScraperId.YOUTUBE_MULTI_ACTOR}"
-                    )
-                    synapse.data = []
-                    return synapse
-
-                # Determine scraping mode: channel or video URL
-                if synapse.usernames:
-                    # Channel mode
-                    channel_identifier = synapse.usernames[0]
-                    bt.logging.info(f"YouTube channel scraping: @{channel_identifier}")
-                    data_entities = await scraper.scrape(
-                        channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
-                        max_videos=synapse.limit or 10,
-                        start_date=start_dt.isoformat(),
-                        end_date=end_dt.isoformat(),
-                        language="en",
-                    )
-                elif synapse.url:
-                    # Video URL mode
-                    bt.logging.info(f"YouTube video URL scraping: {synapse.url}")
-                    data_entities = await scraper.scrape(
-                        youtube_url=synapse.url, language="en"
-                    )
-                else:
-                    bt.logging.error(
-                        "YouTube request needs either username (channel) or url (video URL)"
-                    )
-                    synapse.data = []
-                    return synapse
-
-                synapse.data = (
-                    data_entities[: synapse.limit] if synapse.limit else data_entities
-                )
 
             synapse.version = constants.PROTOCOL_VERSION
 
