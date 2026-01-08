@@ -141,8 +141,6 @@ class S3PartitionedUploader:
                         source_int = DataSource.REDDIT.value
                     elif platform in ['x', 'twitter']:
                         source_int = DataSource.X.value
-                    elif platform == 'youtube':
-                        source_int = DataSource.YOUTUBE.value
                     else:
                         continue
 
@@ -197,12 +195,6 @@ class S3PartitionedUploader:
                 f"LOWER(label) = '{normalized_label}'",
                 f"LOWER(label) = 'r/{normalized_label.removeprefix('r/')}'",
             ]
-        elif source == DataSource.YOUTUBE.value:
-            # For YouTube: check channel labels with #ytc_c_ prefix
-            label_conditions = [
-                f"LOWER(label) = '{normalized_label}'",
-                f"LOWER(label) = '#ytc_c_{normalized_label.removeprefix('#ytc_c_')}'",
-            ]
         else:
             # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
             label_without_hash = normalized_label.lstrip('#')
@@ -252,12 +244,6 @@ class S3PartitionedUploader:
                 f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
                 f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
             ]
-        elif source == DataSource.YOUTUBE.value:
-            # Search YouTube title and description fields
-            content_conditions = [
-                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'",
-                f"LOWER(JSON_EXTRACT(content, '$.description')) LIKE '%{normalized_keyword}%'"
-            ]
         else:
             # Search X text field specifically
             content_conditions = [
@@ -299,12 +285,6 @@ class S3PartitionedUploader:
                 f"LOWER(label) = '{normalized_label}'",
                 f"LOWER(label) = 'r/{normalized_label.removeprefix('r/')}'",
             ]
-        elif source == DataSource.YOUTUBE.value:
-            # For YouTube: check channel labels with #ytc_c_ prefix
-            label_conditions = [
-                f"LOWER(label) = '{normalized_label}'",
-                f"LOWER(label) = '#ytc_c_{normalized_label.removeprefix('#ytc_c_')}'",
-            ]
         else:
             # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
             label_without_hash = normalized_label.lstrip('#')
@@ -328,12 +308,6 @@ class S3PartitionedUploader:
             content_conditions = [
                 f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
                 f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
-            ]
-        elif source == DataSource.YOUTUBE.value:
-            # Search YouTube title and description fields
-            content_conditions = [
-                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'",
-                f"LOWER(JSON_EXTRACT(content, '$.description')) LIKE '%{normalized_keyword}%'"
             ]
         else:
             # Search X text field specifically
@@ -404,26 +378,6 @@ class S3PartitionedUploader:
                     'score': df['decoded_content'].apply(lambda x: x.get('score')),
                     'upvote_ratio': df['decoded_content'].apply(lambda x: x.get('upvote_ratio')),
                     'num_comments': df['decoded_content'].apply(lambda x: x.get('num_comments'))
-                })
-            elif source == DataSource.YOUTUBE.value:
-                # YouTube data structure
-                result_df = pd.DataFrame({
-                    'uri': df['uri'],
-                    'datetime': df['datetime'],
-                    'label': df['label'],
-                    'video_id': df['decoded_content'].apply(lambda x: x.get('video_id')),
-                    'title': df['decoded_content'].apply(lambda x: x.get('title')),
-                    'channel_name': df['decoded_content'].apply(lambda x: x.get('channel_name')),
-                    'upload_date': df['decoded_content'].apply(lambda x: x.get('upload_date')),
-                    'transcript': df['decoded_content'].apply(lambda x: x.get('transcript', [])),
-                    'url': df['decoded_content'].apply(lambda x: x.get('url')),
-                    'duration_seconds': df['decoded_content'].apply(lambda x: x.get('duration_seconds', 0)),
-                    'language': df['decoded_content'].apply(lambda x: x.get('language', 'en')),
-                    'description': df['decoded_content'].apply(lambda x: x.get('description')),
-                    'thumbnails': df['decoded_content'].apply(lambda x: x.get('thumbnails')),
-                    'view_count': df['decoded_content'].apply(lambda x: x.get('view_count')),
-                    'like_count': df['decoded_content'].apply(lambda x: x.get('like_count')),
-                    'subscriber_count': df['decoded_content'].apply(lambda x: x.get('subscriber_count'))
                 })
             else:
                 # X/Twitter data structure

@@ -88,60 +88,38 @@ def _choose_scrape_configs(
         # Get max age from config or use default
         max_age_minutes = label_config.max_age_hint_minutes
 
-        # For YouTube transcript scraper, use a wider date range
-        if scraper_id == ScraperId.YOUTUBE_APIFY_TRANSCRIPT:
-            # Calculate the start time using max_age_minutes
-            start_time = now - dt.timedelta(minutes=max_age_minutes)
+        # Use the normal time bucket approach
+        current_bucket = TimeBucket.from_datetime(now)
+        oldest_bucket = TimeBucket.from_datetime(
+            now - dt.timedelta(minutes=max_age_minutes)
+        )
 
-            # Ensure start_time has timezone information
-            if start_time.tzinfo is None:
-                start_time = start_time.replace(tzinfo=dt.timezone.utc)
+        chosen_bucket = current_bucket
+        # If we have more than 1 bucket to choose from, choose a bucket in the range
+        if oldest_bucket.id < current_bucket.id:
+            # Use a triangular distribution for bucket selection
+            chosen_id = int(numpy.random.default_rng().triangular(
+                left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
+            ))
 
-            date_range = DateRange(start=start_time, end=now)
+            chosen_bucket = TimeBucket(id=chosen_id)
 
-            bt.logging.info(f"Created special date range for YouTube: {date_range.start} to {date_range.end}")
-            bt.logging.info(f"Date range span: {(date_range.end - date_range.start).total_seconds() / 3600} hours")
+        date_range = TimeBucket.to_date_range(chosen_bucket)
 
-            results.append(
-                ScrapeConfig(
-                    entity_limit=label_config.max_data_entities,
-                    date_range=date_range,
-                    labels=labels_to_scrape,
-                )
-            )
-        else:
-            # For other scrapers, use the normal time bucket approach
-            current_bucket = TimeBucket.from_datetime(now)
-            oldest_bucket = TimeBucket.from_datetime(
-                now - dt.timedelta(minutes=max_age_minutes)
+        # Ensure date_range has timezone info
+        if date_range.start.tzinfo is None:
+            date_range = DateRange(
+                start=date_range.start.replace(tzinfo=dt.timezone.utc),
+                end=date_range.end.replace(tzinfo=dt.timezone.utc)
             )
 
-            chosen_bucket = current_bucket
-            # If we have more than 1 bucket to choose from, choose a bucket in the range
-            if oldest_bucket.id < current_bucket.id:
-                # Use a triangular distribution for bucket selection
-                chosen_id = int(numpy.random.default_rng().triangular(
-                    left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
-                ))
-
-                chosen_bucket = TimeBucket(id=chosen_id)
-
-            date_range = TimeBucket.to_date_range(chosen_bucket)
-
-            # Ensure date_range has timezone info
-            if date_range.start.tzinfo is None:
-                date_range = DateRange(
-                    start=date_range.start.replace(tzinfo=dt.timezone.utc),
-                    end=date_range.end.replace(tzinfo=dt.timezone.utc)
-                )
-
-            results.append(
-                ScrapeConfig(
-                    entity_limit=label_config.max_data_entities,
-                    date_range=date_range,
-                    labels=labels_to_scrape,
-                )
+        results.append(
+            ScrapeConfig(
+                entity_limit=label_config.max_data_entities,
+                date_range=date_range,
+                labels=labels_to_scrape,
             )
+        )
 
     return results
 

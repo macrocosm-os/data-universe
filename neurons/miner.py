@@ -46,7 +46,6 @@ from common.api_client import (
     OnDemandJob,
     OnDemandJobPayloadReddit,
     OnDemandJobPayloadX,
-    OnDemandJobPayloadYoutube,
     OnDemandMinerUpload,
 )
 from upload_utils.s3_uploader import S3PartitionedUploader
@@ -187,11 +186,7 @@ class Miner:
         self.last_cleared_request_limits = dt.datetime.now()
         self.requests_by_type_by_hotkey = defaultdict(lambda: defaultdict(lambda: 0))
 
-        self.data_universe_api_base_url = (
-            "https://data-universe-api-branch-main.api.macrocosmos.ai"
-            if "test" in self.config.subtensor.network
-            else "https://data-universe-api.api.macrocosmos.ai"
-        )
+        self.data_universe_api_base_url = self.config.s3_auth_url
         self.verify_ssl = "localhost" not in self.data_universe_api_base_url
         bt.logging.info(
             f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
@@ -230,40 +225,31 @@ class Miner:
             bt.logging.info("Gravity lookup retrieval is not enabled.")
             return
 
-        last_update = None
+        # Update interval: 20 minutes (in seconds)
+        update_interval = 1200
+
         while not self.should_exit:
             try:
-                current_datetime = dt.datetime.utcnow()
+                bt.logging.info("Retrieving the latest dynamic lookup from API...")
 
+                async def _fetch_dd_list():
+                    async with self._on_demand_client() as client:
+                        return await run_retrieval_from_api(client, mode="miner")
+
+                asyncio.run(_fetch_dd_list())
                 bt.logging.info(
-                    f"Checking for update. Last update: {last_update}, Current time: {current_datetime}"
+                    f"New desirable data list has been written to total.json"
                 )
+                bt.logging.info(f"Updated dynamic lookup at {dt.datetime.utcnow()}")
 
-                # Check if it's a new day and we haven't updated yet
-                if last_update is None or current_datetime.date() > last_update.date():
-                    bt.logging.info("Retrieving the latest dynamic lookup from API...")
-
-                    async def _fetch_dd_list():
-                        async with self._on_demand_client() as client:
-                            return await run_retrieval_from_api(client, mode="miner")
-
-                    asyncio.run(_fetch_dd_list())
-                    bt.logging.info(
-                        f"New desirable data list has been written to total.json"
-                    )
-                    last_update = current_datetime
-                    bt.logging.info(f"Updated dynamic lookup at {last_update}")
-                else:
-                    bt.logging.info("No update needed at this time.")
-
-                # Sleep for 5 minutes before checking again
-                bt.logging.info("Sleeping for 5 minutes...")
-                time.sleep(300)
+                # Sleep for 1 hour before next update
+                bt.logging.info(f"Sleeping for {update_interval // 60} minutes...")
+                time.sleep(update_interval)
 
             except Exception as e:
                 bt.logging.error(f"Error in get_updated_lookup: {str(e)}")
                 bt.logging.exception("Exception details:")
-                time.sleep(300)  # Wait 5 minutes before trying again
+                time.sleep(300)  # Wait 5 minutes before trying again on error
 
     def upload_s3_partitioned(self):
         """Upload DD data to S3 in partitioned format"""
@@ -462,12 +448,6 @@ class Miner:
                 usernames = x_job.usernames
                 keywords = x_job.keywords
                 url = x_job.url
-
-            if job_request.job.platform == "youtube":
-                data_source = DataSource.YOUTUBE
-                yt_job: OnDemandJobPayloadYoutube = job_request.job
-                usernames = yt_job.channels
-                url = yt_job.url
 
             if job_request.job.platform == "reddit":
                 data_source = DataSource.REDDIT
@@ -767,47 +747,6 @@ class Miner:
                     limit=synapse.limit,
                 )
                 synapse.data = data[: synapse.limit] if synapse.limit else data
-
-            elif synapse.source == DataSource.YOUTUBE:
-                # Create a new scraper provider and get the YouTube scraper
-                provider = ScraperProvider()
-                scraper = provider.get(ScraperId.YOUTUBE_MULTI_ACTOR)
-
-                if not scraper:
-                    bt.logging.error(
-                        f"No scraper available for ID {ScraperId.YOUTUBE_MULTI_ACTOR}"
-                    )
-                    synapse.data = []
-                    return synapse
-
-                # Determine scraping mode: channel or video URL
-                if synapse.usernames:
-                    # Channel mode
-                    channel_identifier = synapse.usernames[0]
-                    bt.logging.info(f"YouTube channel scraping: @{channel_identifier}")
-                    data_entities = await scraper.scrape(
-                        channel_url=f"https://www.youtube.com/@{channel_identifier.lstrip('@')}",
-                        max_videos=synapse.limit or 10,
-                        start_date=start_dt.isoformat(),
-                        end_date=end_dt.isoformat(),
-                        language="en",
-                    )
-                elif synapse.url:
-                    # Video URL mode
-                    bt.logging.info(f"YouTube video URL scraping: {synapse.url}")
-                    data_entities = await scraper.scrape(
-                        youtube_url=synapse.url, language="en"
-                    )
-                else:
-                    bt.logging.error(
-                        "YouTube request needs either username (channel) or url (video URL)"
-                    )
-                    synapse.data = []
-                    return synapse
-
-                synapse.data = (
-                    data_entities[: synapse.limit] if synapse.limit else data_entities
-                )
 
             synapse.version = constants.PROTOCOL_VERSION
 

@@ -22,7 +22,6 @@ from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
-from scraping.youtube.model import YouTubeContent
 from common.data import DataEntity, DataSource
 from common.constants import FILENAME_FORMAT_REQUIRED_DATE
 import re
@@ -93,7 +92,6 @@ class S3ValidationResultDetailed:
 PREFERRED_SCRAPERS = {
     DataSource.X: ScraperId.X_APIDOJO,
     DataSource.REDDIT: ScraperId.REDDIT_MC,
-    DataSource.YOUTUBE: ScraperId.YOUTUBE_APIFY_TRANSCRIPT
 }
 
 
@@ -895,18 +893,6 @@ class S3Validator:
                                     entity_label == f"r/{job_label_normalized.removeprefix('r/')}" or
                                     entity_label.removeprefix('r/') == job_label_normalized.removeprefix('r/')
                                 )
-                            elif platform == 'youtube':
-                                # For YouTube: use backwards-compatible label matching
-                                # This handles underscore vs hyphen differences in channel labels
-                                label_matches = YouTubeContent.labels_match(entity_label, job_label_normalized)
-                                if not label_matches:
-                                    # Fallback: check without @ prefix
-                                    label_without_at = job_label_normalized.lstrip('@')
-                                    label_matches = (
-                                        YouTubeContent.labels_match(entity_label, label_without_at) or
-                                        job_label_normalized in entity_label or
-                                        label_without_at in entity_label
-                                    )
                             else:
                                 label_matches = (entity_label == job_label_normalized)
 
@@ -919,25 +905,6 @@ class S3Validator:
                                 body = str(row.get('body', '')).lower()
                                 title = str(row.get('title', '')).lower()
                                 keyword_matches = (job_keyword_normalized in body or job_keyword_normalized in title)
-                            elif platform == 'youtube':
-                                # IMPORTANT: match miner behavior -> title OR description
-                                title_val = row.get('title', '')
-                                desc_val = row.get('description', '')
-
-                                if isinstance(title_val, float) and pd.isna(title_val):
-                                    title = ''
-                                else:
-                                    title = str(title_val).lower()
-
-                                if isinstance(desc_val, float) and pd.isna(desc_val):
-                                    description = ''
-                                else:
-                                    description = str(desc_val).lower()
-
-                                keyword_matches = (
-                                    job_keyword_normalized in title or
-                                    job_keyword_normalized in description
-                                )
                             else:  # X/Twitter
                                 text = str(row.get('text', '')).lower()
                                 keyword_matches = job_keyword_normalized in text
@@ -1273,8 +1240,6 @@ class S3Validator:
                 data_source = DataSource.X
             elif platform == 'reddit':
                 data_source = DataSource.REDDIT
-            elif platform == 'youtube':
-                data_source = DataSource.YOUTUBE
             else:
                 return [ValidationResult(
                     is_valid=False,
@@ -1422,8 +1387,6 @@ class S3Validator:
                 return self._create_twitter_data_entity(row)
             elif platform == 'reddit':
                 return self._create_reddit_data_entity(row)
-            elif platform == 'youtube':
-                return self._create_youtube_data_entity(row)
             else:
                 return None
         except Exception:
@@ -1569,47 +1532,6 @@ class S3Validator:
         except Exception:
             return None
     
-    def _create_youtube_data_entity(self, row) -> Optional[DataEntity]:
-        """Create YouTube DataEntity from parquet row"""
-        try:
-            # Get required fields
-            video_id = row.get('video_id', '')
-            title = row.get('title', '')
-            channel_name = row.get('channel_name', '')
-            url = row.get('url', row.get('uri', ''))
-            
-            if not all([video_id, title, channel_name, url]):
-                return None
-            
-            # Get datetime from row or use current time
-            datetime_val = row.get('upload_date', row.get('datetime', ''))
-            if datetime_val and pd.notna(datetime_val):
-                try:
-                    upload_date = pd.to_datetime(datetime_val)
-                    if upload_date.tzinfo is None:
-                        upload_date = upload_date.replace(tzinfo=dt.timezone.utc)
-                except Exception:
-                    upload_date = dt.datetime.now(dt.timezone.utc)
-            else:
-                upload_date = dt.datetime.now(dt.timezone.utc)
-            
-            # Create YouTubeContent object
-            youtube_content = YouTubeContent(
-                video_id=str(video_id),
-                title=str(title),
-                channel_name=str(channel_name),
-                upload_date=upload_date,
-                transcript=row.get('transcript', []) if pd.notna(row.get('transcript')) else [],
-                url=str(url),
-                duration_seconds=int(row.get('duration_seconds', 0)) if pd.notna(row.get('duration_seconds')) else 0,
-                language=str(row.get('language', 'en'))
-            )
-            
-            return YouTubeContent.to_data_entity(youtube_content)
-        except Exception:
-            return None
-
-
 async def get_miner_s3_validation_data(wallet, s3_auth_url: str, miner_hotkey: str) -> Optional[List[Dict]]:
     """Get S3 file data for a specific miner"""
     try:

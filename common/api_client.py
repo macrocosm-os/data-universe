@@ -97,15 +97,6 @@ class OnDemandJobPayloadReddit(BaseModel):
     keywords: Optional[List[str]] = None
 
 
-class OnDemandJobPayloadYoutube(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
-    platform: Literal["youtube"] = "youtube"
-
-    channels: Optional[List[str]] = None
-    url: Optional[str] = None
-
-
 class OnDemandJob(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -115,7 +106,7 @@ class OnDemandJob(BaseModel):
     expire_at: Optional[datetime] = None
 
     job: Union[
-        OnDemandJobPayloadX, OnDemandJobPayloadReddit, OnDemandJobPayloadYoutube
+        OnDemandJobPayloadX, OnDemandJobPayloadReddit
     ] = Field(discriminator="platform")
 
     start_date: Optional[datetime] = None

@@ -62,7 +62,7 @@ Validators will split their votes in JSON format normalized to the following con
 2. Label weights must sum to between 0 and 1. 
     - This comes as a consequence of the previous condition: at most a validator can choose to use 100% of their voting power to specify labels and associated label weights. 
 
-2. Weights must be from subnet data sources: Reddit, X, or YouTube.
+2. Weights must be from subnet data sources: Reddit or X.
 
 
 
