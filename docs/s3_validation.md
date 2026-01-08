@@ -169,7 +169,7 @@ miner_reward = (miner_score / Σ(all_miner_scores)) × total_reward_pool
 
 ### Key Parameters
 
-- **Data Type Weights:** Reddit: 0.55, X: 0.35, YouTube: 0.10
+- **Data Type Weights:** Reddit: 0.65, X: 0.35
 - **Credibility Exponent:** 2.5
 - **Min Evaluation Period:** 60 minutes
 - **Data Age Limit:** 30 days (or job-specific range)
