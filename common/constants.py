@@ -43,7 +43,7 @@ REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # 
 X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
 
 # Date after which filename format validation is enforced (data_{YYYYMMDD_HHMMSS}_{count}_{16hex}.parquet)
-FILENAME_FORMAT_REQUIRED_DATE = dt.datetime(2026, 1, 9, tzinfo=dt.timezone.utc) # January 9, 2026 UTC
+FILENAME_FORMAT_REQUIRED_DATE = dt.datetime(2026, 1, 18, tzinfo=dt.timezone.utc) # January 18, 2026 UTC
 
 EVALUATION_ON_STARTUP = 15
 
