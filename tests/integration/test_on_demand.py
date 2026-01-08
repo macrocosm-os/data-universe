@@ -7,7 +7,6 @@ from common.data import DataSource, DataEntity
 from common.protocol import OnDemandRequest
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.reddit.reddit_json_scraper import RedditJsonScraper
-from scraping.youtube.youtube_multi_actor_scraper import YouTubeMultiActorScraper
 
 
 class TestOnDemandProtocol(unittest.TestCase):
@@ -115,58 +114,6 @@ class TestOnDemandProtocol(unittest.TestCase):
             except Exception as e:
                 print(f"Reddit test skipped due to error: {str(e)}")
                 # Don't fail the test if Reddit API is unavailable
-                pass
-
-        # Run the async test
-        asyncio.run(run_test())
-
-    def test_on_demand_flow_youtube(self):
-        """Test the complete on-demand data flow for YouTube"""
-
-        async def run_test():
-            # Create OnDemand request for YouTube
-            test_request = OnDemandRequest(
-                source=DataSource.YOUTUBE,
-                usernames=["wolfeyvgc"],  
-                start_date=(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=30)).isoformat(),
-                end_date=dt.datetime.now(dt.timezone.utc).isoformat(),
-                limit=2
-            )
-
-            # Set up YouTube scraper
-            scraper = YouTubeMultiActorScraper()
-
-            try:
-                # Use scrape method for YouTube with channel URL
-                channel_identifier = test_request.usernames[0].lstrip('@')
-                data = await scraper.scrape(
-                    channel_url=f"https://www.youtube.com/@{channel_identifier}",
-                    max_videos=test_request.limit,
-                    start_date=test_request.start_date,
-                    end_date=test_request.end_date,
-                    language="en"
-                )
-
-                # Verify data was retrieved
-                self.assertTrue(len(data) >= 0, "Error occurred during YouTube scraping")
-                
-                if data:
-                    print(f"Retrieved {len(data)} YouTube videos")
-                    # Select 1 random sample for validation
-                    samples = random.sample(data, min(1, len(data)))
-                    validation_results = await scraper.validate(samples)
-                    print(f"YouTube data: {data}")
-                    # Check if any validation passed
-                    self.assertTrue(
-                        any(result.is_valid for result in validation_results),
-                        "All validation failed for YouTube sample data"
-                    )
-                else:
-                    print("No YouTube data found for the given criteria")
-                    
-            except Exception as e:
-                print(f"YouTube test skipped due to error: {str(e)}")
-                # Don't fail the test if YouTube API is unavailable
                 pass
 
         # Run the async test

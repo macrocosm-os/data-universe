@@ -63,7 +63,7 @@ class DataSource(IntEnum):
 
     REDDIT = 1
     X = 2
-    YOUTUBE = 3
+    UNKNOWN_3 = 3
     UNKNOWN_4 = 4
     UNKNOWN_5 = 5
     UNKNOWN_6 = 6
@@ -72,9 +72,9 @@ class DataSource(IntEnum):
     @property
     def weight(self):
         weights = {
-            DataSource.REDDIT: 0.61,
+            DataSource.REDDIT: 0.65,
             DataSource.X: 0.35,
-            DataSource.YOUTUBE: 0.04,
+            DataSource.UNKNOWN_3: 0,
             DataSource.UNKNOWN_4: 0,
             DataSource.UNKNOWN_5: 0,
             DataSource.UNKNOWN_6: 0,

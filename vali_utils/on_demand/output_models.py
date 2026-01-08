@@ -61,14 +61,6 @@ class MediaItem(BaseModel):
     type: str
 
 
-class TranscriptSegment(BaseModel):
-    """Transcript segment for YouTube videos."""
-
-    text: str
-    start: float
-    end: float
-
-
 class XOrganicOutput(BaseModel):
     """Output model for X (Twitter) content matching the example JSON structure."""
 
@@ -187,76 +179,7 @@ class RedditOrganicOutput(BaseModel):
         )
 
 
-class YouTubeOrganicOutput(BaseModel):
-    """Output model for YouTube content matching Go YouTubePost struct."""
-
-    uri: str
-    datetime: str
-    source: str
-    label: Optional[str] = None
-    content_size_bytes: int
-    video_id: str
-    title: str
-    channel_name: str
-    upload_date: str
-    transcript: List[TranscriptSegment]
-    url: str
-    duration_seconds: int
-    language: str
-    thumbnails: str
-    view_count: int
-    # Conditional fields (can be missing/null)
-    like_count: Optional[int] = None
-    description: Optional[str] = None
-    subscriber_count: Optional[int] = None
-
-    @classmethod
-    def from_data_entity(cls, data_entity: DataEntity) -> "YouTubeOrganicOutput":
-        """Create YouTubeOrganicOutput from DataEntity"""
-        # Import here to avoid circular imports
-        from scraping.youtube.model import YouTubeContent
-
-        youtube_content = YouTubeContent.from_data_entity(data_entity)
-
-        # Convert transcript data to TranscriptSegment objects
-        transcript_segments = []
-        if youtube_content.transcript:
-            for segment_dict in youtube_content.transcript:
-                if isinstance(segment_dict, dict) and "text" in segment_dict:
-                    transcript_segments.append(
-                        TranscriptSegment(
-                            text=segment_dict.get("text"),
-                            start=float(segment_dict.get("start")),
-                            end=float(segment_dict.get("end")),
-                        )
-                    )
-
-        return cls(
-            uri=data_entity.uri or "",
-            datetime=data_entity.datetime.isoformat(),
-            source="YOUTUBE",
-            label=data_entity.label.value if data_entity.label else None,
-            content_size_bytes=data_entity.content_size_bytes,
-            video_id=youtube_content.video_id,
-            title=youtube_content.title,
-            channel_name=youtube_content.channel_name,
-            upload_date=youtube_content.upload_date.isoformat(),
-            transcript=transcript_segments,
-            url=youtube_content.url,
-            duration_seconds=youtube_content.duration_seconds,
-            language=youtube_content.language,
-            # New required fields
-            thumbnails=youtube_content.thumbnails
-            or "",  # TODO: remove fallback values after YT fields are required on YouTubeContent
-            view_count=youtube_content.view_count or 0,
-            # Conditional fields
-            like_count=youtube_content.like_count,
-            description=youtube_content.description,
-            subscriber_count=youtube_content.subscriber_count,
-        )
-
-
-OrganicOutput = Union[XOrganicOutput, RedditOrganicOutput, YouTubeOrganicOutput]
+OrganicOutput = Union[XOrganicOutput, RedditOrganicOutput]
 
 
 def create_organic_output_dict(data_entity: DataEntity) -> Dict:
@@ -275,8 +198,6 @@ def create_organic_output_dict(data_entity: DataEntity) -> Dict:
             return XOrganicOutput.from_data_entity(data_entity).model_dump()
         elif source.upper() == "REDDIT":
             return RedditOrganicOutput.from_data_entity(data_entity).model_dump()
-        elif source.upper() == "YOUTUBE":
-            return YouTubeOrganicOutput.from_data_entity(data_entity).model_dump()
         else:
             raise ValueError(f"Unknown source: {source}")
     except:
@@ -305,8 +226,6 @@ def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[
             return _validate_x_metadata_completeness(data_entity)
         elif source == "REDDIT":
             return _validate_reddit_metadata_completeness(data_entity)
-        elif source == "YOUTUBE":
-            return _validate_youtube_metadata_completeness(data_entity)
         else:
             bt.logging.warning(f"Unknown source for metadata validation: {source}")
             return False, [f"Unknown source: {source}"]
@@ -428,43 +347,3 @@ def _validate_reddit_metadata_completeness(
     except Exception as e:
         bt.logging.error(f"Error validating Reddit metadata: {str(e)}")
         return False, [f"Reddit validation error: {str(e)}"]
-
-
-def _validate_youtube_metadata_completeness(
-    data_entity: DataEntity,
-) -> tuple[bool, List[str]]:
-    """Validate YouTube content metadata completeness using YouTubeOrganicOutput model."""
-    try:
-        from scraping.youtube.model import YouTubeContent
-
-        youtube_content = YouTubeContent.from_data_entity(data_entity)
-        missing_fields = []
-
-        required_fields = [
-            ("video_id", youtube_content.video_id),
-            ("title", youtube_content.title),
-            ("channel_name", youtube_content.channel_name),
-            ("upload_date", youtube_content.upload_date),
-            ("transcript", youtube_content.transcript),
-            ("url", youtube_content.url),
-            ("duration_seconds", youtube_content.duration_seconds),
-            ("language", youtube_content.language),
-            ("thumbnails", youtube_content.thumbnails),
-            ("view_count", youtube_content.view_count),
-        ]
-
-        for field_name, field_value in required_fields:
-            if field_value is None:
-                missing_fields.append(field_name)
-
-        if missing_fields:
-            bt.logging.debug(
-                f"YouTube metadata validation failed. Missing fields: {missing_fields}"
-            )
-            return False, missing_fields
-
-        return True, []
-
-    except Exception as e:
-        bt.logging.error(f"Error validating YouTube metadata: {str(e)}")
-        return False, [f"YouTube validation error: {str(e)}"]

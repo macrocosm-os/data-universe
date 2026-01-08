@@ -22,11 +22,7 @@ class DataValueCalculator:
         label = scorable_data_entity_bucket.label
         source = scorable_data_entity_bucket.source
 
-        # Apply YouTube byte size reduction (10x less reward for large transcripts)
-        # This prevents YouTube transcripts from dominating rewards due to their large size
         effective_scorable_bytes = scorable_data_entity_bucket.scorable_bytes
-        if source == DataSource.YOUTUBE:
-            effective_scorable_bytes = scorable_data_entity_bucket.scorable_bytes / 8.0
 
         # Calculate time scalar
         time_scalar = self._scale_factor_for_age(time_bucket_id, current_time_bucket.id)
