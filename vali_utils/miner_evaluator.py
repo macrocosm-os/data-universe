@@ -25,7 +25,6 @@ from scraping.scraper import ScraperId, ValidationResult
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
-from storage.validator.s3_validator_storage import S3ValidationStorage
 
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import metrics, utils as vali_utils
@@ -70,7 +69,6 @@ class MinerEvaluator:
         )
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
-        self.s3_storage = S3ValidationStorage(self.config.s3_results_path)
         self.s3_reader = s3_reader
         # Instantiate runners
         self.should_exit: bool = False
@@ -131,10 +129,10 @@ class MinerEvaluator:
         ##########
         #  Perform S3 validation (only if enabled by date)
         current_block = int(self.metagraph.block)
-        s3_validation_info = self.s3_storage.get_validation_info(hotkey)
+        s3_last_block = self.scorer.get_s3_last_validation_block(uid)
         s3_validation_result = None
 
-        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 1350:  # ~4.5 hrs
+        if s3_last_block == 0 or (current_block - s3_last_block) > 1350:  # ~4.5 hrs
             s3_validation_result = await self._perform_s3_validation(uid, hotkey, current_block)
         ##########
 
@@ -340,9 +338,9 @@ class MinerEvaluator:
                 reason=f"S3 validation failed: {str(e)}"
             )
 
-        # Update S3 validation storage
+        # Update S3 validation block in scorer (UID-based, auto-resets on deregistration)
         if s3_validation_result:
-            self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
+            self.scorer.set_s3_last_validation_block(uid, current_block)
 
         return s3_validation_result
 
