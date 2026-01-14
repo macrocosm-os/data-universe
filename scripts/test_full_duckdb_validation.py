@@ -497,6 +497,12 @@ class FullDuckDBValidator:
         self.conn.close()
 
 
+# UIDs to ignore (e.g., subnet owner, known issues)
+IGNORED_UIDS = {
+    162,  # Subnet owner - 5HBswBt1A9Ahx6U76abXXGd7VmabmCNBGhSK2vrP71GSxtgZ
+}
+
+
 def get_miners_from_metagraph(
     num_miners: int = 10,
     netuid: int = 13,
@@ -514,7 +520,10 @@ def get_miners_from_metagraph(
 
     # Get miner UIDs using proper is_miner check
     miner_uids = get_miner_uids(metagraph, vpermit_rao_limit)
-    print(f"Found {len(miner_uids)} miners (excluding validators)")
+
+    # Filter out ignored UIDs
+    miner_uids = [uid for uid in miner_uids if uid not in IGNORED_UIDS]
+    print(f"Found {len(miner_uids)} miners (excluding validators and ignored UIDs)")
 
     # Build miner list with incentive
     miners = []
@@ -556,7 +565,7 @@ async def main():
     parser.add_argument("--wallet-hotkey", type=str, default="default",
                         help="Validator wallet hotkey")
     parser.add_argument("--s3-auth-url", type=str,
-                        default=os.getenv("S3_AUTH_URL", "https://s3-auth.sn13.io"),
+                        default=os.getenv("S3_AUTH_URL", "https://sn13-data.api.macrocosmos.ai"),
                         help="S3 Auth API URL")
     parser.add_argument("--max-files", type=int, default=None,
                         help="Limit number of files per miner (for testing)")
