@@ -216,6 +216,10 @@ class FullDuckDBValidator:
         """
         Run comprehensive validation using DuckDB on all files.
 
+        Parquet column names:
+        - X/Twitter: url, text, username, datetime, tweet_hashtags, etc.
+        - Reddit: url, body, username, datetime, communityName, title, etc.
+
         Args:
             presigned_urls: List of presigned URLs for all files
 
@@ -230,44 +234,46 @@ class FullDuckDBValidator:
 
         try:
             # Query 1: Basic counts and duplicate detection
+            # Use 'url' column (actual column name in parquet files)
             self._log("Running duplicate detection query...")
             dup_start = time.perf_counter()
 
             dup_result = self.conn.execute(f"""
                 WITH all_data AS (
                     SELECT
-                        COALESCE(uri, url, link, source_url) as entity_uri,
+                        url as entity_url,
                         COALESCE(text, body, '') as content,
                         datetime
                     FROM read_parquet([{url_list_str}])
                 ),
-                uri_counts AS (
+                url_counts AS (
                     SELECT
-                        entity_uri,
+                        entity_url,
                         COUNT(*) as cnt
                     FROM all_data
-                    WHERE entity_uri IS NOT NULL AND entity_uri != ''
-                    GROUP BY entity_uri
+                    WHERE entity_url IS NOT NULL AND entity_url != ''
+                    GROUP BY entity_url
                 )
                 SELECT
                     (SELECT COUNT(*) FROM all_data) as total_rows,
-                    COUNT(*) as unique_uris,
-                    SUM(cnt) as total_with_uri,
+                    COUNT(*) as unique_urls,
+                    SUM(cnt) as total_with_url,
                     SUM(CASE WHEN cnt > 1 THEN cnt - 1 ELSE 0 END) as duplicate_count,
                     MAX(cnt) as max_duplicates
-                FROM uri_counts
+                FROM url_counts
             """).fetchone()
 
             dup_time = (time.perf_counter() - dup_start) * 1000
             self._log(f"  Duplicate query took {dup_time:.1f}ms")
 
             total_rows = dup_result[0] or 0
-            unique_uris = dup_result[1] or 0
-            total_with_uri = dup_result[2] or 0
+            unique_urls = dup_result[1] or 0
+            total_with_url = dup_result[2] or 0
             duplicate_count = dup_result[3] or 0
             max_duplicates = dup_result[4] or 0
 
             # Query 2: Content quality
+            # X uses 'text', Reddit uses 'body'
             self._log("Running content quality query...")
             quality_start = time.perf_counter()
 
@@ -277,7 +283,7 @@ class FullDuckDBValidator:
                     SUM(CASE WHEN COALESCE(text, body, '') = '' THEN 1 ELSE 0 END) as empty_content,
                     SUM(CASE WHEN LENGTH(COALESCE(text, body, '')) < 10 THEN 1 ELSE 0 END) as short_content,
                     SUM(CASE WHEN datetime IS NULL THEN 1 ELSE 0 END) as missing_datetime,
-                    SUM(CASE WHEN COALESCE(uri, url, link, source_url, '') = '' THEN 1 ELSE 0 END) as missing_uri,
+                    SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url,
                     AVG(LENGTH(COALESCE(text, body, ''))) as avg_length
                 FROM read_parquet([{url_list_str}])
             """).fetchone()
@@ -288,23 +294,23 @@ class FullDuckDBValidator:
             empty_content = quality_result[1] or 0
             short_content = quality_result[2] or 0
             missing_datetime = quality_result[3] or 0
-            missing_uri = quality_result[4] or 0
+            missing_url = quality_result[4] or 0
             avg_length = quality_result[5] or 0
 
             return {
                 "success": True,
                 "total_rows": total_rows,
-                "unique_uris": unique_uris,
-                "total_with_uri": total_with_uri,
+                "unique_uris": unique_urls,  # Keep key name for compatibility
+                "total_with_uri": total_with_url,
                 "duplicate_count": duplicate_count,
-                "duplicate_rate": (duplicate_count / total_with_uri * 100) if total_with_uri > 0 else 0,
+                "duplicate_rate": (duplicate_count / total_with_url * 100) if total_with_url > 0 else 0,
                 "max_duplicates_per_uri": max_duplicates,
                 "empty_content_count": empty_content,
                 "empty_content_rate": (empty_content / total_rows * 100) if total_rows > 0 else 0,
                 "short_content_count": short_content,
                 "missing_datetime_count": missing_datetime,
-                "missing_uri_count": missing_uri,
-                "missing_uri_rate": (missing_uri / total_rows * 100) if total_rows > 0 else 0,
+                "missing_uri_count": missing_url,
+                "missing_uri_rate": (missing_url / total_rows * 100) if total_rows > 0 else 0,
                 "avg_content_length": float(avg_length) if avg_length else 0,
                 "query_times": {
                     "duplicate_query_ms": dup_time,
@@ -347,12 +353,18 @@ class FullDuckDBValidator:
         print("\n[Step 1] Listing ALL files for miner...")
         step_start = time.perf_counter()
 
-        all_files = await self.s3_reader.list_all_files_with_metadata(miner_hotkey)
-        list_time = (time.perf_counter() - step_start) * 1000
+        try:
+            all_files = await self.s3_reader.list_all_files_with_metadata(miner_hotkey)
+            list_time = (time.perf_counter() - step_start) * 1000
+        except Exception as e:
+            print(f"  ERROR listing files: {e}")
+            result.issues.append(f"Error listing files: {str(e)}")
+            return result
 
         if not all_files:
             result.issues.append("No files found for miner")
             print(f"  ERROR: No files found")
+            print(f"  DEBUG: Check if miner has S3 data at: data/hotkey={miner_hotkey}/")
             return result
 
         result.total_files = len(all_files)
@@ -565,7 +577,7 @@ async def main():
     parser.add_argument("--wallet-hotkey", type=str, default="default",
                         help="Validator wallet hotkey")
     parser.add_argument("--s3-auth-url", type=str,
-                        default=os.getenv("S3_AUTH_URL", "https://sn13-data.api.macrocosmos.ai"),
+                        default=os.getenv("S3_AUTH_URL", "https://data-universe-api.api.macrocosmos.ai"),
                         help="S3 Auth API URL")
     parser.add_argument("--max-files", type=int, default=None,
                         help="Limit number of files per miner (for testing)")
