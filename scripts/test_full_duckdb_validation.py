@@ -44,6 +44,7 @@ sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import bittensor as bt
 from common.utils import is_miner, get_miner_uids
+from common.api_client import DataUniverseApiClient
 
 try:
     import duckdb
@@ -211,96 +212,116 @@ class FullDuckDBValidator:
 
     def validate_with_duckdb(
         self,
-        presigned_urls: List[str],
+        presigned_urls_by_platform: Dict[str, List[str]],
     ) -> Dict[str, Any]:
         """
         Run comprehensive validation using DuckDB on all files.
+        Groups files by platform and uses correct column names.
 
         Parquet column names:
         - X/Twitter: url, text, username, datetime, tweet_hashtags, etc.
         - Reddit: url, body, username, datetime, communityName, title, etc.
 
         Args:
-            presigned_urls: List of presigned URLs for all files
+            presigned_urls_by_platform: Dict mapping platform -> list of presigned URLs
 
         Returns:
             Validation metrics dictionary
         """
-        if not presigned_urls:
-            return {"success": False, "error": "No URLs provided"}
-
-        # Create URL list for DuckDB
-        url_list_str = ", ".join([f"'{url}'" for url in presigned_urls])
+        total_rows = 0
+        total_with_url = 0
+        unique_urls = 0
+        duplicate_count = 0
+        max_duplicates = 0
+        empty_content = 0
+        short_content = 0
+        missing_datetime = 0
+        missing_url = 0
+        total_content_length = 0
+        dup_time = 0
+        quality_time = 0
 
         try:
-            # Query 1: Basic counts and duplicate detection
-            # Use 'url' column (actual column name in parquet files)
-            self._log("Running duplicate detection query...")
-            dup_start = time.perf_counter()
+            # Process each platform separately with correct column names
+            for platform, urls in presigned_urls_by_platform.items():
+                if not urls:
+                    continue
 
-            dup_result = self.conn.execute(f"""
-                WITH all_data AS (
-                    SELECT
-                        url as entity_url,
-                        COALESCE(text, body, '') as content,
-                        datetime
-                    FROM read_parquet([{url_list_str}])
-                ),
-                url_counts AS (
-                    SELECT
-                        entity_url,
-                        COUNT(*) as cnt
-                    FROM all_data
-                    WHERE entity_url IS NOT NULL AND entity_url != ''
-                    GROUP BY entity_url
-                )
-                SELECT
-                    (SELECT COUNT(*) FROM all_data) as total_rows,
-                    COUNT(*) as unique_urls,
-                    SUM(cnt) as total_with_url,
-                    SUM(CASE WHEN cnt > 1 THEN cnt - 1 ELSE 0 END) as duplicate_count,
-                    MAX(cnt) as max_duplicates
-                FROM url_counts
-            """).fetchone()
+                url_list_str = ", ".join([f"'{url}'" for url in urls])
 
-            dup_time = (time.perf_counter() - dup_start) * 1000
-            self._log(f"  Duplicate query took {dup_time:.1f}ms")
+                # Determine content column based on platform
+                if platform in ['x', 'twitter']:
+                    content_col = 'text'
+                elif platform == 'reddit':
+                    content_col = 'body'
+                else:
+                    content_col = 'text'  # Default to text
 
-            total_rows = dup_result[0] or 0
-            unique_urls = dup_result[1] or 0
-            total_with_url = dup_result[2] or 0
-            duplicate_count = dup_result[3] or 0
-            max_duplicates = dup_result[4] or 0
+                self._log(f"Validating {len(urls)} {platform} files (content column: {content_col})...")
 
-            # Query 2: Content quality
-            # X uses 'text', Reddit uses 'body'
-            self._log("Running content quality query...")
-            quality_start = time.perf_counter()
+                # Query 1: Duplicate detection for this platform
+                dup_start = time.perf_counter()
+                try:
+                    dup_result = self.conn.execute(f"""
+                        WITH all_data AS (
+                            SELECT url as entity_url
+                            FROM read_parquet([{url_list_str}])
+                        ),
+                        url_counts AS (
+                            SELECT entity_url, COUNT(*) as cnt
+                            FROM all_data
+                            WHERE entity_url IS NOT NULL AND entity_url != ''
+                            GROUP BY entity_url
+                        )
+                        SELECT
+                            (SELECT COUNT(*) FROM all_data) as total_rows,
+                            COUNT(*) as unique_urls,
+                            SUM(cnt) as total_with_url,
+                            SUM(CASE WHEN cnt > 1 THEN cnt - 1 ELSE 0 END) as duplicate_count,
+                            MAX(cnt) as max_duplicates
+                        FROM url_counts
+                    """).fetchone()
 
-            quality_result = self.conn.execute(f"""
-                SELECT
-                    COUNT(*) as total,
-                    SUM(CASE WHEN COALESCE(text, body, '') = '' THEN 1 ELSE 0 END) as empty_content,
-                    SUM(CASE WHEN LENGTH(COALESCE(text, body, '')) < 10 THEN 1 ELSE 0 END) as short_content,
-                    SUM(CASE WHEN datetime IS NULL THEN 1 ELSE 0 END) as missing_datetime,
-                    SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url,
-                    AVG(LENGTH(COALESCE(text, body, ''))) as avg_length
-                FROM read_parquet([{url_list_str}])
-            """).fetchone()
+                    total_rows += dup_result[0] or 0
+                    unique_urls += dup_result[1] or 0
+                    total_with_url += dup_result[2] or 0
+                    duplicate_count += dup_result[3] or 0
+                    max_duplicates = max(max_duplicates, dup_result[4] or 0)
+                except Exception as e:
+                    self._log(f"  Duplicate query error for {platform}: {e}")
 
-            quality_time = (time.perf_counter() - quality_start) * 1000
-            self._log(f"  Quality query took {quality_time:.1f}ms")
+                dup_time += (time.perf_counter() - dup_start) * 1000
 
-            empty_content = quality_result[1] or 0
-            short_content = quality_result[2] or 0
-            missing_datetime = quality_result[3] or 0
-            missing_url = quality_result[4] or 0
-            avg_length = quality_result[5] or 0
+                # Query 2: Content quality for this platform
+                quality_start = time.perf_counter()
+                try:
+                    quality_result = self.conn.execute(f"""
+                        SELECT
+                            COUNT(*) as total,
+                            SUM(CASE WHEN COALESCE({content_col}, '') = '' THEN 1 ELSE 0 END) as empty_content,
+                            SUM(CASE WHEN LENGTH(COALESCE({content_col}, '')) < 10 THEN 1 ELSE 0 END) as short_content,
+                            SUM(CASE WHEN datetime IS NULL THEN 1 ELSE 0 END) as missing_datetime,
+                            SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url,
+                            SUM(LENGTH(COALESCE({content_col}, ''))) as total_length
+                        FROM read_parquet([{url_list_str}])
+                    """).fetchone()
+
+                    empty_content += quality_result[1] or 0
+                    short_content += quality_result[2] or 0
+                    missing_datetime += quality_result[3] or 0
+                    missing_url += quality_result[4] or 0
+                    total_content_length += quality_result[5] or 0
+                except Exception as e:
+                    self._log(f"  Quality query error for {platform}: {e}")
+
+                quality_time += (time.perf_counter() - quality_start) * 1000
+
+            avg_length = total_content_length / total_rows if total_rows > 0 else 0
 
             return {
                 "success": True,
                 "total_rows": total_rows,
-                "unique_uris": unique_urls,  # Keep key name for compatibility
+                "unique_uris": unique_urls,
                 "total_with_uri": total_with_url,
                 "duplicate_count": duplicate_count,
                 "duplicate_rate": (duplicate_count / total_with_url * 100) if total_with_url > 0 else 0,
@@ -311,7 +332,7 @@ class FullDuckDBValidator:
                 "missing_datetime_count": missing_datetime,
                 "missing_uri_count": missing_url,
                 "missing_uri_rate": (missing_url / total_rows * 100) if total_rows > 0 else 0,
-                "avg_content_length": float(avg_length) if avg_length else 0,
+                "avg_content_length": float(avg_length),
                 "query_times": {
                     "duplicate_query_ms": dup_time,
                     "quality_query_ms": quality_time
@@ -325,6 +346,7 @@ class FullDuckDBValidator:
     async def run_full_validation(
         self,
         miner_hotkey: str,
+        expected_jobs: Dict[str, Dict],
         max_files: Optional[int] = None
     ) -> FullValidationResult:
         """
@@ -332,6 +354,7 @@ class FullDuckDBValidator:
 
         Args:
             miner_hotkey: Miner to validate
+            expected_jobs: Dict mapping job_id -> job config (with platform)
             max_files: Optional limit on files (for testing)
 
         Returns:
@@ -370,26 +393,38 @@ class FullDuckDBValidator:
         result.total_files = len(all_files)
         result.total_size_bytes = sum(f.get('size', 0) for f in all_files)
 
-        # Extract job IDs
-        job_ids = set()
+        # Extract job IDs and group files by job
+        files_by_job = {}
         for f in all_files:
             key = f.get('key', '')
             if '/job_id=' in key:
                 job_id = key.split('/job_id=')[1].split('/')[0]
-                job_ids.add(job_id)
+                if job_id not in files_by_job:
+                    files_by_job[job_id] = []
+                files_by_job[job_id].append(f)
 
-        result.jobs_found = len(job_ids)
+        # Filter to only active jobs
+        active_job_ids = [jid for jid in files_by_job.keys() if jid in expected_jobs]
+        result.jobs_found = len(active_job_ids)
 
         print(f"  Files found: {result.total_files:,}")
         print(f"  Total size: {result.total_size_bytes / (1024*1024):.2f} MB")
-        print(f"  Jobs found: {result.jobs_found}")
+        print(f"  Jobs in S3: {len(files_by_job)}")
+        print(f"  Active jobs (in Gravity): {result.jobs_found}")
         print(f"  Time: {list_time:.1f}ms")
 
+        # Filter to active job files only
+        active_files = []
+        for job_id in active_job_ids:
+            active_files.extend(files_by_job[job_id])
+
+        print(f"  Files in active jobs: {len(active_files):,}")
+
         # Limit files if specified (for testing)
-        files_to_process = all_files
-        if max_files and len(all_files) > max_files:
+        files_to_process = active_files
+        if max_files and len(active_files) > max_files:
             print(f"\n  [TEST MODE] Limiting to {max_files} files...")
-            files_to_process = all_files[:max_files]
+            files_to_process = active_files[:max_files]
 
         # Step 2: Get presigned URLs for ALL files
         print(f"\n[Step 2] Getting presigned URLs for {len(files_to_process)} files...")
@@ -414,13 +449,38 @@ class FullDuckDBValidator:
             print(f"  ERROR: Failed to get presigned URLs")
             return result
 
-        # Step 3: DuckDB validation on ALL files
-        print(f"\n[Step 3] Running DuckDB validation on {len(presigned_urls)} files...")
+        # Step 3: Group URLs by platform
+        print(f"\n[Step 3] Grouping files by platform...")
+        urls_by_platform = {}
+        platform_counts = {}
+
+        for file_key, url_data in presigned_urls.items():
+            # Extract job_id from file key
+            if '/job_id=' in file_key:
+                job_id = file_key.split('/job_id=')[1].split('/')[0]
+                job_config = expected_jobs.get(job_id, {})
+                platform = job_config.get('platform', 'unknown').lower()
+            else:
+                platform = 'unknown'
+
+            if platform not in urls_by_platform:
+                urls_by_platform[platform] = []
+                platform_counts[platform] = 0
+
+            url = url_data.get('presigned_url') if isinstance(url_data, dict) else url_data
+            if url:
+                urls_by_platform[platform].append(url)
+                platform_counts[platform] += 1
+
+        for platform, count in platform_counts.items():
+            print(f"  {platform}: {count} files")
+
+        # Step 4: DuckDB validation by platform
+        print(f"\n[Step 4] Running DuckDB validation by platform...")
         print(f"  This reads ALL data and runs comprehensive checks...")
         step_start = time.perf_counter()
 
-        url_list = list(presigned_urls.values())
-        validation = self.validate_with_duckdb(url_list)
+        validation = self.validate_with_duckdb(urls_by_platform)
 
         result.duckdb_read_time_ms = (time.perf_counter() - step_start) * 1000
         result.duckdb_success = validation.get("success", False)
@@ -514,6 +574,62 @@ IGNORED_UIDS = {
     162,  # Subnet owner - 5HBswBt1A9Ahx6U76abXXGd7VmabmCNBGhSK2vrP71GSxtgZ
 }
 
+# API URL for fetching active jobs
+DATA_UNIVERSE_API_URL = "https://data-universe-api.api.macrocosmos.ai"
+
+
+async def fetch_active_jobs_from_api(wallet: bt.wallet) -> Dict[str, Dict]:
+    """
+    Fetch active jobs from Data Universe API.
+    Returns dict mapping job_id -> job config (including platform)
+    """
+    try:
+        print(f"\nFetching active jobs from API...")
+
+        async with DataUniverseApiClient(
+            base_url=DATA_UNIVERSE_API_URL,
+            keypair=wallet.hotkey,
+            timeout=60,
+        ) as client:
+            dd_list = await client.validator_get_latest_dd_list()
+
+        print(f"Received DD list version={dd_list.version} with {len(dd_list.entries)} entries")
+
+        # Convert to dict mapping job_id -> config
+        jobs_dict = {}
+        platform_counts = {'reddit': 0, 'x': 0, 'other': 0}
+
+        for entry in dd_list.entries:
+            platform = entry.platform.lower() if entry.platform else 'other'
+            jobs_dict[entry.id] = {
+                'id': entry.id,
+                'platform': platform,
+                'label': entry.label,
+                'keyword': entry.keyword,
+                'weight': entry.weight,
+                'params': {
+                    'platform': platform,
+                    'label': entry.label,
+                    'keyword': entry.keyword,
+                }
+            }
+
+            if platform in platform_counts:
+                platform_counts[platform] += 1
+            else:
+                platform_counts['other'] += 1
+
+        print(f"Active jobs by platform:")
+        for platform, count in platform_counts.items():
+            if count > 0:
+                print(f"  {platform}: {count} jobs")
+
+        return jobs_dict
+
+    except Exception as e:
+        print(f"Error fetching active jobs from API: {e}")
+        return {}
+
 
 def get_miners_from_metagraph(
     num_miners: int = 10,
@@ -596,6 +712,12 @@ async def main():
     print(f"Validator hotkey: {wallet.hotkey.ss58_address}")
     print(f"S3 Auth URL: {args.s3_auth_url}")
 
+    # Fetch active jobs from API
+    expected_jobs = await fetch_active_jobs_from_api(wallet)
+    if not expected_jobs:
+        print("ERROR: Could not fetch active jobs from API")
+        return False
+
     # Get miners to validate
     if args.miner_hotkey:
         # Single miner specified
@@ -626,6 +748,7 @@ async def main():
             # Run full validation
             result = await validator.run_full_validation(
                 miner_hotkey=miner['hotkey'],
+                expected_jobs=expected_jobs,
                 max_files=args.max_files
             )
 
