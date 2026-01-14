@@ -3,18 +3,31 @@
 Test Script: Full DuckDB Validation with ALL Files
 
 This script tests comprehensive validation by:
-1. Listing ALL files for a miner (using get-miner-list)
-2. Getting presigned URLs for ALL files (batch request)
-3. Using DuckDB to read and analyze ALL files at once
-4. Running comprehensive anti-cheat validation
+1. Loading miners from metagraph, sorted by incentive
+2. Listing ALL files for a miner (using get-miner-list)
+3. Getting presigned URLs for ALL files (batch request)
+4. Using DuckDB to read and analyze ALL files at once
+5. Running comprehensive anti-cheat validation
 
 This is the "best ever validation" approach - no sampling, full coverage.
 
 Usage:
+    # Test top N miners by incentive
     python scripts/test_full_duckdb_validation.py \
-        --miner-hotkey "5H2..." \
+        --num-miners 5 \
         --wallet-name "validator" \
         --wallet-hotkey "default"
+
+    # Test specific miner
+    python scripts/test_full_duckdb_validation.py \
+        --miner-hotkey "5H2..." \
+        --wallet-name "validator"
+
+    # Test with limited files (faster testing)
+    python scripts/test_full_duckdb_validation.py \
+        --num-miners 3 \
+        --max-files 100 \
+        --debug
 """
 
 import argparse
@@ -30,6 +43,7 @@ from dataclasses import dataclass, field, asdict
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
 import bittensor as bt
+from common.utils import is_miner, get_miner_uids
 
 try:
     import duckdb
@@ -483,13 +497,60 @@ class FullDuckDBValidator:
         self.conn.close()
 
 
+def get_miners_from_metagraph(
+    num_miners: int = 10,
+    netuid: int = 13,
+    vpermit_rao_limit: int = 10_000
+) -> List[Dict]:
+    """
+    Load miners from metagraph and sort by incentive.
+    Uses is_miner() to properly filter out validators.
+    Returns top N miners by incentive.
+    """
+    print(f"\nLoading metagraph for netuid {netuid}...")
+    subtensor = bt.subtensor(network="finney")
+    metagraph = subtensor.metagraph(netuid=netuid)
+    print(f"Metagraph loaded: {len(metagraph.hotkeys)} neurons")
+
+    # Get miner UIDs using proper is_miner check
+    miner_uids = get_miner_uids(metagraph, vpermit_rao_limit)
+    print(f"Found {len(miner_uids)} miners (excluding validators)")
+
+    # Build miner list with incentive
+    miners = []
+    for uid in miner_uids:
+        incentive = float(metagraph.incentive[uid])
+        if incentive > 0:  # Only miners with incentive
+            miners.append({
+                'uid': uid,
+                'hotkey': metagraph.hotkeys[uid],
+                'incentive': incentive,
+                'stake': float(metagraph.stake[uid]),
+            })
+
+    # Sort by incentive (highest first)
+    miners.sort(key=lambda x: x['incentive'], reverse=True)
+
+    print(f"Found {len(miners)} miners with incentive > 0")
+    print(f"Selecting top {num_miners} by incentive")
+
+    # Show top miners
+    print(f"\nTop {min(num_miners, len(miners))} miners by incentive:")
+    for i, m in enumerate(miners[:num_miners]):
+        print(f"  {i+1}. UID {m['uid']:>3} | Incentive: {m['incentive']:.6f} | {m['hotkey'][:20]}...")
+
+    return miners[:num_miners]
+
+
 async def main():
     parser = argparse.ArgumentParser(
         description="Full DuckDB validation with ALL miner files - 100% coverage"
     )
 
-    parser.add_argument("--miner-hotkey", type=str, required=True,
-                        help="Miner hotkey to validate")
+    parser.add_argument("--miner-hotkey", type=str, default=None,
+                        help="Specific miner hotkey to validate (optional)")
+    parser.add_argument("--num-miners", type=int, default=5,
+                        help="Number of top miners to validate (by incentive)")
     parser.add_argument("--wallet-name", type=str, default="default",
                         help="Validator wallet name")
     parser.add_argument("--wallet-hotkey", type=str, default="default",
@@ -498,11 +559,13 @@ async def main():
                         default=os.getenv("S3_AUTH_URL", "https://s3-auth.sn13.io"),
                         help="S3 Auth API URL")
     parser.add_argument("--max-files", type=int, default=None,
-                        help="Limit number of files (for testing)")
+                        help="Limit number of files per miner (for testing)")
     parser.add_argument("--output", type=str, default=None,
                         help="Save results to JSON file")
     parser.add_argument("--debug", action="store_true",
                         help="Enable debug output")
+    parser.add_argument("--netuid", type=int, default=13,
+                        help="Subnet UID")
 
     args = parser.parse_args()
 
@@ -512,6 +575,15 @@ async def main():
     print(f"Validator hotkey: {wallet.hotkey.ss58_address}")
     print(f"S3 Auth URL: {args.s3_auth_url}")
 
+    # Get miners to validate
+    if args.miner_hotkey:
+        # Single miner specified
+        miners_to_test = [{'uid': '?', 'hotkey': args.miner_hotkey, 'incentive': 0}]
+        print(f"\nValidating specific miner: {args.miner_hotkey[:20]}...")
+    else:
+        # Load from metagraph
+        miners_to_test = get_miners_from_metagraph(args.num_miners, args.netuid)
+
     # Create validator
     validator = FullDuckDBValidator(
         wallet=wallet,
@@ -519,20 +591,55 @@ async def main():
         debug=args.debug
     )
 
+    all_results = []
+
     try:
-        # Run full validation
-        result = await validator.run_full_validation(
-            miner_hotkey=args.miner_hotkey,
-            max_files=args.max_files
-        )
+        print(f"\n{'='*70}")
+        print(f"VALIDATING {len(miners_to_test)} MINERS")
+        print(f"{'='*70}")
+
+        for i, miner in enumerate(miners_to_test):
+            print(f"\n[{i+1}/{len(miners_to_test)}] UID {miner['uid']} - Incentive: {miner['incentive']:.6f}")
+            print(f"Hotkey: {miner['hotkey']}")
+
+            # Run full validation
+            result = await validator.run_full_validation(
+                miner_hotkey=miner['hotkey'],
+                max_files=args.max_files
+            )
+
+            # Add miner info to result
+            result_dict = asdict(result)
+            result_dict['uid'] = miner['uid']
+            result_dict['incentive'] = miner['incentive']
+            all_results.append(result_dict)
+
+        # Print summary
+        print(f"\n{'='*70}")
+        print("FINAL SUMMARY - ALL MINERS")
+        print(f"{'='*70}")
+
+        for r in all_results:
+            status = "PASS" if r['is_valid'] else "FAIL"
+            print(f"  UID {r['uid']:>3} | Score: {r['validation_score']:>5.1f} | "
+                  f"Rows: {r['total_rows']:>8,} | Dup: {r['duplicate_rate']:>5.2f}% | "
+                  f"Empty: {r['empty_content_rate']:>5.2f}% | {status}")
+
+        passed = len([r for r in all_results if r['is_valid']])
+        print(f"\nPassed: {passed}/{len(all_results)}")
 
         # Save results if requested
         if args.output:
+            output_data = {
+                'timestamp': time.strftime("%Y-%m-%d %H:%M:%S"),
+                'num_miners': len(all_results),
+                'results': all_results
+            }
             with open(args.output, 'w') as f:
-                json.dump(asdict(result), f, indent=2, default=str)
-            print(f"Results saved to: {args.output}")
+                json.dump(output_data, f, indent=2, default=str)
+            print(f"\nResults saved to: {args.output}")
 
-        return result.is_valid
+        return all(r['is_valid'] for r in all_results)
 
     finally:
         validator.close()
