@@ -924,6 +924,11 @@ class Validator:
         bt.logging.info("Attempting to set weights.")
 
         scorer = self.evaluator.get_scorer()
+
+        # Recalculate S3 boosts based on competition (effective_size shares)
+        # This ensures all miners' shares are up-to-date before weight setting
+        scorer.recalculate_all_s3_boosts()
+
         scores = scorer.get_scores()
         credibilities = scorer.get_credibilities()
 

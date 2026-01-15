@@ -266,6 +266,8 @@ class MinerEvaluator:
                 return
 
             job_match_failure = (s3_validation_result.quality_metrics.get('job_match_rate', 0) < 100)
+
+            # Log validation result
             if s3_validation_result.is_valid:
                 job_match_info = ""
                 if 'job_match_rate' in s3_validation_result.quality_metrics:
@@ -273,15 +275,24 @@ class MinerEvaluator:
                 bt.logging.info(
                     f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} passed S3 validation. "
                     f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
-                    f"Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}"
+                    f"Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}, "
+                    f"Coverage: {s3_validation_result.job_coverage_rate:.1f}%, "
+                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB"
                     f"{job_match_info}"
                 )
-                # Only award boost if validation passed
-                self.scorer.update_s3_boost_and_cred(uid, s3_validation_result.validation_percentage, job_match_failure)
             else:
-                bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. Reason: {s3_validation_result.reason}")
-                # Failed validation = 0% boost
-                self.scorer.update_s3_boost_and_cred(uid, 0.0, job_match_failure)
+                bt.logging.info(
+                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. "
+                    f"Reason: {s3_validation_result.reason}"
+                )
+
+            # Update scorer with competition-based effective_size
+            self.scorer.update_s3_effective_size(
+                uid=uid,
+                effective_size=s3_validation_result.effective_size_bytes,
+                validation_passed=s3_validation_result.is_valid,
+                job_match_failure=job_match_failure
+            )
 
     async def _perform_s3_validation(
         self, uid: int, hotkey: str, current_block: int
