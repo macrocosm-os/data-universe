@@ -219,6 +219,8 @@ class DuckDBSampledValidator:
 
         Returns metrics for quality gate.
         Duplicate check is WITHIN SAME JOB only (cross-job duplicates OK).
+
+        OPTIMIZED: Batch by platform, single query per platform reads all files at once.
         """
         total_rows = 0
         total_duplicates_within_job = 0
@@ -227,69 +229,38 @@ class DuckDBSampledValidator:
         missing_url = 0
 
         try:
+            # Group jobs by platform for batch processing
+            x_jobs = {}
+            reddit_jobs = {}
             for job_id, job_data in urls_by_job.items():
                 platform = job_data['platform']
                 urls = job_data['urls']
-
                 if not urls:
                     continue
-
-                url_list_str = ", ".join([f"'{url}'" for url in urls])
-
-                # Content column varies by platform
                 if platform in ['x', 'twitter']:
-                    content_col = 'text'
+                    x_jobs[job_id] = urls
                 elif platform == 'reddit':
-                    content_col = 'body'
-                else:
-                    content_col = 'text'
+                    reddit_jobs[job_id] = urls
 
-                self._log(f"Job {job_id[:8]}... ({platform}): {len(urls)} files")
+            # Process X/Twitter jobs in batch
+            if x_jobs:
+                self._log(f"Processing {len(x_jobs)} X/Twitter jobs ({sum(len(u) for u in x_jobs.values())} files)...")
+                x_result = self._batch_validate_platform(x_jobs, 'x')
+                total_rows += x_result['total_rows']
+                total_duplicates_within_job += x_result['duplicates']
+                total_with_url += x_result['with_url']
+                empty_content += x_result['empty_content']
+                missing_url += x_result['missing_url']
 
-                # Query 1: Count rows and duplicates WITHIN THIS JOB
-                try:
-                    dup_result = self.conn.execute(f"""
-                        WITH all_data AS (
-                            SELECT url as entity_url
-                            FROM read_parquet([{url_list_str}])
-                        ),
-                        url_counts AS (
-                            SELECT entity_url, COUNT(*) as cnt
-                            FROM all_data
-                            WHERE entity_url IS NOT NULL AND entity_url != ''
-                            GROUP BY entity_url
-                        )
-                        SELECT
-                            (SELECT COUNT(*) FROM all_data) as total_rows,
-                            COUNT(*) as unique_urls,
-                            SUM(CASE WHEN cnt > 1 THEN cnt - 1 ELSE 0 END) as duplicate_count
-                        FROM url_counts
-                    """).fetchone()
-
-                    job_rows = dup_result[0] or 0
-                    job_duplicates = dup_result[2] or 0
-
-                    total_rows += job_rows
-                    total_duplicates_within_job += job_duplicates
-                    total_with_url += dup_result[1] or 0
-
-                except Exception as e:
-                    self._log(f"  Duplicate query error for job {job_id[:8]}: {e}")
-
-                # Query 2: Content quality
-                try:
-                    quality_result = self.conn.execute(f"""
-                        SELECT
-                            SUM(CASE WHEN COALESCE({content_col}, '') = '' THEN 1 ELSE 0 END) as empty_content,
-                            SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url
-                        FROM read_parquet([{url_list_str}])
-                    """).fetchone()
-
-                    empty_content += quality_result[0] or 0
-                    missing_url += quality_result[1] or 0
-
-                except Exception as e:
-                    self._log(f"  Quality query error for job {job_id[:8]}: {e}")
+            # Process Reddit jobs in batch
+            if reddit_jobs:
+                self._log(f"Processing {len(reddit_jobs)} Reddit jobs ({sum(len(u) for u in reddit_jobs.values())} files)...")
+                reddit_result = self._batch_validate_platform(reddit_jobs, 'reddit')
+                total_rows += reddit_result['total_rows']
+                total_duplicates_within_job += reddit_result['duplicates']
+                total_with_url += reddit_result['with_url']
+                empty_content += reddit_result['empty_content']
+                missing_url += reddit_result['missing_url']
 
             return {
                 "success": True,
@@ -305,6 +276,99 @@ class DuckDBSampledValidator:
         except Exception as e:
             self._log(f"DuckDB error: {e}")
             return {"success": False, "error": str(e)}
+
+    def _batch_validate_platform(
+        self,
+        jobs_urls: Dict[str, List[str]],
+        platform: str
+    ) -> Dict[str, int]:
+        """
+        Validate all jobs for a platform in a single DuckDB query.
+        Reads all files once, then aggregates per-job duplicates.
+        """
+        result = {
+            'total_rows': 0,
+            'duplicates': 0,
+            'with_url': 0,
+            'empty_content': 0,
+            'missing_url': 0
+        }
+
+        # Collect all URLs with job tags
+        all_urls = []
+        job_file_map = []  # List of (url, job_id) for tagging
+        for job_id, urls in jobs_urls.items():
+            for url in urls:
+                all_urls.append(url)
+                job_file_map.append((url, job_id))
+
+        if not all_urls:
+            return result
+
+        # Create temp table with file->job mapping
+        url_list_str = ", ".join([f"'{url}'" for url in all_urls])
+
+        # Content column varies by platform
+        if platform in ['x', 'twitter']:
+            content_col = 'text'
+            empty_check = f"COALESCE({content_col}, '') = '' AND (media IS NULL OR LENGTH(CAST(media AS VARCHAR)) <= 2)"
+        else:
+            content_col = 'body'
+            empty_check = f"COALESCE({content_col}, '') = ''"
+
+        try:
+            # Single query: read all files, tag with job_id via filename
+            # DuckDB's read_parquet includes filename column automatically
+            query = f"""
+                WITH raw_data AS (
+                    SELECT
+                        url as entity_url,
+                        filename,
+                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty,
+                        CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END as is_missing_url
+                    FROM read_parquet([{url_list_str}], filename=true)
+                ),
+                -- Extract job_id from filename (format: .../job_id/filename.parquet)
+                tagged_data AS (
+                    SELECT
+                        entity_url,
+                        regexp_extract(filename, '/([^/]+)/[^/]+\\.parquet', 1) as job_id,
+                        is_empty,
+                        is_missing_url
+                    FROM raw_data
+                ),
+                -- Count duplicates within each job
+                job_duplicates AS (
+                    SELECT
+                        job_id,
+                        entity_url,
+                        COUNT(*) as cnt
+                    FROM tagged_data
+                    WHERE entity_url IS NOT NULL AND entity_url != ''
+                    GROUP BY job_id, entity_url
+                )
+                SELECT
+                    (SELECT COUNT(*) FROM tagged_data) as total_rows,
+                    (SELECT COUNT(DISTINCT entity_url) FROM tagged_data WHERE entity_url IS NOT NULL AND entity_url != '') as unique_urls,
+                    (SELECT COALESCE(SUM(cnt - 1), 0) FROM job_duplicates WHERE cnt > 1) as duplicate_count,
+                    (SELECT SUM(is_empty) FROM tagged_data) as empty_content,
+                    (SELECT SUM(is_missing_url) FROM tagged_data) as missing_url
+            """
+
+            query_result = self.conn.execute(query).fetchone()
+
+            result['total_rows'] = query_result[0] or 0
+            result['with_url'] = query_result[1] or 0
+            result['duplicates'] = query_result[2] or 0
+            result['empty_content'] = query_result[3] or 0
+            result['missing_url'] = query_result[4] or 0
+
+            self._log(f"  {platform}: {result['total_rows']} rows, {result['duplicates']} duplicates within jobs")
+
+        except Exception as e:
+            self._log(f"  Batch query error for {platform}: {e}")
+
+        return result
 
     async def perform_scraper_validation(
         self,
