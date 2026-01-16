@@ -123,7 +123,7 @@ class Validator:
         self.organic_processor = None
 
         # Create asyncio event loop to manage async tasks.
-        self.loop = asyncio.get_event_loop()
+        self.loop = None  # # Event loop is thread-affine; Create/set it inside the validator run thread.
         self.axon = None
         self.api = None
         self.step = 0
@@ -244,7 +244,25 @@ class Validator:
                 async with self._on_demand_client() as client:
                     return await run_retrieval_from_api(client, mode="validator")
 
-            model = asyncio.get_event_loop().run_until_complete(_fetch_dd_list())
+            # Prefer the validator thread's loop if it exists; otherwise create a temporary loop.
+            if self.loop is not None and not self.loop.is_closed():
+                model = self.loop.run_until_complete(_fetch_dd_list())
+            else:
+                tmp_loop = asyncio.new_event_loop()
+                try:
+                    asyncio.set_event_loop(tmp_loop)
+                    model = tmp_loop.run_until_complete(_fetch_dd_list())
+                finally:
+                    try:
+                        tmp_loop.run_until_complete(tmp_loop.shutdown_asyncgens())
+                    except Exception:
+                        pass
+                    tmp_loop.close()
+                    try:
+                        asyncio.set_event_loop(None)
+                    except Exception:
+                        pass
+
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
@@ -584,6 +602,12 @@ class Validator:
         3. Saves state
         """
         assert self.is_setup, "Validator must be setup before running."
+
+        # Create and bind an event loop for THIS background thread.
+        # Do NOT reuse an event loop created in another thread.
+        if self.loop is None or getattr(self.loop, "is_closed", lambda: True)():
+            self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
 
         # Check that validator is registered on the network.
         utils.assert_registered(self.wallet, self.metagraph)
