@@ -122,8 +122,8 @@ class Validator:
 
         self.organic_processor = None
 
-        # Create asyncio event loop to manage async tasks.
-        self.loop = asyncio.get_event_loop()
+        # Event loop is thread-affine; will be created inside the validator run thread.
+        self.loop = None
         self.axon = None
         self.api = None
         self.step = 0
@@ -244,7 +244,11 @@ class Validator:
                 async with self._on_demand_client() as client:
                     return await run_retrieval_from_api(client, mode="validator")
 
-            model = asyncio.get_event_loop().run_until_complete(_fetch_dd_list())
+            # Use the validator thread's loop if available, otherwise create a temporary one.
+            if self.loop is not None and not self.loop.is_closed():
+                model = self.loop.run_until_complete(_fetch_dd_list())
+            else:
+                model = asyncio.run(_fetch_dd_list())
             bt.logging.info("Model retrieved, updating value calculator...")
             self.evaluator.scorer.value_calculator = DataValueCalculator(model=model)
             bt.logging.info(f"Evaluator: {self.evaluator.scorer.value_calculator}")
@@ -584,6 +588,11 @@ class Validator:
         3. Saves state
         """
         assert self.is_setup, "Validator must be setup before running."
+
+        # Create and bind an event loop for this background thread.
+        if self.loop is None or self.loop.is_closed():
+            self.loop = asyncio.new_event_loop()
+        asyncio.set_event_loop(self.loop)
 
         # Check that validator is registered on the network.
         utils.assert_registered(self.wallet, self.metagraph)
