@@ -23,7 +23,6 @@ from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
-from common.constants import FILENAME_FORMAT_REQUIRED_DATE
 import re
 
 
@@ -102,47 +101,6 @@ PREFERRED_SCRAPERS = {
     DataSource.X: ScraperId.X_APIDOJO,
     DataSource.REDDIT: ScraperId.REDDIT_MC,
 }
-
-
-def extract_count_from_filename(file_path: str) -> int:
-    """
-    Extract claimed record count from miner filename for dashboard metrics
-
-    Filename format: data_{YYYYMMDD_HHMMSS}_{record_count}_{16_char_hex}.parquet
-    Example: data_20250804_150058_9999_4yk9nu3ghiqjmv6c.parquet -> 9999
-
-    Args:
-        file_path: Full S3 path or just filename
-
-    Returns:
-        Record count as integer, or 0 if invalid format
-    """
-    # Case-insensitive hex pattern to handle both upper and lowercase
-    match = re.search(r'data_\d{8}_\d{6}_(\d+)_[a-fA-F0-9]{16}\.parquet', file_path)
-    return int(match.group(1)) if match else 0
-
-
-def is_valid_filename_format(file_path: str) -> bool:
-    """
-    Check if filename matches required format
-
-    Enforced after FILENAME_FORMAT_REQUIRED_DATE
-
-    Args:
-        file_path: Full S3 path or just filename
-
-    Returns:
-        True if valid format or before enforcement date, False otherwise
-    """
-    now = dt.datetime.now(dt.timezone.utc)
-
-    # Before enforcement date, all filenames are "valid" (no enforcement)
-    if now < FILENAME_FORMAT_REQUIRED_DATE:
-        return True
-
-    # After enforcement date, check format strictly
-    pattern = r'data_\d{8}_\d{6}_\d+_[a-fA-F0-9]{16}\.parquet$'
-    return bool(re.search(pattern, file_path))
 
 
 class DuckDBSampledValidator:
@@ -966,30 +924,8 @@ class S3Validator:
                         job_id = job_id_part.split('/')[0]
                         all_job_ids.add(job_id)
 
-                # Validate filename formats (enforced after FILENAME_FORMAT_REQUIRED_DATE)
-                invalid_filenames = [f['key'] for f in all_files if not is_valid_filename_format(f['key'])]
-
-                if invalid_filenames:
-                    bt.logging.warning(
-                        f"{miner_hotkey}: Found {len(invalid_filenames)} files with invalid filename format"
-                    )
-
-                    # After enforcement date, reject validation if any invalid filenames found
-                    now = dt.datetime.now(dt.timezone.utc)
-                    if now >= FILENAME_FORMAT_REQUIRED_DATE:
-                        return self._create_failed_result(
-                            f"Invalid filename format: {len(invalid_filenames)} files don't match required pattern "
-                            f"(data_YYYYMMDD_HHMMSS_count_16hex.parquet)"
-                        )
-
-                # Extract claimed record counts from filenames for dashboard metrics
-                total_claimed_records = sum(extract_count_from_filename(f['key']) for f in all_files)
-
                 bt.logging.info(
                     f"{miner_hotkey}: Extracted {len(all_job_ids)} unique job IDs from {len(all_files)} files"
-                )
-                bt.logging.info(
-                    f"{miner_hotkey}: Total claimed records from filenames: {total_claimed_records:,} across {len(all_files)} files"
                 )
             else:
                 # Fallback: use old method (has pagination bug but better than nothing)
@@ -1056,16 +992,6 @@ class S3Validator:
                     "Empty file detected (0 rows)",
                     empty_file_detected=True
                 )
-
-            # Check for filename count mismatches (enforced after FILENAME_FORMAT_REQUIRED_DATE)
-            now = dt.datetime.now(dt.timezone.utc)
-            if now >= FILENAME_FORMAT_REQUIRED_DATE and 'count_mismatches' in duplicate_analysis:
-                count_mismatches = duplicate_analysis['count_mismatches']
-                if count_mismatches:
-                    return self._create_failed_result(
-                        f"Record count validation failed: {len(count_mismatches)} files have mismatched counts "
-                        f"(claimed vs actual records)"
-                    )
 
             # Step 5: Validate job content matching
             job_match_analysis = await self._check_job_content_match(
@@ -1435,7 +1361,6 @@ class S3Validator:
         duplicate_uris = []
         total_entities = 0
         duplicate_entities = 0
-        count_mismatches = []
 
         for job_id, job_data in recent_job_files.items():
             files = job_data['files']
@@ -1476,24 +1401,6 @@ class S3Validator:
                             'empty_file_key': file_key
                         }
 
-                    # Validate filename record count matches actual
-                    claimed_count = extract_count_from_filename(file_key)
-                    actual_count = len(df)
-                    if claimed_count > 0 and claimed_count != actual_count:
-                        bt.logging.warning(
-                            f"{miner_hotkey}: Record count mismatch found: "
-                            f"claimed={claimed_count}, actual={actual_count}"
-                        )
-
-                        # After enforcement date, count mismatches are validation failures
-                        now = dt.datetime.now(dt.timezone.utc)
-                        if now >= FILENAME_FORMAT_REQUIRED_DATE:
-                            # Track mismatch for final validation decision
-                            count_mismatches.append({
-                                'claimed': claimed_count,
-                                'actual': actual_count
-                            })
-
                     # Sample rows to check for duplicates
                     sample_size = min(20, len(df))  # rows_per_file_sample = 20
                     sample_df = df.head(sample_size)
@@ -1517,15 +1424,12 @@ class S3Validator:
             if total_entities > 0 else 0
         )
 
-        result = {
+        return {
             'total_entities': total_entities,
             'duplicate_entities': duplicate_entities,
             'duplicate_percentage': duplicate_percentage,
             'sample_duplicates': duplicate_uris[:10]
         }
-        if count_mismatches:
-            result['count_mismatches'] = count_mismatches
-        return result
 
     def _parse_job_datetime(self, raw, miner_hotkey: str) -> Optional[dt.datetime]:
         """Parse job datetime from Gravity; treat null-ish values as no constraint."""
