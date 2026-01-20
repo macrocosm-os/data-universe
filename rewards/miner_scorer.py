@@ -216,10 +216,15 @@ class MinerScorer:
         job_match_failure: bool = False
     ) -> None:
         """
-        Update miner's effective_size and recalculate S3 boost using competition scoring.
+        Update miner's effective_size for S3 competition scoring.
 
-        Competition scoring: Each miner's S3 boost is proportional to their share of the
-        total effective_size pool across all miners.
+        Similar to P2P scoring in sqlite_memory_validator_storage.py:
+        scorable_bytes = my_bytes² / total_bytes
+
+        For S3:
+        s3_boost = (my_effective_size² / total_effective_size) × scale_factor
+
+        This rewards miners who have MORE data than others (squared advantage).
 
         Args:
             uid: Miner UID
@@ -227,25 +232,12 @@ class MinerScorer:
             validation_passed: Whether the miner passed quality validation
             job_match_failure: Whether job content matching failed
         """
-        max_boost = 200 * 10**6  # 200M total pool
-
         with self.lock:
             # Store this miner's effective_size
             if validation_passed and not job_match_failure:
                 self.effective_sizes[uid] = effective_size
             else:
                 self.effective_sizes[uid] = 0.0
-
-            # Calculate total pool (sum of all effective_sizes)
-            total_pool = float(self.effective_sizes.sum())
-
-            # Calculate this miner's share and boost
-            if total_pool > 0 and self.effective_sizes[uid] > 0:
-                share = float(self.effective_sizes[uid]) / total_pool
-                self.s3_boosts[uid] = share * max_boost
-            else:
-                share = 0.0
-                self.s3_boosts[uid] = 0.0
 
             # Update S3 credibility
             if job_match_failure:
@@ -258,38 +250,67 @@ class MinerScorer:
                 # Failed validation decreases credibility (EMA toward 0)
                 self.s3_credibility[uid] = (1-self.s3_cred_alpha) * self.s3_credibility[uid]
 
+            # Recalculate boosts for all miners (competition model)
+            self._recalculate_s3_boosts_internal()
+
             bt.logging.info(
-                f"S3 Competition Update for miner {uid}: "
-                f"effective_size={self.effective_sizes[uid]:.0f}, "
-                f"share={share*100:.2f}%, "
+                f"S3 Update for miner {uid}: "
+                f"effective_size={self.effective_sizes[uid]/(1024*1024):.1f}MB, "
                 f"s3_boost={float(self.s3_boosts[uid]):.0f}, "
-                f"s3_cred={float(self.s3_credibility[uid]):.4f}, "
-                f"total_pool={total_pool:.0f}"
+                f"s3_cred={float(self.s3_credibility[uid]):.4f}"
             )
+
+    def _recalculate_s3_boosts_internal(self) -> None:
+        """
+        Internal method to recalculate S3 boosts using P2P-style competition.
+
+        Formula (same as P2P sqlite storage):
+        scorable_size = my_effective_size² / total_effective_size
+        s3_boost = scorable_size × scale_factor
+
+        This gives squared advantage to miners with more data.
+        Example with 3 miners (100MB, 50MB, 50MB total = 200MB):
+        - Miner A (100MB): 100² / 200 = 50MB scorable → 50M boost
+        - Miner B (50MB):  50² / 200 = 12.5MB scorable → 12.5M boost
+        - Miner C (50MB):  50² / 200 = 12.5MB scorable → 12.5M boost
+
+        Requires: self.lock is held.
+        """
+        BYTES_TO_SCORE_SCALE = 1.0
+
+        total_effective = float(self.effective_sizes.sum())
+
+        if total_effective > 0:
+            for uid in range(len(self.effective_sizes)):
+                my_effective = float(self.effective_sizes[uid])
+                if my_effective > 0:
+                    # P2P-style: my_size² / total_size
+                    scorable_size = (my_effective * my_effective) / total_effective
+                    self.s3_boosts[uid] = scorable_size * BYTES_TO_SCORE_SCALE
+                else:
+                    self.s3_boosts[uid] = 0.0
+        else:
+            # No one has data
+            for uid in range(len(self.effective_sizes)):
+                self.s3_boosts[uid] = 0.0
 
     def recalculate_all_s3_boosts(self) -> None:
         """
         Recalculate S3 boosts for all miners based on current effective_sizes.
 
-        Call this periodically (e.g., before weight setting) to ensure boosts
-        reflect the current competition state after individual validations.
+        Uses P2P-style competition: scorable_size = my_size² / total_size
+        Call this before weight setting to ensure fair competition.
         """
-        max_boost = 200 * 10**6
-
         with self.lock:
-            total_pool = float(self.effective_sizes.sum())
+            self._recalculate_s3_boosts_internal()
 
-            if total_pool > 0:
-                for uid in range(len(self.effective_sizes)):
-                    if self.effective_sizes[uid] > 0:
-                        share = float(self.effective_sizes[uid]) / total_pool
-                        self.s3_boosts[uid] = share * max_boost
-                    else:
-                        self.s3_boosts[uid] = 0.0
+            total_effective = float(self.effective_sizes.sum())
+            total_boosts = float(self.s3_boosts.sum())
 
             bt.logging.info(
                 f"Recalculated S3 boosts for {len(self.effective_sizes)} miners. "
-                f"Total pool: {total_pool:.0f} bytes"
+                f"Total effective_size: {total_effective/(1024*1024):.1f}MB, "
+                f"Total s3_boosts: {total_boosts:.0f}"
             )
 
     def apply_ondemand_penalty(self, uid: int, mult_factor: float):
