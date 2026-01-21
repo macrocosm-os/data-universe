@@ -120,7 +120,7 @@ class DuckDBSampledValidator:
     MAX_EMPTY_RATE = 10.0       # 10% max empty content
     MAX_MISSING_URI_RATE = 5.0  # 5% max missing URIs
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
-    MIN_SCRAPER_SUCCESS = 80.0  # 80% min scraper success rate
+    MIN_SCRAPER_SUCCESS = 70.0  # 70% min scraper success rate
 
     def __init__(
         self,
