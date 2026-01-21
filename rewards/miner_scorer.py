@@ -222,42 +222,62 @@ class MinerScorer:
         scorable_bytes = my_bytes² / total_bytes
 
         For S3:
-        s3_boost = (my_effective_size² / total_effective_size) × scale_factor
+        s3_boost = (my_effective_size² / total_effective_size) × scale_factor × s3_credibility
 
         This rewards miners who have MORE data than others (squared advantage).
 
+        FORGIVING APPROACH (like P2P credibility):
+        - On success: Always update effective_size, increase credibility toward 1.0
+        - On failure: KEEP previous effective_size, decrease credibility via EMA
+        - This way one failed validation doesn't instantly zero out the miner
+        - Consistent failures will eventually reduce credibility to near-zero
+
         Args:
             uid: Miner UID
-            effective_size: total_size_bytes × coverage² (0 if validation failed)
+            effective_size: total_size_bytes × coverage² (calculated from current validation)
             validation_passed: Whether the miner passed quality validation
-            job_match_failure: Whether job content matching failed
+            job_match_failure: Whether job content matching failed (severe - zeros credibility)
         """
         with self.lock:
-            # Store this miner's effective_size
-            if validation_passed and not job_match_failure:
-                self.effective_sizes[uid] = effective_size
-            else:
-                self.effective_sizes[uid] = 0.0
+            old_effective = float(self.effective_sizes[uid])
+            old_cred = float(self.s3_credibility[uid])
 
-            # Update S3 credibility
+            # Update S3 credibility based on validation result
             if job_match_failure:
+                # Job match failure is severe - zero credibility (cheating attempt)
                 bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
                 self.s3_credibility[uid] = 0.0
+                # Also zero effective_size for job match failures (clear cheating)
+                self.effective_sizes[uid] = 0.0
             elif validation_passed:
-                # Successful validation increases credibility
-                self.s3_credibility[uid] = min(1, self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
+                # Success: Update effective_size and increase credibility
+                self.effective_sizes[uid] = effective_size
+                # EMA toward 1.0: new_cred = alpha * 1.0 + (1-alpha) * old_cred
+                self.s3_credibility[uid] = min(1.0, self.s3_cred_alpha + (1 - self.s3_cred_alpha) * self.s3_credibility[uid])
             else:
-                # Failed validation decreases credibility (EMA toward 0)
-                self.s3_credibility[uid] = (1-self.s3_cred_alpha) * self.s3_credibility[uid]
+                # Failure: KEEP previous effective_size, reduce credibility via EMA
+                # This is the forgiving part - one bad validation doesn't kill the miner
+                # EMA toward 0: new_cred = alpha * 0.0 + (1-alpha) * old_cred = (1-alpha) * old_cred
+                self.s3_credibility[uid] = (1 - self.s3_cred_alpha) * self.s3_credibility[uid]
+                # Keep the old effective_size (don't update it)
+                bt.logging.info(
+                    f"S3 validation failed for miner {uid}: "
+                    f"Keeping effective_size={old_effective/(1024*1024):.1f}MB, "
+                    f"reducing credibility {old_cred:.4f} -> {float(self.s3_credibility[uid]):.4f}"
+                )
 
             # Recalculate boosts for all miners (competition model)
             self._recalculate_s3_boosts_internal()
 
+            new_cred = float(self.s3_credibility[uid])
+            new_effective = float(self.effective_sizes[uid])
+
             bt.logging.info(
                 f"S3 Update for miner {uid}: "
-                f"effective_size={self.effective_sizes[uid]/(1024*1024):.1f}MB, "
+                f"effective_size={new_effective/(1024*1024):.1f}MB (was {old_effective/(1024*1024):.1f}MB), "
                 f"s3_boost={float(self.s3_boosts[uid]):.0f}, "
-                f"s3_cred={float(self.s3_credibility[uid]):.4f}"
+                f"s3_cred={new_cred:.4f} (was {old_cred:.4f}), "
+                f"passed={validation_passed}"
             )
 
     def _recalculate_s3_boosts_internal(self) -> None:
