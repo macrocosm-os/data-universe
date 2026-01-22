@@ -56,6 +56,11 @@ class MinerScorer:
         self.ondemand_boosts = torch.zeros(num_neurons, dtype=torch.float32)
         self.ondemand_alpha = 0.3
 
+        # Competition-based S3 scoring: stores effective_size for each miner
+        # effective_size = total_size_bytes × coverage² (set during S3 validation)
+        # S3 boost is calculated as: (my_effective_size / total_effective_size) × max_boost
+        self.effective_sizes = torch.zeros(num_neurons, dtype=torch.float64)
+
         # Make this class thread safe because it'll eventually be accessed by multiple threads.
         # One from the main validator evaluation loop and another from a background thread performing validation on user requests.
         self.lock = threading.Lock()
@@ -71,6 +76,7 @@ class MinerScorer:
                     "s3_credibility": self.s3_credibility,
                     "scorable_bytes": self.scorable_bytes,
                     "ondemand_boosts": self.ondemand_boosts,
+                    "effective_sizes": self.effective_sizes,
                 },
                 filepath,
             )
@@ -86,6 +92,7 @@ class MinerScorer:
                 (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
             ))
             self.ondemand_boosts = state.get("ondemand_boosts", torch.zeros_like(self.scores))
+            self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -107,27 +114,22 @@ class MinerScorer:
             self.s3_boosts[uid] = 0.0
             self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
             self.ondemand_boosts[uid] = 0.0
+            self.effective_sizes[uid] = 0.0
 
     def penalize_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
         """
-        Penalize a miner for uploading empty files.
+        DEPRECATED: With competition-based scoring, empty files result in effective_size=0,
+        which naturally gives no boost. This method is kept for backward compatibility.
 
-        Sets S3 boost and S3 credibility to zero.
-        Also decreases regular miner credibility using EMA (same as regular validation failure).
+        Sets S3 boost, S3 credibility, and effective_size to zero.
         """
         with self.lock:
-            # Set S3 boost and credibility to zero (no reward for empty files)
             self.s3_boosts[uid] = 0.0
             self.s3_credibility[uid] = 0.0
-
-            # Decrease miner credibility using EMA with 0% validation score (same as regular validation failure)
-            old_cred = float(self.miner_credibility[uid])
-            self.miner_credibility[uid] = (1 - self.cred_alpha) * self.miner_credibility[uid]
-            new_cred = float(self.miner_credibility[uid])
+            self.effective_sizes[uid] = 0.0
 
             bt.logging.info(
-                f"EMPTY FILE DETECTED - UID {uid} ({hotkey}): S3 boost and S3 credibility zeroed, "
-                f"miner credibility decreased {old_cred:.4f} -> {new_cred:.4f}. "
+                f"EMPTY FILE DETECTED - UID {uid} ({hotkey}): S3 boost and effective_size zeroed. "
                 f"Reason: {empty_file_reason}"
             )
 
@@ -184,16 +186,20 @@ class MinerScorer:
             self.ondemand_boosts = torch.cat(
                 [self.ondemand_boosts, torch.zeros(to_add, dtype=torch.float32)]
             )
+            self.effective_sizes = torch.cat(
+                [self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)]
+            )
 
     def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float, job_match_failure = False) -> None:
-        """Applies a fixed boost to the scaled score if the miner has passed S3 validation."""
-        max_boost = 200 * 10**6  # Increased to 200M from 120M
+        """
+        DEPRECATED: Use update_s3_effective_size() for competition-based scoring.
+        Kept for backward compatibility during transition.
+        """
+        max_boost = 200 * 10**6
         self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
 
-        # If miners fail job match validation, immediately reset credibility to 0 (no EMA)
-        # Otherwise, use EMA to update credibility
         if job_match_failure:
-            bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0. S3 uploads must match their respective job request params.")
+            bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
             self.s3_credibility[uid] = 0.0
         else:
             self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
@@ -201,6 +207,131 @@ class MinerScorer:
         bt.logging.info(
             f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
         )
+
+    def update_s3_effective_size(
+        self,
+        uid: int,
+        effective_size: float,
+        validation_passed: bool,
+        job_match_failure: bool = False
+    ) -> None:
+        """
+        Update miner's effective_size for S3 competition scoring.
+
+        Similar to P2P scoring in sqlite_memory_validator_storage.py:
+        scorable_bytes = my_bytes² / total_bytes
+
+        For S3:
+        s3_boost = (my_effective_size² / total_effective_size) × scale_factor × s3_credibility
+
+        This rewards miners who have MORE data than others (squared advantage).
+
+        FORGIVING APPROACH (like P2P credibility):
+        - On success: Always update effective_size, increase credibility toward 1.0
+        - On failure: KEEP previous effective_size, decrease credibility via EMA
+        - This way one failed validation doesn't instantly zero out the miner
+        - Consistent failures will eventually reduce credibility to near-zero
+
+        Args:
+            uid: Miner UID
+            effective_size: total_size_bytes × coverage² (calculated from current validation)
+            validation_passed: Whether the miner passed quality validation
+            job_match_failure: Whether job content matching failed (severe - zeros credibility)
+        """
+        with self.lock:
+            old_effective = float(self.effective_sizes[uid])
+            old_cred = float(self.s3_credibility[uid])
+
+            # Update S3 credibility based on validation result
+            if job_match_failure:
+                # Job match failure is severe - zero credibility (cheating attempt)
+                bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
+                self.s3_credibility[uid] = 0.0
+                # Also zero effective_size for job match failures (clear cheating)
+                self.effective_sizes[uid] = 0.0
+            elif validation_passed:
+                # Success: Update effective_size and increase credibility
+                self.effective_sizes[uid] = effective_size
+                # EMA toward 1.0: new_cred = alpha * 1.0 + (1-alpha) * old_cred
+                self.s3_credibility[uid] = min(1.0, self.s3_cred_alpha + (1 - self.s3_cred_alpha) * self.s3_credibility[uid])
+            else:
+                # Failure: KEEP previous effective_size, reduce credibility via EMA
+                # This is the forgiving part - one bad validation doesn't kill the miner
+                # EMA toward 0: new_cred = alpha * 0.0 + (1-alpha) * old_cred = (1-alpha) * old_cred
+                self.s3_credibility[uid] = (1 - self.s3_cred_alpha) * self.s3_credibility[uid]
+                # Keep the old effective_size (don't update it)
+                bt.logging.info(
+                    f"S3 validation failed for miner {uid}: "
+                    f"Keeping effective_size={old_effective/(1024*1024):.1f}MB, "
+                    f"reducing credibility {old_cred:.4f} -> {float(self.s3_credibility[uid]):.4f}"
+                )
+
+            # Recalculate boosts for all miners (competition model)
+            self._recalculate_s3_boosts_internal()
+
+            new_cred = float(self.s3_credibility[uid])
+            new_effective = float(self.effective_sizes[uid])
+
+            bt.logging.info(
+                f"S3 Update for miner {uid}: "
+                f"effective_size={new_effective/(1024*1024):.1f}MB (was {old_effective/(1024*1024):.1f}MB), "
+                f"s3_boost={float(self.s3_boosts[uid]):.0f}, "
+                f"s3_cred={new_cred:.4f} (was {old_cred:.4f}), "
+                f"passed={validation_passed}"
+            )
+
+    def _recalculate_s3_boosts_internal(self) -> None:
+        """
+        Internal method to recalculate S3 boosts using P2P-style competition.
+
+        Formula (same as P2P sqlite storage):
+        scorable_size = my_effective_size² / total_effective_size
+        s3_boost = scorable_size × scale_factor
+
+        This gives squared advantage to miners with more data.
+        Example with 3 miners (100MB, 50MB, 50MB total = 200MB):
+        - Miner A (100MB): 100² / 200 = 50MB scorable → 50M boost
+        - Miner B (50MB):  50² / 200 = 12.5MB scorable → 12.5M boost
+        - Miner C (50MB):  50² / 200 = 12.5MB scorable → 12.5M boost
+
+        Requires: self.lock is held.
+        """
+        BYTES_TO_SCORE_SCALE = 1.0
+
+        total_effective = float(self.effective_sizes.sum())
+
+        if total_effective > 0:
+            for uid in range(len(self.effective_sizes)):
+                my_effective = float(self.effective_sizes[uid])
+                if my_effective > 0:
+                    # P2P-style: my_size² / total_size
+                    scorable_size = (my_effective * my_effective) / total_effective
+                    self.s3_boosts[uid] = scorable_size * BYTES_TO_SCORE_SCALE
+                else:
+                    self.s3_boosts[uid] = 0.0
+        else:
+            # No one has data
+            for uid in range(len(self.effective_sizes)):
+                self.s3_boosts[uid] = 0.0
+
+    def recalculate_all_s3_boosts(self) -> None:
+        """
+        Recalculate S3 boosts for all miners based on current effective_sizes.
+
+        Uses P2P-style competition: scorable_size = my_size² / total_size
+        Call this before weight setting to ensure fair competition.
+        """
+        with self.lock:
+            self._recalculate_s3_boosts_internal()
+
+            total_effective = float(self.effective_sizes.sum())
+            total_boosts = float(self.s3_boosts.sum())
+
+            bt.logging.info(
+                f"Recalculated S3 boosts for {len(self.effective_sizes)} miners. "
+                f"Total effective_size: {total_effective/(1024*1024):.1f}MB, "
+                f"Total s3_boosts: {total_boosts:.0f}"
+            )
 
     def apply_ondemand_penalty(self, uid: int, mult_factor: float):
         """Applies a credibility penalty to a given miner based on their ondemand result"""
