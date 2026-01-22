@@ -233,7 +233,8 @@ class DuckDBSampledValidator:
                     continue
 
                 job_config = expected_jobs.get(job_id, {})
-                platform = job_config.get('platform', 'unknown').lower()
+                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+                platform = params.get('platform', 'unknown').lower()
 
                 if job_id not in urls_by_job:
                     urls_by_job[job_id] = {'platform': platform, 'urls': []}
@@ -541,11 +542,13 @@ class DuckDBSampledValidator:
             if not job_config:
                 continue
 
-            platform = job_config.get('platform', '').lower()
-            job_label = job_config.get('label')
-            job_keyword = job_config.get('keyword')
-            job_start_date = job_config.get('post_start_datetime')
-            job_end_date = job_config.get('post_end_datetime')
+            # Access params nested structure (Gravity schema)
+            params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+            platform = params.get('platform', '').lower()
+            job_label = params.get('label')
+            job_keyword = params.get('keyword')
+            job_start_date = params.get('post_start_datetime')
+            job_end_date = params.get('post_end_datetime')
 
             job_start_dt = self._parse_datetime(job_start_date)
             job_end_dt = self._parse_datetime(job_end_date)
@@ -586,7 +589,7 @@ class DuckDBSampledValidator:
         return {
             'total_checked': total_checked,
             'total_matched': total_matched,
-            'match_rate': (total_matched / total_checked * 100) if total_checked > 0 else 100.0,
+            'match_rate': (total_matched / total_checked * 100) if total_checked > 0 else 0.0,
             'mismatch_samples': mismatch_samples
         }
 
@@ -677,7 +680,9 @@ class DuckDBSampledValidator:
             if '/job_id=' in file_key:
                 job_id = file_key.split('/job_id=')[1].split('/')[0]
                 job_config = expected_jobs.get(job_id, {})
-                platform = job_config.get('platform', 'unknown').lower()
+                # Access params nested structure (Gravity schema)
+                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+                platform = params.get('platform', 'unknown').lower()
             else:
                 continue
 
@@ -741,7 +746,7 @@ class DuckDBSampledValidator:
             return None
 
     def _create_twitter_entity(self, row) -> Optional[DataEntity]:
-        """Create Twitter DataEntity."""
+        """Create Twitter DataEntity with ALL fields for scraper validation."""
         try:
             username = row.get('username', '')
             text = row.get('text', '')
@@ -751,63 +756,131 @@ class DuckDBSampledValidator:
 
             datetime_val = row.get('datetime', row.get('timestamp', ''))
             if datetime_val and pd.notna(datetime_val):
-                timestamp = pd.to_datetime(datetime_val)
-                if timestamp.tzinfo is None:
-                    timestamp = timestamp.replace(tzinfo=dt.timezone.utc)
+                try:
+                    timestamp = pd.to_datetime(datetime_val)
+                    if timestamp.tzinfo is None:
+                        timestamp = timestamp.replace(tzinfo=dt.timezone.utc)
+                except Exception:
+                    timestamp = dt.datetime.now(dt.timezone.utc)
             else:
                 timestamp = dt.datetime.now(dt.timezone.utc)
 
+            # Handle tweet_hashtags array field
             raw_hashtags = row.get('tweet_hashtags', None)
-            tweet_hashtags = []
-            if raw_hashtags is not None:
-                if hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
-                    try:
-                        tweet_hashtags = list(raw_hashtags)
-                    except:
-                        pass
-                elif not pd.isna(raw_hashtags):
+            if raw_hashtags is None:
+                tweet_hashtags = []
+            elif hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
+                try:
+                    tweet_hashtags = list(raw_hashtags)
+                except TypeError:
+                    tweet_hashtags = []
+            else:
+                try:
+                    tweet_hashtags = [] if pd.isna(raw_hashtags) else [raw_hashtags]
+                except Exception:
                     tweet_hashtags = [raw_hashtags]
 
+            # Handle media field (can be NaN)
+            raw_media = row.get('media', None)
+            if isinstance(raw_media, float):
+                media_value = None if math.isnan(raw_media) else raw_media
+            else:
+                media_value = raw_media
+
+            # Create XContent with ALL uploaded fields (required for scraper validation)
             x_content = XContent(
                 username=str(username),
                 text=str(text),
                 url=str(url),
                 timestamp=timestamp,
                 tweet_hashtags=tweet_hashtags,
+                media=media_value,
+                user_id=str(row.get('user_id', '')),
+                user_display_name=str(row.get('user_display_name', '')) if pd.notna(row.get('user_display_name', None)) else None,
+                user_verified=bool(row.get('user_verified', False)),
+                tweet_id=str(row.get('tweet_id', '')),
+                is_reply=bool(row.get('is_reply', False)),
+                is_quote=bool(row.get('is_quote', False)),
+                conversation_id=str(row.get('conversation_id', '')),
+                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')),
+                language=str(row.get('language', '')) if pd.notna(row.get('language', None)) else None,
+                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username', None)) else None,
+                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id', None)) else None,
+                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count', None)) else None,
+                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count', None)) else None,
+                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count', None)) else None,
+                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count', None)) else None,
+                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count', None)) else None,
+                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count', None)) else None,
+                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified', None)) else None,
+                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description', None)) else None,
+                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location', None)) else None,
+                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url', None)) else None,
+                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url', None)) else None,
+                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count', None)) else None,
+                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count', None)) else None
             )
             return XContent.to_data_entity(x_content)
-        except:
+        except Exception:
             return None
 
     def _create_reddit_entity(self, row) -> Optional[DataEntity]:
-        """Create Reddit DataEntity."""
+        """Create Reddit DataEntity. Accept if title OR body is present."""
         try:
             username = row.get('username', '')
-            body = row.get('body', row.get('text', ''))
             url = row.get('url', row.get('uri', ''))
             reddit_id = row.get('id', '')
-            if not all([username, body, url, reddit_id]):
+
+            body = row.get('body', row.get('text', ''))
+            title = row.get('title', '')
+
+            username_str = str(username).strip() if username is not None else ""
+            url_str = str(url).strip() if url is not None else ""
+            reddit_id_str = str(reddit_id).strip() if reddit_id is not None else ""
+
+            body_str = str(body).strip() if body is not None else ""
+            title_str = str(title).strip() if title is not None else ""
+
+            # Accept if either title or body has content (media posts have empty body)
+            if not body_str and not title_str:
                 return None
 
+            # Require basic identity fields
+            if not username_str or not url_str or not reddit_id_str:
+                return None
+
+            # Use body if available, otherwise use title
+            content_str = body_str if body_str else title_str
+
             datetime_val = row.get('datetime', row.get('createdAt', ''))
-            if datetime_val and pd.notna(datetime_val):
-                created_at = pd.to_datetime(datetime_val)
-                if created_at.tzinfo is None:
-                    created_at = created_at.replace(tzinfo=dt.timezone.utc)
+            if datetime_val is not None and pd.notna(datetime_val):
+                try:
+                    created_at = pd.to_datetime(datetime_val)
+                    if created_at.tzinfo is None:
+                        created_at = created_at.replace(tzinfo=dt.timezone.utc)
+                except Exception:
+                    created_at = dt.datetime.now(dt.timezone.utc)
             else:
                 created_at = dt.datetime.now(dt.timezone.utc)
 
             reddit_content = RedditContent(
-                id=str(reddit_id),
-                username=str(username),
-                body=str(body),
-                url=str(url),
-                communityName=str(row.get('communityName', '')),
+                id=reddit_id_str,
+                username=username_str,
+                body=content_str,
+                url=url_str,
+                communityName=str(row.get('communityName', '') or ''),
                 createdAt=created_at,
-                dataType=str(row.get('dataType', 'post')),
+                dataType=str(row.get('dataType', 'post') or 'post'),
+                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None,
+                title=str(row.get('title', '')) if pd.notna(row.get('title')) else None,
+                media=row.get('media', None) if pd.notna(row.get('media')) else None,
+                is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
+                score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
+                upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
+                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None
             )
             return RedditContent.to_data_entity(reddit_content)
-        except:
+        except Exception:
             return None
 
     async def _validate_with_scraper(
