@@ -15,7 +15,7 @@ import duckdb
 import datetime as dt
 import math
 import bittensor as bt
-from typing import Dict, List, Optional, Tuple
+from typing import Dict, List, Optional, Tuple, Any
 from dataclasses import dataclass
 
 from scraping.provider import ScraperProvider
