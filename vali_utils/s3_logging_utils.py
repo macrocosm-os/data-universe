@@ -210,7 +210,7 @@ def log_s3_validation_table(
             table.add_row("", "")
             table.add_row("[bold]Scraper Details[/bold]", "")
 
-            for i, detail in enumerate(enhanced.sample_validation_results[:5]):  # Show max 5
+            for i, detail in enumerate(enhanced.sample_validation_results):  # Show all validated
                 # Format: "✅ x: Good job!" or "❌ reddit: titles don't match"
                 table.add_row(f"  Entity {i+1}", detail)
 

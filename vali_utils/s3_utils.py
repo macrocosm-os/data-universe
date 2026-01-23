@@ -256,7 +256,7 @@ class DuckDBSampledValidator:
             # Step 6: Scraper validation
             bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
             scraper_result = await self._perform_scraper_validation(
-                sampled_files, expected_jobs, presigned_urls, num_entities=10
+                miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
             )
 
             # Step 7: Validation decision
@@ -297,11 +297,24 @@ class DuckDBSampledValidator:
 
             elapsed = time.time() - start_time
 
-            bt.logging.info(
-                f"{miner_hotkey}: DuckDB validation complete in {elapsed:.1f}s - "
-                f"{'PASSED' if is_valid else 'FAILED'}, "
-                f"effective_size={effective_size_bytes/(1024*1024):.1f}MB"
-            )
+            # Log detailed results for miners to debug
+            if is_valid:
+                bt.logging.success(
+                    f"{miner_hotkey}: S3 validation PASSED in {elapsed:.1f}s - "
+                    f"effective_size={effective_size_bytes/(1024*1024):.1f}MB, "
+                    f"dup={duplicate_rate:.1f}%, job_match={job_match_rate:.1f}%, scraper={scraper_success_rate:.1f}%"
+                )
+            else:
+                bt.logging.warning(
+                    f"{miner_hotkey}: S3 validation FAILED in {elapsed:.1f}s - "
+                    f"Issues: {', '.join(issues)}"
+                )
+                bt.logging.info(
+                    f"{miner_hotkey}: S3 validation details - "
+                    f"dup={duplicate_rate:.1f}% (max {self.MAX_DUPLICATE_RATE}%), "
+                    f"job_match={job_match_rate:.1f}% (min {self.MIN_JOB_MATCH_RATE}%), "
+                    f"scraper={scraper_success_rate:.1f}% (min {self.MIN_SCRAPER_SUCCESS}%)"
+                )
 
             return S3ValidationResultDetailed(
                 is_valid=is_valid,
@@ -322,8 +335,8 @@ class DuckDBSampledValidator:
                 validation_issues=issues,
                 reason=f"DuckDB validation: {'PASSED' if is_valid else 'FAILED'} - {', '.join(issues) if issues else 'All checks passed'}",
                 sample_duplicate_uris=[],
-                sample_validation_results=scraper_result.get('sample_results', [])[:5],
-                sample_job_mismatches=job_match_result.get('mismatch_samples', [])[:5],
+                sample_validation_results=scraper_result.get('sample_results', []),
+                sample_job_mismatches=job_match_result.get('mismatch_samples', []),
                 effective_size_bytes=effective_size_bytes,
                 job_coverage_rate=job_coverage_rate
             )
@@ -660,6 +673,7 @@ class DuckDBSampledValidator:
 
     async def _perform_scraper_validation(
         self,
+        miner_hotkey: str,
         sampled_files: List[Dict],
         expected_jobs: Dict[str, Dict],
         presigned_urls: Dict[str, str],
@@ -730,10 +744,20 @@ class DuckDBSampledValidator:
                 total_validated += len(entities)
                 sample_results.append(f"❌ {platform}: Scraper error - {e}")
 
+        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+
+        # Log detailed results for miners to debug
+        bt.logging.success(
+            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
+        )
+        bt.logging.info(
+            f"{miner_hotkey}: S3 scraper validation details: {sample_results}"
+        )
+
         return {
             'entities_validated': total_validated,
             'entities_passed': total_passed,
-            'success_rate': (total_passed / total_validated * 100) if total_validated > 0 else 0,
+            'success_rate': success_rate,
             'sample_results': sample_results
         }
 
@@ -1996,9 +2020,9 @@ class S3Validator:
             job_match_rate=job_match_analysis['match_rate'],
             validation_issues=issues,
             reason=reason,
-            sample_duplicate_uris=duplicate_analysis['sample_duplicates'][:5],
-            sample_validation_results=scraper_validation['sample_results'][:5],
-            sample_job_mismatches=job_match_analysis['mismatch_samples'][:5],
+            sample_duplicate_uris=duplicate_analysis['sample_duplicates'],
+            sample_validation_results=scraper_validation['sample_results'],
+            sample_job_mismatches=job_match_analysis['mismatch_samples'],
             effective_size_bytes=effective_size_bytes,
             job_coverage_rate=job_completion_rate
         )
