@@ -462,11 +462,20 @@ class DuckDBSampledValidator:
 
         # Platform-specific empty check
         if platform in ['x', 'twitter']:
-            content_col = 'text'
-            empty_check = f"COALESCE({content_col}, '') = '' AND (tweet_hashtags IS NULL OR LENGTH(CAST(tweet_hashtags AS VARCHAR)) <= 2)"
+            # Twitter: empty if no text AND no hashtags AND no media
+            # media is List[str], tweet_hashtags is List[str] - check length > 2 (empty array '[]' has length 2)
+            empty_check = """(
+                COALESCE(text, '') = '' AND
+                (tweet_hashtags IS NULL OR LENGTH(CAST(tweet_hashtags AS VARCHAR)) <= 2) AND
+                (media IS NULL OR LENGTH(CAST(media AS VARCHAR)) <= 2)
+            )"""
         else:
-            content_col = 'body'
-            empty_check = f"COALESCE({content_col}, '') = '' AND (media IS NULL OR LENGTH(CAST(media AS VARCHAR)) <= 2)"
+            # Reddit: posts need title, comments need body
+            # Empty if: (it's a post AND title is empty) OR (it's a comment AND body is empty)
+            empty_check = """(
+                (COALESCE(dataType, 'post') = 'post' AND COALESCE(title, '') = '') OR
+                (COALESCE(dataType, 'post') = 'comment' AND COALESCE(body, '') = '')
+            )"""
 
         try:
             query = f"""
