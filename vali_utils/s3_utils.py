@@ -462,20 +462,11 @@ class DuckDBSampledValidator:
 
         # Platform-specific empty check
         if platform in ['x', 'twitter']:
-            # Twitter: empty if no text AND no hashtags AND no media
-            # media is List[str], tweet_hashtags is List[str] - check length > 2 (empty array '[]' has length 2)
-            empty_check = """(
-                COALESCE(text, '') = '' AND
-                (tweet_hashtags IS NULL OR LENGTH(CAST(tweet_hashtags AS VARCHAR)) <= 2) AND
-                (media IS NULL OR LENGTH(CAST(media AS VARCHAR)) <= 2)
-            )"""
+            # Twitter: empty if text is empty (simple check - hashtags/media are bonus)
+            empty_check = "COALESCE(text, '') = ''"
         else:
-            # Reddit: posts need title, comments need body
-            # Empty if: (it's a post AND title is empty) OR (it's a comment AND body is empty)
-            empty_check = """(
-                (COALESCE(dataType, 'post') = 'post' AND COALESCE(title, '') = '') OR
-                (COALESCE(dataType, 'post') = 'comment' AND COALESCE(body, '') = '')
-            )"""
+            # Reddit: empty if body is empty (simple check)
+            empty_check = "COALESCE(body, '') = ''"
 
         try:
             query = f"""
@@ -485,7 +476,7 @@ class DuckDBSampledValidator:
                         filename,
                         CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty,
                         CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END as is_missing_url
-                    FROM read_parquet([{url_list_str}], filename=true)
+                    FROM read_parquet([{url_list_str}], filename=true, union_by_name=true)
                 ),
                 tagged_data AS (
                     SELECT
