@@ -694,7 +694,7 @@ class DuckDBSampledValidator:
                 for _, row in df.head(3).iterrows():
                     entity = self._create_data_entity(row, platform)
                     if entity:
-                        all_entities.append((entity, platform))
+                        all_entities.append((entity, platform, job_id))
             except:
                 continue
 
@@ -708,21 +708,24 @@ class DuckDBSampledValidator:
         sample_results = []
 
         entities_by_platform = {}
-        for entity, platform in entities_to_validate:
+        for entity, platform, job_id in entities_to_validate:
             if platform not in entities_by_platform:
                 entities_by_platform[platform] = []
-            entities_by_platform[platform].append(entity)
+            entities_by_platform[platform].append((entity, job_id))
 
-        for platform, entities in entities_by_platform.items():
+        for platform, entities_with_jobs in entities_by_platform.items():
+            entities = [e[0] for e in entities_with_jobs]
+            job_ids = [e[1] for e in entities_with_jobs]
             try:
                 results = await self._validate_with_scraper(entities, platform)
-                for result in results:
+                for i, result in enumerate(results):
+                    job_id = job_ids[i] if i < len(job_ids) else 'unknown'
                     total_validated += 1
                     if result.is_valid:
                         total_passed += 1
-                        sample_results.append(f"✅ {platform}: {result.reason}")
+                        sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
                     else:
-                        sample_results.append(f"❌ {platform}: {result.reason}")
+                        sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
             except Exception as e:
                 total_validated += len(entities)
                 sample_results.append(f"❌ {platform}: Scraper error - {e}")
