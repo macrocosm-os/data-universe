@@ -478,8 +478,8 @@ class DuckDBSampledValidator:
             # Twitter: empty if text is empty (simple check - hashtags/media are bonus)
             empty_check = "COALESCE(text, '') = ''"
         else:
-            # Reddit: empty if body is empty (simple check)
-            empty_check = "COALESCE(body, '') = ''"
+            # Reddit: empty only if BOTH body and title are empty (media/link posts often have empty body but non-empty title)
+            empty_check = "(COALESCE(body, '') = '' AND COALESCE(title, '') = '')"
 
         try:
             query = f"""
