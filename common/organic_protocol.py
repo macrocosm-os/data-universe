@@ -24,8 +24,4 @@ class OrganicRequest(bt.Synapse):
 
     def deserialize(self) -> Dict[str, Any]:
         """Convert synapse to dictionary for response"""
-        return {
-            "status": self.status,
-            "data": self.data,
-            "meta": self.meta
-        }
+        return {"status": self.status, "data": self.data, "meta": self.meta}

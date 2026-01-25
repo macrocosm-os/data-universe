@@ -65,12 +65,12 @@ class CoordinatorConfig(StrictBaseModel):
 
 
 def _choose_scrape_configs(
-        scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime
+    scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime
 ) -> List[ScrapeConfig]:
     """For the given scraper, returns a list of scrapes (defined by ScrapeConfig) to be run."""
-    assert (
-            scraper_id in config.scraper_configs
-    ), f"Scraper Id {scraper_id} not in config"
+    assert scraper_id in config.scraper_configs, (
+        f"Scraper Id {scraper_id} not in config"
+    )
 
     # Ensure now has timezone information
     if now.tzinfo is None:
@@ -98,9 +98,13 @@ def _choose_scrape_configs(
         # If we have more than 1 bucket to choose from, choose a bucket in the range
         if oldest_bucket.id < current_bucket.id:
             # Use a triangular distribution for bucket selection
-            chosen_id = int(numpy.random.default_rng().triangular(
-                left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
-            ))
+            chosen_id = int(
+                numpy.random.default_rng().triangular(
+                    left=oldest_bucket.id,
+                    mode=current_bucket.id,
+                    right=current_bucket.id,
+                )
+            )
 
             chosen_bucket = TimeBucket(id=chosen_id)
 
@@ -110,7 +114,7 @@ def _choose_scrape_configs(
         if date_range.start.tzinfo is None:
             date_range = DateRange(
                 start=date_range.start.replace(tzinfo=dt.timezone.utc),
-                end=date_range.end.replace(tzinfo=dt.timezone.utc)
+                end=date_range.end.replace(tzinfo=dt.timezone.utc),
             )
 
         results.append(
@@ -122,6 +126,7 @@ def _choose_scrape_configs(
         )
 
     return results
+
 
 class ScraperCoordinator:
     """Coordinates all the scrapers necessary based on the specified target ScrapingDistribution."""

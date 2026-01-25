@@ -29,6 +29,7 @@ import re
 @dataclass
 class S3ValidationResult:
     """S3 validation result structure"""
+
     is_valid: bool
     validation_percentage: float
     job_count: int
@@ -41,7 +42,7 @@ class S3ValidationResult:
     reason: str
 
     # Enhanced validation fields (optional, for backward compatibility)
-    enhanced_validation: Optional['S3ValidationResultDetailed'] = None
+    enhanced_validation: Optional["S3ValidationResultDetailed"] = None
 
     # Empty file detection
     empty_file_detected: bool = False
@@ -55,6 +56,7 @@ class S3ValidationResult:
 @dataclass
 class S3ValidationResultDetailed:
     """Detailed S3 validation result with comprehensive metrics"""
+
     is_valid: bool
     validation_percentage: float
 
@@ -116,25 +118,21 @@ class DuckDBSampledValidator:
     """
 
     # Validation thresholds
-    MAX_DUPLICATE_RATE = 5.0    # 5% max duplicates within same job
-    MAX_EMPTY_RATE = 10.0       # 10% max empty content
+    MAX_DUPLICATE_RATE = 5.0  # 5% max duplicates within same job
+    MAX_EMPTY_RATE = 10.0  # 10% max empty content
     MAX_MISSING_URI_RATE = 5.0  # 5% max missing URIs
-    MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
+    MIN_JOB_MATCH_RATE = 95.0  # 95% min job content match rate
     MIN_SCRAPER_SUCCESS = 70.0  # 70% min scraper success rate
 
     def __init__(
-        self,
-        wallet,
-        s3_auth_url: str,
-        s3_reader=None,
-        sample_percent: float = 10.0
+        self, wallet, s3_auth_url: str, s3_reader=None, sample_percent: float = 10.0
     ):
         self.wallet = wallet
         self.s3_auth_url = s3_auth_url
         self.s3_reader = s3_reader
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
-        self.conn = duckdb.connect(':memory:')
+        self.conn = duckdb.connect(":memory:")
         self._setup_duckdb()
 
     def _setup_duckdb(self):
@@ -145,9 +143,7 @@ class DuckDBSampledValidator:
         self.conn.execute("SET enable_progress_bar=false;")
 
     async def validate_miner_s3_data(
-        self,
-        miner_hotkey: str,
-        expected_jobs: Dict
+        self, miner_hotkey: str, expected_jobs: Dict
     ) -> S3ValidationResultDetailed:
         """
         Validate miner using DuckDB with random sampling.
@@ -156,6 +152,7 @@ class DuckDBSampledValidator:
         """
         import time
         import requests
+
         start_time = time.time()
 
         try:
@@ -173,15 +170,17 @@ class DuckDBSampledValidator:
             # Group files by job
             files_by_job = {}
             for f in all_files:
-                key = f.get('key', '')
-                if '/job_id=' in key:
-                    job_id = key.split('/job_id=')[1].split('/')[0]
+                key = f.get("key", "")
+                if "/job_id=" in key:
+                    job_id = key.split("/job_id=")[1].split("/")[0]
                     if job_id not in files_by_job:
                         files_by_job[job_id] = []
                     files_by_job[job_id].append(f)
 
             # Filter to active jobs only
-            active_job_ids = [jid for jid in files_by_job.keys() if jid in expected_jobs]
+            active_job_ids = [
+                jid for jid in files_by_job.keys() if jid in expected_jobs
+            ]
 
             if not active_job_ids:
                 return self._create_failed_result("No active jobs found")
@@ -190,14 +189,16 @@ class DuckDBSampledValidator:
             total_size_bytes = 0
             for job_id in active_job_ids:
                 for f in files_by_job[job_id]:
-                    total_size_bytes += f.get('size', 0)
+                    total_size_bytes += f.get("size", 0)
 
-            job_coverage_rate = (len(active_job_ids) / len(expected_jobs) * 100) if expected_jobs else 0
+            job_coverage_rate = (
+                (len(active_job_ids) / len(expected_jobs) * 100) if expected_jobs else 0
+            )
 
             bt.logging.info(
                 f"{miner_hotkey}: {len(all_files)} total files, "
                 f"{len(active_job_ids)} active jobs, "
-                f"{total_size_bytes/(1024*1024):.1f}MB, "
+                f"{total_size_bytes / (1024 * 1024):.1f}MB, "
                 f"{job_coverage_rate:.1f}% coverage"
             )
 
@@ -215,11 +216,15 @@ class DuckDBSampledValidator:
             sampled_files_with_job = random.sample(active_files, sample_count)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
-            bt.logging.info(f"{miner_hotkey}: Sampled {len(sampled_files)} files ({self.sample_percent}%)")
+            bt.logging.info(
+                f"{miner_hotkey}: Sampled {len(sampled_files)} files ({self.sample_percent}%)"
+            )
 
             # Step 3: Get presigned URLs for sample
-            file_keys = [f['key'] for f in sampled_files]
-            presigned_urls = await self._get_presigned_urls_batch(miner_hotkey, file_keys)
+            file_keys = [f["key"] for f in sampled_files]
+            presigned_urls = await self._get_presigned_urls_batch(
+                miner_hotkey, file_keys
+            )
 
             if not presigned_urls:
                 return self._create_failed_result("Failed to get presigned URLs")
@@ -227,25 +232,29 @@ class DuckDBSampledValidator:
             # Group by job for DuckDB validation
             urls_by_job = {}
             for file_info, job_id in sampled_files_with_job:
-                file_key = file_info['key']
+                file_key = file_info["key"]
                 url = presigned_urls.get(file_key)
                 if not url:
                     continue
 
                 job_config = expected_jobs.get(job_id, {})
-                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', 'unknown').lower()
+                params = (
+                    job_config.get("params", {}) if isinstance(job_config, dict) else {}
+                )
+                platform = params.get("platform", "unknown").lower()
 
                 if job_id not in urls_by_job:
-                    urls_by_job[job_id] = {'platform': platform, 'urls': []}
-                urls_by_job[job_id]['urls'].append(url)
+                    urls_by_job[job_id] = {"platform": platform, "urls": []}
+                urls_by_job[job_id]["urls"].append(url)
 
             # Step 4: DuckDB validation (duplicates within job, empty content)
             bt.logging.info(f"{miner_hotkey}: Running DuckDB validation...")
             duckdb_result = self._validate_sample_with_duckdb(urls_by_job)
 
             if not duckdb_result.get("success"):
-                return self._create_failed_result(f"DuckDB error: {duckdb_result.get('error')}")
+                return self._create_failed_result(
+                    f"DuckDB error: {duckdb_result.get('error')}"
+                )
 
             # Step 5: Job content matching
             bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
@@ -256,7 +265,11 @@ class DuckDBSampledValidator:
             # Step 6: Scraper validation
             bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
             scraper_result = await self._perform_scraper_validation(
-                miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
+                miner_hotkey,
+                sampled_files,
+                expected_jobs,
+                presigned_urls,
+                num_entities=10,
             )
 
             # Step 7: Validation decision
@@ -264,8 +277,8 @@ class DuckDBSampledValidator:
             duplicate_rate = duckdb_result["duplicate_rate_within_job"]
             empty_rate = duckdb_result["empty_rate"]
             missing_uri_rate = duckdb_result["missing_url_rate"]
-            job_match_rate = job_match_result['match_rate']
-            scraper_success_rate = scraper_result['success_rate']
+            job_match_rate = job_match_result["match_rate"]
+            scraper_success_rate = scraper_result["success_rate"]
 
             if duplicate_rate > self.MAX_DUPLICATE_RATE:
                 issues.append(f"High duplicates: {duplicate_rate:.1f}%")
@@ -283,15 +296,19 @@ class DuckDBSampledValidator:
             # Calculate effective_size for competition scoring
             coverage_ratio = job_coverage_rate / 100.0
             if is_valid:
-                effective_size_bytes = total_size_bytes * (coverage_ratio ** 2)
+                effective_size_bytes = total_size_bytes * (coverage_ratio**2)
             else:
                 effective_size_bytes = 0.0
 
             # Calculate validation percentage (for backward compatibility)
             if is_valid:
                 base_score = 100.0 - (duplicate_rate * 2) - (empty_rate * 0.5)
-                size_bonus = min(20, math.log10(max(1, total_size_bytes / (10 * 1024 * 1024))) * 10)
-                validation_percentage = max(0, base_score + size_bonus) * (coverage_ratio)
+                size_bonus = min(
+                    20, math.log10(max(1, total_size_bytes / (10 * 1024 * 1024))) * 10
+                )
+                validation_percentage = max(0, base_score + size_bonus) * (
+                    coverage_ratio
+                )
             else:
                 validation_percentage = 0.0
 
@@ -301,7 +318,7 @@ class DuckDBSampledValidator:
             if is_valid:
                 bt.logging.success(
                     f"{miner_hotkey}: S3 validation PASSED in {elapsed:.1f}s - "
-                    f"effective_size={effective_size_bytes/(1024*1024):.1f}MB, "
+                    f"effective_size={effective_size_bytes / (1024 * 1024):.1f}MB, "
                     f"dup={duplicate_rate:.1f}%, job_match={job_match_rate:.1f}%, scraper={scraper_success_rate:.1f}%"
                 )
             else:
@@ -326,19 +343,19 @@ class DuckDBSampledValidator:
                 total_size_bytes=total_size_bytes,
                 has_duplicates=(duplicate_rate > self.MAX_DUPLICATE_RATE),
                 duplicate_percentage=duplicate_rate,
-                entities_validated=scraper_result['entities_validated'],
-                entities_passed_scraper=scraper_result['entities_passed'],
+                entities_validated=scraper_result["entities_validated"],
+                entities_passed_scraper=scraper_result["entities_passed"],
                 scraper_success_rate=scraper_success_rate,
-                entities_checked_for_job_match=job_match_result['total_checked'],
-                entities_matched_job=job_match_result['total_matched'],
+                entities_checked_for_job_match=job_match_result["total_checked"],
+                entities_matched_job=job_match_result["total_matched"],
                 job_match_rate=job_match_rate,
                 validation_issues=issues,
                 reason=f"DuckDB validation: {'PASSED' if is_valid else 'FAILED'} - {', '.join(issues) if issues else 'All checks passed'}",
                 sample_duplicate_uris=[],
-                sample_validation_results=scraper_result.get('sample_results', []),
-                sample_job_mismatches=job_match_result.get('mismatch_samples', []),
+                sample_validation_results=scraper_result.get("sample_results", []),
+                sample_job_mismatches=job_match_result.get("mismatch_samples", []),
                 effective_size_bytes=effective_size_bytes,
-                job_coverage_rate=job_coverage_rate
+                job_coverage_rate=job_coverage_rate,
             )
 
         except Exception as e:
@@ -346,17 +363,15 @@ class DuckDBSampledValidator:
             return self._create_failed_result(f"Validation error: {str(e)}")
 
     async def _get_presigned_urls_batch(
-        self,
-        miner_hotkey: str,
-        file_keys: List[str],
-        batch_size: int = 500
+        self, miner_hotkey: str, file_keys: List[str], batch_size: int = 500
     ) -> Dict[str, str]:
         """Get presigned URLs in batches"""
         import requests
+
         all_urls = {}
 
         for i in range(0, len(file_keys), batch_size):
-            batch = file_keys[i:i + batch_size]
+            batch = file_keys[i : i + batch_size]
 
             try:
                 hotkey = self.wallet.hotkey.ss58_address
@@ -370,20 +385,20 @@ class DuckDBSampledValidator:
                     "signature": signature.hex(),
                     "miner_hotkey": miner_hotkey,
                     "file_keys": batch,
-                    "expiry_hours": 1
+                    "expiry_hours": 1,
                 }
 
                 response = requests.post(
                     f"{self.s3_auth_url}/get-file-presigned-urls",
                     json=payload,
-                    timeout=120
+                    timeout=120,
                 )
 
                 if response.status_code == 200:
-                    file_urls = response.json().get('file_urls', {})
+                    file_urls = response.json().get("file_urls", {})
                     for key, data in file_urls.items():
-                        if isinstance(data, dict) and 'presigned_url' in data:
-                            all_urls[key] = data['presigned_url']
+                        if isinstance(data, dict) and "presigned_url" in data:
+                            all_urls[key] = data["presigned_url"]
                         elif isinstance(data, str):
                             all_urls[key] = data
 
@@ -393,8 +408,7 @@ class DuckDBSampledValidator:
         return all_urls
 
     def _validate_sample_with_duckdb(
-        self,
-        urls_by_job: Dict[str, Dict[str, List[str]]]
+        self, urls_by_job: Dict[str, Dict[str, List[str]]]
     ) -> Dict[str, Any]:
         """
         Run DuckDB validation on sampled files.
@@ -411,39 +425,45 @@ class DuckDBSampledValidator:
             x_jobs = {}
             reddit_jobs = {}
             for job_id, job_data in urls_by_job.items():
-                platform = job_data['platform']
-                urls = job_data['urls']
+                platform = job_data["platform"]
+                urls = job_data["urls"]
                 if not urls:
                     continue
-                if platform in ['x', 'twitter']:
+                if platform in ["x", "twitter"]:
                     x_jobs[job_id] = urls
-                elif platform == 'reddit':
+                elif platform == "reddit":
                     reddit_jobs[job_id] = urls
 
             # Process X/Twitter
             if x_jobs:
-                x_result = self._batch_validate_platform(x_jobs, 'x')
-                total_rows += x_result['total_rows']
-                total_duplicates += x_result['duplicates']
-                total_with_url += x_result['with_url']
-                empty_content += x_result['empty_content']
-                missing_url += x_result['missing_url']
+                x_result = self._batch_validate_platform(x_jobs, "x")
+                total_rows += x_result["total_rows"]
+                total_duplicates += x_result["duplicates"]
+                total_with_url += x_result["with_url"]
+                empty_content += x_result["empty_content"]
+                missing_url += x_result["missing_url"]
 
             # Process Reddit
             if reddit_jobs:
-                reddit_result = self._batch_validate_platform(reddit_jobs, 'reddit')
-                total_rows += reddit_result['total_rows']
-                total_duplicates += reddit_result['duplicates']
-                total_with_url += reddit_result['with_url']
-                empty_content += reddit_result['empty_content']
-                missing_url += reddit_result['missing_url']
+                reddit_result = self._batch_validate_platform(reddit_jobs, "reddit")
+                total_rows += reddit_result["total_rows"]
+                total_duplicates += reddit_result["duplicates"]
+                total_with_url += reddit_result["with_url"]
+                empty_content += reddit_result["empty_content"]
+                missing_url += reddit_result["missing_url"]
 
             return {
                 "success": True,
                 "total_rows": total_rows,
-                "duplicate_rate_within_job": (total_duplicates / total_rows * 100) if total_rows > 0 else 0,
-                "empty_rate": (empty_content / total_rows * 100) if total_rows > 0 else 0,
-                "missing_url_rate": (missing_url / total_rows * 100) if total_rows > 0 else 0,
+                "duplicate_rate_within_job": (total_duplicates / total_rows * 100)
+                if total_rows > 0
+                else 0,
+                "empty_rate": (empty_content / total_rows * 100)
+                if total_rows > 0
+                else 0,
+                "missing_url_rate": (missing_url / total_rows * 100)
+                if total_rows > 0
+                else 0,
             }
 
         except Exception as e:
@@ -451,17 +471,15 @@ class DuckDBSampledValidator:
             return {"success": False, "error": str(e)}
 
     def _batch_validate_platform(
-        self,
-        jobs_urls: Dict[str, List[str]],
-        platform: str
+        self, jobs_urls: Dict[str, List[str]], platform: str
     ) -> Dict[str, int]:
         """Validate all jobs for a platform in a single DuckDB query."""
         result = {
-            'total_rows': 0,
-            'duplicates': 0,
-            'with_url': 0,
-            'empty_content': 0,
-            'missing_url': 0
+            "total_rows": 0,
+            "duplicates": 0,
+            "with_url": 0,
+            "empty_content": 0,
+            "missing_url": 0,
         }
 
         all_urls = []
@@ -474,7 +492,7 @@ class DuckDBSampledValidator:
         url_list_str = ", ".join([f"'{url}'" for url in all_urls])
 
         # Platform-specific empty check
-        if platform in ['x', 'twitter']:
+        if platform in ["x", "twitter"]:
             # Twitter: empty if text is empty (simple check - hashtags/media are bonus)
             empty_check = "COALESCE(text, '') = ''"
         else:
@@ -518,11 +536,11 @@ class DuckDBSampledValidator:
 
             query_result = self.conn.execute(query).fetchone()
 
-            result['total_rows'] = query_result[0] or 0
-            result['with_url'] = query_result[1] or 0
-            result['duplicates'] = query_result[2] or 0
-            result['empty_content'] = query_result[3] or 0
-            result['missing_url'] = query_result[4] or 0
+            result["total_rows"] = query_result[0] or 0
+            result["with_url"] = query_result[1] or 0
+            result["duplicates"] = query_result[2] or 0
+            result["empty_content"] = query_result[3] or 0
+            result["missing_url"] = query_result[4] or 0
 
         except Exception as e:
             bt.logging.warning(f"Batch query error for {platform}: {e}")
@@ -534,7 +552,7 @@ class DuckDBSampledValidator:
         sampled_files: List[Dict],
         expected_jobs: Dict[str, Dict],
         presigned_urls: Dict[str, str],
-        samples_per_file: int = 10
+        samples_per_file: int = 10,
     ) -> Dict[str, Any]:
         """Check if data matches job requirements (label/keyword/time)."""
         total_checked = 0
@@ -543,9 +561,9 @@ class DuckDBSampledValidator:
 
         files_by_job = {}
         for file_info in sampled_files:
-            file_key = file_info['key']
-            if '/job_id=' in file_key:
-                job_id = file_key.split('/job_id=')[1].split('/')[0]
+            file_key = file_info["key"]
+            if "/job_id=" in file_key:
+                job_id = file_key.split("/job_id=")[1].split("/")[0]
                 if job_id not in files_by_job:
                     files_by_job[job_id] = []
                 files_by_job[job_id].append(file_info)
@@ -556,12 +574,14 @@ class DuckDBSampledValidator:
                 continue
 
             # Access params nested structure (Gravity schema)
-            params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-            platform = params.get('platform', '').lower()
-            job_label = params.get('label')
-            job_keyword = params.get('keyword')
-            job_start_date = params.get('post_start_datetime')
-            job_end_date = params.get('post_end_datetime')
+            params = (
+                job_config.get("params", {}) if isinstance(job_config, dict) else {}
+            )
+            platform = params.get("platform", "").lower()
+            job_label = params.get("label")
+            job_keyword = params.get("keyword")
+            job_start_date = params.get("post_start_datetime")
+            job_end_date = params.get("post_end_datetime")
 
             job_start_dt = self._parse_datetime(job_start_date)
             job_end_dt = self._parse_datetime(job_end_date)
@@ -573,7 +593,7 @@ class DuckDBSampledValidator:
             sample_files = random.sample(files, min(2, len(files)))
 
             for file_info in sample_files:
-                presigned_url = presigned_urls.get(file_info['key'])
+                presigned_url = presigned_urls.get(file_info["key"])
                 if not presigned_url:
                     continue
 
@@ -587,28 +607,45 @@ class DuckDBSampledValidator:
                     for _, row in sample_df.iterrows():
                         total_checked += 1
                         matches = self._check_row_matches_job(
-                            row, platform, job_label, job_keyword,
-                            job_start_dt, job_end_dt, has_label, has_keyword, has_time
+                            row,
+                            platform,
+                            job_label,
+                            job_keyword,
+                            job_start_dt,
+                            job_end_dt,
+                            has_label,
+                            has_keyword,
+                            has_time,
                         )
                         if matches:
                             total_matched += 1
                         elif len(mismatch_samples) < 5:
-                            uri = row.get('url', row.get('uri', 'unknown'))
+                            uri = row.get("url", row.get("uri", "unknown"))
                             mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
 
                 except Exception as e:
                     continue
 
         return {
-            'total_checked': total_checked,
-            'total_matched': total_matched,
-            'match_rate': (total_matched / total_checked * 100) if total_checked > 0 else 0.0,
-            'mismatch_samples': mismatch_samples
+            "total_checked": total_checked,
+            "total_matched": total_matched,
+            "match_rate": (total_matched / total_checked * 100)
+            if total_checked > 0
+            else 0.0,
+            "mismatch_samples": mismatch_samples,
         }
 
     def _check_row_matches_job(
-        self, row, platform, job_label, job_keyword,
-        job_start_dt, job_end_dt, has_label, has_keyword, has_time
+        self,
+        row,
+        platform,
+        job_label,
+        job_keyword,
+        job_start_dt,
+        job_end_dt,
+        has_label,
+        has_keyword,
+        has_time,
     ) -> bool:
         """Check if a single row matches job requirements."""
         label_matches = True
@@ -617,11 +654,13 @@ class DuckDBSampledValidator:
 
         if has_label:
             job_label_norm = str(job_label).lower().strip()
-            if platform in ['x', 'twitter']:
-                raw_hashtags = row.get('tweet_hashtags', [])
+            if platform in ["x", "twitter"]:
+                raw_hashtags = row.get("tweet_hashtags", [])
                 hashtags_list = []
                 if raw_hashtags is not None:
-                    if hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
+                    if hasattr(raw_hashtags, "__iter__") and not isinstance(
+                        raw_hashtags, str
+                    ):
                         try:
                             hashtags_list = list(raw_hashtags)
                         except:
@@ -629,30 +668,31 @@ class DuckDBSampledValidator:
                     elif not pd.isna(raw_hashtags):
                         hashtags_list = [raw_hashtags]
                 hashtags_lower = [str(h).lower().strip() for h in hashtags_list if h]
-                label_without_hash = job_label_norm.lstrip('#')
+                label_without_hash = job_label_norm.lstrip("#")
                 label_matches = (
-                    f"#{label_without_hash}" in hashtags_lower or
-                    label_without_hash in hashtags_lower
+                    f"#{label_without_hash}" in hashtags_lower
+                    or label_without_hash in hashtags_lower
                 )
-            elif platform == 'reddit':
-                entity_label = str(row.get('communityName', '')).lower().strip()
+            elif platform == "reddit":
+                entity_label = str(row.get("communityName", "")).lower().strip()
                 label_matches = (
-                    entity_label == job_label_norm or
-                    entity_label.removeprefix('r/') == job_label_norm.removeprefix('r/')
+                    entity_label == job_label_norm
+                    or entity_label.removeprefix("r/")
+                    == job_label_norm.removeprefix("r/")
                 )
 
         if has_keyword:
             job_kw_norm = str(job_keyword).lower().strip()
-            if platform == 'reddit':
-                body = str(row.get('body', '')).lower()
-                title = str(row.get('title', '')).lower()
-                keyword_matches = (job_kw_norm in body or job_kw_norm in title)
+            if platform == "reddit":
+                body = str(row.get("body", "")).lower()
+                title = str(row.get("title", "")).lower()
+                keyword_matches = job_kw_norm in body or job_kw_norm in title
             else:
-                text = str(row.get('text', '')).lower()
+                text = str(row.get("text", "")).lower()
                 keyword_matches = job_kw_norm in text
 
         if has_time:
-            entity_dt = row.get('datetime')
+            entity_dt = row.get("datetime")
             if entity_dt is not None and not pd.isna(entity_dt):
                 try:
                     entity_dt = pd.to_datetime(entity_dt, utc=True)
@@ -666,9 +706,9 @@ class DuckDBSampledValidator:
                 time_matches = False
 
         return (
-            (not has_label or label_matches) and
-            (not has_keyword or keyword_matches) and
-            (not has_time or time_matches)
+            (not has_label or label_matches)
+            and (not has_keyword or keyword_matches)
+            and (not has_time or time_matches)
         )
 
     async def _perform_scraper_validation(
@@ -677,7 +717,7 @@ class DuckDBSampledValidator:
         sampled_files: List[Dict],
         expected_jobs: Dict[str, Dict],
         presigned_urls: Dict[str, str],
-        num_entities: int = 10
+        num_entities: int = 10,
     ) -> Dict[str, Any]:
         """Validate random entities using real scrapers."""
         all_entities = []
@@ -686,17 +726,19 @@ class DuckDBSampledValidator:
             if len(all_entities) >= num_entities * 2:
                 break
 
-            file_key = file_info['key']
+            file_key = file_info["key"]
             presigned_url = presigned_urls.get(file_key)
             if not presigned_url:
                 continue
 
-            if '/job_id=' in file_key:
-                job_id = file_key.split('/job_id=')[1].split('/')[0]
+            if "/job_id=" in file_key:
+                job_id = file_key.split("/job_id=")[1].split("/")[0]
                 job_config = expected_jobs.get(job_id, {})
                 # Access params nested structure (Gravity schema)
-                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', 'unknown').lower()
+                params = (
+                    job_config.get("params", {}) if isinstance(job_config, dict) else {}
+                )
+                platform = params.get("platform", "unknown").lower()
             else:
                 continue
 
@@ -713,9 +755,16 @@ class DuckDBSampledValidator:
                 continue
 
         if not all_entities:
-            return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
+            return {
+                "entities_validated": 0,
+                "entities_passed": 0,
+                "success_rate": 0,
+                "sample_results": [],
+            }
 
-        entities_to_validate = random.sample(all_entities, min(num_entities, len(all_entities)))
+        entities_to_validate = random.sample(
+            all_entities, min(num_entities, len(all_entities))
+        )
 
         total_validated = 0
         total_passed = 0
@@ -733,18 +782,24 @@ class DuckDBSampledValidator:
             try:
                 results = await self._validate_with_scraper(entities, platform)
                 for i, result in enumerate(results):
-                    job_id = job_ids[i] if i < len(job_ids) else 'unknown'
+                    job_id = job_ids[i] if i < len(job_ids) else "unknown"
                     total_validated += 1
                     if result.is_valid:
                         total_passed += 1
-                        sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
+                        sample_results.append(
+                            f"✅ {platform} ({job_id[:16]}): {result.reason}"
+                        )
                     else:
-                        sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
+                        sample_results.append(
+                            f"❌ {platform} ({job_id[:16]}): {result.reason}"
+                        )
             except Exception as e:
                 total_validated += len(entities)
                 sample_results.append(f"❌ {platform}: Scraper error - {e}")
 
-        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+        success_rate = (
+            (total_passed / total_validated * 100) if total_validated > 0 else 0
+        )
 
         # Log detailed results for miners to debug
         bt.logging.success(
@@ -755,18 +810,18 @@ class DuckDBSampledValidator:
         )
 
         return {
-            'entities_validated': total_validated,
-            'entities_passed': total_passed,
-            'success_rate': success_rate,
-            'sample_results': sample_results
+            "entities_validated": total_validated,
+            "entities_passed": total_passed,
+            "success_rate": success_rate,
+            "sample_results": sample_results,
         }
 
     def _create_data_entity(self, row, platform: str) -> Optional[DataEntity]:
         """Create DataEntity from parquet row."""
         try:
-            if platform in ['x', 'twitter']:
+            if platform in ["x", "twitter"]:
                 return self._create_twitter_entity(row)
-            elif platform == 'reddit':
+            elif platform == "reddit":
                 return self._create_reddit_entity(row)
             return None
         except:
@@ -775,13 +830,13 @@ class DuckDBSampledValidator:
     def _create_twitter_entity(self, row) -> Optional[DataEntity]:
         """Create Twitter DataEntity with ALL fields for scraper validation."""
         try:
-            username = row.get('username', '')
-            text = row.get('text', '')
-            url = row.get('url', row.get('uri', ''))
+            username = row.get("username", "")
+            text = row.get("text", "")
+            url = row.get("url", row.get("uri", ""))
             if not all([username, text, url]):
                 return None
 
-            datetime_val = row.get('datetime', row.get('timestamp', ''))
+            datetime_val = row.get("datetime", row.get("timestamp", ""))
             if datetime_val and pd.notna(datetime_val):
                 try:
                     timestamp = pd.to_datetime(datetime_val)
@@ -793,10 +848,12 @@ class DuckDBSampledValidator:
                 timestamp = dt.datetime.now(dt.timezone.utc)
 
             # Handle tweet_hashtags array field
-            raw_hashtags = row.get('tweet_hashtags', None)
+            raw_hashtags = row.get("tweet_hashtags", None)
             if raw_hashtags is None:
                 tweet_hashtags = []
-            elif hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
+            elif hasattr(raw_hashtags, "__iter__") and not isinstance(
+                raw_hashtags, str
+            ):
                 try:
                     tweet_hashtags = list(raw_hashtags)
                 except TypeError:
@@ -808,7 +865,7 @@ class DuckDBSampledValidator:
                     tweet_hashtags = [raw_hashtags]
 
             # Handle media field (can be NaN)
-            raw_media = row.get('media', None)
+            raw_media = row.get("media", None)
             if isinstance(raw_media, float):
                 media_value = None if math.isnan(raw_media) else raw_media
             else:
@@ -822,30 +879,64 @@ class DuckDBSampledValidator:
                 timestamp=timestamp,
                 tweet_hashtags=tweet_hashtags,
                 media=media_value,
-                user_id=str(row.get('user_id', '')),
-                user_display_name=str(row.get('user_display_name', '')) if pd.notna(row.get('user_display_name', None)) else None,
-                user_verified=bool(row.get('user_verified', False)),
-                tweet_id=str(row.get('tweet_id', '')),
-                is_reply=bool(row.get('is_reply', False)),
-                is_quote=bool(row.get('is_quote', False)),
-                conversation_id=str(row.get('conversation_id', '')),
-                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')),
-                language=str(row.get('language', '')) if pd.notna(row.get('language', None)) else None,
-                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username', None)) else None,
-                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id', None)) else None,
-                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count', None)) else None,
-                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count', None)) else None,
-                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count', None)) else None,
-                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count', None)) else None,
-                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count', None)) else None,
-                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count', None)) else None,
-                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified', None)) else None,
-                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description', None)) else None,
-                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location', None)) else None,
-                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url', None)) else None,
-                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url', None)) else None,
-                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count', None)) else None,
-                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count', None)) else None
+                user_id=str(row.get("user_id", "")),
+                user_display_name=str(row.get("user_display_name", ""))
+                if pd.notna(row.get("user_display_name", None))
+                else None,
+                user_verified=bool(row.get("user_verified", False)),
+                tweet_id=str(row.get("tweet_id", "")),
+                is_reply=bool(row.get("is_reply", False)),
+                is_quote=bool(row.get("is_quote", False)),
+                conversation_id=str(row.get("conversation_id", "")),
+                in_reply_to_user_id=str(row.get("in_reply_to_user_id", "")),
+                language=str(row.get("language", ""))
+                if pd.notna(row.get("language", None))
+                else None,
+                in_reply_to_username=str(row.get("in_reply_to_username", ""))
+                if pd.notna(row.get("in_reply_to_username", None))
+                else None,
+                quoted_tweet_id=str(row.get("quoted_tweet_id", ""))
+                if pd.notna(row.get("quoted_tweet_id", None))
+                else None,
+                like_count=int(row.get("like_count", 0))
+                if pd.notna(row.get("like_count", None))
+                else None,
+                retweet_count=int(row.get("retweet_count", 0))
+                if pd.notna(row.get("retweet_count", None))
+                else None,
+                reply_count=int(row.get("reply_count", 0))
+                if pd.notna(row.get("reply_count", None))
+                else None,
+                quote_count=int(row.get("quote_count", 0))
+                if pd.notna(row.get("quote_count", None))
+                else None,
+                view_count=int(row.get("view_count", 0))
+                if pd.notna(row.get("view_count", None))
+                else None,
+                bookmark_count=int(row.get("bookmark_count", 0))
+                if pd.notna(row.get("bookmark_count", None))
+                else None,
+                user_blue_verified=bool(row.get("user_blue_verified", False))
+                if pd.notna(row.get("user_blue_verified", None))
+                else None,
+                user_description=str(row.get("user_description", ""))
+                if pd.notna(row.get("user_description", None))
+                else None,
+                user_location=str(row.get("user_location", ""))
+                if pd.notna(row.get("user_location", None))
+                else None,
+                profile_image_url=str(row.get("profile_image_url", ""))
+                if pd.notna(row.get("profile_image_url", None))
+                else None,
+                cover_picture_url=str(row.get("cover_picture_url", ""))
+                if pd.notna(row.get("cover_picture_url", None))
+                else None,
+                user_followers_count=int(row.get("user_followers_count", 0))
+                if pd.notna(row.get("user_followers_count", None))
+                else None,
+                user_following_count=int(row.get("user_following_count", 0))
+                if pd.notna(row.get("user_following_count", None))
+                else None,
             )
             return XContent.to_data_entity(x_content)
         except Exception:
@@ -854,12 +945,12 @@ class DuckDBSampledValidator:
     def _create_reddit_entity(self, row) -> Optional[DataEntity]:
         """Create Reddit DataEntity. Accept if title OR body is present."""
         try:
-            username = row.get('username', '')
-            url = row.get('url', row.get('uri', ''))
-            reddit_id = row.get('id', '')
+            username = row.get("username", "")
+            url = row.get("url", row.get("uri", ""))
+            reddit_id = row.get("id", "")
 
-            body = row.get('body', row.get('text', ''))
-            title = row.get('title', '')
+            body = row.get("body", row.get("text", ""))
+            title = row.get("title", "")
 
             username_str = str(username).strip() if username is not None else ""
             url_str = str(url).strip() if url is not None else ""
@@ -879,7 +970,7 @@ class DuckDBSampledValidator:
             # Use body if available, otherwise use title
             content_str = body_str if body_str else title_str
 
-            datetime_val = row.get('datetime', row.get('createdAt', ''))
+            datetime_val = row.get("datetime", row.get("createdAt", ""))
             if datetime_val is not None and pd.notna(datetime_val):
                 try:
                     created_at = pd.to_datetime(datetime_val)
@@ -895,16 +986,24 @@ class DuckDBSampledValidator:
                 username=username_str,
                 body=content_str,
                 url=url_str,
-                communityName=str(row.get('communityName', '') or ''),
+                communityName=str(row.get("communityName", "") or ""),
                 createdAt=created_at,
-                dataType=str(row.get('dataType', 'post') or 'post'),
-                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None,
-                title=str(row.get('title', '')) if pd.notna(row.get('title')) else None,
-                media=row.get('media', None) if pd.notna(row.get('media')) else None,
-                is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
-                score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
-                upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
-                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None
+                dataType=str(row.get("dataType", "post") or "post"),
+                parentId=str(row.get("parentId"))
+                if row.get("parentId") and pd.notna(row.get("parentId"))
+                else None,
+                title=str(row.get("title", "")) if pd.notna(row.get("title")) else None,
+                media=row.get("media", None) if pd.notna(row.get("media")) else None,
+                is_nsfw=bool(row.get("is_nsfw", False))
+                if pd.notna(row.get("is_nsfw"))
+                else None,
+                score=int(row.get("score", 0)) if pd.notna(row.get("score")) else None,
+                upvote_ratio=float(row.get("upvote_ratio", 0.0))
+                if pd.notna(row.get("upvote_ratio"))
+                else None,
+                num_comments=int(row.get("num_comments", 0))
+                if pd.notna(row.get("num_comments"))
+                else None,
             )
             return RedditContent.to_data_entity(reddit_content)
         except Exception:
@@ -915,17 +1014,31 @@ class DuckDBSampledValidator:
     ) -> List[ValidationResult]:
         """Validate entities using appropriate scraper."""
         try:
-            if platform in ['x', 'twitter']:
+            if platform in ["x", "twitter"]:
                 data_source = DataSource.X
-            elif platform == 'reddit':
+            elif platform == "reddit":
                 data_source = DataSource.REDDIT
             else:
-                return [ValidationResult(is_valid=False, reason=f"Unknown platform: {platform}", content_size_bytes_validated=0) for _ in entities]
+                return [
+                    ValidationResult(
+                        is_valid=False,
+                        reason=f"Unknown platform: {platform}",
+                        content_size_bytes_validated=0,
+                    )
+                    for _ in entities
+                ]
 
             scraper = self.scraper_provider.get(PREFERRED_SCRAPERS[data_source])
             return await scraper.validate(entities)
         except Exception as e:
-            return [ValidationResult(is_valid=False, reason=f"Scraper error: {e}", content_size_bytes_validated=0) for _ in entities]
+            return [
+                ValidationResult(
+                    is_valid=False,
+                    reason=f"Scraper error: {e}",
+                    content_size_bytes_validated=0,
+                )
+                for _ in entities
+            ]
 
     def _parse_datetime(self, dt_val) -> Optional[dt.datetime]:
         """Parse datetime from job config."""
@@ -964,7 +1077,7 @@ class DuckDBSampledValidator:
             sample_validation_results=[],
             sample_job_mismatches=[],
             effective_size_bytes=0.0,
-            job_coverage_rate=0.0
+            job_coverage_rate=0.0,
         )
 
     def close(self):
@@ -986,11 +1099,7 @@ class S3Validator:
         self.s3_reader = s3_reader  # Optional ValidatorS3Access instance
 
     async def validate_miner_s3_data(
-        self,
-        wallet,
-        s3_auth_url: str,
-        miner_hotkey: str,
-        expected_jobs: Dict
+        self, wallet, s3_auth_url: str, miner_hotkey: str, expected_jobs: Dict
     ) -> S3ValidationResultDetailed:
         """
         Perform S3 validation for a miner
@@ -1014,14 +1123,16 @@ class S3Validator:
 
             if self.s3_reader:
                 # Use ValidatorS3Access to get ALL files
-                all_files = await self.s3_reader.list_all_files_with_metadata(miner_hotkey)
+                all_files = await self.s3_reader.list_all_files_with_metadata(
+                    miner_hotkey
+                )
 
                 # Extract job IDs from file paths (data/hotkey=X/job_id=Y/file.parquet)
                 for file_info in all_files:
-                    file_key = file_info.get('key', '')
-                    if '/job_id=' in file_key:
-                        job_id_part = file_key.split('/job_id=')[1]
-                        job_id = job_id_part.split('/')[0]
+                    file_key = file_info.get("key", "")
+                    if "/job_id=" in file_key:
+                        job_id_part = file_key.split("/job_id=")[1]
+                        job_id = job_id_part.split("/")[0]
                         all_job_ids.add(job_id)
 
                 bt.logging.info(
@@ -1029,15 +1140,23 @@ class S3Validator:
                 )
             else:
                 # Fallback: use old method (has pagination bug but better than nothing)
-                bt.logging.warning(f"{miner_hotkey}: ValidatorS3Access not available, using fallback")
-                job_folders = await self._get_miner_job_folders(wallet, s3_auth_url, miner_hotkey)
-                all_job_ids = {jf.get('job_id') for jf in job_folders if jf.get('job_id')}
+                bt.logging.warning(
+                    f"{miner_hotkey}: ValidatorS3Access not available, using fallback"
+                )
+                job_folders = await self._get_miner_job_folders(
+                    wallet, s3_auth_url, miner_hotkey
+                )
+                all_job_ids = {
+                    jf.get("job_id") for jf in job_folders if jf.get("job_id")
+                }
 
             if not all_job_ids:
                 return self._create_failed_result("Could not access miner S3 data")
 
             # Step 2: Filter active jobs
-            active_job_ids = [job_id for job_id in all_job_ids if job_id in expected_jobs]
+            active_job_ids = [
+                job_id for job_id in all_job_ids if job_id in expected_jobs
+            ]
 
             if not active_job_ids:
                 return self._create_failed_result("No active jobs found")
@@ -1052,14 +1171,14 @@ class S3Validator:
             empty_file_check = await self._spot_check_for_empty_files(
                 wallet, s3_auth_url, miner_hotkey, all_files
             )
-            if empty_file_check.get('empty_file_detected'):
+            if empty_file_check.get("empty_file_detected"):
                 bt.logging.error(
                     f"{miner_hotkey}: Empty file found in spot-check: "
                     f"{empty_file_check.get('empty_file_key')}"
                 )
                 return self._create_failed_result(
                     f"Empty file detected (0 rows): {empty_file_check.get('empty_file_key')}",
-                    empty_file_detected=True
+                    empty_file_detected=True,
                 )
 
             # Step 3: Analyze recent data
@@ -1067,15 +1186,17 @@ class S3Validator:
                 wallet, s3_auth_url, miner_hotkey, active_job_ids, all_files
             )
 
-            if not recent_data_analysis['has_recent_data']:
+            if not recent_data_analysis["has_recent_data"]:
                 return self._create_failed_result(
                     "No recent data found in last 3 hours"
                 )
 
             # Log EMA decay statistics
-            raw_size_mb = recent_data_analysis['raw_size_bytes'] / (1024 * 1024)
-            weighted_size_mb = recent_data_analysis['total_size_bytes'] / (1024 * 1024)
-            decay_factor = (weighted_size_mb / raw_size_mb * 100) if raw_size_mb > 0 else 0
+            raw_size_mb = recent_data_analysis["raw_size_bytes"] / (1024 * 1024)
+            weighted_size_mb = recent_data_analysis["total_size_bytes"] / (1024 * 1024)
+            decay_factor = (
+                (weighted_size_mb / raw_size_mb * 100) if raw_size_mb > 0 else 0
+            )
             bt.logging.info(
                 f"{miner_hotkey}: EMA decay applied - Raw: {raw_size_mb:.1f}MB, "
                 f"Weighted: {weighted_size_mb:.1f}MB ({decay_factor:.1f}% effective)"
@@ -1083,46 +1204,56 @@ class S3Validator:
 
             # Step 4: Check for duplicates
             duplicate_analysis = await self._check_for_duplicates(
-                wallet, s3_auth_url, miner_hotkey, recent_data_analysis['recent_job_files']
+                wallet,
+                s3_auth_url,
+                miner_hotkey,
+                recent_data_analysis["recent_job_files"],
             )
 
             # Check for empty files - immediate failure
-            if duplicate_analysis.get('empty_file_detected'):
+            if duplicate_analysis.get("empty_file_detected"):
                 return self._create_failed_result(
-                    "Empty file detected (0 rows)",
-                    empty_file_detected=True
+                    "Empty file detected (0 rows)", empty_file_detected=True
                 )
 
             # Step 5: Validate job content matching
             job_match_analysis = await self._check_job_content_match(
-                wallet, s3_auth_url, miner_hotkey,
-                recent_data_analysis['recent_job_files'], expected_jobs
+                wallet,
+                s3_auth_url,
+                miner_hotkey,
+                recent_data_analysis["recent_job_files"],
+                expected_jobs,
             )
 
             # Check for empty files - immediate failure
-            if job_match_analysis.get('empty_file_detected'):
+            if job_match_analysis.get("empty_file_detected"):
                 return self._create_failed_result(
-                    "Empty file detected (0 rows)",
-                    empty_file_detected=True
+                    "Empty file detected (0 rows)", empty_file_detected=True
                 )
 
             # Step 6: Perform scraper validation
             scraper_validation = await self._perform_scraper_validation(
-                wallet, s3_auth_url, miner_hotkey,
-                recent_data_analysis['recent_job_files'], expected_jobs
+                wallet,
+                s3_auth_url,
+                miner_hotkey,
+                recent_data_analysis["recent_job_files"],
+                expected_jobs,
             )
 
             # Check for empty files - immediate failure
-            if scraper_validation.get('empty_file_detected'):
+            if scraper_validation.get("empty_file_detected"):
                 return self._create_failed_result(
-                    "Empty file detected (0 rows)",
-                    empty_file_detected=True
+                    "Empty file detected (0 rows)", empty_file_detected=True
                 )
 
             # Step 7: Calculate job completion rate for reward scaling
             num_expected_jobs = len(expected_jobs)
             num_active_jobs = len(active_job_ids)
-            job_completion_rate = (num_active_jobs / num_expected_jobs * 100) if num_expected_jobs > 0 else 100.0
+            job_completion_rate = (
+                (num_active_jobs / num_expected_jobs * 100)
+                if num_expected_jobs > 0
+                else 100.0
+            )
 
             # Step 8: Calculate final validation result with job completion multiplier
             return self._calculate_final_result(
@@ -1132,7 +1263,7 @@ class S3Validator:
                 duplicate_analysis,
                 job_match_analysis,
                 scraper_validation,
-                job_completion_rate
+                job_completion_rate,
             )
 
         except Exception as e:
@@ -1153,29 +1284,32 @@ class S3Validator:
                 "hotkey": hotkey,
                 "timestamp": timestamp,
                 "signature": signature.hex(),
-                "miner_hotkey": miner_hotkey
+                "miner_hotkey": miner_hotkey,
             }
 
             response = requests.post(
-                f"{s3_auth_url}/get-folder-presigned-urls",
-                json=payload,
-                timeout=180
+                f"{s3_auth_url}/get-folder-presigned-urls", json=payload, timeout=180
             )
 
             if response.status_code != 200:
                 return []
 
             folder_data = response.json()
-            folder_urls = folder_data.get('folder_urls', {})
+            folder_urls = folder_data.get("folder_urls", {})
 
-            return folder_urls.get(miner_hotkey, {}).get('job_folders', [])
+            return folder_urls.get(miner_hotkey, {}).get("job_folders", [])
 
         except Exception as e:
             bt.logging.error(f"Error getting job folders for {miner_hotkey}: {str(e)}")
             return []
 
     async def _analyze_recent_data(
-        self, wallet, s3_auth_url: str, miner_hotkey: str, active_job_ids: List[str], all_files: List[Dict]
+        self,
+        wallet,
+        s3_auth_url: str,
+        miner_hotkey: str,
+        active_job_ids: List[str],
+        all_files: List[Dict],
     ) -> Dict:
         """
         Analyze data with EMA decay scoring.
@@ -1204,17 +1338,21 @@ class S3Validator:
 
         if all_files:
             # Use already-fetched files (no additional API calls needed!)
-            bt.logging.info(f"{miner_hotkey}: Calculating size from {len(all_files)} pre-fetched files...")
+            bt.logging.info(
+                f"{miner_hotkey}: Calculating size from {len(all_files)} pre-fetched files..."
+            )
 
             for file_info in all_files:
                 try:
-                    file_size = file_info.get('size', 0)
-                    last_modified_str = file_info.get('last_modified', '')
+                    file_size = file_info.get("size", 0)
+                    last_modified_str = file_info.get("last_modified", "")
 
                     # Parse file age
-                    if last_modified_str and 'T' in last_modified_str:
-                        if last_modified_str.endswith('Z'):
-                            parsed_time = dt.datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
+                    if last_modified_str and "T" in last_modified_str:
+                        if last_modified_str.endswith("Z"):
+                            parsed_time = dt.datetime.fromisoformat(
+                                last_modified_str.replace("Z", "+00:00")
+                            )
                         else:
                             parsed_time = dt.datetime.fromisoformat(last_modified_str)
 
@@ -1239,14 +1377,14 @@ class S3Validator:
 
                 except Exception as e:
                     bt.logging.debug(f"Error calculating file weight: {str(e)}")
-                    total_size_bytes += file_info.get('size', 0)
+                    total_size_bytes += file_info.get("size", 0)
                     continue
 
             bt.logging.info(
                 f"{miner_hotkey}: Size calculation complete - "
                 f"{total_files_all_jobs} total files, "
-                f"Raw: {total_size_bytes/(1024*1024):.1f}MB, "
-                f"Weighted: {weighted_size_bytes/(1024*1024):.1f}MB"
+                f"Raw: {total_size_bytes / (1024 * 1024):.1f}MB, "
+                f"Weighted: {weighted_size_bytes / (1024 * 1024):.1f}MB"
             )
         else:
             # Fallback: old method (only samples 5 jobs - inaccurate!)
@@ -1263,10 +1401,10 @@ class S3Validator:
         # Group files by job_id from the already-fetched files
         files_by_job = {}
         for file_info in all_files:
-            file_key = file_info.get('key', '')
-            if '/job_id=' in file_key:
-                job_id_part = file_key.split('/job_id=')[1]
-                job_id = job_id_part.split('/')[0]
+            file_key = file_info.get("key", "")
+            if "/job_id=" in file_key:
+                job_id_part = file_key.split("/job_id=")[1]
+                job_id = job_id_part.split("/")[0]
 
                 # Only include active jobs
                 if job_id in active_job_ids:
@@ -1283,7 +1421,7 @@ class S3Validator:
             has_recent_activity = False
             for file_info in job_files_metadata:
                 try:
-                    last_modified_str = file_info.get('last_modified', '')
+                    last_modified_str = file_info.get("last_modified", "")
                     if self._is_file_recent(last_modified_str, activity_threshold):
                         has_recent_activity = True
                         break
@@ -1307,9 +1445,13 @@ class S3Validator:
         elif len(jobs_with_recent_activity) > 0:
             # Take all jobs with recent activity, plus some random ones to reach 5
             sample_job_ids = jobs_with_recent_activity.copy()
-            remaining_needed = min(5 - len(sample_job_ids), len(jobs_without_recent_activity))
+            remaining_needed = min(
+                5 - len(sample_job_ids), len(jobs_without_recent_activity)
+            )
             if remaining_needed > 0:
-                sample_job_ids.extend(random.sample(jobs_without_recent_activity, remaining_needed))
+                sample_job_ids.extend(
+                    random.sample(jobs_without_recent_activity, remaining_needed)
+                )
             bt.logging.info(
                 f"{miner_hotkey}: Sampling {len(sample_job_ids)} jobs: {len(jobs_with_recent_activity)} with recent activity + "
                 f"{len(sample_job_ids) - len(jobs_with_recent_activity)} without recent activity"
@@ -1335,16 +1477,16 @@ class S3Validator:
                 # Convert file metadata to format expected by validation functions
                 job_files = [
                     {
-                        'key': f.get('key'),
-                        'size': f.get('size'),
-                        'last_modified': f.get('last_modified')
+                        "key": f.get("key"),
+                        "size": f.get("size"),
+                        "last_modified": f.get("last_modified"),
                     }
                     for f in job_files_metadata
                 ]
 
                 recent_job_files[job_id] = {
-                    'files': job_files,
-                    'presigned_url': None  # Not needed anymore, we have all the data
+                    "files": job_files,
+                    "presigned_url": None,  # Not needed anymore, we have all the data
                 }
                 validation_files_count += len(job_files)
                 recent_jobs_count += 1
@@ -1358,12 +1500,14 @@ class S3Validator:
         )
 
         return {
-            'has_recent_data': has_recent_data,
-            'recent_jobs_count': recent_jobs_count,
-            'recent_files_count': validation_files_count,
-            'total_size_bytes': int(weighted_size_bytes),  # Weighted size from ALL files
-            'raw_size_bytes': total_size_bytes,  # Raw size from ALL files
-            'recent_job_files': recent_job_files  # Sampled jobs for validation only
+            "has_recent_data": has_recent_data,
+            "recent_jobs_count": recent_jobs_count,
+            "recent_files_count": validation_files_count,
+            "total_size_bytes": int(
+                weighted_size_bytes
+            ),  # Weighted size from ALL files
+            "raw_size_bytes": total_size_bytes,  # Raw size from ALL files
+            "recent_job_files": recent_job_files,  # Sampled jobs for validation only
         }
 
     async def _spot_check_for_empty_files(
@@ -1379,21 +1523,23 @@ class S3Validator:
         Files larger than 1GB are skipped to prevent memory issues.
         """
         if not all_files:
-            return {'empty_file_detected': False}
+            return {"empty_file_detected": False}
 
         # Filter out files larger than 1GB to prevent memory issues
         max_file_size = 1 * 1024 * 1024 * 1024  # 1GB
-        eligible_files = [f for f in all_files if f.get('size', 0) <= max_file_size]
+        eligible_files = [f for f in all_files if f.get("size", 0) <= max_file_size]
 
         if not eligible_files:
-            bt.logging.warning(f"{miner_hotkey}: No files under 1GB for empty file spot-check")
-            return {'empty_file_detected': False}
+            bt.logging.warning(
+                f"{miner_hotkey}: No files under 1GB for empty file spot-check"
+            )
+            return {"empty_file_detected": False}
 
         # Sample 10 random files from eligible files (regardless of job status)
         sample_size = min(10, len(eligible_files))
         sampled_files = random.sample(eligible_files, sample_size)
 
-        file_keys = [f['key'] for f in sampled_files]
+        file_keys = [f["key"] for f in sampled_files]
 
         bt.logging.info(
             f"{miner_hotkey}: Empty file spot-check: sampling {sample_size} files "
@@ -1406,14 +1552,16 @@ class S3Validator:
         )
 
         if not file_urls:
-            bt.logging.warning(f"{miner_hotkey}: Could not get presigned URLs for spot-check")
-            return {'empty_file_detected': False}
+            bt.logging.warning(
+                f"{miner_hotkey}: Could not get presigned URLs for spot-check"
+            )
+            return {"empty_file_detected": False}
 
         # Check each file for empty content
         files_checked = 0
         for file_key, file_info in file_urls.items():
             try:
-                presigned_url = file_info.get('presigned_url')
+                presigned_url = file_info.get("presigned_url")
                 if not presigned_url:
                     continue
 
@@ -1425,23 +1573,21 @@ class S3Validator:
                     bt.logging.error(
                         f"{miner_hotkey}: Empty file detected in spot-check: {file_key}"
                     )
-                    return {
-                        'empty_file_detected': True,
-                        'empty_file_key': file_key
-                    }
+                    return {"empty_file_detected": True, "empty_file_key": file_key}
 
                 # Also check for files with only placeholder columns
                 if len(df.columns) > 0:
-                    placeholder_cols = [c for c in df.columns if 'placeholder' in c.lower() or 'empty' in c.lower()]
+                    placeholder_cols = [
+                        c
+                        for c in df.columns
+                        if "placeholder" in c.lower() or "empty" in c.lower()
+                    ]
                     if len(placeholder_cols) == len(df.columns):
                         bt.logging.error(
                             f"{miner_hotkey}: Placeholder file detected: {file_key} "
                             f"(columns: {list(df.columns)[:5]})"
                         )
-                        return {
-                            'empty_file_detected': True,
-                            'empty_file_key': file_key
-                        }
+                        return {"empty_file_detected": True, "empty_file_key": file_key}
 
             except Exception as e:
                 bt.logging.debug(f"Error in spot-check for {file_key}: {str(e)}")
@@ -1451,7 +1597,7 @@ class S3Validator:
             f"{miner_hotkey}: Empty file spot-check PASSED - checked {files_checked} files, no empty files found"
         )
 
-        return {'empty_file_detected': False}
+        return {"empty_file_detected": False}
 
     async def _check_for_duplicates(
         self, wallet, s3_auth_url: str, miner_hotkey: str, recent_job_files: Dict
@@ -1463,13 +1609,14 @@ class S3Validator:
         duplicate_entities = 0
 
         for job_id, job_data in recent_job_files.items():
-            files = job_data['files']
+            files = job_data["files"]
 
             # Sample files for duplicate checking
             sample_files = random.sample(
-                files, min(3, len(files))  # files_per_job_sample = 3
+                files,
+                min(3, len(files)),  # files_per_job_sample = 3
             )
-            file_keys = [f['key'] for f in sample_files]
+            file_keys = [f["key"] for f in sample_files]
 
             # Get presigned URLs for files
             file_urls = await self._get_file_presigned_urls(
@@ -1481,7 +1628,7 @@ class S3Validator:
             # Check URIs in files
             for file_key, file_info in file_urls.items():
                 try:
-                    presigned_url = file_info.get('presigned_url')
+                    presigned_url = file_info.get("presigned_url")
                     if not presigned_url:
                         continue
 
@@ -1493,12 +1640,12 @@ class S3Validator:
                             f"{miner_hotkey}: Empty file detected (0 rows): {file_key}"
                         )
                         return {
-                            'total_entities': 0,
-                            'duplicate_entities': 0,
-                            'duplicate_percentage': 0,
-                            'sample_duplicates': [],
-                            'empty_file_detected': True,
-                            'empty_file_key': file_key
+                            "total_entities": 0,
+                            "duplicate_entities": 0,
+                            "duplicate_percentage": 0,
+                            "sample_duplicates": [],
+                            "empty_file_detected": True,
+                            "empty_file_key": file_key,
                         }
 
                     # Sample rows to check for duplicates
@@ -1520,15 +1667,14 @@ class S3Validator:
                     continue
 
         duplicate_percentage = (
-            (duplicate_entities / total_entities * 100)
-            if total_entities > 0 else 0
+            (duplicate_entities / total_entities * 100) if total_entities > 0 else 0
         )
 
         return {
-            'total_entities': total_entities,
-            'duplicate_entities': duplicate_entities,
-            'duplicate_percentage': duplicate_percentage,
-            'sample_duplicates': duplicate_uris[:10]
+            "total_entities": total_entities,
+            "duplicate_entities": duplicate_entities,
+            "duplicate_percentage": duplicate_percentage,
+            "sample_duplicates": duplicate_uris[:10],
         }
 
     def _parse_job_datetime(self, raw, miner_hotkey: str) -> Optional[dt.datetime]:
@@ -1540,12 +1686,18 @@ class S3Validator:
         try:
             return pd.to_datetime(raw, utc=True)
         except Exception as e:
-            bt.logging.warning(f"{miner_hotkey}: Failed to parse job datetime '{raw}': {e}")
+            bt.logging.warning(
+                f"{miner_hotkey}: Failed to parse job datetime '{raw}': {e}"
+            )
             return None
 
     async def _check_job_content_match(
-        self, wallet, s3_auth_url: str, miner_hotkey: str,
-        recent_job_files: Dict, expected_jobs: Dict
+        self,
+        wallet,
+        s3_auth_url: str,
+        miner_hotkey: str,
+        recent_job_files: Dict,
+        expected_jobs: Dict,
     ) -> Dict:
         """Validate that uploaded data matches job requirements (label/keyword AND time window via DataEntity.datetime)."""
         total_checked = 0
@@ -1554,19 +1706,19 @@ class S3Validator:
         checked_uris = []  # Track URIs being checked
 
         for job_id, job_data in recent_job_files.items():
-            files = job_data['files']
+            files = job_data["files"]
             expected_job = expected_jobs.get(job_id, {})
 
             if not expected_job:
                 bt.logging.debug(f"No expected job config found for job_id: {job_id}")
                 continue
 
-            params = expected_job.get('params', {})
-            platform = params.get('platform', '').lower()
-            job_label = params.get('label')
-            job_keyword = params.get('keyword')
-            job_start_date = params.get('post_start_datetime')
-            job_end_date = params.get('post_end_datetime')
+            params = expected_job.get("params", {})
+            platform = params.get("platform", "").lower()
+            job_label = params.get("label")
+            job_keyword = params.get("keyword")
+            job_start_date = params.get("post_start_datetime")
+            job_end_date = params.get("post_end_datetime")
 
             # Parse job time window (UTC)
             job_start_dt = self._parse_job_datetime(job_start_date, miner_hotkey)
@@ -1575,7 +1727,7 @@ class S3Validator:
 
             # Sample files to check (2 files per job)
             sample_files = random.sample(files, min(2, len(files)))
-            file_keys = [f['key'] for f in sample_files]
+            file_keys = [f["key"] for f in sample_files]
 
             # Get presigned URLs for files
             file_urls = await self._get_file_presigned_urls(
@@ -1587,7 +1739,7 @@ class S3Validator:
             # Check entities in sampled files
             for file_key, file_info in file_urls.items():
                 try:
-                    presigned_url = file_info.get('presigned_url')
+                    presigned_url = file_info.get("presigned_url")
                     if not presigned_url:
                         continue
 
@@ -1599,12 +1751,12 @@ class S3Validator:
                             f"{miner_hotkey}: Empty file detected (0 rows): {file_key}"
                         )
                         return {
-                            'total_checked': 0,
-                            'total_matched': 0,
-                            'match_rate': 0,
-                            'mismatch_samples': [],
-                            'empty_file_detected': True,
-                            'empty_file_key': file_key
+                            "total_checked": 0,
+                            "total_matched": 0,
+                            "match_rate": 0,
+                            "mismatch_samples": [],
+                            "empty_file_detected": True,
+                            "empty_file_key": file_key,
                         }
 
                     # Sample rows to check (up to 10 per file)
@@ -1621,22 +1773,26 @@ class S3Validator:
                         entity_dt_str = None
 
                         has_label_requirement = bool(job_label and job_label.strip())
-                        has_keyword_requirement = bool(job_keyword and job_keyword.strip())
+                        has_keyword_requirement = bool(
+                            job_keyword and job_keyword.strip()
+                        )
 
                         if has_label_requirement:
                             # Label-based job: check if entity label matches
-                            entity_label = str(row.get('label', '')).lower().strip()
+                            entity_label = str(row.get("label", "")).lower().strip()
                             job_label_normalized = job_label.lower().strip()
 
                             # Handle different label formats
-                            if platform in ['x', 'twitter']:
+                            if platform in ["x", "twitter"]:
                                 # For X: check if label is in tweet_hashtags array (handles multiple hashtags)
-                                tweet_hashtags_raw = row.get('tweet_hashtags', None)
+                                tweet_hashtags_raw = row.get("tweet_hashtags", None)
 
                                 hashtags_list = []
                                 if tweet_hashtags_raw is not None:
                                     # If it's an iterable (list / array / Series), but not a string
-                                    if hasattr(tweet_hashtags_raw, '__iter__') and not isinstance(tweet_hashtags_raw, str):
+                                    if hasattr(
+                                        tweet_hashtags_raw, "__iter__"
+                                    ) and not isinstance(tweet_hashtags_raw, str):
                                         try:
                                             hashtags_list = list(tweet_hashtags_raw)
                                         except TypeError:
@@ -1653,47 +1809,53 @@ class S3Validator:
                                 hashtags_lower = [
                                     str(h).lower().strip()
                                     for h in hashtags_list
-                                    if h is not None and str(h).strip() != ''
+                                    if h is not None and str(h).strip() != ""
                                 ]
 
-                                label_without_hash = job_label_normalized.lstrip('#')
+                                label_without_hash = job_label_normalized.lstrip("#")
                                 label_with_hash = f"#{label_without_hash}"
 
                                 # Check if job label is in the hashtags array
                                 label_matches = (
-                                    label_with_hash in hashtags_lower or
-                                    label_without_hash in hashtags_lower or
+                                    label_with_hash in hashtags_lower
+                                    or label_without_hash in hashtags_lower
+                                    or
                                     # Fallback: check main label field
-                                    entity_label == label_with_hash or
-                                    entity_label == label_without_hash
+                                    entity_label == label_with_hash
+                                    or entity_label == label_without_hash
                                 )
 
-                            elif platform == 'reddit':
+                            elif platform == "reddit":
                                 # For Reddit: check with and without r/ prefix
                                 label_matches = (
-                                    entity_label == job_label_normalized or
-                                    entity_label == f"r/{job_label_normalized.removeprefix('r/')}" or
-                                    entity_label.removeprefix('r/') == job_label_normalized.removeprefix('r/')
+                                    entity_label == job_label_normalized
+                                    or entity_label
+                                    == f"r/{job_label_normalized.removeprefix('r/')}"
+                                    or entity_label.removeprefix("r/")
+                                    == job_label_normalized.removeprefix("r/")
                                 )
                             else:
-                                label_matches = (entity_label == job_label_normalized)
+                                label_matches = entity_label == job_label_normalized
 
                         if has_keyword_requirement:
                             # Keyword-based job: check if content contains keyword
                             job_keyword_normalized = job_keyword.lower().strip()
 
                             # Check in relevant content fields based on platform
-                            if platform == 'reddit':
-                                body = str(row.get('body', '')).lower()
-                                title = str(row.get('title', '')).lower()
-                                keyword_matches = (job_keyword_normalized in body or job_keyword_normalized in title)
+                            if platform == "reddit":
+                                body = str(row.get("body", "")).lower()
+                                title = str(row.get("title", "")).lower()
+                                keyword_matches = (
+                                    job_keyword_normalized in body
+                                    or job_keyword_normalized in title
+                                )
                             else:  # X/Twitter
-                                text = str(row.get('text', '')).lower()
+                                text = str(row.get("text", "")).lower()
                                 keyword_matches = job_keyword_normalized in text
 
                         # Time window validation
                         if has_time_requirement:
-                            entity_dt = row.get('datetime')
+                            entity_dt = row.get("datetime")
                             if entity_dt is not None and not pd.isna(entity_dt):
                                 entity_dt = pd.to_datetime(entity_dt, utc=True)
                                 entity_dt_str = entity_dt.isoformat()
@@ -1746,20 +1908,28 @@ class S3Validator:
             f"{total_matched} matched job requirements ({match_rate:.1f}%)"
         )
         if checked_uris:
-            bt.logging.info(f"{miner_hotkey}: S3 job match: Sample URIs checked: {checked_uris[:5]}")
+            bt.logging.info(
+                f"{miner_hotkey}: S3 job match: Sample URIs checked: {checked_uris[:5]}"
+            )
         if mismatch_samples:
-            bt.logging.warning(f"{miner_hotkey}: S3 job match failures: {mismatch_samples[:3]}")
+            bt.logging.warning(
+                f"{miner_hotkey}: S3 job match failures: {mismatch_samples[:3]}"
+            )
 
         return {
-            'total_checked': total_checked,
-            'total_matched': total_matched,
-            'match_rate': match_rate,
-            'mismatch_samples': mismatch_samples
+            "total_checked": total_checked,
+            "total_matched": total_matched,
+            "match_rate": match_rate,
+            "mismatch_samples": mismatch_samples,
         }
 
     async def _perform_scraper_validation(
-        self, wallet, s3_auth_url: str, miner_hotkey: str,
-        recent_job_files: Dict, expected_jobs: Dict
+        self,
+        wallet,
+        s3_auth_url: str,
+        miner_hotkey: str,
+        recent_job_files: Dict,
+        expected_jobs: Dict,
     ) -> Dict:
         """Validate random entities using real scrapers"""
         all_entities = []
@@ -1767,13 +1937,13 @@ class S3Validator:
 
         # Collect entities from recent job files
         for job_id, job_data in recent_job_files.items():
-            files = job_data['files']
+            files = job_data["files"]
             expected_job = expected_jobs.get(job_id, {})
-            platform = expected_job.get('params', {}).get('platform', 'unknown').lower()
+            platform = expected_job.get("params", {}).get("platform", "unknown").lower()
 
             if files and len(all_entities) < 15:  # Get extra to ensure we have enough
                 sample_file = random.choice(files)
-                file_keys = [sample_file['key']]
+                file_keys = [sample_file["key"]]
 
                 file_urls = await self._get_file_presigned_urls(
                     wallet, s3_auth_url, miner_hotkey, file_keys
@@ -1782,7 +1952,7 @@ class S3Validator:
                 if file_urls:
                     for file_key, file_info in file_urls.items():
                         try:
-                            presigned_url = file_info.get('presigned_url')
+                            presigned_url = file_info.get("presigned_url")
                             if presigned_url:
                                 df = pd.read_parquet(presigned_url)
 
@@ -1792,12 +1962,12 @@ class S3Validator:
                                         f"{miner_hotkey}: Empty file detected (0 rows): {file_key}"
                                     )
                                     return {
-                                        'entities_validated': 0,
-                                        'entities_passed': 0,
-                                        'success_rate': 0,
-                                        'sample_results': [],
-                                        'empty_file_detected': True,
-                                        'empty_file_key': file_key
+                                        "entities_validated": 0,
+                                        "entities_passed": 0,
+                                        "success_rate": 0,
+                                        "sample_results": [],
+                                        "empty_file_detected": True,
+                                        "empty_file_key": file_key,
                                     }
 
                                 # Sample rows from this file
@@ -1805,7 +1975,9 @@ class S3Validator:
                                 sample_df = df.head(sample_size)
 
                                 for _, row in sample_df.iterrows():
-                                    entity = self._create_data_entity_from_row(row, platform)
+                                    entity = self._create_data_entity_from_row(
+                                        row, platform
+                                    )
                                     if entity:
                                         all_entities.append((entity, platform, job_id))
 
@@ -1816,7 +1988,9 @@ class S3Validator:
                                     break
 
                         except Exception as e:
-                            bt.logging.debug(f"Error reading file for validation: {str(e)}")
+                            bt.logging.debug(
+                                f"Error reading file for validation: {str(e)}"
+                            )
                             continue
 
             if len(all_entities) >= 15:
@@ -1824,7 +1998,8 @@ class S3Validator:
 
         # Select entities for validation
         entities_to_validate = random.sample(
-            all_entities, min(10, len(all_entities))  # sample_size = 10
+            all_entities,
+            min(10, len(all_entities)),  # sample_size = 10
         )
 
         # Log URIs being validated (same style as regular validation)
@@ -1859,14 +2034,19 @@ class S3Validator:
 
                     job_id = (
                         platform_entities[i][1]
-                        if i < len(platform_entities) else "unknown"
+                        if i < len(platform_entities)
+                        else "unknown"
                     )
 
                     if result.is_valid:
                         total_passed += 1
-                        sample_results.append(f"✅ {platform} ({job_id}): {result.reason}")
+                        sample_results.append(
+                            f"✅ {platform} ({job_id}): {result.reason}"
+                        )
                     else:
-                        sample_results.append(f"❌ {platform} ({job_id}): {result.reason}")
+                        sample_results.append(
+                            f"❌ {platform} ({job_id}): {result.reason}"
+                        )
 
             except Exception as e:
                 bt.logging.error(f"Error validating {platform} entities: {str(e)}")
@@ -1876,12 +2056,14 @@ class S3Validator:
                     failed_result = ValidationResult(
                         is_valid=False,
                         reason=f"Scraper error: {str(e)}",
-                        content_size_bytes_validated=0
+                        content_size_bytes_validated=0,
                     )
                     all_validation_results.append(failed_result)
                     sample_results.append(f"❌ {platform}: Scraper error - {str(e)}")
 
-        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+        success_rate = (
+            (total_passed / total_validated * 100) if total_validated > 0 else 0
+        )
 
         # Log results in same style as regular validation
         bt.logging.success(
@@ -1892,59 +2074,69 @@ class S3Validator:
         )
 
         return {
-            'entities_validated': total_validated,
-            'entities_passed': total_passed,
-            'success_rate': success_rate,
-            'sample_results': sample_results
+            "entities_validated": total_validated,
+            "entities_passed": total_passed,
+            "success_rate": success_rate,
+            "sample_results": sample_results,
         }
-    
+
     def _calculate_final_result(
-        self, total_active_jobs: int, expected_jobs_count: int, recent_data_analysis: Dict,
-        duplicate_analysis: Dict, job_match_analysis: Dict, scraper_validation: Dict,
-        job_completion_rate: float
+        self,
+        total_active_jobs: int,
+        expected_jobs_count: int,
+        recent_data_analysis: Dict,
+        duplicate_analysis: Dict,
+        job_match_analysis: Dict,
+        scraper_validation: Dict,
+        job_completion_rate: float,
     ) -> S3ValidationResultDetailed:
         """Calculate final validation result based on all analyses"""
 
         # Allow up to 10% duplicates (accidents happen during uploads)
         duplicate_threshold = 10.0  # Allow 10% duplicates, penalize proportionally
         has_duplicates = (
-            duplicate_analysis['duplicate_percentage'] > duplicate_threshold
+            duplicate_analysis["duplicate_percentage"] > duplicate_threshold
         )
         duplicate_validation_passed = not has_duplicates
 
         # Determine if job content matching passed
         min_job_match_rate = 95.0  # Require 95% of data to match job requirements todo change it back to 100 later.
         job_match_validation_passed = (
-            job_match_analysis['match_rate'] >= min_job_match_rate
+            job_match_analysis["match_rate"] >= min_job_match_rate
         )
 
         # Determine if scraper validation passed
         min_scraper_success_rate = 80.0  # min_scraper_success_rate = 80.0
         scraper_validation_passed = (
-            scraper_validation['success_rate'] >= min_scraper_success_rate
+            scraper_validation["success_rate"] >= min_scraper_success_rate
         )
 
         # Calculate size bonus (logarithmic scaling - bigger uploads = better scores with diminishing returns)
-        size_bytes = recent_data_analysis['total_size_bytes']
+        size_bytes = recent_data_analysis["total_size_bytes"]
         min_size_for_bonus = 10 * 1024 * 1024  # 10MB minimum for any bonus
         if size_bytes >= min_size_for_bonus:
-            size_bonus = math.log10(size_bytes / min_size_for_bonus) * 20  # Log base 10 scaling
+            size_bonus = (
+                math.log10(size_bytes / min_size_for_bonus) * 20
+            )  # Log base 10 scaling
         else:
             size_bonus = 0
 
         # Final validation decision - must pass ALL checks
-        is_valid = duplicate_validation_passed and job_match_validation_passed and scraper_validation_passed
+        is_valid = (
+            duplicate_validation_passed
+            and job_match_validation_passed
+            and scraper_validation_passed
+        )
 
         # Calculate duplicate score (proportional penalty)
         # 0% duplicates = 30 points, 10% duplicates = 0 points, linear scale
-        duplicate_pct = duplicate_analysis['duplicate_percentage']
+        duplicate_pct = duplicate_analysis["duplicate_percentage"]
         duplicate_score = max(0, 30.0 * (1 - duplicate_pct / 10.0))
 
         # Calculate base validation percentage WITHOUT size bonus
         # Base: 30% duplicates (proportional) + 70% scraper = 100%
-        base_validation_percentage = (
-            duplicate_score +
-            (scraper_validation['success_rate'] * 0.7)
+        base_validation_percentage = duplicate_score + (
+            scraper_validation["success_rate"] * 0.7
         )
 
         # Only apply size bonus if validation passed all checks
@@ -1992,14 +2184,14 @@ class S3Validator:
         # effective_size = total_size_bytes × coverage² (only if validation passed)
         coverage_ratio = job_completion_rate / 100.0  # 0-1
         if is_valid:
-            effective_size_bytes = size_bytes * (coverage_ratio ** 2)
+            effective_size_bytes = size_bytes * (coverage_ratio**2)
         else:
             effective_size_bytes = 0.0
 
         bt.logging.info(
-            f"Competition scoring: size={size_bytes/(1024*1024):.1f}MB, "
+            f"Competition scoring: size={size_bytes / (1024 * 1024):.1f}MB, "
             f"coverage={job_completion_rate:.1f}%, "
-            f"effective_size={effective_size_bytes/(1024*1024):.1f}MB"
+            f"effective_size={effective_size_bytes / (1024 * 1024):.1f}MB"
         )
 
         return S3ValidationResultDetailed(
@@ -2007,26 +2199,26 @@ class S3Validator:
             validation_percentage=validation_percentage,
             total_active_jobs=total_active_jobs,
             expected_jobs_count=expected_jobs_count,
-            recent_jobs_analyzed=recent_data_analysis['recent_jobs_count'],
-            recent_files_count=recent_data_analysis['recent_files_count'],
-            total_size_bytes=recent_data_analysis['total_size_bytes'],
+            recent_jobs_analyzed=recent_data_analysis["recent_jobs_count"],
+            recent_files_count=recent_data_analysis["recent_files_count"],
+            total_size_bytes=recent_data_analysis["total_size_bytes"],
             has_duplicates=has_duplicates,
-            duplicate_percentage=duplicate_analysis['duplicate_percentage'],
-            entities_validated=scraper_validation['entities_validated'],
-            entities_passed_scraper=scraper_validation['entities_passed'],
-            scraper_success_rate=scraper_validation['success_rate'],
-            entities_checked_for_job_match=job_match_analysis['total_checked'],
-            entities_matched_job=job_match_analysis['total_matched'],
-            job_match_rate=job_match_analysis['match_rate'],
+            duplicate_percentage=duplicate_analysis["duplicate_percentage"],
+            entities_validated=scraper_validation["entities_validated"],
+            entities_passed_scraper=scraper_validation["entities_passed"],
+            scraper_success_rate=scraper_validation["success_rate"],
+            entities_checked_for_job_match=job_match_analysis["total_checked"],
+            entities_matched_job=job_match_analysis["total_matched"],
+            job_match_rate=job_match_analysis["match_rate"],
             validation_issues=issues,
             reason=reason,
-            sample_duplicate_uris=duplicate_analysis['sample_duplicates'],
-            sample_validation_results=scraper_validation['sample_results'],
-            sample_job_mismatches=job_match_analysis['mismatch_samples'],
+            sample_duplicate_uris=duplicate_analysis["sample_duplicates"],
+            sample_validation_results=scraper_validation["sample_results"],
+            sample_job_mismatches=job_match_analysis["mismatch_samples"],
             effective_size_bytes=effective_size_bytes,
-            job_coverage_rate=job_completion_rate
+            job_coverage_rate=job_completion_rate,
         )
-    
+
     async def _validate_entities_with_scraper(
         self, entities: List[DataEntity], platform: str
     ) -> List[ValidationResult]:
@@ -2034,29 +2226,37 @@ class S3Validator:
         try:
             # Map platform to data source and get scraper using provider
             data_source = None
-            if platform in ['x', 'twitter']:
+            if platform in ["x", "twitter"]:
                 data_source = DataSource.X
-            elif platform == 'reddit':
+            elif platform == "reddit":
                 data_source = DataSource.REDDIT
             else:
-                return [ValidationResult(
-                    is_valid=False,
-                    reason=f"Unknown platform: {platform}",
-                    content_size_bytes_validated=0
-                ) for _ in entities]
-            
+                return [
+                    ValidationResult(
+                        is_valid=False,
+                        reason=f"Unknown platform: {platform}",
+                        content_size_bytes_validated=0,
+                    )
+                    for _ in entities
+                ]
+
             # Get scraper using provider (like in miner_evaluator)
             scraper = self.scraper_provider.get(PREFERRED_SCRAPERS[data_source])
             return await scraper.validate(entities)
-            
+
         except Exception as e:
-            return [ValidationResult(
-                is_valid=False,
-                reason=f"Scraper error: {str(e)}",
-                content_size_bytes_validated=0
-            ) for _ in entities]
-    
-    def _create_failed_result(self, reason: str, empty_file_detected: bool = False) -> S3ValidationResultDetailed:
+            return [
+                ValidationResult(
+                    is_valid=False,
+                    reason=f"Scraper error: {str(e)}",
+                    content_size_bytes_validated=0,
+                )
+                for _ in entities
+            ]
+
+    def _create_failed_result(
+        self, reason: str, empty_file_detected: bool = False
+    ) -> S3ValidationResultDetailed:
         """Create a failed validation result"""
         return S3ValidationResultDetailed(
             is_valid=False,
@@ -2081,9 +2281,9 @@ class S3Validator:
             sample_job_mismatches=[],
             empty_file_detected=empty_file_detected,
             effective_size_bytes=0.0,
-            job_coverage_rate=0.0
+            job_coverage_rate=0.0,
         )
-    
+
     # Additional helper methods
     async def _get_job_files(self, presigned_url: str) -> List[Dict]:
         """Get parquet files from job using proven XML parsing"""
@@ -2091,53 +2291,65 @@ class S3Validator:
             response = requests.get(presigned_url, timeout=30)
             if response.status_code != 200:
                 return []
-            
+
             root = ET.fromstring(response.text)
-            namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
-            
+            namespaces = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+
             files = []
-            for content in root.findall('.//s3:Contents', namespaces):
+            for content in root.findall(".//s3:Contents", namespaces):
                 try:
-                    key_elem = content.find('s3:Key', namespaces)
-                    size_elem = content.find('s3:Size', namespaces)
-                    modified_elem = content.find('s3:LastModified', namespaces)
-                    
+                    key_elem = content.find("s3:Key", namespaces)
+                    size_elem = content.find("s3:Size", namespaces)
+                    modified_elem = content.find("s3:LastModified", namespaces)
+
                     if key_elem is not None and key_elem.text:
                         key = urllib.parse.unquote(key_elem.text)
-                        size = int(size_elem.text) if size_elem is not None and size_elem.text else 0
-                        last_modified = modified_elem.text if modified_elem is not None else ""
-                        
-                        if key.endswith('.parquet'):
-                            files.append({
-                                'key': key,
-                                'size': size,
-                                'last_modified': last_modified
-                            })
+                        size = (
+                            int(size_elem.text)
+                            if size_elem is not None and size_elem.text
+                            else 0
+                        )
+                        last_modified = (
+                            modified_elem.text if modified_elem is not None else ""
+                        )
+
+                        if key.endswith(".parquet"):
+                            files.append(
+                                {
+                                    "key": key,
+                                    "size": size,
+                                    "last_modified": last_modified,
+                                }
+                            )
                 except Exception:
                     continue
-            
+
             return files
-            
+
         except Exception:
             return []
-    
-    def _is_file_recent(self, last_modified_str: str, threshold_time: dt.datetime) -> bool:
+
+    def _is_file_recent(
+        self, last_modified_str: str, threshold_time: dt.datetime
+    ) -> bool:
         """Check if file was modified after threshold time"""
         try:
-            if last_modified_str and 'T' in last_modified_str:
-                if last_modified_str.endswith('Z'):
-                    parsed_time = dt.datetime.fromisoformat(last_modified_str.replace('Z', '+00:00'))
+            if last_modified_str and "T" in last_modified_str:
+                if last_modified_str.endswith("Z"):
+                    parsed_time = dt.datetime.fromisoformat(
+                        last_modified_str.replace("Z", "+00:00")
+                    )
                 else:
                     parsed_time = dt.datetime.fromisoformat(last_modified_str)
-                
+
                 if parsed_time.tzinfo is None:
                     parsed_time = parsed_time.replace(tzinfo=dt.timezone.utc)
-                
+
                 return parsed_time >= threshold_time
         except Exception:
             pass
         return False
-    
+
     async def _get_file_presigned_urls(
         self, wallet, s3_auth_url: str, miner_hotkey: str, file_keys: List[str]
     ) -> Optional[Dict]:
@@ -2147,64 +2359,66 @@ class S3Validator:
             timestamp = int(time.time())
             commitment = f"s3:validator:files:{miner_hotkey}:{hotkey}:{timestamp}"
             signature = wallet.hotkey.sign(commitment.encode())
-            
+
             payload = {
                 "hotkey": hotkey,
                 "timestamp": timestamp,
                 "signature": signature.hex(),
                 "miner_hotkey": miner_hotkey,
                 "file_keys": file_keys,
-                "expiry_hours": 1
+                "expiry_hours": 1,
             }
-            
+
             response = requests.post(
-                f"{s3_auth_url}/get-file-presigned-urls",
-                json=payload,
-                timeout=60
+                f"{s3_auth_url}/get-file-presigned-urls", json=payload, timeout=60
             )
-            
-            return response.json().get('file_urls', {}) if response.status_code == 200 else None
-            
+
+            return (
+                response.json().get("file_urls", {})
+                if response.status_code == 200
+                else None
+            )
+
         except Exception:
             return None
-    
+
     def _get_uri_value(self, row) -> str:
         """Extract URI/URL value from DataFrame row"""
         try:
-            for uri_field in ['uri', 'url', 'link', 'source_url']:
+            for uri_field in ["uri", "url", "link", "source_url"]:
                 if uri_field in row.index and pd.notna(row[uri_field]):
                     uri_value = str(row[uri_field]).strip()
-                    if uri_value and uri_value != '':
+                    if uri_value and uri_value != "":
                         return uri_value
             return ""
         except Exception:
             return ""
-    
+
     def _create_data_entity_from_row(self, row, platform: str) -> Optional[DataEntity]:
         """Create DataEntity from parquet row based on platform"""
         try:
-            if platform in ['x', 'twitter']:
+            if platform in ["x", "twitter"]:
                 return self._create_twitter_data_entity(row)
-            elif platform == 'reddit':
+            elif platform == "reddit":
                 return self._create_reddit_data_entity(row)
             else:
                 return None
         except Exception:
             return None
-    
+
     def _create_twitter_data_entity(self, row) -> Optional[DataEntity]:
         """Create Twitter DataEntity from parquet row"""
         try:
             # Get required fields
-            username = row.get('username', '')
-            text = row.get('text', '')
-            url = row.get('url', row.get('uri', ''))
+            username = row.get("username", "")
+            text = row.get("text", "")
+            url = row.get("url", row.get("uri", ""))
 
             if not all([username, text, url]):
                 return None
 
             # Get datetime from row or use current time
-            datetime_val = row.get('datetime', row.get('timestamp', ''))
+            datetime_val = row.get("datetime", row.get("timestamp", ""))
             if datetime_val and pd.notna(datetime_val):
                 try:
                     timestamp = pd.to_datetime(datetime_val)
@@ -2217,10 +2431,12 @@ class S3Validator:
 
             # ---- SAFE NORMALIZATION FOR ARRAY-LIKE FIELDS ----
             # tweet_hashtags can be list/array/Series or scalar/NaN
-            raw_hashtags = row.get('tweet_hashtags', None)
+            raw_hashtags = row.get("tweet_hashtags", None)
             if raw_hashtags is None:
                 tweet_hashtags = []
-            elif hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
+            elif hasattr(raw_hashtags, "__iter__") and not isinstance(
+                raw_hashtags, str
+            ):
                 # Iterable (list, numpy array, Series, etc.)
                 try:
                     tweet_hashtags = list(raw_hashtags)
@@ -2234,7 +2450,7 @@ class S3Validator:
                     tweet_hashtags = [raw_hashtags]
 
             # media can also be non-scalar; we only want to clear obvious NaN
-            raw_media = row.get('media', None)
+            raw_media = row.get("media", None)
             if isinstance(raw_media, float):
                 # Handle float("nan") specially
                 media_value = None if math.isnan(raw_media) else raw_media
@@ -2250,55 +2466,88 @@ class S3Validator:
                 timestamp=timestamp,
                 tweet_hashtags=tweet_hashtags,
                 media=media_value,
-                user_id=str(row.get('user_id', '')),
+                user_id=str(row.get("user_id", "")),
                 # user_display_name is OPTIONAL (None when NaN/missing)
-                user_display_name=str(row.get('user_display_name', '')) if pd.notna(row.get('user_display_name', None)) else None,
-                user_verified=bool(row.get('user_verified', False)),
-                tweet_id=str(row.get('tweet_id', '')),
-                is_reply=bool(row.get('is_reply', False)),
-                is_quote=bool(row.get('is_quote', False)),
-                conversation_id=str(row.get('conversation_id', '')),
-                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')),
+                user_display_name=str(row.get("user_display_name", ""))
+                if pd.notna(row.get("user_display_name", None))
+                else None,
+                user_verified=bool(row.get("user_verified", False)),
+                tweet_id=str(row.get("tweet_id", "")),
+                is_reply=bool(row.get("is_reply", False)),
+                is_quote=bool(row.get("is_quote", False)),
+                conversation_id=str(row.get("conversation_id", "")),
+                in_reply_to_user_id=str(row.get("in_reply_to_user_id", "")),
                 # Add missing engagement metrics that miners upload
-                language=str(row.get('language', '')) if pd.notna(row.get('language', None)) else None,
-                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username', None)) else None,
-                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id', None)) else None,
-                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count', None)) else None,
-                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count', None)) else None,
-                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count', None)) else None,
-                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count', None)) else None,
-                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count', None)) else None,
-                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count', None)) else None,
+                language=str(row.get("language", ""))
+                if pd.notna(row.get("language", None))
+                else None,
+                in_reply_to_username=str(row.get("in_reply_to_username", ""))
+                if pd.notna(row.get("in_reply_to_username", None))
+                else None,
+                quoted_tweet_id=str(row.get("quoted_tweet_id", ""))
+                if pd.notna(row.get("quoted_tweet_id", None))
+                else None,
+                like_count=int(row.get("like_count", 0))
+                if pd.notna(row.get("like_count", None))
+                else None,
+                retweet_count=int(row.get("retweet_count", 0))
+                if pd.notna(row.get("retweet_count", None))
+                else None,
+                reply_count=int(row.get("reply_count", 0))
+                if pd.notna(row.get("reply_count", None))
+                else None,
+                quote_count=int(row.get("quote_count", 0))
+                if pd.notna(row.get("quote_count", None))
+                else None,
+                view_count=int(row.get("view_count", 0))
+                if pd.notna(row.get("view_count", None))
+                else None,
+                bookmark_count=int(row.get("bookmark_count", 0))
+                if pd.notna(row.get("bookmark_count", None))
+                else None,
                 # Add missing user profile data that miners upload
-                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified', None)) else None,
-                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description', None)) else None,
-                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location', None)) else None,
-                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url', None)) else None,
-                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url', None)) else None,
-                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count', None)) else None,
-                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count', None)) else None
+                user_blue_verified=bool(row.get("user_blue_verified", False))
+                if pd.notna(row.get("user_blue_verified", None))
+                else None,
+                user_description=str(row.get("user_description", ""))
+                if pd.notna(row.get("user_description", None))
+                else None,
+                user_location=str(row.get("user_location", ""))
+                if pd.notna(row.get("user_location", None))
+                else None,
+                profile_image_url=str(row.get("profile_image_url", ""))
+                if pd.notna(row.get("profile_image_url", None))
+                else None,
+                cover_picture_url=str(row.get("cover_picture_url", ""))
+                if pd.notna(row.get("cover_picture_url", None))
+                else None,
+                user_followers_count=int(row.get("user_followers_count", 0))
+                if pd.notna(row.get("user_followers_count", None))
+                else None,
+                user_following_count=int(row.get("user_following_count", 0))
+                if pd.notna(row.get("user_following_count", None))
+                else None,
             )
 
             return XContent.to_data_entity(x_content)
         except Exception:
             return None
 
-
     def _create_reddit_data_entity(self, row) -> Optional[DataEntity]:
         """Create Reddit DataEntity from parquet row"""
         try:
             # Get required fields
-            username = row.get('username', '')
-            body = row.get('body', row.get('text', ''))
-            url = row.get('url', row.get('uri', ''))
-            reddit_id = row.get('id', '')
-            
+            username = row.get("username", "")
+            body = row.get("body", row.get("text", ""))
+            url = row.get("url", row.get("uri", ""))
+            reddit_id = row.get("id", "")
+
             if not all([username, body, url, reddit_id]):
                 return None
-            
+
             # Get datetime from row - use as-is without rounding
             # The parquet already contains obfuscated datetime, and to_data_entity expects unrounded datetime
-            datetime_val = row.get('datetime', row.get('createdAt', ''))
+            datetime_val = row.get("datetime", row.get("createdAt", ""))
             if datetime_val and pd.notna(datetime_val):
                 try:
                     created_at = pd.to_datetime(datetime_val)
@@ -2308,31 +2557,42 @@ class S3Validator:
                     created_at = dt.datetime.now(dt.timezone.utc)
             else:
                 created_at = dt.datetime.now(dt.timezone.utc)
-            
+
             # Create RedditContent object with ALL uploaded fields
             reddit_content = RedditContent(
                 id=str(reddit_id),
                 username=str(username),
                 body=str(body),
                 url=str(url),
-                communityName=str(row.get('communityName', '')),
+                communityName=str(row.get("communityName", "")),
                 createdAt=created_at,
-                dataType=str(row.get('dataType', 'post')),
-                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None,
+                dataType=str(row.get("dataType", "post")),
+                parentId=str(row.get("parentId"))
+                if row.get("parentId") and pd.notna(row.get("parentId"))
+                else None,
                 # Add missing fields that miners upload
-                title=str(row.get('title', '')) if pd.notna(row.get('title')) else None,
-                media=row.get('media', None) if pd.notna(row.get('media')) else None,
-                is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
-                score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
-                upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
-                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None
+                title=str(row.get("title", "")) if pd.notna(row.get("title")) else None,
+                media=row.get("media", None) if pd.notna(row.get("media")) else None,
+                is_nsfw=bool(row.get("is_nsfw", False))
+                if pd.notna(row.get("is_nsfw"))
+                else None,
+                score=int(row.get("score", 0)) if pd.notna(row.get("score")) else None,
+                upvote_ratio=float(row.get("upvote_ratio", 0.0))
+                if pd.notna(row.get("upvote_ratio"))
+                else None,
+                num_comments=int(row.get("num_comments", 0))
+                if pd.notna(row.get("num_comments"))
+                else None,
             )
-            
+
             return RedditContent.to_data_entity(reddit_content)
         except Exception:
             return None
-    
-async def get_miner_s3_validation_data(wallet, s3_auth_url: str, miner_hotkey: str) -> Optional[List[Dict]]:
+
+
+async def get_miner_s3_validation_data(
+    wallet, s3_auth_url: str, miner_hotkey: str
+) -> Optional[List[Dict]]:
     """Get S3 file data for a specific miner"""
     try:
         # Get miner-specific presigned URL
@@ -2346,37 +2606,45 @@ async def get_miner_s3_validation_data(wallet, s3_auth_url: str, miner_hotkey: s
             "hotkey": hotkey,
             "timestamp": timestamp,
             "signature": signature_hex,
-            "miner_hotkey": miner_hotkey
+            "miner_hotkey": miner_hotkey,
         }
 
         response = requests.post(
             f"{s3_auth_url}/get-miner-specific-access",
             json=payload,
-            timeout=60  # Increased timeout for S3 auth
+            timeout=60,  # Increased timeout for S3 auth
         )
 
         if response.status_code != 200:
-            bt.logging.warning(f"Failed to get S3 access for {miner_hotkey}: {response.status_code}")
+            bt.logging.warning(
+                f"Failed to get S3 access for {miner_hotkey}: {response.status_code}"
+            )
             return None
 
         access_data = response.json()
-        miner_url = access_data.get('miner_url', '')
-        
+        miner_url = access_data.get("miner_url", "")
+
         if not miner_url:
             bt.logging.warning(f"No miner URL provided for {miner_hotkey}")
             return None
 
         # Parse S3 file list
-        xml_response = requests.get(miner_url, timeout=60)  # Increased timeout for S3 data fetch
-        
+        xml_response = requests.get(
+            miner_url, timeout=60
+        )  # Increased timeout for S3 data fetch
+
         if xml_response.status_code != 200:
-            bt.logging.warning(f"Failed to get S3 file list for {miner_hotkey}: {xml_response.status_code}")
+            bt.logging.warning(
+                f"Failed to get S3 file list for {miner_hotkey}: {xml_response.status_code}"
+            )
             return None
 
         return parse_s3_file_list(xml_response.text)
-        
+
     except Exception as e:
-        bt.logging.error(f"Error getting S3 validation data for {miner_hotkey}: {str(e)}")
+        bt.logging.error(
+            f"Error getting S3 validation data for {miner_hotkey}: {str(e)}"
+        )
         return None
 
 
@@ -2384,25 +2652,27 @@ def parse_s3_file_list(xml_content: str) -> List[Dict]:
     """Parse S3 XML response to extract file metadata"""
     try:
         root = ET.fromstring(xml_content)
-        namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
-        
+        namespaces = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
+
         files_data = []
-        for content in root.findall('.//s3:Contents', namespaces):
-            key = content.find('s3:Key', namespaces).text
-            size = content.find('s3:Size', namespaces).text
-            last_modified = content.find('s3:LastModified', namespaces).text
-            
-            if key and key.endswith('.parquet'):
+        for content in root.findall(".//s3:Contents", namespaces):
+            key = content.find("s3:Key", namespaces).text
+            size = content.find("s3:Size", namespaces).text
+            last_modified = content.find("s3:LastModified", namespaces).text
+
+            if key and key.endswith(".parquet"):
                 decoded_key = urllib.parse.unquote(key)
-                files_data.append({
-                    'key': decoded_key,
-                    'size': int(size) if size else 0,
-                    'last_modified': last_modified,
-                    'job_id': extract_job_id_from_path(decoded_key)
-                })
-        
+                files_data.append(
+                    {
+                        "key": decoded_key,
+                        "size": int(size) if size else 0,
+                        "last_modified": last_modified,
+                        "job_id": extract_job_id_from_path(decoded_key),
+                    }
+                )
+
         return files_data
-        
+
     except Exception as e:
         bt.logging.error(f"Error parsing S3 file list: {str(e)}")
         return []
@@ -2410,9 +2680,9 @@ def parse_s3_file_list(xml_content: str) -> List[Dict]:
 
 def extract_job_id_from_path(file_path: str) -> str:
     """Extract job_id from S3 file path"""
-    if '/job_id=' in file_path:
-        job_part = file_path.split('/job_id=')[1]
-        return job_part.split('/')[0]
+    if "/job_id=" in file_path:
+        job_part = file_path.split("/job_id=")[1]
+        return job_part.split("/")[0]
     return "unknown"
 
 
@@ -2421,19 +2691,21 @@ def load_expected_jobs_from_gravity() -> Dict:
     try:
         current_dir = os.getcwd()
         for _ in range(3):
-            total_json_path = os.path.join(current_dir, "dynamic_desirability", "total.json")
+            total_json_path = os.path.join(
+                current_dir, "dynamic_desirability", "total.json"
+            )
             if os.path.exists(total_json_path):
-                with open(total_json_path, 'r') as f:
+                with open(total_json_path, "r") as f:
                     jobs_list = json.load(f)
-                    
+
                 jobs_dict = {}
                 for job in jobs_list:
-                    if isinstance(job, dict) and 'id' in job:
-                        jobs_dict[job['id']] = job
-                
+                    if isinstance(job, dict) and "id" in job:
+                        jobs_dict[job["id"]] = job
+
                 return jobs_dict
             current_dir = os.path.dirname(current_dir)
-        
+
         bt.logging.warning("dynamic_desirability/total.json not found")
         return {}
     except Exception as e:
@@ -2442,9 +2714,14 @@ def load_expected_jobs_from_gravity() -> Dict:
 
 
 async def validate_s3_miner_data(
-    wallet, s3_auth_url: str, miner_hotkey: str,
-    use_enhanced_validation: bool = False, config=None, s3_reader=None,
-    use_duckdb_validation: bool = True, sample_percent: float = 10.0
+    wallet,
+    s3_auth_url: str,
+    miner_hotkey: str,
+    use_enhanced_validation: bool = False,
+    config=None,
+    s3_reader=None,
+    use_duckdb_validation: bool = True,
+    sample_percent: float = 10.0,
 ) -> S3ValidationResult:
     """
     Comprehensive S3 validation using metadata analysis and statistical methods.
@@ -2474,7 +2751,7 @@ async def validate_s3_miner_data(
                 wallet=wallet,
                 s3_auth_url=s3_auth_url,
                 s3_reader=s3_reader,
-                sample_percent=sample_percent
+                sample_percent=sample_percent,
             )
             duckdb_result = await validator.validate_miner_s3_data(
                 miner_hotkey, expected_jobs
@@ -2491,20 +2768,22 @@ async def validate_s3_miner_data(
                 valid_jobs=duckdb_result.recent_jobs_analyzed,
                 recent_files=duckdb_result.recent_files_count,
                 quality_metrics={
-                    'duplicate_percentage': duckdb_result.duplicate_percentage,
-                    'job_match_rate': duckdb_result.job_match_rate,
-                    'scraper_success_rate': duckdb_result.scraper_success_rate
+                    "duplicate_percentage": duckdb_result.duplicate_percentage,
+                    "job_match_rate": duckdb_result.job_match_rate,
+                    "scraper_success_rate": duckdb_result.scraper_success_rate,
                 },
                 issues=duckdb_result.validation_issues,
                 reason=duckdb_result.reason,
                 enhanced_validation=duckdb_result,
                 empty_file_detected=False,
                 effective_size_bytes=duckdb_result.effective_size_bytes,
-                job_coverage_rate=duckdb_result.job_coverage_rate
+                job_coverage_rate=duckdb_result.job_coverage_rate,
             )
 
         except Exception as e:
-            bt.logging.error(f"DuckDB validation failed for {miner_hotkey}: {str(e)}, falling back to enhanced validation")
+            bt.logging.error(
+                f"DuckDB validation failed for {miner_hotkey}: {str(e)}, falling back to enhanced validation"
+            )
             # Fall through to enhanced validation
 
     if use_enhanced_validation:
@@ -2514,7 +2793,7 @@ async def validate_s3_miner_data(
             enhanced_result = await validator.validate_miner_s3_data(
                 wallet, s3_auth_url, miner_hotkey, expected_jobs
             )
-            
+
             # Convert enhanced result to standard S3ValidationResult format
             return S3ValidationResult(
                 is_valid=enhanced_result.is_valid,
@@ -2525,22 +2804,24 @@ async def validate_s3_miner_data(
                 valid_jobs=enhanced_result.recent_jobs_analyzed,
                 recent_files=enhanced_result.recent_files_count,
                 quality_metrics={
-                    'duplicate_percentage': enhanced_result.duplicate_percentage,
-                    'job_match_rate': enhanced_result.job_match_rate,
-                    'scraper_success_rate': enhanced_result.scraper_success_rate
+                    "duplicate_percentage": enhanced_result.duplicate_percentage,
+                    "job_match_rate": enhanced_result.job_match_rate,
+                    "scraper_success_rate": enhanced_result.scraper_success_rate,
                 },
                 issues=enhanced_result.validation_issues,
                 reason=enhanced_result.reason,
                 enhanced_validation=enhanced_result,
                 empty_file_detected=enhanced_result.empty_file_detected,
                 effective_size_bytes=enhanced_result.effective_size_bytes,
-                job_coverage_rate=enhanced_result.job_coverage_rate
+                job_coverage_rate=enhanced_result.job_coverage_rate,
             )
-            
+
         except Exception as e:
-            bt.logging.error(f"S3 validation with real scrapers failed for {miner_hotkey}: {str(e)}")
+            bt.logging.error(
+                f"S3 validation with real scrapers failed for {miner_hotkey}: {str(e)}"
+            )
             # Fall back to basic validation
-            
+
     # Get miner file data (basic validation)
     files_data = await get_miner_s3_validation_data(wallet, s3_auth_url, miner_hotkey)
     if not files_data:
@@ -2554,23 +2835,25 @@ async def validate_s3_miner_data(
             recent_files=0,
             quality_metrics={},
             issues=["No S3 data accessible"],
-            reason="Could not access miner S3 data"
+            reason="Could not access miner S3 data",
         )
-    
+
     # Perform basic analysis
     return analyze_miner_s3_data(files_data, expected_jobs, miner_hotkey)
 
 
-def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hotkey: str) -> S3ValidationResult:
+def analyze_miner_s3_data(
+    files_data: List[Dict], expected_jobs: Dict, miner_hotkey: str
+) -> S3ValidationResult:
     """Analyze miner S3 data using DuckDB for statistical validation"""
-    
+
     issues = []
     quality_metrics = {}
-    
+
     # Basic statistics
     total_files = len(files_data)
-    total_size_bytes = sum(f['size'] for f in files_data)
-    
+    total_size_bytes = sum(f["size"] for f in files_data)
+
     if total_files == 0:
         return S3ValidationResult(
             is_valid=False,
@@ -2582,17 +2865,17 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
             recent_files=0,
             quality_metrics={},
             issues=["No files found"],
-            reason="No files available for validation"
+            reason="No files available for validation",
         )
-    
+
     # Use DuckDB for advanced analysis
     conn = duckdb.connect()
-    
+
     try:
         # Load data into DuckDB
         df = pd.DataFrame(files_data)
-        conn.register('miner_files', df)
-        
+        conn.register("miner_files", df)
+
         # 1. File quality validation
         size_stats = conn.execute("""
             SELECT 
@@ -2603,11 +2886,11 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
                 ROUND(AVG(size), 0) as avg_size
             FROM miner_files
         """).fetchone()
-        
+
         total, size_valid, min_size, max_size, avg_size = size_stats
         file_quality_score = (size_valid / total * 100) if total > 0 else 0
-        quality_metrics['file_quality'] = file_quality_score
-        
+        quality_metrics["file_quality"] = file_quality_score
+
         # 2. Temporal validation
         temporal_stats = conn.execute("""
             SELECT 
@@ -2616,12 +2899,12 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
                 SUM(CASE WHEN CAST(last_modified AS TIMESTAMP) >= CURRENT_DATE - INTERVAL '7 days' THEN 1 ELSE 0 END) as recent_7d
             FROM miner_files
         """).fetchone()
-        
+
         total, recent_30d, recent_7d = temporal_stats
         temporal_quality_score = (recent_30d / total * 100) if total > 0 else 0
-        quality_metrics['temporal_quality'] = temporal_quality_score
+        quality_metrics["temporal_quality"] = temporal_quality_score
         recent_files = recent_30d
-        
+
         # 3. Job-based validation
         job_stats = conn.execute("""
             SELECT 
@@ -2633,39 +2916,43 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
             GROUP BY job_id
             ORDER BY file_count DESC
         """).fetchall()
-        
+
         job_count = len(job_stats)
-        unique_jobs = len(set(f['job_id'] for f in files_data if f['job_id'] != 'unknown'))
+        unique_jobs = len(
+            set(f["job_id"] for f in files_data if f["job_id"] != "unknown")
+        )
         avg_files_per_job = total_files / job_count if job_count > 0 else 0
-        
+
         # Job presence validation - if we find any jobs, consider it valid
         valid_jobs = job_count  # Any job found is considered valid
         job_validity_score = 100.0 if job_count > 0 else 0.0
-        quality_metrics['job_validity'] = job_validity_score
-        
+        quality_metrics["job_validity"] = job_validity_score
+
         # 4. Distribution analysis
-        distribution_score = min(100.0, avg_files_per_job * 5) if avg_files_per_job > 0 else 0
-        quality_metrics['distribution'] = distribution_score
-        
+        distribution_score = (
+            min(100.0, avg_files_per_job * 5) if avg_files_per_job > 0 else 0
+        )
+        quality_metrics["distribution"] = distribution_score
+
         # 5. Calculate overall validation score
         scores = [
-            ('file_quality', file_quality_score, 0.3),
-            ('temporal_quality', temporal_quality_score, 0.2),
-            ('job_validity', job_validity_score, 0.3),
-            ('distribution', distribution_score, 0.2)
+            ("file_quality", file_quality_score, 0.3),
+            ("temporal_quality", temporal_quality_score, 0.2),
+            ("job_validity", job_validity_score, 0.3),
+            ("distribution", distribution_score, 0.2),
         ]
-        
+
         weighted_sum = sum(score * weight for name, score, weight in scores)
         total_weight = sum(weight for name, score, weight in scores)
         validation_percentage = weighted_sum / total_weight if total_weight > 0 else 0
-        
+
         # 6. Validation decision criteria - simplified
         is_valid = (
-            validation_percentage >= 60.0 and
-            job_count > 0 and  # Must have at least one job
-            recent_files >= 10
+            validation_percentage >= 60.0
+            and job_count > 0  # Must have at least one job
+            and recent_files >= 10
         )
-        
+
         # Collect issues
         if validation_percentage < 60.0:
             issues.append(f"Overall quality score: {validation_percentage:.1f}%")
@@ -2678,17 +2965,21 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
 
         # Calculate job coverage and effective_size for competition scoring
         expected_jobs_count = len(expected_jobs) if expected_jobs else 1
-        job_coverage_rate = min(100.0, (job_count / expected_jobs_count) * 100) if expected_jobs_count > 0 else 0.0
+        job_coverage_rate = (
+            min(100.0, (job_count / expected_jobs_count) * 100)
+            if expected_jobs_count > 0
+            else 0.0
+        )
         coverage_ratio = job_coverage_rate / 100.0
 
         if is_valid:
-            effective_size_bytes = total_size_bytes * (coverage_ratio ** 2)
+            effective_size_bytes = total_size_bytes * (coverage_ratio**2)
         else:
             effective_size_bytes = 0.0
 
         bt.logging.info(
-            f"Basic validation competition scoring: size={total_size_bytes/(1024*1024):.1f}MB, "
-            f"coverage={job_coverage_rate:.1f}%, effective_size={effective_size_bytes/(1024*1024):.1f}MB"
+            f"Basic validation competition scoring: size={total_size_bytes / (1024 * 1024):.1f}MB, "
+            f"coverage={job_coverage_rate:.1f}%, effective_size={effective_size_bytes / (1024 * 1024):.1f}MB"
         )
 
         return S3ValidationResult(
@@ -2703,9 +2994,9 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
             issues=issues,
             reason=reason,
             effective_size_bytes=effective_size_bytes,
-            job_coverage_rate=job_coverage_rate
+            job_coverage_rate=job_coverage_rate,
         )
-        
+
     except Exception as e:
         bt.logging.error(f"Error in S3 data analysis for {miner_hotkey}: {str(e)}")
         return S3ValidationResult(
@@ -2718,7 +3009,7 @@ def analyze_miner_s3_data(files_data: List[Dict], expected_jobs: Dict, miner_hot
             recent_files=0,
             quality_metrics={},
             issues=[f"Analysis error: {str(e)}"],
-            reason=f"S3 validation failed: {str(e)}"
+            reason=f"S3 validation failed: {str(e)}",
         )
     finally:
         conn.close()
@@ -2728,9 +3019,9 @@ def get_s3_validation_summary(result: S3ValidationResult) -> str:
     """Generate a summary string for S3 validation result with detailed breakdown"""
 
     # Get quality metrics if available
-    dup_rate = result.quality_metrics.get('duplicate_percentage', 0)
-    job_match = result.quality_metrics.get('job_match_rate', 0)
-    scraper_rate = result.quality_metrics.get('scraper_success_rate', 0)
+    dup_rate = result.quality_metrics.get("duplicate_percentage", 0)
+    job_match = result.quality_metrics.get("job_match_rate", 0)
+    scraper_rate = result.quality_metrics.get("scraper_success_rate", 0)
 
     size_mb = result.total_size_bytes / (1024 * 1024)
 

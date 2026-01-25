@@ -11,7 +11,9 @@ class TestNormalizeChannelName(unittest.TestCase):
         """Spaces in channel names should be converted to underscores."""
         self.assertEqual(normalize_channel_name("Wicked Tuna"), "wicked_tuna")
         self.assertEqual(normalize_channel_name("Cold Fusion"), "cold_fusion")
-        self.assertEqual(normalize_channel_name("Two Minute Papers"), "two_minute_papers")
+        self.assertEqual(
+            normalize_channel_name("Two Minute Papers"), "two_minute_papers"
+        )
 
     def test_hyphens_converted_to_underscores(self):
         """Hyphens in channel names should be converted to underscores."""
@@ -21,18 +23,26 @@ class TestNormalizeChannelName(unittest.TestCase):
     def test_underscores_preserved(self):
         """Existing underscores should be preserved."""
         self.assertEqual(normalize_channel_name("Wicked_Tuna"), "wicked_tuna")
-        self.assertEqual(normalize_channel_name("already_underscored"), "already_underscored")
+        self.assertEqual(
+            normalize_channel_name("already_underscored"), "already_underscored"
+        )
 
     def test_mixed_separators(self):
         """Mixed separators (spaces, hyphens, underscores) should all become underscores."""
-        self.assertEqual(normalize_channel_name("Some-Channel Name_Here"), "some_channel_name_here")
+        self.assertEqual(
+            normalize_channel_name("Some-Channel Name_Here"), "some_channel_name_here"
+        )
         self.assertEqual(normalize_channel_name("A-B C_D"), "a_b_c_d")
 
     def test_consecutive_separators(self):
         """Consecutive separators should be collapsed to single underscore."""
         self.assertEqual(normalize_channel_name("Multiple   Spaces"), "multiple_spaces")
-        self.assertEqual(normalize_channel_name("Multiple---Hyphens"), "multiple_hyphens")
-        self.assertEqual(normalize_channel_name("Mixed--  -Separators"), "mixed_separators")
+        self.assertEqual(
+            normalize_channel_name("Multiple---Hyphens"), "multiple_hyphens"
+        )
+        self.assertEqual(
+            normalize_channel_name("Mixed--  -Separators"), "mixed_separators"
+        )
 
     def test_simple_names_unchanged(self):
         """Simple names without separators should remain unchanged (lowercased)."""
@@ -65,50 +75,42 @@ class TestYouTubeContentLabelMethods(unittest.TestCase):
     def test_create_channel_label(self):
         """create_channel_label should produce consistent #ytc_c_ prefixed labels."""
         self.assertEqual(
-            YouTubeContent.create_channel_label("Wicked Tuna"),
-            "#ytc_c_wicked_tuna"
+            YouTubeContent.create_channel_label("Wicked Tuna"), "#ytc_c_wicked_tuna"
         )
         self.assertEqual(
-            YouTubeContent.create_channel_label("lexfridman"),
-            "#ytc_c_lexfridman"
+            YouTubeContent.create_channel_label("lexfridman"), "#ytc_c_lexfridman"
         )
         self.assertEqual(
-            YouTubeContent.create_channel_label("@lexfridman"),
-            "#ytc_c_lexfridman"
+            YouTubeContent.create_channel_label("@lexfridman"), "#ytc_c_lexfridman"
         )
 
     def test_normalize_label_for_comparison_converts_hyphens(self):
         """normalize_label_for_comparison should convert hyphens to underscores in the slug."""
         self.assertEqual(
             YouTubeContent.normalize_label_for_comparison("#ytc_c_wicked-tuna"),
-            "#ytc_c_wicked_tuna"
+            "#ytc_c_wicked_tuna",
         )
         self.assertEqual(
             YouTubeContent.normalize_label_for_comparison("#ytc_c_cold-fusion"),
-            "#ytc_c_cold_fusion"
+            "#ytc_c_cold_fusion",
         )
 
     def test_normalize_label_for_comparison_preserves_underscores(self):
         """normalize_label_for_comparison should preserve already-underscored labels."""
         self.assertEqual(
             YouTubeContent.normalize_label_for_comparison("#ytc_c_wicked_tuna"),
-            "#ytc_c_wicked_tuna"
+            "#ytc_c_wicked_tuna",
         )
 
     def test_normalize_label_for_comparison_non_youtube_labels(self):
         """normalize_label_for_comparison should return non-YouTube labels unchanged."""
         self.assertEqual(
-            YouTubeContent.normalize_label_for_comparison("r/Bitcoin"),
-            "r/Bitcoin"
+            YouTubeContent.normalize_label_for_comparison("r/Bitcoin"), "r/Bitcoin"
         )
         self.assertEqual(
-            YouTubeContent.normalize_label_for_comparison("#bitcoin"),
-            "#bitcoin"
+            YouTubeContent.normalize_label_for_comparison("#bitcoin"), "#bitcoin"
         )
-        self.assertEqual(
-            YouTubeContent.normalize_label_for_comparison(""),
-            ""
-        )
+        self.assertEqual(YouTubeContent.normalize_label_for_comparison(""), "")
 
     def test_labels_match_identical_labels(self):
         """labels_match should return True for identical labels."""
@@ -137,7 +139,9 @@ class TestYouTubeContentLabelMethods(unittest.TestCase):
             YouTubeContent.labels_match("#ytc_c_cold-fusion", "#ytc_c_cold_fusion")
         )
         self.assertTrue(
-            YouTubeContent.labels_match("#ytc_c_two-minute-papers", "#ytc_c_two_minute_papers")
+            YouTubeContent.labels_match(
+                "#ytc_c_two-minute-papers", "#ytc_c_two_minute_papers"
+            )
         )
 
     def test_labels_match_different_channels(self):
@@ -164,16 +168,13 @@ class TestYouTubeContentLabelMethods(unittest.TestCase):
         """parse_channel_label should extract channel slug from valid labels."""
         # Should work with both hyphens and underscores
         self.assertEqual(
-            YouTubeContent.parse_channel_label("#ytc_c_wicked_tuna"),
-            "wicked_tuna"
+            YouTubeContent.parse_channel_label("#ytc_c_wicked_tuna"), "wicked_tuna"
         )
         self.assertEqual(
-            YouTubeContent.parse_channel_label("#ytc_c_wicked-tuna"),
-            "wicked-tuna"
+            YouTubeContent.parse_channel_label("#ytc_c_wicked-tuna"), "wicked-tuna"
         )
         self.assertEqual(
-            YouTubeContent.parse_channel_label("#ytc_c_lexfridman"),
-            "lexfridman"
+            YouTubeContent.parse_channel_label("#ytc_c_lexfridman"), "lexfridman"
         )
 
     def test_parse_channel_label_invalid(self):
@@ -245,11 +246,11 @@ class TestBackwardsCompatibilityScenarios(unittest.TestCase):
         Result: Should match via labels_match()
         """
         old_miner_label = "#ytc_c_wicked-tuna"  # Produced by old normalize_channel_name
-        new_job_label = "#ytc_c_wicked_tuna"    # Produced by new normalize_channel_name
+        new_job_label = "#ytc_c_wicked_tuna"  # Produced by new normalize_channel_name
 
         self.assertTrue(
             YouTubeContent.labels_match(old_miner_label, new_job_label),
-            "Old miner labels (hyphens) should match new job labels (underscores)"
+            "Old miner labels (hyphens) should match new job labels (underscores)",
         )
 
     def test_new_miner_label_matches_new_job_label(self):
@@ -265,22 +266,30 @@ class TestBackwardsCompatibilityScenarios(unittest.TestCase):
 
         self.assertTrue(
             YouTubeContent.labels_match(new_miner_label, new_job_label),
-            "New miner labels should match new job labels"
+            "New miner labels should match new job labels",
         )
 
     def test_complex_channel_name_backwards_compatibility(self):
         """Test backwards compatibility with complex channel names."""
         test_cases = [
-            ("Two Minute Papers", "#ytc_c_two-minute-papers", "#ytc_c_two_minute_papers"),
+            (
+                "Two Minute Papers",
+                "#ytc_c_two-minute-papers",
+                "#ytc_c_two_minute_papers",
+            ),
             ("AI Crypto TV", "#ytc_c_ai-crypto-tv", "#ytc_c_ai_crypto_tv"),
-            ("Some-Hyphenated-Channel", "#ytc_c_some-hyphenated-channel", "#ytc_c_some_hyphenated_channel"),
+            (
+                "Some-Hyphenated-Channel",
+                "#ytc_c_some-hyphenated-channel",
+                "#ytc_c_some_hyphenated_channel",
+            ),
         ]
 
         for channel_name, old_label, new_label in test_cases:
             with self.subTest(channel_name=channel_name):
                 self.assertTrue(
                     YouTubeContent.labels_match(old_label, new_label),
-                    f"Old label {old_label} should match new label {new_label}"
+                    f"Old label {old_label} should match new label {new_label}",
                 )
 
 

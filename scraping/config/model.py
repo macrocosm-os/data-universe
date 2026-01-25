@@ -1,7 +1,7 @@
 """This file contains the pydantic classes for the scraping config JSON file.
 
 We use JSON for the configuring the scraping distribution config to make it easier
-for miner's to customize their miners, while still being able to take advantage of 
+for miner's to customize their miners, while still being able to take advantage of
 auto-updates, in future.
 
 The classes here are ~identical to their sibling classes in scraping/scraper.py, except

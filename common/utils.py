@@ -338,6 +338,8 @@ class LRUSet:
 
     def __contains__(self, key: str) -> bool:
         return key in self.data
+
+
 def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> Optional[str]:
     """Query the subnet owner hotkey from the chain.
 
@@ -366,7 +368,7 @@ def apply_burn_to_weights(
     metagraph: bt.metagraph,
     subtensor: bt.subtensor,
     netuid: int,
-    burn_percentage: float
+    burn_percentage: float,
 ) -> torch.Tensor:
     """Apply burn mechanism to weight distribution.
 
@@ -390,7 +392,10 @@ def apply_burn_to_weights(
     owner_uid = metagraph.hotkeys.index(owner_hotkey)
 
     # Safety check: ensure weights are valid
-    if torch.sum(raw_weights) == 0 or torch.sum(raw_weights[torch.arange(len(raw_weights)) != owner_uid]) == 0:
+    if (
+        torch.sum(raw_weights) == 0
+        or torch.sum(raw_weights[torch.arange(len(raw_weights)) != owner_uid]) == 0
+    ):
         bt.logging.warning("Invalid weight distribution, skipping burn")
         return raw_weights
 
@@ -401,10 +406,12 @@ def apply_burn_to_weights(
     # Scale remaining weights to sum to (1 - burn_percentage)
     other_mask = torch.arange(len(raw_weights)) != owner_uid
     other_sum = torch.sum(raw_weights[other_mask])
-    new_weights[other_mask] = raw_weights[other_mask] * (1 - burn_percentage) / other_sum
+    new_weights[other_mask] = (
+        raw_weights[other_mask] * (1 - burn_percentage) / other_sum
+    )
 
     bt.logging.info(
-        f"Applied {burn_percentage*100:.1f}% burn to UID {owner_uid} ({owner_hotkey[:8]}...)"
+        f"Applied {burn_percentage * 100:.1f}% burn to UID {owner_uid} ({owner_hotkey[:8]}...)"
     )
 
     return new_weights

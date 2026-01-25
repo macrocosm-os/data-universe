@@ -89,7 +89,7 @@ MAIN_LOOP_LAST_SUCCESS_TS = Gauge(
 SET_WEIGHTS_LAST_TS = Gauge(
     "set_weights_last_ts",
     "Unix timestamp of the last set_weights()",
-    labelnames=["hotkey", 'status'],
+    labelnames=["hotkey", "status"],
     **_params,
     unit="seconds",
 )
@@ -163,7 +163,7 @@ ORGANIC_MINER_RESULTS = Counter(
 
 ## Miner Evaluator
 COMMON_EVALUATION_HIST_DURATION_BUCKET = tuple(
-    x * 60 for x in (1,2,3,4,5,6,7,8,9,10,11,12,13,14,15,20,30,60)
+    x * 60 for x in (1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 20, 30, 60)
 )
 
 MINER_EVALUATOR_EVAL_BATCH_DURATION = Histogram(

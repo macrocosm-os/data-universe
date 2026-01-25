@@ -12,12 +12,21 @@ def main():
     parser = argparse.ArgumentParser(description="Test S3 access for validators")
     parser.add_argument("--wallet", type=str, required=True, help="Wallet name")
     parser.add_argument("--hotkey", type=str, required=True, help="Hotkey name")
-    parser.add_argument("--s3_auth_url", type=str, default="https://sn13-data.api.macrocosmos.ai",
-                        help="S3 authentication URL")
+    parser.add_argument(
+        "--s3_auth_url",
+        type=str,
+        default="https://sn13-data.api.macrocosmos.ai",
+        help="S3 authentication URL",
+    )
     parser.add_argument("--netuid", type=int, default=13, help="Network UID")
     parser.add_argument("--network", type=str, default="finney", help="Network name")
-    parser.add_argument("--action", type=str, choices=['auth', 'list_sources', 'list_miners', 'list_files'],
-                        default='auth', help="Action to perform")
+    parser.add_argument(
+        "--action",
+        type=str,
+        choices=["auth", "list_sources", "list_miners", "list_files"],
+        default="auth",
+        help="Action to perform",
+    )
     parser.add_argument("--source", type=str, help="Data source (x or reddit)")
     parser.add_argument("--miner", type=str, help="Miner ID (coldkey)")
 
@@ -30,13 +39,10 @@ def main():
 
     # Create wallet and S3 access
     wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
-    s3_access = ValidatorS3Access(
-        wallet=wallet,
-        s3_auth_url=args.s3_auth_url
-    )
+    s3_access = ValidatorS3Access(wallet=wallet, s3_auth_url=args.s3_auth_url)
 
     # Perform requested action
-    if args.action == 'auth':
+    if args.action == "auth":
         # Test authentication
         if s3_access.ensure_access():
             print("✅ Authentication successful")
@@ -49,8 +55,8 @@ def main():
             print(f"  Expiry: {access_data.get('expiry')}")
 
             # Print URLs structure
-            urls = access_data.get('urls', {})
-            sources = urls.get('sources', {})
+            urls = access_data.get("urls", {})
+            sources = urls.get("sources", {})
             print(f"  Available sources: {list(sources.keys())}")
 
             return 0
@@ -58,7 +64,7 @@ def main():
             print("❌ Authentication failed")
             return 1
 
-    elif args.action == 'list_sources':
+    elif args.action == "list_sources":
         # List available sources
         sources = s3_access.list_sources()
         if sources:
@@ -68,7 +74,7 @@ def main():
             print("❌ Failed to list sources or none available")
             return 1
 
-    elif args.action == 'list_miners':
+    elif args.action == "list_miners":
         # List miners for a source
         if not args.source:
             print("❌ --source is required for list_miners action")
@@ -86,7 +92,7 @@ def main():
             print(f"❌ No miners found for source {args.source} or listing failed")
             return 1
 
-    elif args.action == 'list_files':
+    elif args.action == "list_files":
         # List files for a miner
         if not args.source or not args.miner:
             print("❌ --source and --miner are required for list_files action")
@@ -94,9 +100,13 @@ def main():
 
         files = s3_access.list_files(args.source, args.miner)
         if files:
-            print(f"✅ Found {len(files)} files for miner {args.miner} in source {args.source}:")
+            print(
+                f"✅ Found {len(files)} files for miner {args.miner} in source {args.source}:"
+            )
             for i, f in enumerate(files[:10]):  # Show first 10
-                print(f"  {i + 1}. {f['filename']} ({f['size']} bytes, modified: {f['last_modified']})")
+                print(
+                    f"  {i + 1}. {f['filename']} ({f['size']} bytes, modified: {f['last_modified']})"
+                )
             if len(files) > 10:
                 print(f"  ... and {len(files) - 10} more")
             return 0

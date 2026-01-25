@@ -24,16 +24,15 @@ class MinerScorer:
     # The exponent used to scale the miner's score by its credibility.
     _CREDIBILITY_EXP = 2.5
 
-    ONDEMAND_MAX_CRED_PENALTY = 0.0075   # 0.75%
+    ONDEMAND_MAX_CRED_PENALTY = 0.0075  # 0.75%
     ONDEMAND_BASE_REWARD = 200_000_000  # 200M
-
 
     def __init__(
         self,
         num_neurons: int,
         value_calculator: DataValueCalculator,
         cred_alpha: float = 0.15,
-        s3_cred_alpha: float = 0.30
+        s3_cred_alpha: float = 0.30,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
@@ -88,11 +87,20 @@ class MinerScorer:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
             self.s3_boosts = state.get("s3_boosts", torch.zeros_like(self.scores))
-            self.s3_credibility = state.get("s3_credibility", torch.full(
-                (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
-            ))
-            self.ondemand_boosts = state.get("ondemand_boosts", torch.zeros_like(self.scores))
-            self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
+            self.s3_credibility = state.get(
+                "s3_credibility",
+                torch.full(
+                    (self.scores.size(0), 1),
+                    MinerScorer.STARTING_S3_CREDIBILITY,
+                    dtype=torch.float32,
+                ),
+            )
+            self.ondemand_boosts = state.get(
+                "ondemand_boosts", torch.zeros_like(self.scores)
+            )
+            self.effective_sizes = state.get(
+                "effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64)
+            )
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -116,7 +124,9 @@ class MinerScorer:
             self.ondemand_boosts[uid] = 0.0
             self.effective_sizes[uid] = 0.0
 
-    def penalize_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
+    def penalize_empty_file(
+        self, uid: int, hotkey: str, empty_file_reason: str
+    ) -> None:
         """
         DEPRECATED: With competition-based scoring, empty files result in effective_size=0,
         which naturally gives no boost. This method is kept for backward compatibility.
@@ -144,9 +154,9 @@ class MinerScorer:
         The new size must be greater than or equal to the current size.
         """
         with self.lock:
-            assert num_neurons >= self.scores.size(
-                0
-            ), f"Tried to downsize the number of neurons from {self.scores.size(0)} to {num_neurons}"
+            assert num_neurons >= self.scores.size(0), (
+                f"Tried to downsize the number of neurons from {self.scores.size(0)} to {num_neurons}"
+            )
 
             bt.logging.trace(
                 f"Resizing MinerScorer from {self.scores.size(0)} to {num_neurons}"
@@ -190,19 +200,27 @@ class MinerScorer:
                 [self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)]
             )
 
-    def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float, job_match_failure = False) -> None:
+    def update_s3_boost_and_cred(
+        self, uid: int, s3_vali_percentage: float, job_match_failure=False
+    ) -> None:
         """
         DEPRECATED: Use update_s3_effective_size() for competition-based scoring.
         Kept for backward compatibility during transition.
         """
         max_boost = 200 * 10**6
-        self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
+        self.s3_boosts[uid] = s3_vali_percentage / 100 * max_boost
 
         if job_match_failure:
-            bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
+            bt.logging.info(
+                f"S3 Job Match Failure for miner {uid}: Setting credibility to 0."
+            )
             self.s3_credibility[uid] = 0.0
         else:
-            self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
+            self.s3_credibility[uid] = min(
+                1,
+                s3_vali_percentage / 100 * self.s3_cred_alpha
+                + (1 - self.s3_cred_alpha) * self.s3_credibility[uid],
+            )
 
         bt.logging.info(
             f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
@@ -213,7 +231,7 @@ class MinerScorer:
         uid: int,
         effective_size: float,
         validation_passed: bool,
-        job_match_failure: bool = False
+        job_match_failure: bool = False,
     ) -> None:
         """
         Update miner's effective_size for S3 competition scoring.
@@ -245,7 +263,9 @@ class MinerScorer:
             # Update S3 credibility based on validation result
             if job_match_failure:
                 # Job match failure is severe - zero credibility (cheating attempt)
-                bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
+                bt.logging.info(
+                    f"S3 Job Match Failure for miner {uid}: Setting credibility to 0."
+                )
                 self.s3_credibility[uid] = 0.0
                 # Also zero effective_size for job match failures (clear cheating)
                 self.effective_sizes[uid] = 0.0
@@ -253,16 +273,22 @@ class MinerScorer:
                 # Success: Update effective_size and increase credibility
                 self.effective_sizes[uid] = effective_size
                 # EMA toward 1.0: new_cred = alpha * 1.0 + (1-alpha) * old_cred
-                self.s3_credibility[uid] = min(1.0, self.s3_cred_alpha + (1 - self.s3_cred_alpha) * self.s3_credibility[uid])
+                self.s3_credibility[uid] = min(
+                    1.0,
+                    self.s3_cred_alpha
+                    + (1 - self.s3_cred_alpha) * self.s3_credibility[uid],
+                )
             else:
                 # Failure: KEEP previous effective_size, reduce credibility via EMA
                 # This is the forgiving part - one bad validation doesn't kill the miner
                 # EMA toward 0: new_cred = alpha * 0.0 + (1-alpha) * old_cred = (1-alpha) * old_cred
-                self.s3_credibility[uid] = (1 - self.s3_cred_alpha) * self.s3_credibility[uid]
+                self.s3_credibility[uid] = (
+                    1 - self.s3_cred_alpha
+                ) * self.s3_credibility[uid]
                 # Keep the old effective_size (don't update it)
                 bt.logging.info(
                     f"S3 validation failed for miner {uid}: "
-                    f"Keeping effective_size={old_effective/(1024*1024):.1f}MB, "
+                    f"Keeping effective_size={old_effective / (1024 * 1024):.1f}MB, "
                     f"reducing credibility {old_cred:.4f} -> {float(self.s3_credibility[uid]):.4f}"
                 )
 
@@ -274,7 +300,7 @@ class MinerScorer:
 
             bt.logging.info(
                 f"S3 Update for miner {uid}: "
-                f"effective_size={new_effective/(1024*1024):.1f}MB (was {old_effective/(1024*1024):.1f}MB), "
+                f"effective_size={new_effective / (1024 * 1024):.1f}MB (was {old_effective / (1024 * 1024):.1f}MB), "
                 f"s3_boost={float(self.s3_boosts[uid]):.0f}, "
                 f"s3_cred={new_cred:.4f} (was {old_cred:.4f}), "
                 f"passed={validation_passed}"
@@ -329,7 +355,7 @@ class MinerScorer:
 
             bt.logging.info(
                 f"Recalculated S3 boosts for {len(self.effective_sizes)} miners. "
-                f"Total effective_size: {total_effective/(1024*1024):.1f}MB, "
+                f"Total effective_size: {total_effective / (1024 * 1024):.1f}MB, "
                 f"Total s3_boosts: {total_boosts:.0f}"
             )
 
@@ -340,15 +366,17 @@ class MinerScorer:
             old_cred = float(self.miner_credibility[uid])
 
             # Apply credibility penalty
-            self.miner_credibility[uid] = max(self.miner_credibility[uid] - cred_penalty, 0)
+            self.miner_credibility[uid] = max(
+                self.miner_credibility[uid] - cred_penalty, 0
+            )
             new_cred = float(self.miner_credibility[uid])
 
             # EMA the ondemand boost with 0 reward for failures
             old_boost = float(self.ondemand_boosts[uid])
             failure_reward = 0
             self.ondemand_boosts[uid] = (
-                self.ondemand_alpha * failure_reward +
-                (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
+                self.ondemand_alpha * failure_reward
+                + (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
             )
             new_boost = float(self.ondemand_boosts[uid])
 
@@ -371,10 +399,7 @@ class MinerScorer:
                 )
 
     def apply_ondemand_reward(
-        self,
-        uid: int,
-        speed_multiplier: float,
-        volume_multiplier: float
+        self, uid: int, speed_multiplier: float, volume_multiplier: float
     ):
         """
         Updates the miner's OnDemand boost based on their latest on-demand performance.
@@ -388,13 +413,15 @@ class MinerScorer:
         """
         with self.lock:
             # Calculate raw reward for this on-demand job
-            raw_reward = MinerScorer.ONDEMAND_BASE_REWARD * speed_multiplier * volume_multiplier
+            raw_reward = (
+                MinerScorer.ONDEMAND_BASE_REWARD * speed_multiplier * volume_multiplier
+            )
 
             # Update OnDemand boost using EMA (alpha=0.3)
             old_boost = float(self.ondemand_boosts[uid])
             self.ondemand_boosts[uid] = (
-                self.ondemand_alpha * raw_reward +
-                (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
+                self.ondemand_alpha * raw_reward
+                + (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
             )
             new_boost = float(self.ondemand_boosts[uid])
 
@@ -409,7 +436,7 @@ class MinerScorer:
         self,
         uid: int,
         index: Optional[ScorableMinerIndex],
-        validation_results: List[ValidationResult]
+        validation_results: List[ValidationResult],
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
 
@@ -455,12 +482,16 @@ class MinerScorer:
                 # Awarding the miner their S3 boost based on their last S3 evaluation.
                 s3_boost = self.s3_boosts[uid] * self.s3_credibility[uid]
                 score += s3_boost
-                bt.logging.info(f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}.")
+                bt.logging.info(
+                    f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}."
+                )
 
                 # Awarding the miner their OnDemand boost based on recent on-demand performance.
                 ondemand_boost = float(self.ondemand_boosts[uid])
                 score += ondemand_boost
-                bt.logging.info(f"Awarded Miner {uid} an OnDemand boost of {ondemand_boost:.0f} based on recent on-demand performance, adjusting the score to {float(score)}.")
+                bt.logging.info(
+                    f"Awarded Miner {uid} an OnDemand boost of {ondemand_boost:.0f} based on recent on-demand performance, adjusting the score to {float(score)}."
+                )
 
                 # Now update the credibility again based on the current validation results.
                 self._update_credibility(uid, validation_results)
@@ -479,9 +510,9 @@ class MinerScorer:
 
         Requires: self.lock is held.
         """
-        assert (
-            len(validation_results) > 0
-        ), "Must be provided at least 1 validation result."
+        assert len(validation_results) > 0, (
+            "Must be provided at least 1 validation result."
+        )
 
         # Weight the current set of validation_results by the total content size validaed
         total_bytes_validated = sum(

@@ -28,44 +28,47 @@ from tests import utils as test_utils
 class TestMinerScorer(unittest.TestCase):
     def setUp(self):
         self.num_neurons = 10
-        
+
         # Create a job matcher for Reddit with test jobs
-        reddit_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,  # currently only accepting label-only jobs
-                label="testlabel",  
-                job_weight=1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,  
-                label="otherlabel",  
-                job_weight=0.75,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-        ])
+        reddit_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,  # currently only accepting label-only jobs
+                    label="testlabel",
+                    job_weight=1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="otherlabel",
+                    job_weight=0.75,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+            ]
+        )
 
         # Create a job matcher for X with test jobs
-        x_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,  
-                label="#testlabel",  
-                job_weight=1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,  
-                label="#otherlabel",  
-                job_weight=0.75,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
+        x_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,
+                    label="#testlabel",
+                    job_weight=1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="#otherlabel",
+                    job_weight=0.75,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+            ]
+        )
 
-        ])
-        
         self.value_calculator = rewards.data_value_calculator.DataValueCalculator(
             DataDesirabilityLookup(
                 distribution={
@@ -531,26 +534,26 @@ class TestMinerScorer(unittest.TestCase):
             ],
             last_updated=self.now,
         )
-        
+
         # Set perfect credibility for this test
         self.scorer.miner_credibility[uid] = 1.0
-        
+
         # Get the score
         self.scorer.on_miner_evaluated(
             uid,
             index,
             [ValidationResult(is_valid=True, content_size_bytes_validated=600)],
         )
-        
+
         score = self.scorer.get_scores()[uid].item()
-        
+
         # Calculate expected score:
         # 1. REDDIT testlabel: 0.4 (weight) * 1.0 (job_weight) * 100 (bytes) = 40
         # 2. X #testlabel: 0.6 (weight) * 1.0 (job_weight) * 100 (bytes) = 60
         # 3. REDDIT unknown-label: 0.4 (weight) * 0.5 (default_scale) * 100 (bytes) = 20
         # Total expected: 120 (assuming perfect credibility and no time depreciation)
         expected_score = 120
-        
+
         # Allow some tolerance for EMA and other factors
         self.assertAlmostEqual(score, expected_score, delta=expected_score * 0.1)
 
@@ -558,18 +561,22 @@ class TestMinerScorer(unittest.TestCase):
         """Tests that buckets with date-constrained jobs are scored correctly."""
         # Create a custom model with date-constrained jobs
         now_timebucket = utils.time_bucket_id_from_datetime(self.now)
-        future_timebucket = utils.time_bucket_id_from_datetime(self.now + dt.timedelta(days=5))
-        
-        reddit_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,  
-                label="dated-label",  
-                job_weight=2.0,
-                start_timebucket=now_timebucket,  # Convert datetime string to time bucket ID
-                end_timebucket=future_timebucket,  # Convert datetime string to time bucket ID
-            ),
-        ])
-        
+        future_timebucket = utils.time_bucket_id_from_datetime(
+            self.now + dt.timedelta(days=5)
+        )
+
+        reddit_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,
+                    label="dated-label",
+                    job_weight=2.0,
+                    start_timebucket=now_timebucket,  # Convert datetime string to time bucket ID
+                    end_timebucket=future_timebucket,  # Convert datetime string to time bucket ID
+                ),
+            ]
+        )
+
         custom_model = DataDesirabilityLookup(
             distribution={
                 DataSource.REDDIT: DataSourceDesirability(
@@ -580,9 +587,11 @@ class TestMinerScorer(unittest.TestCase):
             },
             max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
         )
-        custom_calculator = rewards.data_value_calculator.DataValueCalculator(model=custom_model)
+        custom_calculator = rewards.data_value_calculator.DataValueCalculator(
+            model=custom_model
+        )
         custom_scorer = MinerScorer(self.num_neurons, custom_calculator)
-        
+
         uid = 0
         # Create an index with a label that matches our date-constrained job
         index = ScorableMinerIndex(
@@ -598,32 +607,34 @@ class TestMinerScorer(unittest.TestCase):
             ],
             last_updated=self.now,
         )
-        
+
         # Set perfect credibility for this test
         custom_scorer.miner_credibility[uid] = 1.0
-        
+
         # Get the score
         custom_scorer.on_miner_evaluated(
             uid,
             index,
             [ValidationResult(is_valid=True, content_size_bytes_validated=200)],
         )
-        
+
         score = custom_scorer.get_scores()[uid].item()
-        
+
         # Calculate expected score:
         # REDDIT dated-label: 1.0 (weight) * 2.0 (job_weight) * 100 (bytes) = 200
         expected_score = 200
-        
+
         # Allow some tolerance for EMA and other factors
         self.assertAlmostEqual(score, expected_score, delta=expected_score * 0.1)
-        
+
         # Now test with a date outside the job's range
         past_index = ScorableMinerIndex(
             hotkey="past_date_test",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    time_bucket_id=utils.time_bucket_id_from_datetime(self.now - dt.timedelta(days=7)),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(
+                        self.now - dt.timedelta(days=7)
+                    ),
                     source=DataSource.REDDIT,
                     label="dated-label",
                     size_bytes=200,
@@ -632,25 +643,25 @@ class TestMinerScorer(unittest.TestCase):
             ],
             last_updated=self.now,
         )
-        
+
         # Reset and set perfect credibility again
         custom_scorer.reset(uid)
         custom_scorer.miner_credibility[uid] = 1.0
-        
+
         # Get the score
         custom_scorer.on_miner_evaluated(
             uid,
             past_index,
             [ValidationResult(is_valid=True, content_size_bytes_validated=200)],
         )
-        
+
         score = custom_scorer.get_scores()[uid].item()
-        
+
         # Calculate expected score (should use default scale factor since date is outside job range):
         # REDDIT dated-label: 1.0 (weight) * 0.5 (default_scale) * 100 (bytes) = 50
         # Note: There might also be time depreciation applied
         expected_score = 50
-        
+
         # Allow some tolerance for time depreciation, EMA and other factors
         self.assertLess(score, expected_score)
 

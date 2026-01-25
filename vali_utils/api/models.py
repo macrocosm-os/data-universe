@@ -12,6 +12,7 @@ class DesirabilityRequest(BaseModel):
 
 class DataItem(StrictBaseModel):
     """Single data item in response"""
+
     content: bytes
     datetime: dt.datetime
     uri: str
@@ -21,6 +22,7 @@ class DataItem(StrictBaseModel):
 
 class HealthResponse(StrictBaseModel):
     """Response model for health check"""
+
     status: str = Field(description="Service status")
     timestamp: dt.datetime = Field(description="Current UTC timestamp")
     miners_available: int = Field(description="Number of available miners")
@@ -31,6 +33,7 @@ class HealthResponse(StrictBaseModel):
 
 class MinerInfo(BaseModel):
     """Information about a miner's current data"""
+
     hotkey: str
     credibility: float
     bucket_count: int
@@ -41,6 +44,7 @@ class MinerInfo(BaseModel):
 
 class LabelSize(BaseModel):
     """Content size information for a specific label"""
+
     label_value: str
     content_size_bytes: int
     adj_content_size_bytes: int
@@ -48,6 +52,7 @@ class LabelSize(BaseModel):
 
 class AgeSize(BaseModel):
     """Content size information for a specific time bucket"""
+
     time_bucket_id: int
     content_size_bytes: int
     adj_content_size_bytes: int
@@ -55,6 +60,7 @@ class AgeSize(BaseModel):
 
 class LabelBytes(BaseModel):
     """Byte size information for a particular label"""
+
     label: str
     total_bytes: int
     adj_total_bytes: float

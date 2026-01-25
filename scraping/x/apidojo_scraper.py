@@ -30,7 +30,9 @@ class ApiDojoTwitterScraper(Scraper):
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
 
-    async def validate(self, entities: List[DataEntity], allow_low_engagement: bool = False) -> List[ValidationResult]:
+    async def validate(
+        self, entities: List[DataEntity], allow_low_engagement: bool = False
+    ) -> List[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
 
         async def validate_entity(entity) -> ValidationResult:
@@ -86,7 +88,9 @@ class ApiDojoTwitterScraper(Scraper):
                 # Parse the response
                 check_engagement = not allow_low_engagement
                 tweets, is_retweets, author_datas, view_counts = (
-                    self._best_effort_parse_dataset(dataset=dataset, check_engagement=check_engagement)
+                    self._best_effort_parse_dataset(
+                        dataset=dataset, check_engagement=check_engagement
+                    )
                 )
 
                 actual_tweet = None
@@ -239,7 +243,7 @@ class ApiDojoTwitterScraper(Scraper):
         keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
-        limit: int = 100
+        limit: int = 100,
     ) -> List[DataEntity]:
         """
         Scrapes Twitter/X data based on specific search criteria, including low-engagement posts.
@@ -289,7 +293,9 @@ class ApiDojoTwitterScraper(Scraper):
                 return []
 
             # Parse the results - ALLOW LOW ENGAGEMENT POSTS
-            x_contents, _, _, _ = self._best_effort_parse_dataset(dataset=dataset, check_engagement=False)
+            x_contents, _, _, _ = self._best_effort_parse_dataset(
+                dataset=dataset, check_engagement=False
+            )
 
             bt.logging.success(
                 f"Completed on-demand scrape for URL {url}. Scraped {len(x_contents)} items."
@@ -303,7 +309,10 @@ class ApiDojoTwitterScraper(Scraper):
             return data_entities
 
         # Return empty list if all key search parameters are None
-        if all(param is None for param in [usernames, keywords, start_datetime, end_datetime]):
+        if all(
+            param is None
+            for param in [usernames, keywords, start_datetime, end_datetime]
+        ):
             bt.logging.trace("All search parameters are None, returning empty list")
             return []
 
@@ -311,22 +320,28 @@ class ApiDojoTwitterScraper(Scraper):
             f"On-demand X scrape with usernames={usernames}, keywords={keywords}, "
             f"keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
         )
-        
+
         # Construct the query string
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
         query_parts = []
-        
+
         # Add date range if provided
         if start_datetime:
-            query_parts.append(f"since:{start_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
+            query_parts.append(
+                f"since:{start_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
+            )
         if end_datetime:
-            query_parts.append(f"until:{end_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
-        
+            query_parts.append(
+                f"until:{end_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
+            )
+
         # Add usernames with OR logic between them
         if usernames:
-            username_queries = [f"from:{username.removeprefix('@')}" for username in usernames]
+            username_queries = [
+                f"from:{username.removeprefix('@')}" for username in usernames
+            ]
             query_parts.append(f"({' OR '.join(username_queries)})")
-        
+
         # Add keywords with specified logic
         if keywords:
             quoted_keywords = [f'"{keyword}"' for keyword in keywords]
@@ -334,13 +349,13 @@ class ApiDojoTwitterScraper(Scraper):
                 query_parts.append(f"({' AND '.join(quoted_keywords)})")
             else:  # keyword_mode == "any"
                 query_parts.append(f"({' OR '.join(quoted_keywords)})")
-        
+
         # If no specific criteria provided, add default search term
         if not query_parts or (not usernames and not keywords):
             query_parts.append("e")  # Most common letter in English
-        
+
         query = " ".join(query_parts)
-        
+
         # Construct the input to the runner
         run_input = {
             **ApiDojoTwitterScraper.BASE_RUN_INPUT,
@@ -361,11 +376,15 @@ class ApiDojoTwitterScraper(Scraper):
         try:
             dataset: List[dict] = await self.runner.run(run_config, run_input)
         except Exception as e:
-            bt.logging.exception(f"Failed to scrape tweets using query {query}: {str(e)}")
+            bt.logging.exception(
+                f"Failed to scrape tweets using query {query}: {str(e)}"
+            )
             return []
 
         # Parse the results using enhanced methods - ALLOW LOW ENGAGEMENT POSTS
-        x_contents, _, _, _ = self._best_effort_parse_dataset(dataset=dataset, check_engagement=False)
+        x_contents, _, _, _ = self._best_effort_parse_dataset(
+            dataset=dataset, check_engagement=False
+        )
 
         bt.logging.success(
             f"Completed on-demand scrape for {query}. Scraped {len(x_contents)} items."
@@ -458,8 +477,12 @@ class ApiDojoTwitterScraper(Scraper):
                         # ===== NEW FIELDS =====
                         # Static tweet metadata
                         language=data.get("lang") if data.get("lang") else None,
-                        in_reply_to_username=data.get("inReplyToUsername") if data.get("inReplyToUsername") else None,
-                        quoted_tweet_id=data.get("quoteId") if data.get("quoteId") else None,
+                        in_reply_to_username=data.get("inReplyToUsername")
+                        if data.get("inReplyToUsername")
+                        else None,
+                        quoted_tweet_id=data.get("quoteId")
+                        if data.get("quoteId")
+                        else None,
                         # Dynamic engagement metrics
                         like_count=engagement_metrics["like_count"],
                         retweet_count=engagement_metrics["retweet_count"],
@@ -545,10 +568,16 @@ class ApiDojoTwitterScraper(Scraper):
         author = data.get("author", {})
         return {
             "user_blue_verified": author.get("isBlueVerified"),
-            "user_description": author.get("description") if author.get("description") else None,
+            "user_description": author.get("description")
+            if author.get("description")
+            else None,
             "user_location": author.get("location") if author.get("location") else None,
-            "profile_image_url": author.get("profilePicture") if author.get("profilePicture") else None,
-            "cover_picture_url": author.get("coverPicture") if author.get("coverPicture") else None,
+            "profile_image_url": author.get("profilePicture")
+            if author.get("profilePicture")
+            else None,
+            "cover_picture_url": author.get("coverPicture")
+            if author.get("coverPicture")
+            else None,
             "user_followers_count": author.get("followers"),
             "user_following_count": author.get("following"),
         }
@@ -564,7 +593,11 @@ class ApiDojoTwitterScraper(Scraper):
     ) -> ValidationResult:
         """Validates the tweet with spam and engagement filtering."""
         # First check spam/engagement if data is available and filtering is enabled
-        if author_data is not None and view_count is not None and not allow_low_engagement:
+        if (
+            author_data is not None
+            and view_count is not None
+            and not allow_low_engagement
+        ):
             # Check if account is spam (low followers/new account)
             if utils.is_spam_account(author_data):
                 return ValidationResult(

@@ -6,7 +6,9 @@ from typing import List, Dict, Any
 
 
 # Function to generate a synthetic transcript for a podcast
-def generate_synthetic_transcript(duration_minutes: int, words_per_minute: int = 150) -> List[Dict[str, Any]]:
+def generate_synthetic_transcript(
+    duration_minutes: int, words_per_minute: int = 150
+) -> List[Dict[str, Any]]:
     """Generate a synthetic transcript for testing compression"""
     # Sample sentences to build our synthetic transcript
     sentences = [
@@ -29,7 +31,7 @@ def generate_synthetic_transcript(duration_minutes: int, words_per_minute: int =
         "Education systems need to adapt to these changes.",
         "Critical thinking will remain an essential human skill.",
         "Thank you for listening to our discussion today.",
-        "Don't forget to subscribe for more content like this."
+        "Don't forget to subscribe for more content like this.",
     ]
 
     # Calculate total words based on duration and speaking rate
@@ -48,11 +50,13 @@ def generate_synthetic_transcript(duration_minutes: int, words_per_minute: int =
         # Calculate how long this sentence would take to say
         duration = word_count / (words_per_minute / 60)
 
-        transcript.append({
-            "text": sentence,
-            "start": round(current_time, 2),
-            "duration": round(duration, 2)
-        })
+        transcript.append(
+            {
+                "text": sentence,
+                "start": round(current_time, 2),
+                "duration": round(duration, 2),
+            }
+        )
 
         current_time += duration
         words_so_far += word_count
@@ -61,16 +65,18 @@ def generate_synthetic_transcript(duration_minutes: int, words_per_minute: int =
 
 
 # Compression function
-def compress_transcript(transcript: List[Dict[str, Any]], chunk_size: int = 3000) -> List[Dict[str, Any]]:
+def compress_transcript(
+    transcript: List[Dict[str, Any]], chunk_size: int = 3000
+) -> List[Dict[str, Any]]:
     """Compress the transcript by combining small segments into larger chunks"""
     if not transcript:
         return []
 
     # Extract the full text
-    full_text = " ".join([item['text'] for item in transcript])
+    full_text = " ".join([item["text"] for item in transcript])
 
     # Remove redundant whitespace
-    full_text = re.sub(r'\s+', ' ', full_text).strip()
+    full_text = re.sub(r"\s+", " ", full_text).strip()
 
     # Create chunks based on natural sentence boundaries
     chunks = []
@@ -84,9 +90,9 @@ def compress_transcript(transcript: List[Dict[str, Any]], chunk_size: int = 3000
         if end_pos < len(full_text):
             # Look for sentence endings (.!?) followed by space or end of text
             sentence_break = max(
-                full_text.rfind('. ', current_pos, end_pos),
-                full_text.rfind('! ', current_pos, end_pos),
-                full_text.rfind('? ', current_pos, end_pos)
+                full_text.rfind(". ", current_pos, end_pos),
+                full_text.rfind("! ", current_pos, end_pos),
+                full_text.rfind("? ", current_pos, end_pos),
             )
 
             if sentence_break > current_pos:
@@ -98,24 +104,28 @@ def compress_transcript(transcript: List[Dict[str, Any]], chunk_size: int = 3000
 
     # Create a compressed transcript with fewer entries
     compressed_transcript = []
-    total_duration = sum(item.get('duration', 0) for item in transcript)
+    total_duration = sum(item.get("duration", 0) for item in transcript)
 
     if chunks:
         chunk_duration = total_duration / len(chunks)
 
         for i, chunk in enumerate(chunks):
             start_time = i * chunk_duration
-            compressed_transcript.append({
-                'text': chunk,
-                'start': round(start_time, 2),
-                'duration': round(chunk_duration, 2)
-            })
+            compressed_transcript.append(
+                {
+                    "text": chunk,
+                    "start": round(start_time, 2),
+                    "duration": round(chunk_duration, 2),
+                }
+            )
 
     return compressed_transcript
 
 
 # Function to analyze the compression
-def analyze_compression(original: List[Dict[str, Any]], compressed: List[Dict[str, Any]]) -> Dict[str, Any]:
+def analyze_compression(
+    original: List[Dict[str, Any]], compressed: List[Dict[str, Any]]
+) -> Dict[str, Any]:
     """Analyze the compression results"""
     original_json = json.dumps(original)
     compressed_json = json.dumps(compressed)
@@ -124,8 +134,8 @@ def analyze_compression(original: List[Dict[str, Any]], compressed: List[Dict[st
     compressed_size = len(compressed_json)
     compression_ratio = original_size / compressed_size if compressed_size > 0 else 0
 
-    original_words = sum(len(item['text'].split()) for item in original)
-    compressed_words = sum(len(item['text'].split()) for item in compressed)
+    original_words = sum(len(item["text"].split()) for item in original)
+    compressed_words = sum(len(item["text"].split()) for item in compressed)
 
     return {
         "original_segments": len(original),
@@ -135,7 +145,9 @@ def analyze_compression(original: List[Dict[str, Any]], compressed: List[Dict[st
         "compression_ratio": compression_ratio,
         "original_words": original_words,
         "compressed_words": compressed_words,
-        "word_retention_ratio": compressed_words / original_words if original_words > 0 else 0
+        "word_retention_ratio": compressed_words / original_words
+        if original_words > 0
+        else 0,
     }
 
 
@@ -160,18 +172,25 @@ def run_demo():
         analysis = analyze_compression(original_transcript, compressed_transcript)
 
         # Print results]
-        print(analysis['compressed_size_bytes'])
-        print(f"  Original: {analysis['original_segments']} segments, {analysis['original_size_bytes']:,} bytes")
-        print(f"  Compressed: {analysis['compressed_chunks']} chunks, {analysis['compressed_size_bytes']:,} bytes")
+        print(analysis["compressed_size_bytes"])
+        print(
+            f"  Original: {analysis['original_segments']} segments, {analysis['original_size_bytes']:,} bytes"
+        )
+        print(
+            f"  Compressed: {analysis['compressed_chunks']} chunks, {analysis['compressed_size_bytes']:,} bytes"
+        )
         print(f"  Compression ratio: {analysis['compression_ratio']:.2f}x")
         print(
-            f"  Words: {analysis['original_words']} → {analysis['compressed_words']} ({analysis['word_retention_ratio']:.2%} retention)")
+            f"  Words: {analysis['original_words']} → {analysis['compressed_words']} ({analysis['word_retention_ratio']:.2%} retention)"
+        )
         print(f"  Compression time: {compression_time:.3f} seconds")
 
         # Show a sample of the compressed transcript (first chunk)
         if compressed_transcript:
             print("\n  Sample of first compressed chunk:")
-            print(f"  Start: {compressed_transcript[0]['start']}s, Duration: {compressed_transcript[0]['duration']}s")
+            print(
+                f"  Start: {compressed_transcript[0]['start']}s, Duration: {compressed_transcript[0]['duration']}s"
+            )
             print(f"  Text excerpt: {compressed_transcript[0]['text'][:100]}...")
 
 

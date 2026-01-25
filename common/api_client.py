@@ -105,9 +105,9 @@ class OnDemandJob(BaseModel):
     created_at: Optional[datetime] = None
     expire_at: Optional[datetime] = None
 
-    job: Union[
-        OnDemandJobPayloadX, OnDemandJobPayloadReddit
-    ] = Field(discriminator="platform")
+    job: Union[OnDemandJobPayloadX, OnDemandJobPayloadReddit] = Field(
+        discriminator="platform"
+    )
 
     start_date: Optional[datetime] = None
     end_date: Optional[datetime] = None

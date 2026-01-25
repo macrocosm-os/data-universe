@@ -25,8 +25,8 @@ def is_valid_reddit_url(url: str) -> bool:
 
 
 def validate_reddit_content(
-        actual_content: RedditContent,
-        entity_to_validate: DataEntity,
+    actual_content: RedditContent,
+    entity_to_validate: DataEntity,
 ) -> ValidationResult:
     """Verifies the RedditContent is valid by the definition provided by entity."""
     content_to_validate = None
@@ -151,8 +151,8 @@ def validate_reddit_content(
     # Since the mistake was to assign the submission id which is always earlier and therefore smaller we can check that
     # length of the claimed is always less than or equal to that of the real entity.
     if (
-            actual_content.parent_id is not None
-            and content_to_validate.parent_id is not None
+        actual_content.parent_id is not None
+        and content_to_validate.parent_id is not None
     ):
         if len(content_to_validate.parent_id) > len(actual_content.parent_id):
             bt.logging.info(
@@ -191,7 +191,7 @@ def validate_reddit_content(
         byte_difference_allowed = 0
 
         if (
-                entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
+            entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
         ) > byte_difference_allowed:
             return ValidationResult(
                 is_valid=False,
@@ -200,7 +200,7 @@ def validate_reddit_content(
             )
 
         if not DataEntity.are_non_content_fields_equal(
-                actual_entity, entity_to_validate
+            actual_entity, entity_to_validate
         ):
             return ValidationResult(
                 is_valid=False,
@@ -220,12 +220,16 @@ def validate_reddit_content(
         )
 
     # Score validation
-    score_validation_result = validate_score_content(content_to_validate, actual_content, entity_to_validate)
+    score_validation_result = validate_score_content(
+        content_to_validate, actual_content, entity_to_validate
+    )
     if not score_validation_result.is_valid:
         return score_validation_result
 
     # Comment count validation
-    comment_validation_result = validate_comment_count(content_to_validate, actual_content, entity_to_validate)
+    comment_validation_result = validate_comment_count(
+        content_to_validate, actual_content, entity_to_validate
+    )
     if not comment_validation_result.is_valid:
         return comment_validation_result
 
@@ -293,8 +297,9 @@ def normalize_permalink(permalink: str) -> str:
         return "/" + permalink
 
 
-def validate_media_content(submitted_content: RedditContent, actual_content: RedditContent,
-                           entity: DataEntity) -> ValidationResult:
+def validate_media_content(
+    submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity
+) -> ValidationResult:
     """
     Validate media content to prevent exploitation - follows X/Twitter validation pattern.
     Backward compatible: only validates if miner provided media field.
@@ -358,8 +363,9 @@ def validate_media_content(submitted_content: RedditContent, actual_content: Red
     )
 
 
-def validate_nsfw_content(submitted_content: RedditContent, actual_content: RedditContent,
-                          entity: DataEntity) -> ValidationResult:
+def validate_nsfw_content(
+    submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity
+) -> ValidationResult:
     """
     Validate NSFW content rules.
     Backward compatible: only validates if miner provided is_nsfw field.
@@ -439,42 +445,48 @@ def extract_media_urls(submission) -> List[str]:
 
     try:
         # 1. Direct URL (for image/video posts) - prioritize original URLs
-        if hasattr(submission, 'url') and submission.url:
+        if hasattr(submission, "url") and submission.url:
             url = submission.url
             # Check if it's a direct media URL or Reddit media domain
-            if (any(url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.mp4', '.webm']) or
-                    any(domain in url for domain in ['i.redd.it', 'v.redd.it'])):
+            if any(
+                url.endswith(ext)
+                for ext in [".jpg", ".jpeg", ".png", ".gif", ".mp4", ".webm"]
+            ) or any(domain in url for domain in ["i.redd.it", "v.redd.it"]):
                 # Clean URL parameters to get original
-                clean_url = url.split('?')[0]
+                clean_url = url.split("?")[0]
                 media_urls.append(clean_url)
 
         # 2. Preview images (only if no direct URL found, and clean parameters)
-        if hasattr(submission, 'preview') and submission.preview:
+        if hasattr(submission, "preview") and submission.preview:
             preview_data = submission.preview
-            if isinstance(preview_data, dict) and 'images' in preview_data:
-                for image in preview_data['images']:
-                    if 'source' in image and 'url' in image['source']:
+            if isinstance(preview_data, dict) and "images" in preview_data:
+                for image in preview_data["images"]:
+                    if "source" in image and "url" in image["source"]:
                         # Clean URL parameters to prevent gaming with extra bytes
-                        clean_url = image['source']['url'].split('?')[0]
+                        clean_url = image["source"]["url"].split("?")[0]
                         # Convert preview URLs to original i.redd.it URLs when possible
-                        if 'preview.redd.it' in clean_url:
-                            original_url = clean_url.replace('preview.redd.it', 'i.redd.it')
+                        if "preview.redd.it" in clean_url:
+                            original_url = clean_url.replace(
+                                "preview.redd.it", "i.redd.it"
+                            )
                             media_urls.append(original_url)
                         else:
                             media_urls.append(clean_url)
 
         # 3. Gallery media - clean URLs and get originals
-        if hasattr(submission, 'media_metadata') and submission.media_metadata:
+        if hasattr(submission, "media_metadata") and submission.media_metadata:
             if isinstance(submission.media_metadata, dict):
                 for media_id, media_data in submission.media_metadata.items():
-                    if isinstance(media_data, dict) and 's' in media_data:
-                        source = media_data['s']
-                        if 'u' in source:
+                    if isinstance(media_data, dict) and "s" in media_data:
+                        source = media_data["s"]
+                        if "u" in source:
                             # Decode HTML entities and clean parameters
-                            url = source['u'].replace('&amp;', '&').split('?')[0]
+                            url = source["u"].replace("&amp;", "&").split("?")[0]
                             # Convert preview URLs to original i.redd.it URLs
-                            if 'preview.redd.it' in url:
-                                original_url = url.replace('preview.redd.it', 'i.redd.it')
+                            if "preview.redd.it" in url:
+                                original_url = url.replace(
+                                    "preview.redd.it", "i.redd.it"
+                                )
                                 media_urls.append(original_url)
                             else:
                                 media_urls.append(url)
@@ -488,7 +500,7 @@ def extract_media_urls(submission) -> List[str]:
 
     for url in media_urls:
         # Remove all parameters after ? to eliminate auto=webp&s=... stuff
-        clean_url = url.split('?')[0]
+        clean_url = url.split("?")[0]
 
         # Skip if we've already seen this clean URL
         if clean_url in seen_urls:
@@ -500,17 +512,18 @@ def extract_media_urls(submission) -> List[str]:
     return clean_media_urls
 
 
-def validate_score_content(submitted_content: RedditContent, actual_content: RedditContent,
-                          entity: DataEntity) -> ValidationResult:
+def validate_score_content(
+    submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity
+) -> ValidationResult:
     """
     Validate score content with smart time-based tolerance and anti-cheating mechanisms.
     Backward compatible: only validates if miner provided score fields.
-    
+
     Args:
         submitted_content: Content submitted by miner
         actual_content: Actual content from Reddit API
         entity: DataEntity being validated
-        
+
     Returns:
         ValidationResult indicating if score content is valid
     """
@@ -521,11 +534,11 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
             reason="Score validation skipped - field not provided (backward compatibility)",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Calculate content age from creation time
     now = dt.datetime.now(dt.timezone.utc)
     content_age = now - submitted_content.created_at
-    
+
     # Define age-based score tolerance thresholds
     # Newer content has tighter tolerance, older content allows more variance
     if content_age < dt.timedelta(hours=1):
@@ -548,34 +561,44 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
         # Old content: highest tolerance
         score_tolerance_percent = 2.0
         min_tolerance = 100
-    
+
     # Anti-cheating mechanism: prevent unreasonably high scores
-    max_reasonable_score = _calculate_max_reasonable_score(submitted_content, content_age)
+    max_reasonable_score = _calculate_max_reasonable_score(
+        submitted_content, content_age
+    )
     if submitted_content.score > max_reasonable_score:
-        bt.logging.info(f"Submitted score {submitted_content.score} exceeds reasonable maximum {max_reasonable_score} for content age {content_age}")
+        bt.logging.info(
+            f"Submitted score {submitted_content.score} exceeds reasonable maximum {max_reasonable_score} for content age {content_age}"
+        )
         return ValidationResult(
             is_valid=False,
             reason=f"Score {submitted_content.score} is unreasonably high for content of this age",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Calculate allowed score variance
     base_score = abs(actual_content.score) if actual_content.score else 0
     tolerance = max(int(base_score * score_tolerance_percent), min_tolerance)
-    
+
     # Score can only increase or stay the same (Reddit doesn't remove upvotes typically)
     # Allow some decrease for edge cases but be more strict about it
     max_allowed_score = actual_content.score + tolerance
-    min_allowed_score = actual_content.score - min(tolerance // 2, 10)  # Less tolerance for decreases
-    
+    min_allowed_score = actual_content.score - min(
+        tolerance // 2, 10
+    )  # Less tolerance for decreases
+
     # Validate score is within reasonable bounds - use penalty system for outliers
     if not (min_allowed_score <= submitted_content.score <= max_allowed_score):
         # Calculate how far off the score is (penalty factor)
         if submitted_content.score > max_allowed_score:
-            score_deviation = (submitted_content.score - max_allowed_score) / max(max_allowed_score, 1)
+            score_deviation = (submitted_content.score - max_allowed_score) / max(
+                max_allowed_score, 1
+            )
         else:
-            score_deviation = (min_allowed_score - submitted_content.score) / max(actual_content.score, 1)
-        
+            score_deviation = (min_allowed_score - submitted_content.score) / max(
+                actual_content.score, 1
+            )
+
         # For very extreme outliers (>500% off), still reject to prevent major cheating
         if score_deviation > 5.0:  # More than 5x off
             bt.logging.info(
@@ -587,17 +610,19 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
                 reason=f"Score {submitted_content.score} is extremely unrealistic (deviation: {score_deviation:.2f}x)",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-    
+
     # Validate upvote_ratio if provided (submissions only)
     if submitted_content.upvote_ratio is not None:
         if actual_content.upvote_ratio is None:
-            bt.logging.info("Miner provided upvote_ratio but actual content has none (likely a comment)")
+            bt.logging.info(
+                "Miner provided upvote_ratio but actual content has none (likely a comment)"
+            )
             return ValidationResult(
                 is_valid=False,
                 reason="Upvote ratio provided for content that doesn't support it",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-        
+
         # Upvote ratio should be between 0.0 and 1.0
         if not (0.0 <= submitted_content.upvote_ratio <= 1.0):
             bt.logging.info(f"Invalid upvote_ratio: {submitted_content.upvote_ratio}")
@@ -607,7 +632,6 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
                 content_size_bytes_validated=entity.content_size_bytes,
             )
 
-    
     return ValidationResult(
         is_valid=True,
         reason="Score validation passed",
@@ -615,14 +639,16 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
     )
 
 
-def _calculate_max_reasonable_score(content: RedditContent, content_age: dt.timedelta) -> int:
+def _calculate_max_reasonable_score(
+    content: RedditContent, content_age: dt.timedelta
+) -> int:
     """
     Calculate maximum reasonable score based on content age and type to prevent cheating.
-    
+
     Args:
         content: The Reddit content
         content_age: Age of the content
-        
+
     Returns:
         Maximum reasonable score for this content
     """
@@ -630,16 +656,16 @@ def _calculate_max_reasonable_score(content: RedditContent, content_age: dt.time
     if content.data_type == RedditDataType.POST:
         # Posts can get much higher scores
         base_hourly_rate = 500  # Max 500 upvotes per hour for posts
-        max_absolute = 50000     # Absolute maximum for posts
+        max_absolute = 50000  # Absolute maximum for posts
     else:
         # Comments typically get lower scores
-        base_hourly_rate = 200  # Max 200 upvotes per hour for comments  
-        max_absolute = 10000    # Absolute maximum for comments
-    
+        base_hourly_rate = 200  # Max 200 upvotes per hour for comments
+        max_absolute = 10000  # Absolute maximum for comments
+
     # Calculate time-based maximum
     age_hours = max(content_age.total_seconds() / 3600, 0.1)  # Minimum 0.1 hours
     time_based_max = int(base_hourly_rate * age_hours)
-    
+
     # Apply diminishing returns for older content (viral content peaks then stabilizes)
     if age_hours > 24:
         # After 24 hours, growth slows significantly
@@ -647,23 +673,24 @@ def _calculate_max_reasonable_score(content: RedditContent, content_age: dt.time
     if age_hours > 168:  # 1 week
         # After 1 week, very little growth
         time_based_max = int(time_based_max * 0.5)
-    
+
     # Return the minimum of time-based and absolute maximum
     return min(time_based_max, max_absolute)
 
 
-def validate_comment_count(submitted_content: RedditContent, actual_content: RedditContent,
-                          entity: DataEntity) -> ValidationResult:
+def validate_comment_count(
+    submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity
+) -> ValidationResult:
     """
     Validate comment count with sophisticated growth modeling and anti-cheating mechanisms.
     Comments grow differently than scores - they can only increase and follow predictable patterns.
     Backward compatible: only validates if miner provided num_comments field.
-    
+
     Args:
         submitted_content: Content submitted by miner
         actual_content: Actual content from Reddit API
         entity: DataEntity being validated
-        
+
     Returns:
         ValidationResult indicating if comment count is valid
     """
@@ -674,11 +701,13 @@ def validate_comment_count(submitted_content: RedditContent, actual_content: Red
             reason="Comment count validation skipped - field not provided (backward compatibility)",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Comment count only applies to posts, not comments
     if submitted_content.data_type != RedditDataType.POST:
         if submitted_content.num_comments is not None:
-            bt.logging.info("Miner provided num_comments for a comment (should only be for posts)")
+            bt.logging.info(
+                "Miner provided num_comments for a comment (should only be for posts)"
+            )
             return ValidationResult(
                 is_valid=False,
                 reason="Comment count provided for content that doesn't support it (comments don't have comment counts)",
@@ -689,54 +718,72 @@ def validate_comment_count(submitted_content: RedditContent, actual_content: Red
             reason="Comment count validation skipped - not applicable to comments",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Basic sanity check: comment count must be non-negative
     if submitted_content.num_comments < 0:
-        bt.logging.info(f"Invalid negative comment count: {submitted_content.num_comments}")
+        bt.logging.info(
+            f"Invalid negative comment count: {submitted_content.num_comments}"
+        )
         return ValidationResult(
             is_valid=False,
             reason=f"Invalid negative comment count: {submitted_content.num_comments}",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Calculate content age for validation logic
     now = dt.datetime.now(dt.timezone.utc)
     content_age = now - submitted_content.created_at
-    
+
     # Anti-cheating: Maximum reasonable comment count based on content age and viral potential
-    max_reasonable_comments = _calculate_max_reasonable_comment_count(submitted_content, content_age)
+    max_reasonable_comments = _calculate_max_reasonable_comment_count(
+        submitted_content, content_age
+    )
     if submitted_content.num_comments > max_reasonable_comments:
-        bt.logging.info(f"Submitted comment count {submitted_content.num_comments} exceeds reasonable maximum {max_reasonable_comments} for content age {content_age}")
+        bt.logging.info(
+            f"Submitted comment count {submitted_content.num_comments} exceeds reasonable maximum {max_reasonable_comments} for content age {content_age}"
+        )
         return ValidationResult(
             is_valid=False,
             reason=f"Comment count {submitted_content.num_comments} is unreasonably high for content of this age",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Sophisticated tolerance based on comment growth patterns
-    comment_tolerance = _calculate_comment_count_tolerance(submitted_content, actual_content, content_age)
-    
+    comment_tolerance = _calculate_comment_count_tolerance(
+        submitted_content, actual_content, content_age
+    )
+
     # Comments can ONLY increase over time (Reddit doesn't delete comments automatically)
     # Allow very small decreases only for edge cases (deleted spam comments)
     max_allowed_comments = actual_content.num_comments + comment_tolerance
-    min_allowed_comments = max(0, actual_content.num_comments - min(comment_tolerance // 10, 2))  # Very strict on decreases
-    
+    min_allowed_comments = max(
+        0, actual_content.num_comments - min(comment_tolerance // 10, 2)
+    )  # Very strict on decreases
+
     # Special case: If actual count is 0, allow some initial growth
     if actual_content.num_comments == 0:
         min_allowed_comments = 0
         # Fresh posts can get initial comments quickly
         max_allowed_comments = max(comment_tolerance, 10)
-    
+
     # Validate comment count is within sophisticated bounds - use penalty system for viral outliers
-    if not (min_allowed_comments <= submitted_content.num_comments <= max_allowed_comments):
+    if not (
+        min_allowed_comments <= submitted_content.num_comments <= max_allowed_comments
+    ):
         # Calculate how far off the comment count is
         if submitted_content.num_comments > max_allowed_comments:
-            comment_deviation = (submitted_content.num_comments - max_allowed_comments) / max(max_allowed_comments, 1)
+            comment_deviation = (
+                submitted_content.num_comments - max_allowed_comments
+            ) / max(max_allowed_comments, 1)
         else:
-            comment_deviation = (min_allowed_comments - submitted_content.num_comments) / max(actual_content.num_comments, 1)
-        
+            comment_deviation = (
+                min_allowed_comments - submitted_content.num_comments
+            ) / max(actual_content.num_comments, 1)
+
         # For very extreme outliers (>800% off), still reject to prevent major cheating
-        if comment_deviation > 8.0:  # More than 8x off (comments can be more viral than scores)
+        if (
+            comment_deviation > 8.0
+        ):  # More than 8x off (comments can be more viral than scores)
             bt.logging.info(
                 f"Comment count validation failed - extreme outlier: submitted={submitted_content.num_comments}, "
                 f"actual={actual_content.num_comments}, deviation={comment_deviation:.2f}x"
@@ -746,11 +793,13 @@ def validate_comment_count(submitted_content: RedditContent, actual_content: Red
                 reason=f"Comment count {submitted_content.num_comments} is extremely unrealistic (deviation: {comment_deviation:.2f}x)",
                 content_size_bytes_validated=entity.content_size_bytes,
             )
-        
+
         # For moderate outliers, apply penalty but still validate
-        penalty_factor = min(0.4, comment_deviation * 0.08)  # Max 40% penalty for comments, scales with deviation
+        penalty_factor = min(
+            0.4, comment_deviation * 0.08
+        )  # Max 40% penalty for comments, scales with deviation
         penalized_bytes = int(entity.content_size_bytes * (1.0 - penalty_factor))
-        
+
         bt.logging.info(
             f"Comment count validation passed with penalty: submitted={submitted_content.num_comments}, "
             f"actual={actual_content.num_comments}, deviation={comment_deviation:.2f}x, penalty={penalty_factor:.2f}"
@@ -760,12 +809,14 @@ def validate_comment_count(submitted_content: RedditContent, actual_content: Red
             reason=f"Comment count validation passed with penalty for viral outlier (deviation: {comment_deviation:.2f}x)",
             content_size_bytes_validated=penalized_bytes,
         )
-    
+
     # Advanced validation: Check comment-to-score ratio for suspicious patterns
-    suspicious_ratio_result = _validate_comment_score_ratio(submitted_content, actual_content, entity)
+    suspicious_ratio_result = _validate_comment_score_ratio(
+        submitted_content, actual_content, entity
+    )
     if not suspicious_ratio_result.is_valid:
         return suspicious_ratio_result
-    
+
     return ValidationResult(
         is_valid=True,
         reason="Comment count validation passed",
@@ -773,21 +824,24 @@ def validate_comment_count(submitted_content: RedditContent, actual_content: Red
     )
 
 
-def _calculate_comment_count_tolerance(submitted_content: RedditContent, actual_content: RedditContent, 
-                                     content_age: dt.timedelta) -> int:
+def _calculate_comment_count_tolerance(
+    submitted_content: RedditContent,
+    actual_content: RedditContent,
+    content_age: dt.timedelta,
+) -> int:
     """
     Calculate sophisticated tolerance for comment count changes based on content patterns.
-    
+
     Args:
         submitted_content: Content submitted by miner
         actual_content: Actual content from Reddit API
         content_age: Age of the content
-        
+
     Returns:
         Comment count tolerance (absolute number)
     """
     base_count = actual_content.num_comments or 0
-    
+
     # Age-based tolerance - newer content has more comment activity
     if content_age < dt.timedelta(hours=1):
         # Very fresh: high comment velocity
@@ -809,70 +863,79 @@ def _calculate_comment_count_tolerance(submitted_content: RedditContent, actual_
         # Old: very slow growth
         age_tolerance_percent = 0.25
         min_tolerance = 2
-    
+
     # Score-based adjustment: higher scoring posts get more comments
     score_multiplier = 1.0
     if submitted_content.score and submitted_content.score > 100:
         # High-scoring posts attract more comments
         score_multiplier = min(2.0, 1.0 + (submitted_content.score / 1000))
-    
+
     # Calculate final tolerance
     base_tolerance = max(int(base_count * age_tolerance_percent), min_tolerance)
     final_tolerance = int(base_tolerance * score_multiplier)
-    
+
     return final_tolerance
 
 
-def _calculate_max_reasonable_comment_count(content: RedditContent, content_age: dt.timedelta) -> int:
+def _calculate_max_reasonable_comment_count(
+    content: RedditContent, content_age: dt.timedelta
+) -> int:
     """
     Calculate maximum reasonable comment count to prevent extreme cheating.
-    
+
     Args:
         content: The Reddit content
         content_age: Age of the content
-        
+
     Returns:
         Maximum reasonable comment count for this content
     """
     # Base comment velocity (comments per hour) - Reddit can get MASSIVELY viral
-    base_hourly_rate = 200  # Max 200 comments per hour for normal posts (increased from 50)
-    max_absolute = 100000   # Absolute maximum comments (increased from 5000 to handle mega-viral posts like COVID threads, AMAs, breaking news)
-    
+    base_hourly_rate = (
+        200  # Max 200 comments per hour for normal posts (increased from 50)
+    )
+    max_absolute = 100000  # Absolute maximum comments (increased from 5000 to handle mega-viral posts like COVID threads, AMAs, breaking news)
+
     # Viral content multiplier based on score - handle mega-viral events
     viral_multiplier = 1.0
     if content.score and content.score > 10000:
         # Mega-viral posts (COVID, breaking news, major AMAs) can get 50x+ comments
-        viral_multiplier = min(50.0, content.score / 1000)  # Up to 50x for 50k+ score posts
+        viral_multiplier = min(
+            50.0, content.score / 1000
+        )  # Up to 50x for 50k+ score posts
     elif content.score and content.score > 1000:
         # Very high scoring posts can get many more comments
-        viral_multiplier = min(20.0, content.score / 1000)  # Up to 20x for 20k+ score posts
+        viral_multiplier = min(
+            20.0, content.score / 1000
+        )  # Up to 20x for 20k+ score posts
     elif content.score and content.score > 100:
         # Moderately high scoring posts get modest boost
         viral_multiplier = min(5.0, 1.0 + (content.score / 500))  # Up to 5x
-    
+
     # Calculate time-based maximum with viral adjustment
     age_hours = max(content_age.total_seconds() / 3600, 0.1)  # Minimum 0.1 hours
     time_based_max = int(base_hourly_rate * viral_multiplier * age_hours)
-    
+
     # Apply diminishing returns for very old content
     if age_hours > 48:  # After 48 hours, comment growth slows significantly
         time_based_max = int(time_based_max * 0.6)
     if age_hours > 168:  # After 1 week, very little new comment activity
         time_based_max = int(time_based_max * 0.3)
-    
+
     return min(time_based_max, max_absolute)
 
 
-def _validate_comment_score_ratio(submitted_content: RedditContent, actual_content: RedditContent,
-                                entity: DataEntity) -> ValidationResult:
+def _validate_comment_score_ratio(
+    submitted_content: RedditContent, actual_content: RedditContent, entity: DataEntity
+) -> ValidationResult:
     """
     Advanced validation: Check for suspicious comment-to-score ratios that might indicate cheating.
-    
+
     Args:
         submitted_content: Content submitted by miner
         actual_content: Actual content from Reddit API
         entity: DataEntity being validated
-        
+
     Returns:
         ValidationResult indicating if the comment-score ratio is reasonable
     """
@@ -883,7 +946,7 @@ def _validate_comment_score_ratio(submitted_content: RedditContent, actual_conte
             reason="Comment-score ratio validation skipped - insufficient data",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Calculate comment-to-score ratio
     if submitted_content.score <= 0:
         # Edge case: negative or zero score posts can still have comments
@@ -898,32 +961,34 @@ def _validate_comment_score_ratio(submitted_content: RedditContent, actual_conte
             reason="Comment-score ratio acceptable for low/negative score post",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     # Normal case: positive score
     comment_to_score_ratio = submitted_content.num_comments / submitted_content.score
-    
+
     # Typical Reddit patterns:
     # - Most posts: 0.1-2.0 comments per upvote (10-200 comments per 100 score)
     # - Controversial posts: higher ratio (lots of arguing)
     # - Simple memes: lower ratio (just upvote and move on)
     # - Low-score posts (1-5 points): Often have 6-10 comments per point due to discussions
-    
+
     # Dynamic threshold based on score - low-score posts naturally have higher ratios
     if submitted_content.score <= 3:
         max_reasonable_ratio = 10.0  # Low-score posts can have high engagement
     elif submitted_content.score <= 10:
-        max_reasonable_ratio = 8.0   # Moderate adjustment for medium-low scores
+        max_reasonable_ratio = 8.0  # Moderate adjustment for medium-low scores
     else:
-        max_reasonable_ratio = 5.0   # Keep original threshold for higher scores
-    
+        max_reasonable_ratio = 5.0  # Keep original threshold for higher scores
+
     if comment_to_score_ratio > max_reasonable_ratio:
-        bt.logging.info(f"Suspicious comment-to-score ratio: {comment_to_score_ratio:.2f} (comments={submitted_content.num_comments}, score={submitted_content.score})")
+        bt.logging.info(
+            f"Suspicious comment-to-score ratio: {comment_to_score_ratio:.2f} (comments={submitted_content.num_comments}, score={submitted_content.score})"
+        )
         return ValidationResult(
             is_valid=False,
             reason=f"Suspicious comment-to-score ratio: {comment_to_score_ratio:.2f} exceeds reasonable maximum {max_reasonable_ratio}",
             content_size_bytes_validated=entity.content_size_bytes,
         )
-    
+
     return ValidationResult(
         is_valid=True,
         reason="Comment-score ratio is reasonable",

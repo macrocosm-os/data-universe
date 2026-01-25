@@ -34,13 +34,19 @@ MIN_EVALUATION_PERIOD = dt.timedelta(minutes=60)
 MINER_CACHE_FRESHNESS = dt.timedelta(minutes=20)
 
 # Date after which only x.com URLs are accepted
-NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # December 28, 2024 UTC
+NO_TWITTER_URLS_DATE = dt.datetime(
+    2024, 12, 28, tzinfo=dt.timezone.utc
+)  # December 28, 2024 UTC
 
 # Date after which media content is required for Reddit posts that contain media
-REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # August 7, 2025 UTC (one month from now)
+REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(
+    2025, 8, 7, tzinfo=dt.timezone.utc
+)  # August 7, 2025 UTC (one month from now)
 
 # Date after which backwards compatibility for nested X content format will be removed
-X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
+X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(
+    2025, 9, 30, tzinfo=dt.timezone.utc
+)  # September 30, 2025 UTC
 
 EVALUATION_ON_STARTUP = 15
 

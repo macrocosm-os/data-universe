@@ -16,7 +16,7 @@ class S3ValidationStorage:
             self._create_empty_dataframe()
 
     def _create_empty_dataframe(self):
-        df = pd.DataFrame(columns=['hotkey', 'job_count', 'block'])
+        df = pd.DataFrame(columns=["hotkey", "job_count", "block"])
         self._safe_write_parquet(df)
 
     def _safe_write_parquet(self, df):
@@ -45,17 +45,19 @@ class S3ValidationStorage:
         except Exception as e:
             print(f"Recovery failed: {e}")
             print("Creating a new empty dataframe.")
-            return pd.DataFrame(columns=['hotkey', 'job_count', 'block'])
+            return pd.DataFrame(columns=["hotkey", "job_count", "block"])
 
     def get_validation_info(self, hotkey):
         df = self._safe_read_parquet()
-        matching_rows = df[df['hotkey'] == hotkey]
-        return matching_rows.to_dict('records')[0] if not matching_rows.empty else None
+        matching_rows = df[df["hotkey"] == hotkey]
+        return matching_rows.to_dict("records")[0] if not matching_rows.empty else None
 
     def update_validation_info(self, hotkey, job_count, block):
         df = self._safe_read_parquet()
-        new_row = pd.DataFrame({'hotkey': [hotkey], 'job_count': [job_count], 'block': [block]})
-        df = pd.concat([df[df['hotkey'] != hotkey], new_row], ignore_index=True)
+        new_row = pd.DataFrame(
+            {"hotkey": [hotkey], "job_count": [job_count], "block": [block]}
+        )
+        df = pd.concat([df[df["hotkey"] != hotkey], new_row], ignore_index=True)
         self._safe_write_parquet(df)
 
     def get_all_validations(self):

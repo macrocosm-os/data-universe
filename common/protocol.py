@@ -13,15 +13,9 @@ KeywordMode = Literal["any", "all"]
 
 
 class BaseProtocol(bt.Synapse):
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        validate_assignment=True
-    )
+    model_config = ConfigDict(arbitrary_types_allowed=True, validate_assignment=True)
 
-    version: Optional[int] = Field(
-        description="Protocol version",
-        default=None
-    )
+    version: Optional[int] = Field(description="Protocol version", default=None)
 
 
 class GetMinerIndex(BaseProtocol):
@@ -101,59 +95,41 @@ class OnDemandRequest(BaseProtocol):
 
     # Request parameters
     source: Optional[DataSource] = Field(
-        default=None,
-        description="Source to query (X or Reddit)"
+        default=None, description="Source to query (X or Reddit)"
     )
 
     usernames: List[str] = Field(
-        default_factory=list,
-        description="Usernames to fetch data from",
-        max_length=10
+        default_factory=list, description="Usernames to fetch data from", max_length=10
     )
 
     keywords: List[str] = Field(
         default_factory=list,
         description="Keywords/hashtags to search for",
-        max_length=5
+        max_length=5,
     )
 
     url: Optional[str] = Field(
-        default=None,
-        description="Single URL for URL search mode (X or YouTube)"
+        default=None, description="Single URL for URL search mode (X or YouTube)"
     )
 
     keyword_mode: KeywordMode = Field(
-        default="all",
-        description="Keyword matching mode: 'any' or 'all'"
+        default="all", description="Keyword matching mode: 'any' or 'all'"
     )
 
     start_date: Optional[str] = Field(
-        default=None,
-        description="Start date (ISO format)"
+        default=None, description="Start date (ISO format)"
     )
 
-    end_date: Optional[str] = Field(
-        default=None,
-        description="End date (ISO format)"
-    )
+    end_date: Optional[str] = Field(default=None, description="End date (ISO format)")
 
     limit: int = Field(
-        default=100,
-        ge=1,
-        le=1000,
-        description="Maximum items to return"
+        default=100, ge=1, le=1000, description="Maximum items to return"
     )
 
     # Response fields
-    data: List[DataEntity] = Field(
-        default_factory=list,
-        description="Retrieved data"
-    )
+    data: List[DataEntity] = Field(default_factory=list, description="Retrieved data")
 
-    version: Optional[int] = Field(
-        default=None,
-        description="Protocol version"
-    )
+    version: Optional[int] = Field(default=None, description="Protocol version")
 
 
 # How many times validators can send requests per validation period.

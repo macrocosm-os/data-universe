@@ -28,7 +28,9 @@ class ValidatorS3Access:
         if self.debug:
             print(f"DEBUG S3: {message}")
 
-    async def _request_presigned_list_url(self, miner_hotkey: str, continuation_token: Optional[str] = None) -> Optional[str]:
+    async def _request_presigned_list_url(
+        self, miner_hotkey: str, continuation_token: Optional[str] = None
+    ) -> Optional[str]:
         """Request fresh presigned URL from /get-miner-list endpoint for specific miner"""
         try:
             hotkey = self.wallet.hotkey.ss58_address
@@ -52,8 +54,8 @@ class ValidatorS3Access:
                 lambda: requests.post(
                     f"{self.s3_auth_url.rstrip('/')}/get-miner-list",
                     json=payload,
-                    timeout=30
-                )
+                    timeout=30,
+                ),
             )
 
             if response.status_code != 200:
@@ -85,15 +87,19 @@ class ValidatorS3Access:
                 return False
 
             self.access_data = access_data
-            self._debug_print(f"Got S3 access data with keys: {list(access_data.keys())}")
+            self._debug_print(
+                f"Got S3 access data with keys: {list(access_data.keys())}"
+            )
 
             # Set expiry time based on the returned expiry
-            if 'expiry_seconds' in access_data:
-                self.expiry_time = current_time + access_data['expiry_seconds'] - 600  # 10 minute buffer
+            if "expiry_seconds" in access_data:
+                self.expiry_time = (
+                    current_time + access_data["expiry_seconds"] - 600
+                )  # 10 minute buffer
             else:
                 # Parse ISO format expiry string if available
                 try:
-                    expiry_str = access_data.get('expiry')
+                    expiry_str = access_data.get("expiry")
                     if expiry_str:
                         expiry_dt = dt.datetime.fromisoformat(expiry_str)
                         self.expiry_time = expiry_dt.timestamp()
@@ -124,10 +130,12 @@ class ValidatorS3Access:
             payload = {
                 "hotkey": hotkey,
                 "timestamp": timestamp,
-                "signature": signature_hex
+                "signature": signature_hex,
             }
 
-            self._debug_print(f"Sending request to: {self.s3_auth_url}/get-validator-access")
+            self._debug_print(
+                f"Sending request to: {self.s3_auth_url}/get-validator-access"
+            )
 
             # Use asyncio for HTTP request
             loop = asyncio.get_event_loop()
@@ -136,8 +144,8 @@ class ValidatorS3Access:
                 lambda: requests.post(
                     f"{self.s3_auth_url.rstrip('/')}/get-validator-access",
                     json=payload,
-                    timeout=30
-                )
+                    timeout=30,
+                ),
             )
 
             self._debug_print(f"Auth server response status: {response.status_code}")
@@ -171,7 +179,7 @@ class ValidatorS3Access:
                 "hotkey": hotkey,
                 "timestamp": timestamp,
                 "signature": signature_hex,
-                "miner_hotkey": miner_hotkey
+                "miner_hotkey": miner_hotkey,
             }
 
             self._debug_print(f"Getting miner-specific access for {miner_hotkey}")
@@ -182,22 +190,26 @@ class ValidatorS3Access:
                 lambda: requests.post(
                     f"{self.s3_auth_url.rstrip('/')}/get-miner-specific-access",
                     json=payload,
-                    timeout=30
-                )
+                    timeout=30,
+                ),
             )
 
             if response.status_code == 200:
                 result = response.json()
-                return result.get('miner_url', '')
+                return result.get("miner_url", "")
             else:
-                self._debug_print(f"Miner-specific access failed: {response.status_code}")
+                self._debug_print(
+                    f"Miner-specific access failed: {response.status_code}"
+                )
                 return ""
 
         except Exception as e:
             self._debug_print(f"Exception getting miner-specific access: {str(e)}")
             return ""
 
-    async def list_all_files_with_metadata(self, miner_hotkey: str) -> List[Dict[str, Any]]:
+    async def list_all_files_with_metadata(
+        self, miner_hotkey: str
+    ) -> List[Dict[str, Any]]:
         """
         List ALL files for specific miner with metadata (size, last_modified) using pagination.
         This is used for accurate size calculation across ALL jobs.
@@ -207,7 +219,9 @@ class ValidatorS3Access:
         """
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/"
-            self._debug_print(f"Listing ALL files with metadata for miner: {miner_hotkey}")
+            self._debug_print(
+                f"Listing ALL files with metadata for miner: {miner_hotkey}"
+            )
 
             all_files = []
             continuation_token = None
@@ -217,11 +231,15 @@ class ValidatorS3Access:
             loop = asyncio.get_event_loop()
 
             while page <= max_pages:
-                presigned_url = await self._request_presigned_list_url(miner_hotkey, continuation_token)
+                presigned_url = await self._request_presigned_list_url(
+                    miner_hotkey, continuation_token
+                )
                 if not presigned_url:
                     break
 
-                response = await loop.run_in_executor(None, lambda: requests.get(presigned_url, timeout=60))
+                response = await loop.run_in_executor(
+                    None, lambda: requests.get(presigned_url, timeout=60)
+                )
                 if response.status_code != 200:
                     break
 
@@ -230,42 +248,54 @@ class ValidatorS3Access:
                 except:
                     break
 
-                namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                namespaces = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
                 # Extract ALL files with metadata
                 page_files = 0
-                for content in root.findall('.//s3:Contents', namespaces):
-                    key_elem = content.find('s3:Key', namespaces)
-                    size_elem = content.find('s3:Size', namespaces)
-                    modified_elem = content.find('s3:LastModified', namespaces)
+                for content in root.findall(".//s3:Contents", namespaces):
+                    key_elem = content.find("s3:Key", namespaces)
+                    size_elem = content.find("s3:Size", namespaces)
+                    modified_elem = content.find("s3:LastModified", namespaces)
 
                     if key_elem is not None and key_elem.text:
                         decoded_key = urllib.parse.unquote(key_elem.text)
 
                         # Only include .parquet files for the target miner
-                        if decoded_key.startswith(target_prefix) and decoded_key.endswith('.parquet'):
-                            all_files.append({
-                                'key': decoded_key,
-                                'size': int(size_elem.text) if size_elem is not None and size_elem.text else 0,
-                                'last_modified': modified_elem.text if modified_elem is not None else ''
-                            })
+                        if decoded_key.startswith(
+                            target_prefix
+                        ) and decoded_key.endswith(".parquet"):
+                            all_files.append(
+                                {
+                                    "key": decoded_key,
+                                    "size": int(size_elem.text)
+                                    if size_elem is not None and size_elem.text
+                                    else 0,
+                                    "last_modified": modified_elem.text
+                                    if modified_elem is not None
+                                    else "",
+                                }
+                            )
                             page_files += 1
 
-                self._debug_print(f"Page {page}: collected {page_files} files (total: {len(all_files)})")
+                self._debug_print(
+                    f"Page {page}: collected {page_files} files (total: {len(all_files)})"
+                )
 
                 # Check for more pages
-                is_trunc = root.find('.//s3:IsTruncated', namespaces)
-                if is_trunc is None or str(is_trunc.text).lower() != 'true':
+                is_trunc = root.find(".//s3:IsTruncated", namespaces)
+                if is_trunc is None or str(is_trunc.text).lower() != "true":
                     break
 
-                token_elem = root.find('.//s3:NextContinuationToken', namespaces)
+                token_elem = root.find(".//s3:NextContinuationToken", namespaces)
                 if token_elem is None or not token_elem.text:
                     break
 
                 continuation_token = token_elem.text
                 page += 1
 
-            self._debug_print(f"Found {len(all_files)} total files across {page} pages for {miner_hotkey}")
+            self._debug_print(
+                f"Found {len(all_files)} total files across {page} pages for {miner_hotkey}"
+            )
             return all_files
 
         except Exception as e:
@@ -286,11 +316,15 @@ class ValidatorS3Access:
             loop = asyncio.get_event_loop()
 
             while page <= max_pages:
-                presigned_url = await self._request_presigned_list_url(miner_hotkey, continuation_token)
+                presigned_url = await self._request_presigned_list_url(
+                    miner_hotkey, continuation_token
+                )
                 if not presigned_url:
                     break
 
-                response = await loop.run_in_executor(None, lambda: requests.get(presigned_url, timeout=60))
+                response = await loop.run_in_executor(
+                    None, lambda: requests.get(presigned_url, timeout=60)
+                )
                 if response.status_code != 200:
                     break
 
@@ -299,22 +333,25 @@ class ValidatorS3Access:
                 except:
                     break
 
-                namespaces = {'s3': 'http://s3.amazonaws.com/doc/2006-03-01/'}
+                namespaces = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
-                for content in root.findall('.//s3:Contents', namespaces):
-                    key_elem = content.find('s3:Key', namespaces)
+                for content in root.findall(".//s3:Contents", namespaces):
+                    key_elem = content.find("s3:Key", namespaces)
                     if key_elem is not None and key_elem.text:
                         decoded_key = urllib.parse.unquote(key_elem.text)
-                        if decoded_key.startswith(target_prefix) and '/job_id=' in decoded_key:
-                            job_part_full = decoded_key[len(target_prefix):]
-                            if job_part_full.startswith('job_id='):
-                                jobs.add(job_part_full.split('/')[0][7:])
+                        if (
+                            decoded_key.startswith(target_prefix)
+                            and "/job_id=" in decoded_key
+                        ):
+                            job_part_full = decoded_key[len(target_prefix) :]
+                            if job_part_full.startswith("job_id="):
+                                jobs.add(job_part_full.split("/")[0][7:])
 
-                is_trunc = root.find('.//s3:IsTruncated', namespaces)
-                if is_trunc is None or str(is_trunc.text).lower() != 'true':
+                is_trunc = root.find(".//s3:IsTruncated", namespaces)
+                if is_trunc is None or str(is_trunc.text).lower() != "true":
                     break
 
-                token_elem = root.find('.//s3:NextContinuationToken', namespaces)
+                token_elem = root.find(".//s3:NextContinuationToken", namespaces)
                 if token_elem is None or not token_elem.text:
                     break
 
@@ -327,9 +364,8 @@ class ValidatorS3Access:
         except Exception as e:
             self._debug_print(f"Exception in list_jobs_direct: {str(e)}")
             return []
-        
-    async def _get_all_s3_data(self, miner_hotkey: str) -> List[str]:
 
+    async def _get_all_s3_data(self, miner_hotkey: str) -> List[str]:
         try:
             all_files: List[str] = []
             continuation_token: Optional[str] = None
@@ -422,13 +458,10 @@ class ValidatorS3Access:
             self._debug_print(
                 f"Exception getting all S3 data for {miner_hotkey}: {str(e)}"
             )
-            bt.logging.error(
-                f"S3 list all data error for {miner_hotkey}: {str(e)}"
-            )
+            bt.logging.error(f"S3 list all data error for {miner_hotkey}: {str(e)}")
             return []
 
     async def _list_jobs_cached(self, miner_hotkey: str) -> List[str]:
-
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/"
             self._debug_print(f"Looking for jobs with prefix: {target_prefix}")
@@ -450,7 +483,9 @@ class ValidatorS3Access:
             for file_path in all_files:
                 if file_path.startswith(target_prefix) and "/job_id=" in file_path:
                     files_found += 1
-                    job_part_full = file_path[len(target_prefix):]  # strip "data/hotkey=.../"
+                    job_part_full = file_path[
+                        len(target_prefix) :
+                    ]  # strip "data/hotkey=.../"
                     if job_part_full.startswith("job_id="):
                         # remove "job_id=" and take the first segment before '/'
                         job_part = job_part_full.split("/")[0][7:]
@@ -458,9 +493,7 @@ class ValidatorS3Access:
 
             self._debug_print(f"Found {files_found} files for {miner_hotkey}")
             jobs_list = list(jobs)
-            self._debug_print(
-                f"Extracted {len(jobs_list)} unique jobs: {jobs_list}"
-            )
+            self._debug_print(f"Extracted {len(jobs_list)} unique jobs: {jobs_list}")
             return jobs_list
 
         except Exception as e:
@@ -474,7 +507,9 @@ class ValidatorS3Access:
         try:
             jobs = await self.list_jobs_direct(miner_hotkey)
             if jobs:
-                self._debug_print(f"Direct method found {len(jobs)} jobs for {miner_hotkey}")
+                self._debug_print(
+                    f"Direct method found {len(jobs)} jobs for {miner_hotkey}"
+                )
                 return jobs
         except Exception as e:
             self._debug_print(f"Direct method failed for {miner_hotkey}: {str(e)}")
@@ -482,9 +517,8 @@ class ValidatorS3Access:
         # Fallback to cached method (for miners in first 1000)
         self._debug_print(f"Using cached method for {miner_hotkey}")
         return await self._list_jobs_cached(miner_hotkey)
-   
-    async def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
 
+    async def list_files(self, miner_hotkey: str, job_id: str) -> List[Dict[str, Any]]:
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/job_id={job_id}/"
             self._debug_print(f"Looking for files with prefix: {target_prefix}")
@@ -520,14 +554,10 @@ class ValidatorS3Access:
             # Use the global list_all_data URL to fetch metadata for *all* objects,
             # then filter down to the ones under our target_prefix.
             loop = asyncio.get_event_loop()
-            response = await loop.run_in_executor(
-                None, lambda: requests.get(list_url)
-            )
+            response = await loop.run_in_executor(None, lambda: requests.get(list_url))
 
             if response.status_code != 200:
-                self._debug_print(
-                    f"Failed files response: {response.status_code}"
-                )
+                self._debug_print(f"Failed files response: {response.status_code}")
                 return []
 
             root = ET.fromstring(response.text)
@@ -554,9 +584,7 @@ class ValidatorS3Access:
                             f"Found file: {os.path.basename(decoded_key)}"
                         )
 
-            self._debug_print(
-                f"Found {len(files)} files in {miner_hotkey}/{job_id}"
-            )
+            self._debug_print(f"Found {len(files)} files in {miner_hotkey}/{job_id}")
             return files
 
         except Exception as e:

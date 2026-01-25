@@ -22,16 +22,20 @@ def run_command(command: List[str]) -> str:
         raise
 
 
-def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None, hotkey: str = None) -> Optional[str]:
+def normalize_preferences_json(
+    file_path: str = None, desirability_dict: Dict = None, hotkey: str = None
+) -> Optional[str]:
     """
     Normalize potentially invalid preferences JSONs using Pydantic models.
     Works with both old and new formats.
     """
     if file_path:
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path, "r") as f:
                 if os.path.getsize(file_path) == 0:
-                    bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
+                    bt.logging.info(
+                        "File is empty. Pushing an empty JSON file to delete preferences."
+                    )
                     return json.dumps([])
                 data = json.load(f)
         except FileNotFoundError:
@@ -72,17 +76,19 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
 
     file_name = f"{PREFERENCES_FOLDER}/{hotkey}.json"
     bt.logging.info(f"Creating preferences file: {file_name}")
-    with open(file_name, 'w') as f:
+    with open(file_name, "w") as f:
         f.write(json_content)
 
     bt.logging.info("Staging, committing, and pushing changes")
 
-    try:    
+    try:
         run_command(["git", "add", file_name])
         run_command(["git", "commit", "-m", f"Add {hotkey} preferences JSON file"])
         run_command(["git", "push", "origin", BRANCH_NAME])
     except subprocess.CalledProcessError as e:
-        bt.logging.warning("What you're currently trying to commit has no differences to your last commit. Proceeding with last commit...")
+        bt.logging.warning(
+            "What you're currently trying to commit has no differences to your last commit. Proceeding with last commit..."
+        )
 
     bt.logging.info("Retrieving commit hash")
     local_commit_hash = run_command(["git", "rev-parse", "HEAD"])
@@ -108,12 +114,18 @@ async def run_uploader(args):
     my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
     my_hotkey = my_wallet.hotkey.ss58_address
     subtensor = bt.subtensor(network=args.network)
-    uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=my_hotkey, netuid=args.netuid)
+    uid = subtensor.get_uid_for_hotkey_on_subnet(
+        hotkey_ss58=my_hotkey, netuid=args.netuid
+    )
 
     try:
-        json_content = normalize_preferences_json(file_path=args.file_path, hotkey=my_hotkey)
+        json_content = normalize_preferences_json(
+            file_path=args.file_path, hotkey=my_hotkey
+        )
         if not json_content:
-            bt.logging.error("Please see docs for correct format. Not pushing to Github or chain.")
+            bt.logging.error(
+                "Please see docs for correct format. Not pushing to Github or chain."
+            )
             return
 
         bt.logging.info(f"JSON content:\n{json_content}")
@@ -130,14 +142,17 @@ async def run_uploader(args):
 def run_uploader_from_gravity(config, desirability_dict) -> Tuple[bool, str]:
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
-    uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
+    uid = subtensor.get_uid_for_hotkey_on_subnet(
+        hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid
+    )
     try:
         json_content = normalize_preferences_json(
-            desirability_dict=desirability_dict,
-            hotkey=wallet.hotkey.ss58_address
+            desirability_dict=desirability_dict, hotkey=wallet.hotkey.ss58_address
         )
         if not json_content:
-            message = "Please see docs for correct format. Not pushing to Github or chain."
+            message = (
+                "Please see docs for correct format. Not pushing to Github or chain."
+            )
             bt.logging.error(message)
             return False, message
 

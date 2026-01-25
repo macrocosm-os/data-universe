@@ -18,9 +18,7 @@ from pydantic import (
 class StrictBaseModel(BaseModel):
     """A BaseModel that enforces stricter validation constraints"""
 
-    model_config = ConfigDict(
-        use_enum_values=True
-    )
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class TimeBucket(StrictBaseModel):
@@ -78,7 +76,7 @@ class DataSource(IntEnum):
             DataSource.UNKNOWN_4: 0,
             DataSource.UNKNOWN_5: 0,
             DataSource.UNKNOWN_6: 0,
-            DataSource.UNKNOWN_7: 0
+            DataSource.UNKNOWN_7: 0,
         }
         return weights[self]
 
@@ -92,7 +90,6 @@ class DataLabel(StrictBaseModel):
         max_length=140,
         description="The label. E.g. a subreddit for Reddit data.",
     )
-
 
     @field_validator("value")  # Changed from validator
     @classmethod
@@ -125,13 +122,13 @@ class DataEntity(StrictBaseModel):
 
     @classmethod
     def are_non_content_fields_equal(
-            cls, this: "DataEntity", other: "DataEntity"
+        cls, this: "DataEntity", other: "DataEntity"
     ) -> bool:
         return (
-                this.uri == other.uri
-                and this.datetime == other.datetime
-                and this.source == other.source
-                and this.label == other.label
+            this.uri == other.uri
+            and this.datetime == other.datetime
+            and this.source == other.source
+            and this.label == other.label
         )
 
     def to_json_dict(self) -> Dict[str, Any]:
@@ -141,8 +138,8 @@ class DataEntity(StrictBaseModel):
             "datetime": self.datetime.isoformat(),
             "source": self.source,
             "label": self.label.value if self.label else None,
-            "content": self.content.decode('utf-8'),
-            "content_size_bytes": self.content_size_bytes
+            "content": self.content.decode("utf-8"),
+            "content_size_bytes": self.content_size_bytes,
         }
 
     @classmethod
@@ -153,8 +150,8 @@ class DataEntity(StrictBaseModel):
             datetime=dt.datetime.fromisoformat(data["datetime"]),
             source=DataSource(data["source"]),
             label=DataLabel(value=data["label"]) if data["label"] else None,
-            content=data["content"].encode('utf-8'),
-            content_size_bytes=data["content_size_bytes"]
+            content=data["content"].encode("utf-8"),
+            content_size_bytes=data["content_size_bytes"],
         )
 
 
@@ -197,7 +194,7 @@ class CompressedMinerIndex(BaseModel):
     @field_validator("sources")  # Changed from validator
     @classmethod
     def validate_index_size(
-            cls, sources: Dict[int, List[CompressedEntityBucket]]
+        cls, sources: Dict[int, List[CompressedEntityBucket]]
     ) -> Dict[int, List[CompressedEntityBucket]]:
         size = sum(
             len(compressed_bucket.time_bucket_ids)

@@ -44,27 +44,20 @@ class S3ValidationResult(StrictBaseModel):
     validation_percentage: float = Field(
         description="The percentage of successfully validated S3 data.",
         ge=0.0,
-        le=100.0
+        le=100.0,
     )
     job_count: int = Field(
-        description="The number of jobs found in S3 for this miner.",
-        ge=0
+        description="The number of jobs found in S3 for this miner.", ge=0
     )
-    total_files: int = Field(
-        description="The total number of files validated.",
-        ge=0
-    )
+    total_files: int = Field(description="The total number of files validated.", ge=0)
     reason: str = Field(
-        description="An optional reason for the validation result.",
-        default=""
+        description="An optional reason for the validation result.", default=""
     )
     empty_file_detected: bool = Field(
-        description="Whether an empty file (0 rows) was detected.",
-        default=False
+        description="Whether an empty file (0 rows) was detected.", default=False
     )
     empty_file_key: str = Field(
-        description="The S3 key of the empty file if detected.",
-        default=""
+        description="The S3 key of the empty file if detected.", default=""
     )
 
 

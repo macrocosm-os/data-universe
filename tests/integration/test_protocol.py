@@ -28,10 +28,10 @@ class FakeMiner:
     """A simple implementation of a miner that defines the protocol forward functions."""
 
     def __init__(
-            self,
-            index: GetMinerIndex = None,
-            entities: GetDataEntityBucket = None,
-            storage: MinerStorage = None,
+        self,
+        index: GetMinerIndex = None,
+        entities: GetDataEntityBucket = None,
+        storage: MinerStorage = None,
     ):
         self.index = index
         self.entities = entities
@@ -47,7 +47,7 @@ class FakeMiner:
         return self.index
 
     def get_data_bucket(
-            self, request: old_protocol.GetDataEntityBucket
+        self, request: old_protocol.GetDataEntityBucket
     ) -> old_protocol.GetDataEntityBucket:
         return self.entities
 
@@ -118,7 +118,9 @@ class IntegrationTestProtocol(unittest.TestCase):
         self.vali_storage = SqliteMemoryValidatorStorage()
         self.miner_storage = SqliteMinerStorage()
 
-    def _test_round_trip(self, forward_fn: Callable, request: bt.Epistula) -> bt.Epistula:
+    def _test_round_trip(
+        self, forward_fn: Callable, request: bt.Epistula
+    ) -> bt.Epistula:
         """Base test for verifying a protocol message between dendrite and axon."""
         port = 1234
         axon = bt.axon(

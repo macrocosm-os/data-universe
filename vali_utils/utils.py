@@ -18,28 +18,30 @@ from scraping.x import utils as x_utils
 
 from random import Random
 
+
 def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
     """Securely pick one DataEntityBucket to validate.
     Uses a seed based on system time.
     """
     total_size = sum(
-        scorable_bucket.scorable_bytes 
+        scorable_bucket.scorable_bytes
         for scorable_bucket in index.scorable_data_entity_buckets
     )
-    
+
     # Use nanosecond precision timestamp as seed
     seed = time.time_ns()
     rng = Random(seed)
     chosen_byte = rng.uniform(0, total_size)
-    
+
     iterated_bytes = 0
     for scorable_bucket in index.scorable_data_entity_buckets:
         if iterated_bytes + scorable_bucket.scorable_bytes >= chosen_byte:
             return scorable_bucket.to_data_entity_bucket()
         iterated_bytes += scorable_bucket.scorable_bytes
-    assert (
-        False
-    ), "Failed to choose a DataEntityBucket to query... which should never happen"
+    assert False, (
+        "Failed to choose a DataEntityBucket to query... which should never happen"
+    )
+
 
 def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""
@@ -181,4 +183,6 @@ def get_miner_index_from_response(response: GetMinerIndex) -> CompressedMinerInd
     if not response.compressed_index_serialized:
         raise ValueError("GetMinerIndex response has no index.")
 
-    return CompressedMinerIndex.model_validate_json(response.compressed_index_serialized)
+    return CompressedMinerIndex.model_validate_json(
+        response.compressed_index_serialized
+    )

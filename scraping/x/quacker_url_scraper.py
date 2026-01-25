@@ -31,7 +31,9 @@ class QuackerUrlScraper(Scraper):
         self.runner = runner
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
-        bt.logging.info("Using Quacker URL Scraper as backup while APIDojo is nonfunctional.")
+        bt.logging.info(
+            "Using Quacker URL Scraper as backup while APIDojo is nonfunctional."
+        )
         """Validate the correctness of a DataEntity by URI."""
         if not entities:
             return []
@@ -106,12 +108,11 @@ class QuackerUrlScraper(Scraper):
                 utils.validate_tweet_content(
                     actual_tweet=actual_tweet,
                     entity=entity,
-                    is_retweet=False # Quacker does not have an is_retweet field, give credit to all tweets for now 
+                    is_retweet=False,  # Quacker does not have an is_retweet field, give credit to all tweets for now
                 )
             )
 
         return results
-
 
     async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""

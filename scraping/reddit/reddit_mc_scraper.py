@@ -17,7 +17,7 @@ from scraping.reddit.utils import (
     validate_nsfw_content,
     validate_score_content,
     validate_comment_count,
-    normalize_label
+    normalize_label,
 )
 
 
@@ -47,16 +47,12 @@ class RedditMCScraper(Scraper):
         subreddit_names = [normalize_label(label) for label in labels]
 
         # Prepare actor input
-        actor_input = {
-            "subreddits": subreddit_names,
-            "limit": 25,
-            "sort": "new"
-        }
+        actor_input = {"subreddits": subreddit_names, "limit": 25, "sort": "new"}
 
         # Run the actor with increased timeout
         run = await self.client.actor(self.ACTOR_ID).call(
             run_input=actor_input,
-            timeout_secs=300  # 5 minutes timeout
+            timeout_secs=300,  # 5 minutes timeout
         )
 
         # Fetch results from the dataset
@@ -71,8 +67,8 @@ class RedditMCScraper(Scraper):
         for item in items:
             try:
                 # Fix field names from Apify actor output to match RedditContent model
-                if 'isNsfw' in item:
-                    item['is_nsfw'] = item.pop('isNsfw')
+                if "isNsfw" in item:
+                    item["is_nsfw"] = item.pop("isNsfw")
 
                 # Convert Apify output to RedditContent
                 content = RedditContent(**item)
@@ -117,15 +113,13 @@ class RedditMCScraper(Scraper):
                 continue
 
             # Validate by fetching from Apify actor
-            actor_input = {
-                "url": ent_content.url
-            }
+            actor_input = {"url": ent_content.url}
 
             try:
                 # Run the actor with single URL and increased timeout
                 run = await self.client.actor(self.ACTOR_ID).call(
                     run_input=actor_input,
-                    timeout_secs=300  # 5 minutes timeout
+                    timeout_secs=300,  # 5 minutes timeout
                 )
 
                 # Check if we got results
@@ -139,10 +133,12 @@ class RedditMCScraper(Scraper):
                 if len(items) > 0:
                     # Fix field names from Apify actor output
                     item = items[0]
-                    bt.logging.trace(f"Apify actor returned for URL {ent_content.url}: {item}")
+                    bt.logging.trace(
+                        f"Apify actor returned for URL {ent_content.url}: {item}"
+                    )
 
-                    if 'isNsfw' in item:
-                        item['is_nsfw'] = item.pop('isNsfw')
+                    if "isNsfw" in item:
+                        item["is_nsfw"] = item.pop("isNsfw")
 
                     live_content = RedditContent(**item)
 
@@ -155,25 +151,33 @@ class RedditMCScraper(Scraper):
 
                     # 2) Media validation (same as custom scraper line 135-138)
                     if validation_result.is_valid:
-                        media_validation_result = validate_media_content(ent_content, live_content, entity)
+                        media_validation_result = validate_media_content(
+                            ent_content, live_content, entity
+                        )
                         if not media_validation_result.is_valid:
                             validation_result = media_validation_result
 
                     # 3) NSFW validation (same as custom scraper line 141-144)
                     if validation_result.is_valid:
-                        nsfw_validation_result = validate_nsfw_content(ent_content, live_content, entity)
+                        nsfw_validation_result = validate_nsfw_content(
+                            ent_content, live_content, entity
+                        )
                         if not nsfw_validation_result.is_valid:
                             validation_result = nsfw_validation_result
 
                     # 4) Score validation (CRITICAL: was missing! - from utils.py line 223-225)
                     if validation_result.is_valid:
-                        score_validation_result = validate_score_content(ent_content, live_content, entity)
+                        score_validation_result = validate_score_content(
+                            ent_content, live_content, entity
+                        )
                         if not score_validation_result.is_valid:
                             validation_result = score_validation_result
 
                     # 5) Comment count validation (CRITICAL: was missing! - from utils.py line 228-230)
                     if validation_result.is_valid:
-                        comment_validation_result = validate_comment_count(ent_content, live_content, entity)
+                        comment_validation_result = validate_comment_count(
+                            ent_content, live_content, entity
+                        )
                         if not comment_validation_result.is_valid:
                             validation_result = comment_validation_result
 
@@ -225,7 +229,10 @@ async def test_scrape():
     scrape_config = ScrapeConfig(
         entity_limit=25,
         labels=[DataLabel(value="bittensor_"), DataLabel(value="python")],
-        date_range=DateRange(start=dt.datetime.now(dt.timezone.utc) - timedelta(days=7), end=dt.datetime.now(dt.timezone.utc))
+        date_range=DateRange(
+            start=dt.datetime.now(dt.timezone.utc) - timedelta(days=7),
+            end=dt.datetime.now(dt.timezone.utc),
+        ),
     )
 
     entities = await scraper.scrape(scrape_config)
@@ -249,7 +256,9 @@ async def test_scrape():
             bt.logging.info(f"   Username: {content.username}")
             bt.logging.info(f"   Community: {content.community}")
             bt.logging.info(f"   Data Type: {content.data_type}")
-            bt.logging.info(f"   Title: {content.title[:80] + '...' if content.title and len(content.title) > 80 else content.title}")
+            bt.logging.info(
+                f"   Title: {content.title[:80] + '...' if content.title and len(content.title) > 80 else content.title}"
+            )
             bt.logging.info(f"   Score: {content.score}")
             bt.logging.info(f"   Media: {content.media}")
         except Exception as e:
@@ -289,7 +298,9 @@ async def test_validate():
     bt.logging.info(f"\n   Validation Result:")
     bt.logging.info(f"   Valid: {results[0].is_valid}")
     bt.logging.info(f"   Reason: {results[0].reason}")
-    bt.logging.info(f"   Content Size Validated: {results[0].content_size_bytes_validated} bytes")
+    bt.logging.info(
+        f"   Content Size Validated: {results[0].content_size_bytes_validated} bytes"
+    )
 
     bt.logging.info("\n" + "=" * 60)
     bt.logging.info("VALIDATION TEST COMPLETED")
@@ -317,8 +328,7 @@ async def test_scrape_and_validate():
 
     try:
         run = await scraper.client.actor(scraper.ACTOR_ID).call(
-            run_input=actor_input,
-            timeout_secs=300
+            run_input=actor_input, timeout_secs=300
         )
 
         # Fetch results
@@ -331,11 +341,13 @@ async def test_scrape_and_validate():
 
         if len(items) > 0:
             item = items[0]
-            bt.logging.info(f"   Successfully scraped! Got item with ID: {item.get('id')}")
+            bt.logging.info(
+                f"   Successfully scraped! Got item with ID: {item.get('id')}"
+            )
 
             # Fix field names
-            if 'isNsfw' in item:
-                item['is_nsfw'] = item.pop('isNsfw')
+            if "isNsfw" in item:
+                item["is_nsfw"] = item.pop("isNsfw")
 
             # Convert to RedditContent and DataEntity
             content = RedditContent(**item)
@@ -360,7 +372,9 @@ async def test_scrape_and_validate():
                 bt.logging.info(f"\n   Validation Result:")
                 bt.logging.info(f"     Valid: {result.is_valid}")
                 bt.logging.info(f"     Reason: {result.reason}")
-                bt.logging.info(f"     Content Size Validated: {result.content_size_bytes_validated} bytes")
+                bt.logging.info(
+                    f"     Content Size Validated: {result.content_size_bytes_validated} bytes"
+                )
 
                 if result.is_valid:
                     bt.logging.success("   ✅ Validation PASSED - Entity is valid!")
@@ -374,6 +388,7 @@ async def test_scrape_and_validate():
     except Exception as e:
         bt.logging.error(f"   Error during scrape and validate test: {str(e)}")
         import traceback
+
         bt.logging.error(traceback.format_exc())
 
     bt.logging.info("\n" + "=" * 60)

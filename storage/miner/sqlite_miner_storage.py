@@ -195,7 +195,9 @@ class SqliteMinerStorage(MinerStorage):
             cursor = connection.cursor()
             cursor.execute(query, (source,))
             result = cursor.fetchone()
-            return result['earliest_date'] if result and result['earliest_date'] else None
+            return (
+                result["earliest_date"] if result and result["earliest_date"] else None
+            )
 
     def list_data_entities_in_data_entity_bucket(
         self, data_entity_bucket_id: DataEntityBucketId
@@ -237,7 +239,9 @@ class SqliteMinerStorage(MinerStorage):
                         source=DataSource(row["source"]),
                         content=row["content"],
                         content_size_bytes=row["contentSizeBytes"],
-                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None
+                        label=DataLabel(value=row["label"])
+                        if row["label"] != "NULL"
+                        else None,
                     )
 
                     data_entities.append(data_entity)
@@ -315,9 +319,9 @@ class SqliteMinerStorage(MinerStorage):
                     )
                     bucket.sizes_bytes.append(size)
                     bucket.time_bucket_ids.append(row["timeBucketId"])
-                    buckets_by_source_by_label[DataSource(row["source"])][
-                        label
-                    ] = bucket
+                    buckets_by_source_by_label[DataSource(row["source"])][label] = (
+                        bucket
+                    )
 
                 # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
                 bt.logging.trace("Creating protocol 4 cached index.")
@@ -381,7 +385,9 @@ class SqliteMinerStorage(MinerStorage):
                     data_entity_bucket_id = DataEntityBucketId(
                         time_bucket=TimeBucket(id=row["timeBucketId"]),
                         source=DataSource(row["source"]),
-                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None
+                        label=DataLabel(value=row["label"])
+                        if row["label"] != "NULL"
+                        else None,
                     )
                     buckets_ids_to_contents[data_entity_bucket_id].append(
                         row["content"]

@@ -68,9 +68,7 @@ class MicroworldsTwitterScraper(Scraper):
                 dataset: List[dict] = None
                 try:
                     dataset: List[dict] = await self.runner.run(run_config, run_input)
-                except (
-                    Exception
-                ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
+                except Exception as e:  # Catch all exceptions here to ensure we do not exit validation early.
                     if attempt != max_attempts:
                         # Retrying.
                         continue
@@ -93,7 +91,9 @@ class MicroworldsTwitterScraper(Scraper):
                 actual_tweet = None
 
                 for index, tweet in enumerate(tweets):
-                    if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
+                    if utils.normalize_url(tweet.url) == utils.normalize_url(
+                        entity.uri
+                    ):
                         actual_tweet = tweet
                         is_retweet = is_retweets[index]
                         break
@@ -183,7 +183,9 @@ class MicroworldsTwitterScraper(Scraper):
 
         return data_entities
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
+    def _best_effort_parse_dataset(
+        self, dataset: List[dict]
+    ) -> Tuple[List[XContent], List[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
         Any errors are logged and ignored."""
         if not dataset or dataset == [{"zero_result": True}]:
@@ -195,52 +197,54 @@ class MicroworldsTwitterScraper(Scraper):
         for data in dataset:
             try:
                 # Check that we have the required fields
-                if not all(field in data for field in ["full_text", "user", "created_at"]):
+                if not all(
+                    field in data for field in ["full_text", "user", "created_at"]
+                ):
                     bt.logging.warning("Missing required fields in data")
                     continue
 
-                text = data['full_text']
+                text = data["full_text"]
 
                 # Extract hashtags from text or user entities if available
                 tags = []
-                user_data = data.get('user', {})
-                user_entities = user_data.get('entities', {})
-                if 'hashtags' in user_entities:
-                    tags = ["#" + item['text'] for item in user_entities['hashtags']]
-                
+                user_data = data.get("user", {})
+                user_entities = user_data.get("entities", {})
+                if "hashtags" in user_entities:
+                    tags = ["#" + item["text"] for item in user_entities["hashtags"]]
+
                 # Extract media URLs - check multiple possible locations
                 media_urls = []
-                
-                # check entities.media (deprecated in microworlds scraper)
-                if 'entities' in data and 'media' in data['entities']:
-                    for media_item in data['entities']['media']:
-                        if 'media_url_https' in media_item:
-                            media_urls.append(media_item['media_url_https'])
 
-                is_retweet = data.get('retweeted', False)
+                # check entities.media (deprecated in microworlds scraper)
+                if "entities" in data and "media" in data["entities"]:
+                    for media_item in data["entities"]["media"]:
+                        if "media_url_https" in media_item:
+                            media_urls.append(media_item["media_url_https"])
+
+                is_retweet = data.get("retweeted", False)
                 is_retweets.append(is_retweet)
-                
+
                 # Extract user information - user_id_str if available, or id_str
-                user_id = data.get('user_id_str') or user_data.get('id_str')
-                user_display_name = user_data.get('name', '')
-                user_verified = user_data.get('verified', False)
-                username = user_data.get('screen_name', '')
-                
+                user_id = data.get("user_id_str") or user_data.get("id_str")
+                user_display_name = user_data.get("name", "")
+                user_verified = user_data.get("verified", False)
+                username = user_data.get("screen_name", "")
+
                 # Extract tweet metadata
-                tweet_id = data.get('id_str')
-                
+                tweet_id = data.get("id_str")
+
                 # Extract reply information
-                is_reply = data.get('in_reply_to_status_id_str', None)
-                is_quote = data.get('is_quote_status', None)
-                
+                is_reply = data.get("in_reply_to_status_id_str", None)
+                is_quote = data.get("is_quote_status", None)
+
                 # Get conversation ID
-                conversation_id = data.get('conversation_id_str')
-                
+                conversation_id = data.get("conversation_id_str")
+
                 # Get in-reply-to information
-                in_reply_to_user_id = data.get('in_reply_to_user_id_str')
+                in_reply_to_user_id = data.get("in_reply_to_user_id_str")
 
                 # Create URL if not present (construct from tweet ID)
-                url = data.get('url')
+                url = data.get("url")
                 if not url and tweet_id and username:
                     url = f"https://twitter.com/{username}/status/{tweet_id}"
 
@@ -312,7 +316,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#catcoin"),
             content='{"username": "@100Xpotential", "text": "As i said green candles incoming 🚀🫡👇👇\\n\\nAround 15% price surge in #CatCoin 📊💸🚀🚀\\n\\n𝐂𝐨𝐦𝐦𝐞𝐧𝐭 |  𝐋𝐢𝐤𝐞 |  𝐑𝐞𝐭𝐰𝐞𝐞𝐭 |  𝐅𝐨𝐥𝐥𝐨𝐰\\n\\n#Binance #Bitcoin #PiNetwork #Blockchain #NFT #BabyDoge #Solana #PEPE #Crypto #1000x #cryptocurrency #Catcoin #100x", "url": "https://twitter.com/100Xpotential/status/1790785842967101530", "timestamp": "2024-05-15T16:46:00+00:00", "tweet_hashtags": ["#CatCoin", "#Binance", "#Bitcoin", "#PiNetwork", "#Blockchain", "#NFT", "#BabyDoge", "#Solana", "#PEPE", "#Crypto", "#1000x", "#cryptocurrency", "#Catcoin", "#100x"]}',
-            content_size_bytes=933
+            content_size_bytes=933,
         ),
         DataEntity(
             uri="https://x.com/20nineCapitaL/status/1789488160688541878",
@@ -320,7 +324,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@20nineCapitaL", "text": "Yup! We agreed to. \\n\\n@MetaMaskSupport #Bitcoin #Investors #DigitalAssets #EthereumETF #Airdrops", "url": "https://twitter.com/20nineCapitaL/status/1789488160688541878", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin", "#Investors", "#DigitalAssets", "#EthereumETF", "#Airdrops"]}',
-            content_size_bytes=345
+            content_size_bytes=345,
         ),
         DataEntity(
             uri="https://x.com/AAAlviarez/status/1790787185047658838",
@@ -328,7 +332,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#web3‌‌"),
             content='{"username": "@AAAlviarez", "text": "1/3🧵\\n\\nOnce a month dozens of #web3‌‌  users show our support to one of the projects that is doing an excellent job in services and #cryptocurrency adoption.\\n\\nDo you know what Leo Power Up Day is all about?", "url": "https://twitter.com/AAAlviarez/status/1790787185047658838", "timestamp": "2024-05-15T16:51:00+00:00", "tweet_hashtags": ["#web3‌‌", "#cryptocurrency"]}',
-            content_size_bytes=439
+            content_size_bytes=439,
         ),
         DataEntity(
             uri="https://x.com/AGariaparra/status/1789488091453091936",
@@ -336,7 +340,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AGariaparra", "text": "J.P Morgan, Wells Fargo hold #Bitcoin now: Why are they interested in BTC? - AMBCrypto", "url": "https://twitter.com/AGariaparra/status/1789488091453091936", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
-            content_size_bytes=269
+            content_size_bytes=269,
         ),
         DataEntity(
             uri="https://x.com/AGariaparra/status/1789488427546939525",
@@ -344,7 +348,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AGariaparra", "text": "We Asked ChatGPT if #Bitcoin Will Enter a Massive Bull Run in 2024", "url": "https://twitter.com/AGariaparra/status/1789488427546939525", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
-            content_size_bytes=249
+            content_size_bytes=249,
         ),
         DataEntity(
             uri="https://x.com/AMikulanecs/status/1784324497895522673",
@@ -352,7 +356,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#felix"),
             content='{"username": "@AMikulanecs", "text": "$FELIX The new Dog with OG Vibes... \\nWe have a clear vision for success.\\nNew Dog $FELIX \\n➡️Follow @FelixInuETH \\n➡️Join➡️Visit#memecoins #BTC #MemeCoinSeason #Bullrun2024 #Ethereum #altcoin #Crypto #meme #SOL #BaseChain #Binance", "url": "https://twitter.com/AMikulanecs/status/1784324497895522673", "timestamp": "2024-04-27T20:51:00+00:00", "tweet_hashtags": ["#FELIX", "#FELIX", "#memecoins", "#BTC", "#MemeCoinSeason", "#Bullrun2024", "#Ethereum", "#altcoin", "#Crypto", "#meme", "#SOL", "#BaseChain", "#Binance"]}',
-            content_size_bytes=588
+            content_size_bytes=588,
         ),
         DataEntity(
             uri="https://x.com/AdamEShelton/status/1789490040751411475",
@@ -360,7 +364,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AdamEShelton", "text": "#bitcoin  love", "url": "https://twitter.com/AdamEShelton/status/1789490040751411475", "timestamp": "2024-05-12T02:57:00+00:00", "tweet_hashtags": ["#bitcoin"]}',
-            content_size_bytes=199
+            content_size_bytes=199,
         ),
         DataEntity(
             uri="https://x.com/AfroWestor/status/1789488798406975580",
@@ -368,7 +372,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AfroWestor", "text": "Given is for Prince and princess form inheritances  to kingdom. \\n\\nWe the #BITCOIN family we Gain profits for ever. \\n\\nSo if you embrace #BTC that means you have a Kingdom to pass on for ever.", "url": "https://twitter.com/AfroWestor/status/1789488798406975580", "timestamp": "2024-05-12T02:52:00+00:00", "tweet_hashtags": ["#BITCOIN", "#BTC"]}',
-            content_size_bytes=383
+            content_size_bytes=383,
         ),
         DataEntity(
             uri="https://x.com/AlexEmidio7/status/1789488453979189327",
@@ -376,7 +380,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AlexEmidio7", "text": "Bip47 V3 V4 #Bitcoin", "url": "https://twitter.com/AlexEmidio7/status/1789488453979189327", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
-            content_size_bytes=203
+            content_size_bytes=203,
         ),
     ]
 
