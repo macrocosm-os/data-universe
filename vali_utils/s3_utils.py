@@ -494,7 +494,10 @@ class DuckDBSampledValidator:
                 tagged_data AS (
                     SELECT
                         entity_url,
-                        regexp_extract(filename, '/job_id=([^/]+)/', 1) as job_id,
+                        COALESCE(
+                            NULLIF(regexp_extract(filename, '/job_id=([^/]+)/', 1), ''),
+                            NULLIF(regexp_extract(filename, '/job_id%3D([^/]+)/', 1), '')
+                        ) as job_id,
                         is_empty,
                         is_missing_url
                     FROM raw_data
