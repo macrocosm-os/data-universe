@@ -450,8 +450,8 @@ class DuckDBSampledValidator:
             # Twitter: empty if text is empty (simple check - hashtags/media are bonus)
             empty_check = "COALESCE(text, '') = ''"
         else:
-            # Reddit: empty if body is empty (simple check)
-            empty_check = "COALESCE(body, '') = ''"
+            # Reddit: empty only if BOTH body and title are empty (posts can have title but no body)
+            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = ''"
 
         try:
             query = f"""
@@ -466,7 +466,10 @@ class DuckDBSampledValidator:
                 tagged_data AS (
                     SELECT
                         entity_url,
-                        regexp_extract(filename, '/job_id=([^/]+)/', 1) as job_id,
+                        COALESCE(
+                            NULLIF(regexp_extract(filename, '/job_id=([^/]+)/', 1), ''),
+                            NULLIF(regexp_extract(filename, '/job_id%3D([^/]+)/', 1), '')
+                        ) as job_id,
                         is_empty,
                         is_missing_url
                     FROM raw_data
@@ -779,12 +782,20 @@ class DuckDBSampledValidator:
                 except Exception:
                     tweet_hashtags = [raw_hashtags]
 
-            # Handle media field (can be NaN)
+            # Handle media array field (same as tweet_hashtags)
             raw_media = row.get('media', None)
-            if isinstance(raw_media, float):
-                media_value = None if math.isnan(raw_media) else raw_media
+            if raw_media is None:
+                media_value = None
+            elif hasattr(raw_media, '__iter__') and not isinstance(raw_media, str):
+                try:
+                    media_value = list(raw_media)
+                except TypeError:
+                    media_value = None
             else:
-                media_value = raw_media
+                try:
+                    media_value = None if pd.isna(raw_media) else [raw_media]
+                except Exception:
+                    media_value = [raw_media]
 
             # Create XContent with ALL uploaded fields (required for scraper validation)
             x_content = XContent(
@@ -837,11 +848,12 @@ class DuckDBSampledValidator:
             url_str = str(url).strip() if url is not None else ""
             reddit_id_str = str(reddit_id).strip() if reddit_id is not None else ""
 
-            body_str = str(body).strip() if body is not None else ""
-            title_str = str(title).strip() if title is not None else ""
+            # Preserve original body/title (don't strip - scraper preserves exact content)
+            body_str = str(body) if body is not None and not pd.isna(body) else ""
+            title_str = str(title) if title is not None and not pd.isna(title) else ""
 
             # Accept if either title or body has content (media posts have empty body)
-            if not body_str and not title_str:
+            if not body_str.strip() and not title_str.strip():
                 return None
 
             # Require basic identity fields
