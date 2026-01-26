@@ -30,36 +30,10 @@ class S3ValidationResult:
     """S3 validation result structure"""
     is_valid: bool
     validation_percentage: float
-    job_count: int
-    total_files: int
-    total_size_bytes: int
-    valid_jobs: int
-    recent_files: int
-    quality_metrics: Dict[str, float]
-    issues: List[str]
-    reason: str
-
-    # Enhanced validation fields (optional, for backward compatibility)
-    enhanced_validation: Optional['S3ValidationResultDetailed'] = None
-
-    # Empty file detection
-    empty_file_detected: bool = False
-
-    # Competition-based scoring: effective_size = total_size_bytes × coverage²
-    # This is used for proportional S3 boost distribution among miners
-    effective_size_bytes: float = 0.0
-    job_coverage_rate: float = 0.0  # Percentage of active jobs covered (0-100)
-
-
-@dataclass
-class S3ValidationResultDetailed:
-    """Detailed S3 validation result with comprehensive metrics"""
-    is_valid: bool
-    validation_percentage: float
 
     # Job and file metrics
     total_active_jobs: int
-    expected_jobs_count: int  # Total number of expected jobs from Gravity
+    expected_jobs_count: int
     recent_jobs_analyzed: int
     recent_files_count: int
     total_size_bytes: int
@@ -90,7 +64,7 @@ class S3ValidationResultDetailed:
     # Empty file detection
     empty_file_detected: bool = False
 
-    # Competition-based scoring
+    # Competition-based scoring: effective_size = total_size_bytes × coverage²
     effective_size_bytes: float = 0.0
     job_coverage_rate: float = 0.0
 
@@ -147,14 +121,13 @@ class DuckDBSampledValidator:
         self,
         miner_hotkey: str,
         expected_jobs: Dict
-    ) -> S3ValidationResultDetailed:
+    ) -> S3ValidationResult:
         """
         Validate miner using DuckDB with random sampling.
 
-        Returns S3ValidationResultDetailed with effective_size for competition scoring.
+        Returns S3ValidationResult with effective_size for competition scoring.
         """
         import time
-        import requests
         start_time = time.time()
 
         try:
@@ -315,7 +288,7 @@ class DuckDBSampledValidator:
                     f"scraper={scraper_success_rate:.1f}% (min {self.MIN_SCRAPER_SUCCESS}%)"
                 )
 
-            return S3ValidationResultDetailed(
+            return S3ValidationResult(
                 is_valid=is_valid,
                 validation_percentage=validation_percentage,
                 total_active_jobs=len(active_job_ids),
@@ -939,9 +912,9 @@ class DuckDBSampledValidator:
         except:
             return None
 
-    def _create_failed_result(self, reason: str) -> S3ValidationResultDetailed:
+    def _create_failed_result(self, reason: str) -> S3ValidationResult:
         """Create a failed validation result."""
-        return S3ValidationResultDetailed(
+        return S3ValidationResult(
             is_valid=False,
             validation_percentage=0.0,
             total_active_jobs=0,
@@ -1026,69 +999,53 @@ async def validate_s3_miner_data(
             s3_reader=s3_reader,
             sample_percent=sample_percent
         )
-        duckdb_result = await validator.validate_miner_s3_data(
+        result = await validator.validate_miner_s3_data(
             miner_hotkey, expected_jobs
         )
         validator.close()
-
-        return S3ValidationResult(
-            is_valid=duckdb_result.is_valid,
-            validation_percentage=duckdb_result.validation_percentage,
-            job_count=duckdb_result.total_active_jobs,
-            total_files=duckdb_result.recent_files_count,
-            total_size_bytes=duckdb_result.total_size_bytes,
-            valid_jobs=duckdb_result.recent_jobs_analyzed,
-            recent_files=duckdb_result.recent_files_count,
-            quality_metrics={
-                'duplicate_percentage': duckdb_result.duplicate_percentage,
-                'job_match_rate': duckdb_result.job_match_rate,
-                'scraper_success_rate': duckdb_result.scraper_success_rate
-            },
-            issues=duckdb_result.validation_issues,
-            reason=duckdb_result.reason,
-            enhanced_validation=duckdb_result,
-            empty_file_detected=False,
-            effective_size_bytes=duckdb_result.effective_size_bytes,
-            job_coverage_rate=duckdb_result.job_coverage_rate
-        )
+        return result
 
     except Exception as e:
         bt.logging.error(f"DuckDB validation failed for {miner_hotkey}: {str(e)}")
         return S3ValidationResult(
             is_valid=False,
             validation_percentage=0.0,
-            job_count=0,
-            total_files=0,
+            total_active_jobs=0,
+            expected_jobs_count=0,
+            recent_jobs_analyzed=0,
+            recent_files_count=0,
             total_size_bytes=0,
-            valid_jobs=0,
-            recent_files=0,
-            quality_metrics={},
-            issues=[f"Validation error: {str(e)}"],
-            reason=f"Validation failed: {str(e)}"
+            has_duplicates=False,
+            duplicate_percentage=0.0,
+            entities_validated=0,
+            entities_passed_scraper=0,
+            scraper_success_rate=0.0,
+            entities_checked_for_job_match=0,
+            entities_matched_job=0,
+            job_match_rate=0.0,
+            validation_issues=[f"Validation error: {str(e)}"],
+            reason=f"Validation failed: {str(e)}",
+            sample_duplicate_uris=[],
+            sample_validation_results=[],
+            sample_job_mismatches=[]
         )
 
 
 def get_s3_validation_summary(result: S3ValidationResult) -> str:
     """Generate a summary string for S3 validation result with detailed breakdown"""
 
-    # Get quality metrics if available
-    dup_rate = result.quality_metrics.get('duplicate_percentage', 0)
-    job_match = result.quality_metrics.get('job_match_rate', 0)
-    scraper_rate = result.quality_metrics.get('scraper_success_rate', 0)
-
     size_mb = result.total_size_bytes / (1024 * 1024)
 
     if result.is_valid:
         return (
             f"✅ S3 PASSED ({result.validation_percentage:.1f}%): "
-            f"{result.job_count} jobs, {result.total_files} files ({size_mb:.1f}MB) | "
-            f"Dup: {dup_rate:.1f}%, JobMatch: {job_match:.1f}%, Scraper: {scraper_rate:.1f}%"
+            f"{result.total_active_jobs} jobs, {result.recent_files_count} files ({size_mb:.1f}MB) | "
+            f"Dup: {result.duplicate_percentage:.1f}%, JobMatch: {result.job_match_rate:.1f}%, Scraper: {result.scraper_success_rate:.1f}%"
         )
     else:
-        # Show breakdown even on failure so miners know what to fix
         return (
             f"❌ S3 FAILED ({result.validation_percentage:.1f}%): "
-            f"{result.job_count} jobs, {result.total_files} files ({size_mb:.1f}MB) | "
-            f"Dup: {dup_rate:.1f}%, JobMatch: {job_match:.1f}%, Scraper: {scraper_rate:.1f}% | "
-            f"Issues: {', '.join(result.issues[:3])}"
+            f"{result.total_active_jobs} jobs, {result.recent_files_count} files ({size_mb:.1f}MB) | "
+            f"Dup: {result.duplicate_percentage:.1f}%, JobMatch: {result.job_match_rate:.1f}%, Scraper: {result.scraper_success_rate:.1f}% | "
+            f"Issues: {', '.join(result.validation_issues[:3])}"
         )
