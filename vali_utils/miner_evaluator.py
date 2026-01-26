@@ -30,10 +30,10 @@ from storage.validator.s3_validator_storage import S3ValidationStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import metrics, utils as vali_utils
 
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from vali_utils.validator_s3_access import ValidatorS3Access
 from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
-from vali_utils.s3_logging_utils import log_s3_validation_table, log_s3_validation_compact
+from vali_utils.s3_logging_utils import log_s3_validation_table
 
 from rewards.miner_scorer import MinerScorer
 
@@ -314,7 +314,7 @@ class MinerEvaluator:
             
             s3_validation_result = await validate_s3_miner_data(
                 self.wallet, s3_auth_url, hotkey,
-                use_enhanced_validation=True, config=self.config, s3_reader=self.s3_reader
+                config=self.config, s3_reader=self.s3_reader
             )
             
             # Log results with rich table
