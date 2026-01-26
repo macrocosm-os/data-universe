@@ -30,10 +30,10 @@ from storage.validator.s3_validator_storage import S3ValidationStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import metrics, utils as vali_utils
 
-from typing import List, Optional, Tuple
+from typing import List, Optional
 from vali_utils.validator_s3_access import ValidatorS3Access
 from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
-from vali_utils.s3_logging_utils import log_s3_validation_table, log_s3_validation_compact
+from vali_utils.s3_logging_utils import log_s3_validation_table
 
 from rewards.miner_scorer import MinerScorer
 
@@ -265,20 +265,17 @@ class MinerEvaluator:
                 self.scorer.penalize_empty_file(uid, hotkey, s3_validation_result.reason)
                 return
 
-            job_match_failure = (s3_validation_result.quality_metrics.get('job_match_rate', 0) < 100)
+            job_match_failure = (s3_validation_result.job_match_rate < 100)
 
             # Log validation result
             if s3_validation_result.is_valid:
-                job_match_info = ""
-                if 'job_match_rate' in s3_validation_result.quality_metrics:
-                    job_match_info = f", Job match: {s3_validation_result.quality_metrics['job_match_rate']:.1f}%"
                 bt.logging.info(
                     f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} passed S3 validation. "
                     f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
-                    f"Jobs: {s3_validation_result.job_count}, Files: {s3_validation_result.total_files}, "
+                    f"Jobs: {s3_validation_result.total_active_jobs}, Files: {s3_validation_result.recent_files_count}, "
                     f"Coverage: {s3_validation_result.job_coverage_rate:.1f}%, "
-                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB"
-                    f"{job_match_info}"
+                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB, "
+                    f"Job match: {s3_validation_result.job_match_rate:.1f}%"
                 )
             else:
                 bt.logging.info(
@@ -298,10 +295,7 @@ class MinerEvaluator:
         self, uid: int, hotkey: str, current_block: int
     ) -> Optional[S3ValidationResult]:
         """
-        Performs comprehensive S3 validation using metadata analysis and statistical methods.
-        Validates file structure, job alignment, data quality, and temporal patterns.
-        
-        Can use enhanced validation with real scrapers if enabled in configuration.
+        Performs S3 validation using DuckDB-based sampled validation.
 
         Returns:
             An S3ValidationResult with validation details or None if no S3 data is found.
@@ -314,7 +308,7 @@ class MinerEvaluator:
             
             s3_validation_result = await validate_s3_miner_data(
                 self.wallet, s3_auth_url, hotkey,
-                use_enhanced_validation=True, config=self.config, s3_reader=self.s3_reader
+                config=self.config, s3_reader=self.s3_reader
             )
             
             # Log results with rich table
@@ -332,27 +326,37 @@ class MinerEvaluator:
             except Exception as e:
                 bt.logging.debug(f"Error displaying S3 validation table: {e}")
 
-            if not s3_validation_result.is_valid and s3_validation_result.issues:
-                bt.logging.debug(f"{hotkey}: S3 validation issues: {', '.join(s3_validation_result.issues[:3])}")
+            if not s3_validation_result.is_valid and s3_validation_result.validation_issues:
+                bt.logging.debug(f"{hotkey}: S3 validation issues: {', '.join(s3_validation_result.validation_issues[:3])}")
 
         except Exception as e:
             bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
             s3_validation_result = S3ValidationResult(
                 is_valid=False,
                 validation_percentage=0.0,
-                job_count=0,
-                total_files=0,
+                total_active_jobs=0,
+                expected_jobs_count=0,
+                recent_jobs_analyzed=0,
+                recent_files_count=0,
                 total_size_bytes=0,
-                valid_jobs=0,
-                recent_files=0,
-                quality_metrics={},
-                issues=[f"Validation error: {str(e)}"],
-                reason=f"S3 validation failed: {str(e)}"
+                has_duplicates=False,
+                duplicate_percentage=0.0,
+                entities_validated=0,
+                entities_passed_scraper=0,
+                scraper_success_rate=0.0,
+                entities_checked_for_job_match=0,
+                entities_matched_job=0,
+                job_match_rate=0.0,
+                validation_issues=[f"Validation error: {str(e)}"],
+                reason=f"S3 validation failed: {str(e)}",
+                sample_duplicate_uris=[],
+                sample_validation_results=[],
+                sample_job_mismatches=[]
             )
 
         # Update S3 validation storage
         if s3_validation_result:
-            self.s3_storage.update_validation_info(hotkey, s3_validation_result.job_count, current_block)
+            self.s3_storage.update_validation_info(hotkey, s3_validation_result.total_active_jobs, current_block)
 
         return s3_validation_result
 

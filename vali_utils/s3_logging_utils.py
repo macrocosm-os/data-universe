@@ -109,118 +109,89 @@ def log_s3_validation_table(
     table.add_row("Hotkey", f"{hotkey[:20]}...")
 
     # Job Statistics
-    if hasattr(result, 'enhanced_validation') and result.enhanced_validation:
-        enhanced = result.enhanced_validation
-        total_jobs = enhanced.total_active_jobs
-        expected_jobs = enhanced.expected_jobs_count
-        # Calculate correct job completion percentage
-        job_completion_pct = (total_jobs / expected_jobs * 100) if expected_jobs > 0 else 0
-        table.add_row(
-            "Jobs Coverage",
-            f"{total_jobs}/{expected_jobs} active jobs ({job_completion_pct:.1f}% coverage)"
-        )
-    else:
-        table.add_row("Jobs Found", f"{result.job_count} jobs")
+    job_completion_pct = (result.total_active_jobs / result.expected_jobs_count * 100) if result.expected_jobs_count > 0 else 0
+    table.add_row(
+        "Jobs Coverage",
+        f"{result.total_active_jobs}/{result.expected_jobs_count} active jobs ({job_completion_pct:.1f}% coverage)"
+    )
 
     # File Statistics
-    table.add_row("Files Sampled", f"{result.total_files:,} files (10% random sample)")
+    table.add_row("Files Sampled", f"{result.recent_files_count:,} files (10% random sample)")
     table.add_row("Total Size", format_size(result.total_size_bytes))
 
-    # NEW: Competition Scoring (effective_size and coverage)
-    if hasattr(result, 'effective_size_bytes') and hasattr(result, 'job_coverage_rate'):
-        coverage = result.job_coverage_rate
-        effective_size = result.effective_size_bytes
+    # Competition Scoring
+    table.add_row("", "")
+    table.add_row("[bold]Competition Scoring[/bold]", "")
+    table.add_row("", "")
 
-        table.add_row("", "")
-        table.add_row("[bold]Competition Scoring[/bold]", "")
-        table.add_row("", "")
+    coverage_penalty = (result.job_coverage_rate / 100.0) ** 2
+    table.add_row(
+        "Job Coverage",
+        f"{result.job_coverage_rate:.1f}% (penalty: {coverage_penalty:.2f}x)"
+    )
 
-        # Coverage with squared penalty explanation
-        coverage_penalty = (coverage / 100.0) ** 2
+    if result.effective_size_bytes > 0:
         table.add_row(
-            "Job Coverage",
-            f"{coverage:.1f}% (penalty: {coverage_penalty:.2f}x)"
+            "Effective Size",
+            f"[green]{format_size(int(result.effective_size_bytes))}[/green] = {format_size(result.total_size_bytes)} × {coverage_penalty:.2f}"
         )
-
-        # Effective size (what counts for competition)
-        if effective_size > 0:
-            table.add_row(
-                "Effective Size",
-                f"[green]{format_size(int(effective_size))}[/green] = {format_size(result.total_size_bytes)} × {coverage_penalty:.2f}"
-            )
-        else:
-            table.add_row(
-                "Effective Size",
-                f"[red]0 B[/red] (validation failed)"
-            )
+    else:
+        table.add_row(
+            "Effective Size",
+            f"[red]0 B[/red] (validation failed)"
+        )
 
     # Add separator
     table.add_row("", "")
     table.add_row("[bold]Validation Checks[/bold]", "")
     table.add_row("", "")
 
-    # Quality Metrics with updated thresholds
-    if result.quality_metrics:
-        dup_pct = result.quality_metrics.get('duplicate_percentage', 0)
-        empty_pct = result.quality_metrics.get('empty_content_rate', 0)
-        job_match = result.quality_metrics.get('job_match_rate', 0)
-        scraper_rate = result.quality_metrics.get('scraper_success_rate', 0)
+    # Quality Metrics
+    # Duplicates (lower is better, threshold 5%)
+    dup_status = format_percentage_with_status(result.duplicate_percentage, 5.0, inverse=True)
+    table.add_row("Duplicate Rate", dup_status)
 
-        # Duplicates (lower is better, threshold 5%)
-        dup_status = format_percentage_with_status(dup_pct, 5.0, inverse=True)
-        table.add_row("Duplicate Rate", dup_status)
+    # Job Match Rate (higher is better, threshold 95%)
+    if result.job_match_rate > 0:
+        job_match_status = format_percentage_with_status(result.job_match_rate, 95.0, inverse=False)
+        table.add_row("Job Match Rate", job_match_status)
 
-        # Empty content (lower is better, threshold 10%)
-        if empty_pct > 0:
-            empty_status = format_percentage_with_status(empty_pct, 10.0, inverse=True)
-            table.add_row("Empty Content", empty_status)
+    # Scraper Success (higher is better, threshold 70%)
+    if result.scraper_success_rate > 0:
+        scraper_status = format_percentage_with_status(result.scraper_success_rate, 70.0, inverse=False)
+        table.add_row("Scraper Success", scraper_status)
 
-        # Job Match Rate (higher is better, threshold 95%)
-        if job_match > 0:
-            job_match_status = format_percentage_with_status(job_match, 95.0, inverse=False)
-            table.add_row("Job Match Rate", job_match_status)
+    # Entities validated
+    if result.entities_validated > 0:
+        passed_color = "green" if result.entities_passed_scraper >= result.entities_validated * 0.7 else "yellow"
+        table.add_row(
+            "Entities Validated",
+            f"[{passed_color}]{result.entities_passed_scraper}/{result.entities_validated} passed[/{passed_color}]"
+        )
 
-        # Scraper Success (higher is better, threshold 70%)
-        if scraper_rate > 0:
-            scraper_status = format_percentage_with_status(scraper_rate, 70.0, inverse=False)
-            table.add_row("Scraper Success", scraper_status)
+    # Job match details
+    if result.entities_checked_for_job_match > 0:
+        match_color = "green" if result.entities_matched_job >= result.entities_checked_for_job_match * 0.95 else "yellow"
+        table.add_row(
+            "Job Content Match",
+            f"[{match_color}]{result.entities_matched_job}/{result.entities_checked_for_job_match} matched[/{match_color}]"
+        )
 
-    # Enhanced validation details
-    if hasattr(result, 'enhanced_validation') and result.enhanced_validation:
-        enhanced = result.enhanced_validation
+    # Scraper validation details (why entities passed/failed)
+    if result.sample_validation_results:
+        table.add_row("", "")
+        table.add_row("[bold]Scraper Details[/bold]", "")
 
-        # Show entities validated
-        if enhanced.entities_validated > 0:
-            passed_color = "green" if enhanced.entities_passed_scraper >= enhanced.entities_validated * 0.7 else "yellow"
-            table.add_row(
-                "Entities Validated",
-                f"[{passed_color}]{enhanced.entities_passed_scraper}/{enhanced.entities_validated} passed[/{passed_color}]"
-            )
+        for i, detail in enumerate(result.sample_validation_results):
+            table.add_row(f"  Entity {i+1}", detail)
 
-        # Show job match details
-        if enhanced.entities_checked_for_job_match > 0:
-            match_color = "green" if enhanced.entities_matched_job >= enhanced.entities_checked_for_job_match * 0.95 else "yellow"
-            table.add_row(
-                "Job Content Match",
-                f"[{match_color}]{enhanced.entities_matched_job}/{enhanced.entities_checked_for_job_match} matched[/{match_color}]"
-            )
+    # Job mismatch samples if any
+    if result.sample_job_mismatches:
+        table.add_row("", "")
+        table.add_row("[bold yellow]Job Mismatches[/bold yellow]", "")
 
-        # NEW: Show scraper validation details (why entities passed/failed)
-        if hasattr(enhanced, 'sample_validation_results') and enhanced.sample_validation_results:
-            table.add_row("", "")
-            table.add_row("[bold]Scraper Details[/bold]", "")
-
-            for i, detail in enumerate(enhanced.sample_validation_results):  # Show all validated
-                # Format: "✅ x: Good job!" or "❌ reddit: titles don't match"
-                table.add_row(f"  Entity {i+1}", detail)
-
-        # NEW: Show job mismatch samples if any
-        if hasattr(enhanced, 'sample_job_mismatches') and enhanced.sample_job_mismatches:
-            table.add_row("", "")
-            table.add_row("[bold yellow]Job Mismatches[/bold yellow]", "")
-
-            for i, mismatch in enumerate(enhanced.sample_job_mismatches[:3]):  # Show max 3
-                table.add_row(f"  Mismatch {i+1}", f"[yellow]{mismatch}[/yellow]")
+        for i, mismatch in enumerate(result.sample_job_mismatches[:3]):
+            table.add_row(f"  Mismatch {i+1}", f"[yellow]{mismatch}[/yellow]")
 
     # Pagination stats if provided
     if pagination_stats:
@@ -238,12 +209,12 @@ def log_s3_validation_table(
             table.add_row("Retrieval Time", f"{pagination_stats['retrieval_time']:.1f}s")
 
     # Issues (if any)
-    if not result.is_valid and result.issues:
+    if not result.is_valid and result.validation_issues:
         table.add_row("", "")
         table.add_row("[bold red]Issues Found[/bold red]", "")
         table.add_row("", "")
 
-        for i, issue in enumerate(result.issues[:5]):  # Show max 5 issues
+        for i, issue in enumerate(result.validation_issues[:5]):  # Show max 5 issues
             table.add_row(f"  Issue {i+1}", f"[red]{issue}[/red]")
 
     # Summary
@@ -255,47 +226,3 @@ def log_s3_validation_table(
     # Print the table
     console.print(table)
     console.print()  # Add spacing after table
-
-
-def log_s3_validation_compact(
-    result: S3ValidationResult,
-    uid: int,
-    hotkey: str
-):
-    """
-    Display S3 validation results in a compact single-line format
-    Useful for batch processing or quick summaries
-
-    Args:
-        result: S3ValidationResult object
-        uid: Miner UID
-        hotkey: Miner hotkey
-    """
-    status_emoji = "✅" if result.is_valid else "❌"
-    status_color = "green" if result.is_valid else "red"
-
-    # Get key metrics
-    dup_pct = result.quality_metrics.get('duplicate_percentage', 0) if result.quality_metrics else 0
-    job_match = result.quality_metrics.get('job_match_rate', 0) if result.quality_metrics else 0
-    scraper_rate = result.quality_metrics.get('scraper_success_rate', 0) if result.quality_metrics else 0
-
-    # Get effective size and coverage (new fields)
-    effective_size = getattr(result, 'effective_size_bytes', 0)
-    coverage = getattr(result, 'job_coverage_rate', 0)
-
-    size_str = format_size(result.total_size_bytes)
-    eff_size_str = format_size(int(effective_size)) if effective_size > 0 else "0"
-
-    console.print(
-        f"[{status_color}]{status_emoji} UID {uid:3d} | {hotkey[:12]}... | "
-        f"Size: {size_str} | Eff: {eff_size_str} | Cov: {coverage:5.1f}% | "
-        f"Dup: {dup_pct:4.1f}% | Job: {job_match:5.1f}% | Scrp: {scraper_rate:5.1f}%[/{status_color}]"
-    )
-
-
-def log_s3_validation_header():
-    """Print a header for compact validation logs"""
-    console.print("[bold cyan]" + "="*100 + "[/bold cyan]")
-    console.print("[bold cyan]S3 Validation Results (DuckDB Competition Model)[/bold cyan]")
-    console.print("[bold cyan]" + "="*100 + "[/bold cyan]")
-    console.print()
