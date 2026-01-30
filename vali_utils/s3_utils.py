@@ -75,6 +75,29 @@ PREFERRED_SCRAPERS = {
     DataSource.REDDIT: ScraperId.REDDIT_MC,
 }
 
+# Shared DuckDB connection - reused across all concurrent miner validations
+_shared_duckdb_conn = None
+_shared_duckdb_lock = None
+
+def _get_shared_duckdb():
+    """Get or create shared DuckDB connection for all validations."""
+    global _shared_duckdb_conn, _shared_duckdb_lock
+    import threading
+
+    if _shared_duckdb_lock is None:
+        _shared_duckdb_lock = threading.Lock()
+
+    with _shared_duckdb_lock:
+        if _shared_duckdb_conn is None:
+            _shared_duckdb_conn = duckdb.connect(':memory:')
+            _shared_duckdb_conn.execute("INSTALL httpfs;")
+            _shared_duckdb_conn.execute("LOAD httpfs;")
+            _shared_duckdb_conn.execute("SET http_timeout=120000;")
+            _shared_duckdb_conn.execute("SET enable_progress_bar=false;")
+            _shared_duckdb_conn.execute("SET memory_limit='4GB';")
+            bt.logging.info("Created shared DuckDB connection with 4GB memory limit")
+        return _shared_duckdb_conn
+
 
 class DuckDBSampledValidator:
     """
@@ -107,17 +130,7 @@ class DuckDBSampledValidator:
         self.s3_reader = s3_reader
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
-        self.conn = duckdb.connect(':memory:')
-        self._setup_duckdb()
-
-    def _setup_duckdb(self):
-        """Configure DuckDB for HTTP parquet reading with memory limits"""
-        self.conn.execute("INSTALL httpfs;")
-        self.conn.execute("LOAD httpfs;")
-        self.conn.execute("SET http_timeout=120000;")
-        self.conn.execute("SET enable_progress_bar=false;")
-        # Memory management - limit DuckDB to prevent OOM, spill to disk if needed
-        self.conn.execute("SET memory_limit='4GB';")
+        self.conn = _get_shared_duckdb()  # Use shared connection
 
     async def validate_miner_s3_data(
         self,
@@ -428,7 +441,7 @@ class DuckDBSampledValidator:
         self,
         jobs_urls: Dict[str, List[str]],
         platform: str,
-        batch_size: int = 50
+        batch_size: int = 10
     ) -> Dict[str, int]:
         """Validate all jobs for a platform in batched DuckDB queries to limit memory."""
         result = {
@@ -931,8 +944,8 @@ class DuckDBSampledValidator:
         )
 
     def close(self):
-        """Close DuckDB connection."""
-        self.conn.close()
+        """No-op - shared connection stays open for process lifetime."""
+        pass
 
 
 def load_expected_jobs_from_gravity() -> Dict:
@@ -983,6 +996,7 @@ async def validate_s3_miner_data(
     # Load expected jobs
     expected_jobs = load_expected_jobs_from_gravity()
 
+    validator = None
     try:
         validator = DuckDBSampledValidator(
             wallet=wallet,
@@ -993,7 +1007,6 @@ async def validate_s3_miner_data(
         result = await validator.validate_miner_s3_data(
             miner_hotkey, expected_jobs
         )
-        validator.close()
         return result
 
     except Exception as e:
@@ -1020,6 +1033,10 @@ async def validate_s3_miner_data(
             sample_validation_results=[],
             sample_job_mismatches=[]
         )
+
+    finally:
+        if validator:
+            validator.close()
 
 
 def get_s3_validation_summary(result: S3ValidationResult) -> str:
