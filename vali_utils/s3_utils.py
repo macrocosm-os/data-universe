@@ -182,7 +182,7 @@ class DuckDBSampledValidator:
                 return self._create_failed_result("No files in active jobs")
 
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
-            sample_count = min(sample_count, len(active_files))
+            sample_count = min(sample_count, len(active_files), 200)  # Cap at 200 files max
 
             sampled_files_with_job = random.sample(active_files, sample_count)
             sampled_files = [f for f, _ in sampled_files_with_job]
@@ -425,9 +425,10 @@ class DuckDBSampledValidator:
     def _batch_validate_platform(
         self,
         jobs_urls: Dict[str, List[str]],
-        platform: str
+        platform: str,
+        batch_size: int = 50
     ) -> Dict[str, int]:
-        """Validate all jobs for a platform in a single DuckDB query."""
+        """Validate all jobs for a platform in batched DuckDB queries to limit memory."""
         result = {
             'total_rows': 0,
             'duplicates': 0,
@@ -443,64 +444,62 @@ class DuckDBSampledValidator:
         if not all_urls:
             return result
 
-        url_list_str = ", ".join([f"'{url}'" for url in all_urls])
-
         # Platform-specific empty check
         if platform in ['x', 'twitter']:
-            # Twitter: empty if text is empty (simple check - hashtags/media are bonus)
             empty_check = "COALESCE(text, '') = ''"
         else:
-            # Reddit: empty only if BOTH body and title are empty (posts can have title but no body)
             empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = ''"
 
-        try:
-            query = f"""
-                WITH raw_data AS (
+        # Process in batches to limit memory usage
+        all_tagged_data = []
+        for i in range(0, len(all_urls), batch_size):
+            batch_urls = all_urls[i:i + batch_size]
+            url_list_str = ", ".join([f"'{url}'" for url in batch_urls])
+
+            try:
+                query = f"""
                     SELECT
                         url as entity_url,
-                        filename,
-                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty,
-                        CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END as is_missing_url
-                    FROM read_parquet([{url_list_str}], filename=true, union_by_name=true)
-                ),
-                tagged_data AS (
-                    SELECT
-                        entity_url,
                         COALESCE(
                             NULLIF(regexp_extract(filename, '/job_id=([^/]+)/', 1), ''),
                             NULLIF(regexp_extract(filename, '/job_id%3D([^/]+)/', 1), '')
                         ) as job_id,
-                        is_empty,
-                        is_missing_url
-                    FROM raw_data
-                ),
-                job_duplicates AS (
-                    SELECT
-                        job_id,
-                        entity_url,
-                        COUNT(*) as cnt
-                    FROM tagged_data
-                    WHERE entity_url IS NOT NULL AND entity_url != ''
-                    GROUP BY job_id, entity_url
-                )
-                SELECT
-                    (SELECT COUNT(*) FROM tagged_data) as total_rows,
-                    (SELECT COUNT(DISTINCT entity_url) FROM tagged_data WHERE entity_url IS NOT NULL AND entity_url != '') as unique_urls,
-                    (SELECT COALESCE(SUM(cnt - 1), 0) FROM job_duplicates WHERE cnt > 1) as duplicate_count,
-                    (SELECT SUM(is_empty) FROM tagged_data) as empty_content,
-                    (SELECT SUM(is_missing_url) FROM tagged_data) as missing_url
-            """
+                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty,
+                        CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END as is_missing_url
+                    FROM read_parquet([{url_list_str}], filename=true, union_by_name=true)
+                """
+                batch_result = self.conn.execute(query).fetchall()
+                all_tagged_data.extend(batch_result)
 
-            query_result = self.conn.execute(query).fetchone()
+            except Exception as e:
+                bt.logging.warning(f"Batch query error for {platform} batch {i//batch_size}: {e}")
+                continue
 
-            result['total_rows'] = query_result[0] or 0
-            result['with_url'] = query_result[1] or 0
-            result['duplicates'] = query_result[2] or 0
-            result['empty_content'] = query_result[3] or 0
-            result['missing_url'] = query_result[4] or 0
+        if not all_tagged_data:
+            return result
 
-        except Exception as e:
-            bt.logging.warning(f"Batch query error for {platform}: {e}")
+        # Aggregate results from all batches
+        result['total_rows'] = len(all_tagged_data)
+        result['empty_content'] = sum(1 for row in all_tagged_data if row[2])
+        result['missing_url'] = sum(1 for row in all_tagged_data if row[3])
+
+        # Count duplicates within each job
+        from collections import defaultdict
+        job_url_counts = defaultdict(lambda: defaultdict(int))
+        for row in all_tagged_data:
+            entity_url, job_id = row[0], row[1]
+            if entity_url:
+                job_url_counts[job_id][entity_url] += 1
+
+        result['duplicates'] = sum(
+            count - 1
+            for job_urls in job_url_counts.values()
+            for count in job_urls.values()
+            if count > 1
+        )
+        result['with_url'] = sum(
+            len(job_urls) for job_urls in job_url_counts.values()
+        )
 
         return result
 
