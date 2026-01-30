@@ -75,33 +75,6 @@ PREFERRED_SCRAPERS = {
     DataSource.REDDIT: ScraperId.REDDIT_MC,
 }
 
-# Shared DuckDB connection - reused across all concurrent miner validations
-_shared_duckdb_conn = None
-_shared_duckdb_lock = None
-
-def _get_shared_duckdb():
-    """Get or create shared DuckDB connection for all validations."""
-    global _shared_duckdb_conn, _shared_duckdb_lock
-    import threading
-
-    if _shared_duckdb_lock is None:
-        _shared_duckdb_lock = threading.Lock()
-
-    with _shared_duckdb_lock:
-        if _shared_duckdb_conn is None:
-            _shared_duckdb_conn = duckdb.connect(':memory:')
-            _shared_duckdb_conn.execute("INSTALL httpfs;")
-            _shared_duckdb_conn.execute("LOAD httpfs;")
-            _shared_duckdb_conn.execute("SET http_timeout=120000;")
-            _shared_duckdb_conn.execute("SET enable_progress_bar=false;")
-            # Memory management: 8GB limit with disk spilling for large queries
-            _shared_duckdb_conn.execute("SET memory_limit='8GB';")
-            _shared_duckdb_conn.execute("SET temp_directory='/tmp/duckdb_temp';")
-            _shared_duckdb_conn.execute("SET threads=4;")  # Limit threads to reduce memory
-            bt.logging.info("Created shared DuckDB connection with 8GB memory limit + disk spilling")
-        return _shared_duckdb_conn
-
-
 class DuckDBSampledValidator:
     """
     DuckDB-based validator with random sampling for efficient validation.
@@ -133,7 +106,18 @@ class DuckDBSampledValidator:
         self.s3_reader = s3_reader
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
-        self.conn = _get_shared_duckdb()  # Use shared connection
+        self._setup_duckdb()
+
+    def _setup_duckdb(self):
+        """Configure DuckDB for HTTP parquet reading with memory limits"""
+        self.conn = duckdb.connect(':memory:')
+        self.conn.execute("INSTALL httpfs;")
+        self.conn.execute("LOAD httpfs;")
+        self.conn.execute("SET http_timeout=120000;")
+        self.conn.execute("SET enable_progress_bar=false;")
+        # Memory limit per connection - 15 validators × 2GB = 30GB max
+        self.conn.execute("SET memory_limit='2GB';")
+        self.conn.execute("SET threads=2;")  # Limit threads per connection
 
     async def validate_miner_s3_data(
         self,
@@ -463,9 +447,8 @@ class DuckDBSampledValidator:
             return result
 
         # Platform-specific empty check (includes media)
-        # DuckDB automatically does column projection - only columns in the query are read
         if platform in ['x', 'twitter']:
-            # Twitter: empty if no text AND no media (use len() for arrays)
+            # Twitter: empty if no text AND no media
             empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR len(media) = 0)"
         else:
             # Reddit: empty if no body AND no title AND no media
@@ -951,8 +934,13 @@ class DuckDBSampledValidator:
         )
 
     def close(self):
-        """No-op - shared connection stays open for process lifetime."""
-        pass
+        """Close DuckDB connection to free memory."""
+        if self.conn:
+            try:
+                self.conn.close()
+            except:
+                pass
+            self.conn = None
 
 
 def load_expected_jobs_from_gravity() -> Dict:
