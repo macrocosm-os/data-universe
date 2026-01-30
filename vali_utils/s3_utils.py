@@ -408,7 +408,8 @@ class DuckDBSampledValidator:
                 conn.execute("SET threads=1;")
 
                 # First get schema to check available columns
-                schema_query = f"SELECT column_name FROM parquet_schema('{presigned_url}')"
+                # parquet_schema returns 'name' column, not 'column_name'
+                schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
                 schema_result = conn.execute(schema_query).fetchall()
                 available_columns = {row[0].lower() for row in schema_result}
 
