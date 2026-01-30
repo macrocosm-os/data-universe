@@ -429,13 +429,13 @@ class DuckDBSampledValidator:
                     empty_check = " AND ".join(checks) if checks else "FALSE"
 
                 # Use TABLESAMPLE BERNOULLI - probabilistic sampling, memory efficient
-                # 0.01% of rows, then LIMIT to get desired sample size
+                # 10% sampling ensures we get rows even from smaller files
                 query = f"""
                     SELECT
                         url,
                         CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
                     FROM read_parquet('{presigned_url}')
-                    TABLESAMPLE BERNOULLI(0.1%)
+                    TABLESAMPLE BERNOULLI(10%)
                     LIMIT {samples_per_file}
                 """
                 rows = conn.execute(query).fetchall()
@@ -665,12 +665,13 @@ class DuckDBSampledValidator:
                 conn = None
                 try:
                     # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
+                    # 10% sampling ensures we get rows even from smaller files
                     conn = duckdb.connect(':memory:')
                     conn.execute("SET memory_limit='256MB';")
                     conn.execute("SET threads=1;")
                     sample_df = conn.execute(f"""
                         SELECT * FROM read_parquet('{presigned_url}')
-                        TABLESAMPLE BERNOULLI(0.1%)
+                        TABLESAMPLE BERNOULLI(10%)
                         LIMIT {samples_per_file}
                     """).fetchdf()
 
@@ -804,13 +805,14 @@ class DuckDBSampledValidator:
             conn = None
             try:
                 # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
+                # Use 10% sampling to ensure we get rows even from smaller files
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='256MB';")
                 conn.execute("SET threads=1;")
                 df = conn.execute(f"""
                     SELECT * FROM read_parquet('{presigned_url}')
-                    TABLESAMPLE BERNOULLI(0.1%)
-                    LIMIT 3
+                    TABLESAMPLE BERNOULLI(10%)
+                    LIMIT 5
                 """).fetchdf()
 
                 if df is None or len(df) == 0:
