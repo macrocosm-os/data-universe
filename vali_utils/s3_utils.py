@@ -214,16 +214,11 @@ class DuckDBSampledValidator:
                     urls_by_job[job_id] = {'platform': platform, 'urls': []}
                 urls_by_job[job_id]['urls'].append(url)
 
-            # Step 4: DuckDB validation (TEMPORARILY DISABLED - fixing OOM issues)
-            # TODO: Re-enable after fixing DuckDB memory issues
-            bt.logging.info(f"{miner_hotkey}: Skipping DuckDB validation (temporarily disabled)")
-            duckdb_result = {
-                "success": True,
-                "duplicate_rate_within_job": 0.0,
-                "empty_rate": 0.0,
-                "missing_url_rate": 0.0,
-                "total_rows": 0
-            }
+            # Step 4: Lightweight DuckDB validation (sampled - memory safe)
+            bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
+            duckdb_result = await self._sampled_duckdb_validation(
+                sampled_files, expected_jobs, presigned_urls, samples_per_file=100
+            )
 
             # Step 5: Job content matching
             bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
@@ -369,6 +364,111 @@ class DuckDBSampledValidator:
                 bt.logging.warning(f"Presigned URL batch error: {e}")
 
         return all_urls
+
+    async def _sampled_duckdb_validation(
+        self,
+        sampled_files: List[Dict],
+        expected_jobs: Dict[str, Dict],
+        presigned_urls: Dict[str, str],
+        samples_per_file: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Lightweight DuckDB validation using random sampling.
+        Checks duplicates, empty content, and missing URLs on sampled rows only.
+        Memory safe: 256MB limit, processes one file at a time.
+        """
+        total_rows = 0
+        duplicate_urls = set()
+        all_urls_seen = []
+        empty_count = 0
+        missing_url_count = 0
+
+        # Limit to 20 files max for this check
+        files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
+
+        for file_info in files_to_check:
+            presigned_url = presigned_urls.get(file_info['key'])
+            if not presigned_url:
+                continue
+
+            # Get platform from job_id
+            file_key = file_info['key']
+            if '/job_id=' in file_key:
+                job_id = file_key.split('/job_id=')[1].split('/')[0]
+                job_config = expected_jobs.get(job_id, {})
+                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+                platform = params.get('platform', '').lower()
+            else:
+                platform = 'unknown'
+
+            # Platform-specific empty check
+            if platform in ['x', 'twitter']:
+                empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR len(media) = 0)"
+            else:
+                empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR len(media) = 0)"
+
+            try:
+                conn = duckdb.connect(':memory:')
+                conn.execute("SET memory_limit='256MB';")
+
+                # Sample random rows and get basic stats
+                query = f"""
+                    SELECT
+                        url,
+                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
+                    FROM read_parquet('{presigned_url}')
+                    USING SAMPLE {samples_per_file} ROWS
+                """
+                df = conn.execute(query).fetchdf()
+                conn.close()
+
+                if df is None or len(df) == 0:
+                    continue
+
+                total_rows += len(df)
+
+                # Check empty content
+                empty_count += df['is_empty'].sum()
+
+                # Check missing URLs
+                missing_url_count += df['url'].isna().sum() + (df['url'] == '').sum()
+
+                # Check duplicates (within this sample and across files)
+                for url in df['url'].dropna():
+                    if url and url != '':
+                        if url in all_urls_seen:
+                            duplicate_urls.add(url)
+                        all_urls_seen.append(url)
+
+            except Exception as e:
+                bt.logging.debug(f"Sampled validation error for file: {e}")
+                continue
+
+        if total_rows == 0:
+            return {
+                "success": True,
+                "duplicate_rate_within_job": 0.0,
+                "empty_rate": 0.0,
+                "missing_url_rate": 0.0,
+                "total_rows": 0
+            }
+
+        duplicate_rate = (len(duplicate_urls) / total_rows * 100) if total_rows > 0 else 0
+        empty_rate = (empty_count / total_rows * 100) if total_rows > 0 else 0
+        missing_url_rate = (missing_url_count / total_rows * 100) if total_rows > 0 else 0
+
+        bt.logging.info(
+            f"Sampled DuckDB validation: {total_rows} rows, "
+            f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%"
+        )
+
+        return {
+            "success": True,
+            "duplicate_rate_within_job": duplicate_rate,
+            "empty_rate": empty_rate,
+            "missing_url_rate": missing_url_rate,
+            "total_rows": total_rows
+        }
 
     def _validate_sample_with_duckdb(
         self,
