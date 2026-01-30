@@ -407,6 +407,7 @@ class DuckDBSampledValidator:
             else:
                 empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR len(media) = 0)"
 
+            conn = None
             try:
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='256MB';")
@@ -420,7 +421,6 @@ class DuckDBSampledValidator:
                     USING SAMPLE {samples_per_file} ROWS
                 """
                 df = conn.execute(query).fetchdf()
-                conn.close()
 
                 if df is None or len(df) == 0:
                     continue
@@ -443,6 +443,12 @@ class DuckDBSampledValidator:
             except Exception as e:
                 bt.logging.debug(f"Sampled validation error for file: {e}")
                 continue
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
 
         if total_rows == 0:
             return {
@@ -638,6 +644,7 @@ class DuckDBSampledValidator:
                 if not presigned_url:
                     continue
 
+                conn = None
                 try:
                     # Read random rows using DuckDB SAMPLE (memory efficient)
                     conn = duckdb.connect(':memory:')
@@ -646,7 +653,6 @@ class DuckDBSampledValidator:
                         SELECT * FROM read_parquet('{presigned_url}')
                         USING SAMPLE {samples_per_file} ROWS
                     """).fetchdf()
-                    conn.close()
 
                     if sample_df is None or len(sample_df) == 0:
                         continue
@@ -665,6 +671,12 @@ class DuckDBSampledValidator:
 
                 except Exception as e:
                     continue
+                finally:
+                    if conn:
+                        try:
+                            conn.close()
+                        except:
+                            pass
 
         return {
             'total_checked': total_checked,
@@ -767,6 +779,7 @@ class DuckDBSampledValidator:
             else:
                 continue
 
+            conn = None
             try:
                 # Read random rows using DuckDB SAMPLE (memory efficient)
                 conn = duckdb.connect(':memory:')
@@ -775,7 +788,6 @@ class DuckDBSampledValidator:
                     SELECT * FROM read_parquet('{presigned_url}')
                     USING SAMPLE 3 ROWS
                 """).fetchdf()
-                conn.close()
 
                 if df is None or len(df) == 0:
                     continue
@@ -786,6 +798,12 @@ class DuckDBSampledValidator:
                         all_entities.append((entity, platform, job_id))
             except:
                 continue
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
 
         if not all_entities:
             return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
