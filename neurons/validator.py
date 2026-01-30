@@ -616,8 +616,8 @@ class Validator:
                     f"Validator running on step({self.step}) block({self.block})."
                 )
 
-                # Log memory usage every 5 steps
-                if self.step % 5 == 0:
+                # Log memory usage every step
+                if True:
                     snapshot = tracemalloc.take_snapshot()
                     top_stats = snapshot.statistics('lineno')
                     bt.logging.info("=== TOP 10 MEMORY ALLOCATIONS ===")
