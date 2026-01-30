@@ -395,11 +395,11 @@ class MinerEvaluator:
             ).total_seconds()
 
         t_start = time.perf_counter()
-        # Run in batches of 15.
-        miners_to_eval = 15
+        # Run in batches of 5 (reduced from 15 to lower memory usage).
+        miners_to_eval = 5
 
         # Otherwise, execute the next batch of evaluations.
-        # Use a set in case the network has fewer than 15 miners.
+        # Use a set in case the network has fewer than 5 miners.
         uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
 
         bt.logging.info(
