@@ -1,4 +1,5 @@
 import os
+import gc
 import copy
 import asyncio
 import datetime
@@ -253,6 +254,10 @@ class MinerEvaluator:
         )
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
+
+        # Force garbage collection to free miner index objects (can be 350K+ buckets per miner)
+        del index
+        gc.collect()
 
         metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
 

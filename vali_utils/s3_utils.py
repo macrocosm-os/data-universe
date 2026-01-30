@@ -440,6 +440,8 @@ class DuckDBSampledValidator:
                             duplicate_urls.add(url)
                         all_urls_seen.append(url)
 
+                del df  # Free DataFrame memory
+
             except Exception as e:
                 bt.logging.debug(f"Sampled validation error for file: {e}")
                 continue
@@ -669,6 +671,8 @@ class DuckDBSampledValidator:
                             uri = row.get('url', row.get('uri', 'unknown'))
                             mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
 
+                    del sample_df  # Free DataFrame memory
+
                 except Exception as e:
                     continue
                 finally:
@@ -796,6 +800,8 @@ class DuckDBSampledValidator:
                     entity = self._create_data_entity(row, platform)
                     if entity:
                         all_entities.append((entity, platform, job_id))
+
+                del df  # Free DataFrame memory
             except:
                 continue
             finally:
