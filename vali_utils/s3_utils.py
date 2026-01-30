@@ -115,8 +115,8 @@ class DuckDBSampledValidator:
         self.conn.execute("LOAD httpfs;")
         self.conn.execute("SET http_timeout=120000;")
         self.conn.execute("SET enable_progress_bar=false;")
-        # Memory limit per connection - 15 validators × 2GB = 30GB max
-        self.conn.execute("SET memory_limit='2GB';")
+        # Memory limit per connection - 15 validators × 4GB = 60GB max (but queries don't all run at once)
+        self.conn.execute("SET memory_limit='4GB';")
         self.conn.execute("SET threads=2;")  # Limit threads per connection
 
     async def validate_miner_s3_data(
@@ -428,7 +428,7 @@ class DuckDBSampledValidator:
         self,
         jobs_urls: Dict[str, List[str]],
         platform: str,
-        batch_size: int = 10
+        batch_size: int = 3
     ) -> Dict[str, int]:
         """Validate all jobs for a platform in batched DuckDB queries to limit memory."""
         result = {
