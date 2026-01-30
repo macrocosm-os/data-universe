@@ -616,14 +616,15 @@ class Validator:
                     f"Validator running on step({self.step}) block({self.block})."
                 )
 
-                # Log memory usage every step
-                snapshot = tracemalloc.take_snapshot()
-                top_stats = snapshot.statistics('lineno')
-                bt.logging.info("=== TOP 10 MEMORY ALLOCATIONS ===")
-                for stat in top_stats[:10]:
-                    bt.logging.info(str(stat))
-                current, peak = tracemalloc.get_traced_memory()
-                bt.logging.info(f"Current memory: {current / 1024 / 1024:.1f} MB, Peak: {peak / 1024 / 1024:.1f} MB")
+                # Log memory usage every 5 steps
+                if self.step % 5 == 0:
+                    snapshot = tracemalloc.take_snapshot()
+                    top_stats = snapshot.statistics('lineno')
+                    bt.logging.info("=== TOP 10 MEMORY ALLOCATIONS ===")
+                    for stat in top_stats[:10]:
+                        bt.logging.info(str(stat))
+                    current, peak = tracemalloc.get_traced_memory()
+                    bt.logging.info(f"Current memory: {current / 1024 / 1024:.1f} MB, Peak: {peak / 1024 / 1024:.1f} MB")
 
                 # Ensure validator hotkey is still registered on the network.
                 utils.assert_registered(self.wallet, self.metagraph)
