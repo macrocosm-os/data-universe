@@ -42,7 +42,7 @@ REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # 
 # Date after which backwards compatibility for nested X content format will be removed
 X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
 
-EVALUATION_ON_STARTUP = 15
+EVALUATION_ON_STARTUP = 5
 
 # Emission Control / Burn Configuration
 EMISSION_CONTROL_PERCENTAGE = 0.60  # 60% of emissions redirected to subnet owner (burn)
