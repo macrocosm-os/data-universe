@@ -75,7 +75,6 @@ PREFERRED_SCRAPERS = {
     DataSource.REDDIT: ScraperId.REDDIT_MC,
 }
 
-
 class DuckDBSampledValidator:
     """
     DuckDB-based validator with random sampling for efficient validation.
@@ -107,15 +106,18 @@ class DuckDBSampledValidator:
         self.s3_reader = s3_reader
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
-        self.conn = duckdb.connect(':memory:')
         self._setup_duckdb()
 
     def _setup_duckdb(self):
-        """Configure DuckDB for HTTP parquet reading"""
+        """Configure DuckDB for HTTP parquet reading with memory limits"""
+        self.conn = duckdb.connect(':memory:')
         self.conn.execute("INSTALL httpfs;")
         self.conn.execute("LOAD httpfs;")
         self.conn.execute("SET http_timeout=120000;")
         self.conn.execute("SET enable_progress_bar=false;")
+        # Memory limit per connection - 15 validators × 4GB = 60GB max (but queries don't all run at once)
+        self.conn.execute("SET memory_limit='4GB';")
+        self.conn.execute("SET threads=2;")  # Limit threads per connection
 
     async def validate_miner_s3_data(
         self,
@@ -182,7 +184,7 @@ class DuckDBSampledValidator:
                 return self._create_failed_result("No files in active jobs")
 
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
-            sample_count = min(sample_count, len(active_files))
+            sample_count = min(sample_count, len(active_files), 200)  # Cap at 200 files max
 
             sampled_files_with_job = random.sample(active_files, sample_count)
             sampled_files = [f for f, _ in sampled_files_with_job]
@@ -212,12 +214,11 @@ class DuckDBSampledValidator:
                     urls_by_job[job_id] = {'platform': platform, 'urls': []}
                 urls_by_job[job_id]['urls'].append(url)
 
-            # Step 4: DuckDB validation (duplicates within job, empty content)
-            bt.logging.info(f"{miner_hotkey}: Running DuckDB validation...")
-            duckdb_result = self._validate_sample_with_duckdb(urls_by_job)
-
-            if not duckdb_result.get("success"):
-                return self._create_failed_result(f"DuckDB error: {duckdb_result.get('error')}")
+            # Step 4: Lightweight DuckDB validation (sampled - memory safe)
+            bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
+            duckdb_result = await self._sampled_duckdb_validation(
+                sampled_files, expected_jobs, presigned_urls, samples_per_file=100
+            )
 
             # Step 5: Job content matching
             bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
@@ -364,6 +365,117 @@ class DuckDBSampledValidator:
 
         return all_urls
 
+    async def _sampled_duckdb_validation(
+        self,
+        sampled_files: List[Dict],
+        expected_jobs: Dict[str, Dict],
+        presigned_urls: Dict[str, str],
+        samples_per_file: int = 100
+    ) -> Dict[str, Any]:
+        """
+        Lightweight DuckDB validation using random sampling.
+        Checks duplicates, empty content, and missing URLs on sampled rows only.
+        Memory safe: 256MB limit, processes one file at a time.
+        """
+        total_rows = 0
+        duplicate_urls = set()
+        all_urls_seen = []
+        empty_count = 0
+        missing_url_count = 0
+
+        # Limit to 20 files max for this check
+        files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
+
+        for file_info in files_to_check:
+            presigned_url = presigned_urls.get(file_info['key'])
+            if not presigned_url:
+                continue
+
+            # Get platform from job_id
+            file_key = file_info['key']
+            if '/job_id=' in file_key:
+                job_id = file_key.split('/job_id=')[1].split('/')[0]
+                job_config = expected_jobs.get(job_id, {})
+                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+                platform = params.get('platform', '').lower()
+            else:
+                platform = 'unknown'
+
+            # Platform-specific empty check
+            if platform in ['x', 'twitter']:
+                empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR len(media) = 0)"
+            else:
+                empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR len(media) = 0)"
+
+            conn = None
+            try:
+                conn = duckdb.connect(':memory:')
+                conn.execute("SET memory_limit='256MB';")
+
+                # Sample random rows and get basic stats
+                query = f"""
+                    SELECT
+                        url,
+                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
+                    FROM read_parquet('{presigned_url}')
+                    USING SAMPLE {samples_per_file} ROWS
+                """
+                df = conn.execute(query).fetchdf()
+
+                if df is None or len(df) == 0:
+                    continue
+
+                total_rows += len(df)
+
+                # Check empty content
+                empty_count += df['is_empty'].sum()
+
+                # Check missing URLs
+                missing_url_count += df['url'].isna().sum() + (df['url'] == '').sum()
+
+                # Check duplicates (within this sample and across files)
+                for url in df['url'].dropna():
+                    if url and url != '':
+                        if url in all_urls_seen:
+                            duplicate_urls.add(url)
+                        all_urls_seen.append(url)
+
+            except Exception as e:
+                bt.logging.debug(f"Sampled validation error for file: {e}")
+                continue
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
+
+        if total_rows == 0:
+            return {
+                "success": True,
+                "duplicate_rate_within_job": 0.0,
+                "empty_rate": 0.0,
+                "missing_url_rate": 0.0,
+                "total_rows": 0
+            }
+
+        duplicate_rate = (len(duplicate_urls) / total_rows * 100) if total_rows > 0 else 0
+        empty_rate = (empty_count / total_rows * 100) if total_rows > 0 else 0
+        missing_url_rate = (missing_url_count / total_rows * 100) if total_rows > 0 else 0
+
+        bt.logging.info(
+            f"Sampled DuckDB validation: {total_rows} rows, "
+            f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%"
+        )
+
+        return {
+            "success": True,
+            "duplicate_rate_within_job": duplicate_rate,
+            "empty_rate": empty_rate,
+            "missing_url_rate": missing_url_rate,
+            "total_rows": total_rows
+        }
+
     def _validate_sample_with_duckdb(
         self,
         urls_by_job: Dict[str, Dict[str, List[str]]]
@@ -425,9 +537,10 @@ class DuckDBSampledValidator:
     def _batch_validate_platform(
         self,
         jobs_urls: Dict[str, List[str]],
-        platform: str
+        platform: str,
+        batch_size: int = 3
     ) -> Dict[str, int]:
-        """Validate all jobs for a platform in a single DuckDB query."""
+        """Validate all jobs for a platform in batched DuckDB queries to limit memory."""
         result = {
             'total_rows': 0,
             'duplicates': 0,
@@ -443,64 +556,43 @@ class DuckDBSampledValidator:
         if not all_urls:
             return result
 
-        url_list_str = ", ".join([f"'{url}'" for url in all_urls])
-
-        # Platform-specific empty check
+        # Platform-specific empty check (includes media)
         if platform in ['x', 'twitter']:
-            # Twitter: empty if text is empty (simple check - hashtags/media are bonus)
-            empty_check = "COALESCE(text, '') = ''"
+            # Twitter: empty if no text AND no media
+            empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR len(media) = 0)"
         else:
-            # Reddit: empty only if BOTH body and title are empty (posts can have title but no body)
-            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = ''"
+            # Reddit: empty if no body AND no title AND no media
+            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR len(media) = 0)"
 
-        try:
-            query = f"""
-                WITH raw_data AS (
+        # Process in batches - use DuckDB aggregation to avoid loading all rows into Python
+        for i in range(0, len(all_urls), batch_size):
+            batch_urls = all_urls[i:i + batch_size]
+            url_list_str = ", ".join([f"'{url}'" for url in batch_urls])
+
+            try:
+                # DuckDB auto-projects: only url/text/body/title/media columns are read (~80% memory savings)
+                # Full schema is still read in _perform_scraper_validation() for content validation
+                query = f"""
                     SELECT
-                        url as entity_url,
-                        filename,
-                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty,
-                        CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END as is_missing_url
-                    FROM read_parquet([{url_list_str}], filename=true, union_by_name=true)
-                ),
-                tagged_data AS (
-                    SELECT
-                        entity_url,
-                        COALESCE(
-                            NULLIF(regexp_extract(filename, '/job_id=([^/]+)/', 1), ''),
-                            NULLIF(regexp_extract(filename, '/job_id%3D([^/]+)/', 1), '')
-                        ) as job_id,
-                        is_empty,
-                        is_missing_url
-                    FROM raw_data
-                ),
-                job_duplicates AS (
-                    SELECT
-                        job_id,
-                        entity_url,
-                        COUNT(*) as cnt
-                    FROM tagged_data
-                    WHERE entity_url IS NOT NULL AND entity_url != ''
-                    GROUP BY job_id, entity_url
-                )
-                SELECT
-                    (SELECT COUNT(*) FROM tagged_data) as total_rows,
-                    (SELECT COUNT(DISTINCT entity_url) FROM tagged_data WHERE entity_url IS NOT NULL AND entity_url != '') as unique_urls,
-                    (SELECT COALESCE(SUM(cnt - 1), 0) FROM job_duplicates WHERE cnt > 1) as duplicate_count,
-                    (SELECT SUM(is_empty) FROM tagged_data) as empty_content,
-                    (SELECT SUM(is_missing_url) FROM tagged_data) as missing_url
-            """
+                        COUNT(*) as total_rows,
+                        SUM(CASE WHEN {empty_check} THEN 1 ELSE 0 END) as empty_count,
+                        SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url_count,
+                        COUNT(url) - COUNT(DISTINCT url) as duplicate_count,
+                        COUNT(DISTINCT url) as unique_urls
+                    FROM read_parquet([{url_list_str}], union_by_name=true)
+                """
+                batch_result = self.conn.execute(query).fetchone()
 
-            query_result = self.conn.execute(query).fetchone()
+                if batch_result:
+                    result['total_rows'] += batch_result[0] or 0
+                    result['empty_content'] += batch_result[1] or 0
+                    result['missing_url'] += batch_result[2] or 0
+                    result['duplicates'] += batch_result[3] or 0
+                    result['with_url'] += batch_result[4] or 0
 
-            result['total_rows'] = query_result[0] or 0
-            result['with_url'] = query_result[1] or 0
-            result['duplicates'] = query_result[2] or 0
-            result['empty_content'] = query_result[3] or 0
-            result['missing_url'] = query_result[4] or 0
-
-        except Exception as e:
-            bt.logging.warning(f"Batch query error for {platform}: {e}")
+            except Exception as e:
+                bt.logging.warning(f"Batch query error for {platform} batch {i//batch_size}: {e}")
+                continue
 
         return result
 
@@ -552,12 +644,18 @@ class DuckDBSampledValidator:
                 if not presigned_url:
                     continue
 
+                conn = None
                 try:
-                    df = pd.read_parquet(presigned_url)
-                    if len(df) == 0:
-                        continue
+                    # Read random rows using DuckDB SAMPLE (memory efficient)
+                    conn = duckdb.connect(':memory:')
+                    conn.execute("SET memory_limit='256MB';")
+                    sample_df = conn.execute(f"""
+                        SELECT * FROM read_parquet('{presigned_url}')
+                        USING SAMPLE {samples_per_file} ROWS
+                    """).fetchdf()
 
-                    sample_df = df.head(min(samples_per_file, len(df)))
+                    if sample_df is None or len(sample_df) == 0:
+                        continue
 
                     for _, row in sample_df.iterrows():
                         total_checked += 1
@@ -573,6 +671,12 @@ class DuckDBSampledValidator:
 
                 except Exception as e:
                     continue
+                finally:
+                    if conn:
+                        try:
+                            conn.close()
+                        except:
+                            pass
 
         return {
             'total_checked': total_checked,
@@ -675,17 +779,31 @@ class DuckDBSampledValidator:
             else:
                 continue
 
+            conn = None
             try:
-                df = pd.read_parquet(presigned_url)
-                if len(df) == 0:
+                # Read random rows using DuckDB SAMPLE (memory efficient)
+                conn = duckdb.connect(':memory:')
+                conn.execute("SET memory_limit='256MB';")
+                df = conn.execute(f"""
+                    SELECT * FROM read_parquet('{presigned_url}')
+                    USING SAMPLE 3 ROWS
+                """).fetchdf()
+
+                if df is None or len(df) == 0:
                     continue
 
-                for _, row in df.head(3).iterrows():
+                for _, row in df.iterrows():
                     entity = self._create_data_entity(row, platform)
                     if entity:
                         all_entities.append((entity, platform, job_id))
             except:
                 continue
+            finally:
+                if conn:
+                    try:
+                        conn.close()
+                    except:
+                        pass
 
         if not all_entities:
             return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
@@ -952,8 +1070,13 @@ class DuckDBSampledValidator:
         )
 
     def close(self):
-        """Close DuckDB connection."""
-        self.conn.close()
+        """Close DuckDB connection to free memory."""
+        if self.conn:
+            try:
+                self.conn.close()
+            except:
+                pass
+            self.conn = None
 
 
 def load_expected_jobs_from_gravity() -> Dict:
@@ -1004,6 +1127,7 @@ async def validate_s3_miner_data(
     # Load expected jobs
     expected_jobs = load_expected_jobs_from_gravity()
 
+    validator = None
     try:
         validator = DuckDBSampledValidator(
             wallet=wallet,
@@ -1014,7 +1138,6 @@ async def validate_s3_miner_data(
         result = await validator.validate_miner_s3_data(
             miner_hotkey, expected_jobs
         )
-        validator.close()
         return result
 
     except Exception as e:
@@ -1041,6 +1164,10 @@ async def validate_s3_miner_data(
             sample_validation_results=[],
             sample_job_mismatches=[]
         )
+
+    finally:
+        if validator:
+            validator.close()
 
 
 def get_s3_validation_summary(result: S3ValidationResult) -> str:
