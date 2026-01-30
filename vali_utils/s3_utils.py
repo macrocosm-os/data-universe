@@ -539,11 +539,17 @@ class DuckDBSampledValidator:
                     continue
 
                 try:
-                    df = pd.read_parquet(presigned_url)
-                    if len(df) == 0:
-                        continue
+                    # Read random rows using DuckDB SAMPLE (memory efficient)
+                    conn = duckdb.connect(':memory:')
+                    conn.execute("SET memory_limit='256MB';")
+                    sample_df = conn.execute(f"""
+                        SELECT * FROM read_parquet('{presigned_url}')
+                        USING SAMPLE {samples_per_file} ROWS
+                    """).fetchdf()
+                    conn.close()
 
-                    sample_df = df.head(min(samples_per_file, len(df)))
+                    if sample_df is None or len(sample_df) == 0:
+                        continue
 
                     for _, row in sample_df.iterrows():
                         total_checked += 1
@@ -662,11 +668,19 @@ class DuckDBSampledValidator:
                 continue
 
             try:
-                df = pd.read_parquet(presigned_url)
-                if len(df) == 0:
+                # Read random rows using DuckDB SAMPLE (memory efficient)
+                conn = duckdb.connect(':memory:')
+                conn.execute("SET memory_limit='256MB';")
+                df = conn.execute(f"""
+                    SELECT * FROM read_parquet('{presigned_url}')
+                    USING SAMPLE 3 ROWS
+                """).fetchdf()
+                conn.close()
+
+                if df is None or len(df) == 0:
                     continue
 
-                for _, row in df.head(3).iterrows():
+                for _, row in df.iterrows():
                     entity = self._create_data_entity(row, platform)
                     if entity:
                         all_entities.append((entity, platform, job_id))
