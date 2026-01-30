@@ -214,12 +214,16 @@ class DuckDBSampledValidator:
                     urls_by_job[job_id] = {'platform': platform, 'urls': []}
                 urls_by_job[job_id]['urls'].append(url)
 
-            # Step 4: DuckDB validation (duplicates within job, empty content)
-            bt.logging.info(f"{miner_hotkey}: Running DuckDB validation...")
-            duckdb_result = self._validate_sample_with_duckdb(urls_by_job)
-
-            if not duckdb_result.get("success"):
-                return self._create_failed_result(f"DuckDB error: {duckdb_result.get('error')}")
+            # Step 4: DuckDB validation (TEMPORARILY DISABLED - fixing OOM issues)
+            # TODO: Re-enable after fixing DuckDB memory issues
+            bt.logging.info(f"{miner_hotkey}: Skipping DuckDB validation (temporarily disabled)")
+            duckdb_result = {
+                "success": True,
+                "duplicate_rate_within_job": 0.0,
+                "empty_rate": 0.0,
+                "missing_url_rate": 0.0,
+                "total_rows": 0
+            }
 
             # Step 5: Job content matching
             bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
