@@ -462,15 +462,14 @@ class DuckDBSampledValidator:
         if not all_urls:
             return result
 
-        # Platform-specific: columns to read and empty check (includes media)
+        # Platform-specific empty check (includes media)
+        # DuckDB automatically does column projection - only columns in the query are read
         if platform in ['x', 'twitter']:
             # Twitter: empty if no text AND no media
             empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR CARDINALITY(media) = 0)"
-            columns_to_read = "url, text, media"
         else:
             # Reddit: empty if no body AND no title AND no media
             empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR CARDINALITY(media) = 0)"
-            columns_to_read = "url, body, title, media"
 
         # Process in batches - use DuckDB aggregation to avoid loading all rows into Python
         for i in range(0, len(all_urls), batch_size):
@@ -478,7 +477,7 @@ class DuckDBSampledValidator:
             url_list_str = ", ".join([f"'{url}'" for url in batch_urls])
 
             try:
-                # Column projection: only read columns needed for aggregation (~80% memory savings)
+                # DuckDB auto-projects: only url/text/body/title/media columns are read (~80% memory savings)
                 # Full schema is still read in _perform_scraper_validation() for content validation
                 query = f"""
                     SELECT
@@ -487,7 +486,7 @@ class DuckDBSampledValidator:
                         SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url_count,
                         COUNT(url) - COUNT(DISTINCT url) as duplicate_count,
                         COUNT(DISTINCT url) as unique_urls
-                    FROM read_parquet([{url_list_str}], union_by_name=true, columns=['{columns_to_read.replace(", ", "', '")}'])
+                    FROM read_parquet([{url_list_str}], union_by_name=true)
                 """
                 batch_result = self.conn.execute(query).fetchone()
 
