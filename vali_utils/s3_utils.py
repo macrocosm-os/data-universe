@@ -465,11 +465,11 @@ class DuckDBSampledValidator:
         # Platform-specific empty check (includes media)
         # DuckDB automatically does column projection - only columns in the query are read
         if platform in ['x', 'twitter']:
-            # Twitter: empty if no text AND no media
-            empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR CARDINALITY(media) = 0)"
+            # Twitter: empty if no text AND no media (use len() for arrays)
+            empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR len(media) = 0)"
         else:
             # Reddit: empty if no body AND no title AND no media
-            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR CARDINALITY(media) = 0)"
+            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR len(media) = 0)"
 
         # Process in batches - use DuckDB aggregation to avoid loading all rows into Python
         for i in range(0, len(all_urls), batch_size):
