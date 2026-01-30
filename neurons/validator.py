@@ -32,6 +32,7 @@ import tracemalloc
 
 # Start memory tracking
 tracemalloc.start()
+
 from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
 from dynamic_desirability.desirability_retrieval import run_retrieval_from_api
