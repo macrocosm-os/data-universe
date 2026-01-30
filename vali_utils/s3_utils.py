@@ -111,11 +111,13 @@ class DuckDBSampledValidator:
         self._setup_duckdb()
 
     def _setup_duckdb(self):
-        """Configure DuckDB for HTTP parquet reading"""
+        """Configure DuckDB for HTTP parquet reading with memory limits"""
         self.conn.execute("INSTALL httpfs;")
         self.conn.execute("LOAD httpfs;")
         self.conn.execute("SET http_timeout=120000;")
         self.conn.execute("SET enable_progress_bar=false;")
+        # Memory management - limit DuckDB to prevent OOM, spill to disk if needed
+        self.conn.execute("SET memory_limit='4GB';")
 
     async def validate_miner_s3_data(
         self,
@@ -450,56 +452,34 @@ class DuckDBSampledValidator:
         else:
             empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = ''"
 
-        # Process in batches to limit memory usage
-        all_tagged_data = []
+        # Process in batches - use DuckDB aggregation to avoid loading all rows into Python
         for i in range(0, len(all_urls), batch_size):
             batch_urls = all_urls[i:i + batch_size]
             url_list_str = ", ".join([f"'{url}'" for url in batch_urls])
 
             try:
+                # Aggregate in DuckDB - returns ~1 row per job instead of millions of rows
                 query = f"""
                     SELECT
-                        url as entity_url,
-                        COALESCE(
-                            NULLIF(regexp_extract(filename, '/job_id=([^/]+)/', 1), ''),
-                            NULLIF(regexp_extract(filename, '/job_id%3D([^/]+)/', 1), '')
-                        ) as job_id,
-                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty,
-                        CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END as is_missing_url
+                        COUNT(*) as total_rows,
+                        SUM(CASE WHEN {empty_check} THEN 1 ELSE 0 END) as empty_count,
+                        SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url_count,
+                        COUNT(url) - COUNT(DISTINCT url) as duplicate_count,
+                        COUNT(DISTINCT url) as unique_urls
                     FROM read_parquet([{url_list_str}], filename=true, union_by_name=true)
                 """
-                batch_result = self.conn.execute(query).fetchall()
-                all_tagged_data.extend(batch_result)
+                batch_result = self.conn.execute(query).fetchone()
+
+                if batch_result:
+                    result['total_rows'] += batch_result[0] or 0
+                    result['empty_content'] += batch_result[1] or 0
+                    result['missing_url'] += batch_result[2] or 0
+                    result['duplicates'] += batch_result[3] or 0
+                    result['with_url'] += batch_result[4] or 0
 
             except Exception as e:
                 bt.logging.warning(f"Batch query error for {platform} batch {i//batch_size}: {e}")
                 continue
-
-        if not all_tagged_data:
-            return result
-
-        # Aggregate results from all batches
-        result['total_rows'] = len(all_tagged_data)
-        result['empty_content'] = sum(1 for row in all_tagged_data if row[2])
-        result['missing_url'] = sum(1 for row in all_tagged_data if row[3])
-
-        # Count duplicates within each job
-        from collections import defaultdict
-        job_url_counts = defaultdict(lambda: defaultdict(int))
-        for row in all_tagged_data:
-            entity_url, job_id = row[0], row[1]
-            if entity_url:
-                job_url_counts[job_id][entity_url] += 1
-
-        result['duplicates'] = sum(
-            count - 1
-            for job_urls in job_url_counts.values()
-            for count in job_urls.values()
-            if count > 1
-        )
-        result['with_url'] = sum(
-            len(job_urls) for job_urls in job_url_counts.values()
-        )
 
         return result
 
