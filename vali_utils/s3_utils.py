@@ -94,8 +94,11 @@ def _get_shared_duckdb():
             _shared_duckdb_conn.execute("LOAD httpfs;")
             _shared_duckdb_conn.execute("SET http_timeout=120000;")
             _shared_duckdb_conn.execute("SET enable_progress_bar=false;")
-            _shared_duckdb_conn.execute("SET memory_limit='4GB';")
-            bt.logging.info("Created shared DuckDB connection with 4GB memory limit")
+            # Memory management: 8GB limit with disk spilling for large queries
+            _shared_duckdb_conn.execute("SET memory_limit='8GB';")
+            _shared_duckdb_conn.execute("SET temp_directory='/tmp/duckdb_temp';")
+            _shared_duckdb_conn.execute("SET threads=4;")  # Limit threads to reduce memory
+            bt.logging.info("Created shared DuckDB connection with 8GB memory limit + disk spilling")
         return _shared_duckdb_conn
 
 
@@ -459,11 +462,15 @@ class DuckDBSampledValidator:
         if not all_urls:
             return result
 
-        # Platform-specific empty check
+        # Platform-specific: columns to read and empty check (includes media)
         if platform in ['x', 'twitter']:
-            empty_check = "COALESCE(text, '') = ''"
+            # Twitter: empty if no text AND no media
+            empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR CARDINALITY(media) = 0)"
+            columns_to_read = "url, text, media"
         else:
-            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = ''"
+            # Reddit: empty if no body AND no title AND no media
+            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR CARDINALITY(media) = 0)"
+            columns_to_read = "url, body, title, media"
 
         # Process in batches - use DuckDB aggregation to avoid loading all rows into Python
         for i in range(0, len(all_urls), batch_size):
@@ -471,7 +478,8 @@ class DuckDBSampledValidator:
             url_list_str = ", ".join([f"'{url}'" for url in batch_urls])
 
             try:
-                # Aggregate in DuckDB - returns ~1 row per job instead of millions of rows
+                # Column projection: only read columns needed for aggregation (~80% memory savings)
+                # Full schema is still read in _perform_scraper_validation() for content validation
                 query = f"""
                     SELECT
                         COUNT(*) as total_rows,
@@ -479,7 +487,7 @@ class DuckDBSampledValidator:
                         SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url_count,
                         COUNT(url) - COUNT(DISTINCT url) as duplicate_count,
                         COUNT(DISTINCT url) as unique_urls
-                    FROM read_parquet([{url_list_str}], filename=true, union_by_name=true)
+                    FROM read_parquet([{url_list_str}], union_by_name=true, columns=['{columns_to_read.replace(", ", "', '")}'])
                 """
                 batch_result = self.conn.execute(query).fetchone()
 
