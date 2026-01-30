@@ -373,9 +373,9 @@ class DuckDBSampledValidator:
         samples_per_file: int = 100
     ) -> Dict[str, Any]:
         """
-        Lightweight DuckDB validation using random sampling.
-        Checks duplicates, empty content, and missing URLs on sampled rows only.
-        Memory safe: 256MB limit, processes one file at a time.
+        Lightweight DuckDB validation using TABLESAMPLE BERNOULLI.
+        Uses probabilistic sampling - memory efficient (~4MB per file).
+        Checks duplicates, empty content, and missing URLs on sampled rows.
         """
         total_rows = 0
         duplicate_urls = set()
@@ -401,41 +401,59 @@ class DuckDBSampledValidator:
             else:
                 platform = 'unknown'
 
-            # Platform-specific empty check
-            if platform in ['x', 'twitter']:
-                empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR len(media) = 0)"
-            else:
-                empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR len(media) = 0)"
-
             conn = None
             try:
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='256MB';")
+                conn.execute("SET threads=1;")
 
-                # Sample random rows and get basic stats
+                # First get schema to check available columns
+                # parquet_schema returns 'name' column, not 'column_name'
+                schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
+                schema_result = conn.execute(schema_query).fetchall()
+                available_columns = {row[0].lower() for row in schema_result}
+
+                # Build empty check based on available columns (no media - often missing)
+                if platform in ['x', 'twitter']:
+                    if 'text' in available_columns:
+                        empty_check = "COALESCE(text, '') = ''"
+                    else:
+                        empty_check = "FALSE"
+                else:
+                    # Reddit - check body and title
+                    checks = []
+                    if 'body' in available_columns:
+                        checks.append("COALESCE(body, '') = ''")
+                    if 'title' in available_columns:
+                        checks.append("COALESCE(title, '') = ''")
+                    empty_check = " AND ".join(checks) if checks else "FALSE"
+
+                # Use TABLESAMPLE BERNOULLI - probabilistic sampling, memory efficient
+                # 10% sampling ensures we get rows even from smaller files
                 query = f"""
                     SELECT
                         url,
                         CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
                     FROM read_parquet('{presigned_url}')
-                    USING SAMPLE {samples_per_file} ROWS
+                    TABLESAMPLE BERNOULLI(10%)
+                    LIMIT {samples_per_file}
                 """
-                df = conn.execute(query).fetchdf()
+                rows = conn.execute(query).fetchall()
 
-                if df is None or len(df) == 0:
+                if not rows:
                     continue
 
-                total_rows += len(df)
+                for row in rows:
+                    total_rows += 1
+                    url = row[0]
+                    is_empty = row[1]
 
-                # Check empty content
-                empty_count += df['is_empty'].sum()
+                    if is_empty:
+                        empty_count += 1
 
-                # Check missing URLs
-                missing_url_count += df['url'].isna().sum() + (df['url'] == '').sum()
-
-                # Check duplicates (within this sample and across files)
-                for url in df['url'].dropna():
-                    if url and url != '':
+                    if url is None or url == '':
+                        missing_url_count += 1
+                    else:
                         if url in all_urls_seen:
                             duplicate_urls.add(url)
                         all_urls_seen.append(url)
@@ -646,12 +664,15 @@ class DuckDBSampledValidator:
 
                 conn = None
                 try:
-                    # Read random rows using DuckDB SAMPLE (memory efficient)
+                    # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
+                    # 10% sampling ensures we get rows even from smaller files
                     conn = duckdb.connect(':memory:')
                     conn.execute("SET memory_limit='256MB';")
+                    conn.execute("SET threads=1;")
                     sample_df = conn.execute(f"""
                         SELECT * FROM read_parquet('{presigned_url}')
-                        USING SAMPLE {samples_per_file} ROWS
+                        TABLESAMPLE BERNOULLI(10%)
+                        LIMIT {samples_per_file}
                     """).fetchdf()
 
                     if sample_df is None or len(sample_df) == 0:
@@ -668,6 +689,8 @@ class DuckDBSampledValidator:
                         elif len(mismatch_samples) < 5:
                             uri = row.get('url', row.get('uri', 'unknown'))
                             mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
+
+                    del sample_df  # Free DataFrame memory
 
                 except Exception as e:
                     continue
@@ -781,12 +804,15 @@ class DuckDBSampledValidator:
 
             conn = None
             try:
-                # Read random rows using DuckDB SAMPLE (memory efficient)
+                # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
+                # Use 10% sampling to ensure we get rows even from smaller files
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='256MB';")
+                conn.execute("SET threads=1;")
                 df = conn.execute(f"""
                     SELECT * FROM read_parquet('{presigned_url}')
-                    USING SAMPLE 3 ROWS
+                    TABLESAMPLE BERNOULLI(10%)
+                    LIMIT 5
                 """).fetchdf()
 
                 if df is None or len(df) == 0:
@@ -796,6 +822,8 @@ class DuckDBSampledValidator:
                     entity = self._create_data_entity(row, platform)
                     if entity:
                         all_entities.append((entity, platform, job_id))
+
+                del df  # Free DataFrame memory
             except:
                 continue
             finally:

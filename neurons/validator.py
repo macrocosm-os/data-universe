@@ -28,10 +28,6 @@ import time
 import os
 import wandb
 import subprocess
-import tracemalloc
-
-# Start memory tracking
-tracemalloc.start()
 from common.metagraph_syncer import MetagraphSyncer
 from neurons.config import NeuronType, check_config, create_config
 from dynamic_desirability.desirability_retrieval import run_retrieval_from_api
@@ -615,15 +611,6 @@ class Validator:
                     f"Validator running on step({self.step}) block({self.block})."
                 )
 
-                # Log memory usage every step
-                snapshot = tracemalloc.take_snapshot()
-                top_stats = snapshot.statistics('lineno')
-                bt.logging.info("=== TOP 10 MEMORY ALLOCATIONS ===")
-                for stat in top_stats[:10]:
-                    bt.logging.info(str(stat))
-                current, peak = tracemalloc.get_traced_memory()
-                bt.logging.info(f"Current memory: {current / 1024 / 1024:.1f} MB, Peak: {peak / 1024 / 1024:.1f} MB")
-
                 # Ensure validator hotkey is still registered on the network.
                 utils.assert_registered(self.wallet, self.metagraph)
 
@@ -861,7 +848,7 @@ class Validator:
             #  if we've completed fewer than the allotted number of evaluation cycles, don't set weights
             if self.evaluation_cycles_since_startup < constants.EVALUATION_ON_STARTUP:
                 bt.logging.info(
-                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/15 evaluation cycles since startup"
+                    f"Skipping weight setting - completed {self.evaluation_cycles_since_startup}/10 evaluation cycles since startup"
                 )
                 return False
 
