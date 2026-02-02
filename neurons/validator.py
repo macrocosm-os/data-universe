@@ -2,22 +2,24 @@
 # Copyright © 2023 Data Universe
 
 # Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated
-# documentation files (the “Software”), to deal in the Software without restriction, including without limitation
+# documentation files (the "Software"), to deal in the Software without restriction, including without limitation
 # the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software,
 # and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
 
 # The above copyright notice and this permission notice shall be included in all copies or substantial portions of
 # the Software.
 
-# THE SOFTWARE IS PROVIDED “AS IS”, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO
 # THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL
 # THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from collections import defaultdict
+# Suppress deprecation warnings BEFORE any imports (protobuf uses utcnow)
+import warnings
+warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*utcnow.*")
+
 import copy
-import json
 import random
 import sys
 import torch
@@ -41,17 +43,14 @@ from vali_utils.validator_s3_access import ValidatorS3Access
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
-import warnings
 import requests
 from dotenv import load_dotenv
 import bittensor as bt
 from typing import Dict
-from common.organic_protocol import OrganicRequest
 from common import constants
 from common import utils
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.on_demand.organic_query_processor import OrganicQueryProcessor
-
 from vali_utils import metrics
 
 load_dotenv()
@@ -66,13 +65,6 @@ def filtered_trace(message, *args, **kwargs):
 
 bt.logging.trace = filtered_trace
 
-# Filter out the specific deprecation warning from datetime.utcnow()
-warnings.filterwarnings(
-    "ignore",
-    category=DeprecationWarning,
-    message="datetime.datetime.utcnow() is deprecated",
-)
-# import datetime after the warning filter
 import datetime as dt
 
 bt.logging.set_trace(True)  # TODO remove it in future
