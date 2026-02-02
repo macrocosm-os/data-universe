@@ -442,10 +442,12 @@ class DuckDBSampledValidator:
 
                 # First get schema to check available columns
                 # parquet_schema returns 'name' column, not 'column_name'
-                # Note: it includes a root 'schema' entry, so we exclude it
+                # Note: it includes root 'schema' and nested elements ('list', 'element') we filter out
                 schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
                 schema_result = conn.execute(schema_query).fetchall()
-                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() != 'schema']
+                # Filter out schema metadata and nested array elements
+                excluded_names = {'schema', 'list', 'element', 'model_config'}
+                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
                 available_columns = set(all_column_names)
 
                 # Schema validation - reject files with incorrect schema
@@ -750,7 +752,8 @@ class DuckDBSampledValidator:
                     # Schema validation - verify column count matches expected
                     schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
                     schema_result = conn.execute(schema_query).fetchall()
-                    all_column_names = [row[0].lower() for row in schema_result if row[0].lower() != 'schema']
+                    excluded_names = {'schema', 'list', 'element', 'model_config'}
+                    all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
 
                     if platform in ['x', 'twitter']:
                         max_columns = len(self.EXPECTED_COLUMNS_X)
@@ -905,7 +908,8 @@ class DuckDBSampledValidator:
                 # Schema validation - verify column count matches expected
                 schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
                 schema_result = conn.execute(schema_query).fetchall()
-                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() != 'schema']
+                excluded_names = {'schema', 'list', 'element', 'model_config'}
+                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
 
                 if platform in ['x', 'twitter']:
                     max_columns = len(self.EXPECTED_COLUMNS_X)
