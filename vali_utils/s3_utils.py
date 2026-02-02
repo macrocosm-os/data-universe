@@ -237,17 +237,23 @@ class DuckDBSampledValidator:
                 sampled_files, expected_jobs, presigned_urls, samples_per_file=100
             )
 
-            # Step 5: Job content matching
-            bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
-            job_match_result = await self._perform_job_content_matching(
-                sampled_files, expected_jobs, presigned_urls
-            )
+            # If schema validation failed, skip remaining checks (fail fast)
+            if duckdb_result.get("reason"):
+                bt.logging.warning(f"{miner_hotkey}: Schema validation failed - skipping remaining checks")
+                job_match_result = {'total_checked': 0, 'total_matched': 0, 'match_rate': 0.0}
+                scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0.0}
+            else:
+                # Step 5: Job content matching
+                bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
+                job_match_result = await self._perform_job_content_matching(
+                    sampled_files, expected_jobs, presigned_urls
+                )
 
-            # Step 6: Scraper validation
-            bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
-            scraper_result = await self._perform_scraper_validation(
-                miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
-            )
+                # Step 6: Scraper validation
+                bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
+                scraper_result = await self._perform_scraper_validation(
+                    miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
+                )
 
             # Step 7: Validation decision
             issues = []

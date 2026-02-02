@@ -15,9 +15,9 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-# Suppress deprecation warnings BEFORE any imports (protobuf uses utcnow)
+# Suppress deprecation warnings BEFORE any imports
 import warnings
-warnings.filterwarnings("ignore", category=DeprecationWarning, message=".*utcnow.*")
+warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import copy
 import random
