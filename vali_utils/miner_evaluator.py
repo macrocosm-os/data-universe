@@ -1,4 +1,5 @@
 import os
+import gc
 import copy
 import asyncio
 import datetime
@@ -254,6 +255,10 @@ class MinerEvaluator:
 
         self.scorer.on_miner_evaluated(uid, index, validation_results)
 
+        # Force garbage collection to free miner index objects (can be 350K+ buckets per miner)
+        del index
+        gc.collect()
+
         metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
@@ -390,11 +395,11 @@ class MinerEvaluator:
             ).total_seconds()
 
         t_start = time.perf_counter()
-        # Run in batches of 15.
-        miners_to_eval = 15
+        # Run in batches of 5 (reduced from 15 to lower memory usage).
+        miners_to_eval = 5
 
         # Otherwise, execute the next batch of evaluations.
-        # Use a set in case the network has fewer than 15 miners.
+        # Use a set in case the network has fewer than 5 miners.
         uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
 
         bt.logging.info(
