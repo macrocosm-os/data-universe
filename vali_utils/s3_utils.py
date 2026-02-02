@@ -410,6 +410,10 @@ class DuckDBSampledValidator:
         files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
 
         for file_info in files_to_check:
+            # Fail fast - if we already found invalid schema, stop checking
+            if schema_failures > 0:
+                break
+
             presigned_url = presigned_urls.get(file_info['key'])
             if not presigned_url:
                 continue
@@ -448,23 +452,23 @@ class DuckDBSampledValidator:
 
                 files_checked += 1
 
-                # Check total column count (reject duplicate columns)
+                # Check total column count (reject duplicate columns) - fail fast
                 if len(all_column_names) > max_columns:
                     bt.logging.warning(
                         f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
                         f"Sample columns: {all_column_names[:10]}..."
                     )
                     schema_failures += 1
-                    continue
+                    break  # Fail fast
 
-                # Check for unexpected column names
+                # Check for unexpected column names - fail fast
                 unexpected_columns = available_columns - expected_columns
                 if unexpected_columns:
                     bt.logging.warning(
                         f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
                     )
                     schema_failures += 1
-                    continue
+                    break  # Fail fast
 
                 # Build empty check based on available columns (no media - often missing)
                 if platform in ['x', 'twitter']:
