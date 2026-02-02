@@ -94,6 +94,23 @@ class DuckDBSampledValidator:
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
     MIN_SCRAPER_SUCCESS = 70.0  # 70% min scraper success rate
 
+    # Schema validation - expected columns per platform (from s3_uploader.py)
+    EXPECTED_COLUMNS_X = {
+        'uri', 'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
+        'url', 'media', 'user_id', 'user_display_name', 'user_verified', 'tweet_id',
+        'is_reply', 'is_quote', 'conversation_id', 'in_reply_to_user_id', 'language',
+        'in_reply_to_username', 'quoted_tweet_id', 'like_count', 'retweet_count',
+        'reply_count', 'quote_count', 'view_count', 'bookmark_count', 'user_blue_verified',
+        'user_description', 'user_location', 'profile_image_url', 'cover_picture_url',
+        'user_followers_count', 'user_following_count'
+    }  # 33 columns
+
+    EXPECTED_COLUMNS_REDDIT = {
+        'uri', 'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
+        'createdAt', 'dataType', 'parentId', 'url', 'media', 'is_nsfw', 'score',
+        'upvote_ratio', 'num_comments'
+    }  # 17 columns
+
     def __init__(
         self,
         wallet,
@@ -220,17 +237,23 @@ class DuckDBSampledValidator:
                 sampled_files, expected_jobs, presigned_urls, samples_per_file=100
             )
 
-            # Step 5: Job content matching
-            bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
-            job_match_result = await self._perform_job_content_matching(
-                sampled_files, expected_jobs, presigned_urls
-            )
+            # If schema validation failed, skip remaining checks (fail fast)
+            if duckdb_result.get("reason"):
+                bt.logging.warning(f"{miner_hotkey}: Schema validation failed - skipping remaining checks")
+                job_match_result = {'total_checked': 0, 'total_matched': 0, 'match_rate': 0.0}
+                scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0.0}
+            else:
+                # Step 5: Job content matching
+                bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
+                job_match_result = await self._perform_job_content_matching(
+                    sampled_files, expected_jobs, presigned_urls
+                )
 
-            # Step 6: Scraper validation
-            bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
-            scraper_result = await self._perform_scraper_validation(
-                miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
-            )
+                # Step 6: Scraper validation
+                bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
+                scraper_result = await self._perform_scraper_validation(
+                    miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
+                )
 
             # Step 7: Validation decision
             issues = []
@@ -239,6 +262,10 @@ class DuckDBSampledValidator:
             missing_uri_rate = duckdb_result["missing_url_rate"]
             job_match_rate = job_match_result['match_rate']
             scraper_success_rate = scraper_result['success_rate']
+
+            # Check for schema validation failure
+            if duckdb_result.get("reason"):
+                issues.append(duckdb_result["reason"])
 
             if duplicate_rate > self.MAX_DUPLICATE_RATE:
                 issues.append(f"High duplicates: {duplicate_rate:.1f}%")
@@ -382,11 +409,17 @@ class DuckDBSampledValidator:
         all_urls_seen = []
         empty_count = 0
         missing_url_count = 0
+        schema_failures = 0
+        files_checked = 0
 
         # Limit to 20 files max for this check
         files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
 
         for file_info in files_to_check:
+            # Fail fast - if we already found invalid schema, stop checking
+            if schema_failures > 0:
+                break
+
             presigned_url = presigned_urls.get(file_info['key'])
             if not presigned_url:
                 continue
@@ -409,9 +442,41 @@ class DuckDBSampledValidator:
 
                 # First get schema to check available columns
                 # parquet_schema returns 'name' column, not 'column_name'
+                # Note: it includes root 'schema' and nested elements ('list', 'element') we filter out
                 schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
                 schema_result = conn.execute(schema_query).fetchall()
-                available_columns = {row[0].lower() for row in schema_result}
+                # Filter out schema metadata and nested array elements
+                excluded_names = {'schema', 'list', 'element', 'model_config'}
+                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+                available_columns = set(all_column_names)
+
+                # Schema validation - reject files with incorrect schema
+                if platform in ['x', 'twitter']:
+                    expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_X}
+                    max_columns = len(self.EXPECTED_COLUMNS_X)
+                else:
+                    expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_REDDIT}
+                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+
+                files_checked += 1
+
+                # Check total column count (reject duplicate columns) - fail fast
+                if len(all_column_names) > max_columns:
+                    bt.logging.warning(
+                        f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
+                        f"Sample columns: {all_column_names[:10]}..."
+                    )
+                    schema_failures += 1
+                    break  # Fail fast
+
+                # Check for unexpected column names - fail fast
+                unexpected_columns = available_columns - expected_columns
+                if unexpected_columns:
+                    bt.logging.warning(
+                        f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
+                    )
+                    schema_failures += 1
+                    break  # Fail fast
 
                 # Build empty check based on available columns (no media - often missing)
                 if platform in ['x', 'twitter']:
@@ -467,6 +532,20 @@ class DuckDBSampledValidator:
                         conn.close()
                     except:
                         pass
+
+        # Zero tolerance for schema failures
+        if schema_failures > 0:
+            bt.logging.warning(
+                f"Schema validation FAILED: {schema_failures}/{files_checked} files have invalid schema"
+            )
+            return {
+                "success": False,
+                "duplicate_rate_within_job": 100.0,  # Force failure
+                "empty_rate": 100.0,
+                "missing_url_rate": 100.0,
+                "total_rows": 0,
+                "reason": f"Invalid schema in {schema_failures} files"
+            }
 
         if total_rows == 0:
             return {
@@ -669,6 +748,22 @@ class DuckDBSampledValidator:
                     conn = duckdb.connect(':memory:')
                     conn.execute("SET memory_limit='256MB';")
                     conn.execute("SET threads=1;")
+
+                    # Schema validation - verify column count matches expected
+                    schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
+                    schema_result = conn.execute(schema_query).fetchall()
+                    excluded_names = {'schema', 'list', 'element', 'model_config'}
+                    all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+
+                    if platform in ['x', 'twitter']:
+                        max_columns = len(self.EXPECTED_COLUMNS_X)
+                    else:
+                        max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+
+                    if len(all_column_names) > max_columns:
+                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                        continue
+
                     sample_df = conn.execute(f"""
                         SELECT * FROM read_parquet('{presigned_url}')
                         TABLESAMPLE BERNOULLI(10%)
@@ -809,6 +904,22 @@ class DuckDBSampledValidator:
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='256MB';")
                 conn.execute("SET threads=1;")
+
+                # Schema validation - verify column count matches expected
+                schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
+                schema_result = conn.execute(schema_query).fetchall()
+                excluded_names = {'schema', 'list', 'element', 'model_config'}
+                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+
+                if platform in ['x', 'twitter']:
+                    max_columns = len(self.EXPECTED_COLUMNS_X)
+                else:
+                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+
+                if len(all_column_names) > max_columns:
+                    bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                    continue
+
                 df = conn.execute(f"""
                     SELECT * FROM read_parquet('{presigned_url}')
                     TABLESAMPLE BERNOULLI(10%)
