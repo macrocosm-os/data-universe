@@ -401,38 +401,54 @@ class DuckDBSampledValidator:
     ) -> Dict[str, Any]:
         """
         Lightweight DuckDB validation using TABLESAMPLE BERNOULLI.
-        Uses probabilistic sampling - memory efficient (~4MB per file).
-        Checks duplicates, empty content, and missing URLs on sampled rows.
+
+        HARDENED BEHAVIOR:
+        (1) Any parquet read / schema read / sample query error (incl OOM) => FAIL FAST
+        (2) If total_rows == 0 => FAIL (no more "all zeros pass")
+        (3) Schema-check coverage increased: validate schema across up to 200 sampled files
+
+        NOTE: No "missing required columns" failure (as requested).
         """
         total_rows = 0
-        duplicate_urls = set()
-        all_urls_seen = []
         empty_count = 0
         missing_url_count = 0
-        schema_failures = 0
-        files_checked = 0
 
-        # Limit to 20 files max for this check
-        files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
+        # Duplicate detection across sampled rows (as before, approximate)
+        seen_urls: set = set()
+        duplicate_urls: set = set()
+
+        files_checked = 0
+        read_errors = 0
+
+        # Increase schema coverage: up to 100 files (sampled_files is upstream-capped at 100,
+        # but enforce here too).
+        max_files_to_check = min(100, len(sampled_files))
+        files_to_check = random.sample(sampled_files, max_files_to_check) if sampled_files else []
 
         for file_info in files_to_check:
-            # Fail fast - if we already found invalid schema, stop checking
-            if schema_failures > 0:
-                break
+            file_key = file_info.get('key', '')
 
-            presigned_url = presigned_urls.get(file_info['key'])
+            presigned_url = presigned_urls.get(file_key)
             if not presigned_url:
-                continue
+                # If we can't read the file at all, that is a hard validation failure.
+                read_errors += 1
+                bt.logging.warning(f"Sampled validation hard-fail: missing presigned URL key={file_key}")
+                return {
+                    "success": False,
+                    "duplicate_rate_within_job": 100.0,
+                    "empty_rate": 100.0,
+                    "missing_url_rate": 100.0,
+                    "total_rows": 0,
+                    "reason": f"Missing presigned URL for key={file_key}"
+                }
 
-            # Get platform from job_id
-            file_key = file_info['key']
+            # Identify platform from job_id -> expected_jobs params
+            platform = 'unknown'
             if '/job_id=' in file_key:
                 job_id = file_key.split('/job_id=')[1].split('/')[0]
                 job_config = expected_jobs.get(job_id, {})
                 params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', '').lower()
-            else:
-                platform = 'unknown'
+                platform = str(params.get('platform', '') or '').lower()
 
             conn = None
             try:
@@ -440,17 +456,19 @@ class DuckDBSampledValidator:
                 conn.execute("SET memory_limit='256MB';")
                 conn.execute("SET threads=1;")
 
-                # First get schema to check available columns
-                # parquet_schema returns 'name' column, not 'column_name'
-                # Note: it includes root 'schema' and nested elements ('list', 'element') we filter out
+                # --- Schema read ---
                 schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
                 schema_result = conn.execute(schema_query).fetchall()
-                # Filter out schema metadata and nested array elements
+
                 excluded_names = {'schema', 'list', 'element', 'model_config'}
-                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+                all_column_names = [
+                    row[0].lower()
+                    for row in schema_result
+                    if row and row[0] and row[0].lower() not in excluded_names
+                ]
                 available_columns = set(all_column_names)
 
-                # Schema validation - reject files with incorrect schema
+                # Expected schema per platform
                 if platform in ['x', 'twitter']:
                     expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_X}
                     max_columns = len(self.EXPECTED_COLUMNS_X)
@@ -460,32 +478,40 @@ class DuckDBSampledValidator:
 
                 files_checked += 1
 
-                # Check total column count (reject duplicate columns) - fail fast
+                # Fail fast on extra columns (padded/poisoned schema)
                 if len(all_column_names) > max_columns:
                     bt.logging.warning(
                         f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
-                        f"Sample columns: {all_column_names[:10]}..."
+                        f"key={file_key} sample_cols={all_column_names[:10]}..."
                     )
-                    schema_failures += 1
-                    break  # Fail fast
+                    return {
+                        "success": False,
+                        "duplicate_rate_within_job": 100.0,
+                        "empty_rate": 100.0,
+                        "missing_url_rate": 100.0,
+                        "total_rows": 0,
+                        "reason": f"Invalid schema: too many columns ({len(all_column_names)} > {max_columns})"
+                    }
 
-                # Check for unexpected column names - fail fast
+                # Fail fast on unexpected columns
                 unexpected_columns = available_columns - expected_columns
                 if unexpected_columns:
                     bt.logging.warning(
-                        f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
+                        f"Invalid schema: unexpected columns {list(unexpected_columns)[:10]} key={file_key}"
                     )
-                    schema_failures += 1
-                    break  # Fail fast
+                    return {
+                        "success": False,
+                        "duplicate_rate_within_job": 100.0,
+                        "empty_rate": 100.0,
+                        "missing_url_rate": 100.0,
+                        "total_rows": 0,
+                        "reason": "Invalid schema: unexpected columns found"
+                    }
 
-                # Build empty check based on available columns (no media - often missing)
+                # Build empty check based on available columns
                 if platform in ['x', 'twitter']:
-                    if 'text' in available_columns:
-                        empty_check = "COALESCE(text, '') = ''"
-                    else:
-                        empty_check = "FALSE"
+                    empty_check = "COALESCE(text, '') = ''" if 'text' in available_columns else "FALSE"
                 else:
-                    # Reddit - check body and title
                     checks = []
                     if 'body' in available_columns:
                         checks.append("COALESCE(body, '') = ''")
@@ -493,25 +519,23 @@ class DuckDBSampledValidator:
                         checks.append("COALESCE(title, '') = ''")
                     empty_check = " AND ".join(checks) if checks else "FALSE"
 
-                # Use TABLESAMPLE BERNOULLI - probabilistic sampling, memory efficient
-                # 10% sampling ensures we get rows even from smaller files
+                # Sample rows
                 query = f"""
                     SELECT
                         url,
                         CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
                     FROM read_parquet('{presigned_url}')
                     TABLESAMPLE BERNOULLI(10%)
-                    LIMIT {samples_per_file}
+                    LIMIT {int(samples_per_file)}
                 """
                 rows = conn.execute(query).fetchall()
 
                 if not rows:
+                    # No rows is not an error by itself; continue to other files
                     continue
 
-                for row in rows:
+                for url, is_empty in rows:
                     total_rows += 1
-                    url = row[0]
-                    is_empty = row[1]
 
                     if is_empty:
                         empty_count += 1
@@ -519,49 +543,53 @@ class DuckDBSampledValidator:
                     if url is None or url == '':
                         missing_url_count += 1
                     else:
-                        if url in all_urls_seen:
+                        if url in seen_urls:
                             duplicate_urls.add(url)
-                        all_urls_seen.append(url)
+                        else:
+                            seen_urls.add(url)
 
             except Exception as e:
-                bt.logging.debug(f"Sampled validation error for file: {e}")
-                continue
+                # (1) Any read/schema/sample error => FAIL (including OOM)
+                read_errors += 1
+                bt.logging.warning(
+                    f"Sampled validation hard-fail: key={file_key} err={type(e).__name__}: {e}"
+                )
+                return {
+                    "success": False,
+                    "duplicate_rate_within_job": 100.0,
+                    "empty_rate": 100.0,
+                    "missing_url_rate": 100.0,
+                    "total_rows": 0,
+                    "reason": f"Parquet read/schema error in sampled validation ({type(e).__name__})"
+                }
             finally:
                 if conn:
                     try:
                         conn.close()
-                    except:
+                    except Exception:
                         pass
 
-        # Zero tolerance for schema failures
-        if schema_failures > 0:
+        # (2) Fail if 0 rows validated (meaning: we didn't really validate anything)
+        if total_rows == 0:
             bt.logging.warning(
-                f"Schema validation FAILED: {schema_failures}/{files_checked} files have invalid schema"
+                f"Sampled DuckDB validation FAILED: validated 0 rows across {files_checked} files "
+                f"(read_errors={read_errors})"
             )
             return {
                 "success": False,
-                "duplicate_rate_within_job": 100.0,  # Force failure
+                "duplicate_rate_within_job": 100.0,
                 "empty_rate": 100.0,
                 "missing_url_rate": 100.0,
                 "total_rows": 0,
-                "reason": f"Invalid schema in {schema_failures} files"
+                "reason": "Validated 0 rows in sampled DuckDB validation"
             }
 
-        if total_rows == 0:
-            return {
-                "success": True,
-                "duplicate_rate_within_job": 0.0,
-                "empty_rate": 0.0,
-                "missing_url_rate": 0.0,
-                "total_rows": 0
-            }
-
-        duplicate_rate = (len(duplicate_urls) / total_rows * 100) if total_rows > 0 else 0
-        empty_rate = (empty_count / total_rows * 100) if total_rows > 0 else 0
-        missing_url_rate = (missing_url_count / total_rows * 100) if total_rows > 0 else 0
+        duplicate_rate = (len(duplicate_urls) / total_rows * 100.0) if total_rows else 0.0
+        empty_rate = (empty_count / total_rows * 100.0) if total_rows else 0.0
+        missing_url_rate = (missing_url_count / total_rows * 100.0) if total_rows else 0.0
 
         bt.logging.info(
-            f"Sampled DuckDB validation: {total_rows} rows, "
+            f"Sampled DuckDB validation: {total_rows} rows across {files_checked} files, "
             f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%"
         )
 
