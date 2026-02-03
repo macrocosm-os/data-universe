@@ -406,8 +406,6 @@ class DuckDBSampledValidator:
         (1) Any parquet read / schema read / sample query error (incl OOM) => FAIL FAST
         (2) If total_rows == 0 => FAIL (no more "all zeros pass")
         (3) Schema-check coverage increased: validate schema across up to 200 sampled files
-
-        NOTE: No "missing required columns" failure (as requested).
         """
         total_rows = 0
         empty_count = 0
