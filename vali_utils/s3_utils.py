@@ -403,6 +403,12 @@ class DuckDBSampledValidator:
         Lightweight DuckDB validation using TABLESAMPLE BERNOULLI.
         Uses probabilistic sampling - memory efficient (~4MB per file).
         Checks duplicates, empty content, and missing URLs on sampled rows.
+
+        FIX:
+        - DO NOT use parquet_schema() to derive "columns": it includes schema-tree nodes
+          (root message like duckdb_schema, list/element wrappers).
+        - Use DESCRIBE read_parquet(...) to get *actual data columns* only.
+        - Ensure httpfs is loaded for presigned https:// URLs.
         """
         total_rows = 0
         duplicate_urls = set()
@@ -439,15 +445,32 @@ class DuckDBSampledValidator:
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='256MB';")
                 conn.execute("SET threads=1;")
+                conn.execute("SET enable_progress_bar=false;")
 
-                # First get schema to check available columns
-                # parquet_schema returns 'name' column, not 'column_name'
-                # Note: it includes root 'schema' and nested elements ('list', 'element') we filter out
-                schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
-                schema_result = conn.execute(schema_query).fetchall()
-                # Filter out schema metadata and nested array elements
-                excluded_names = {'schema', 'list', 'element', 'model_config'}
-                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+                # Ensure httpfs for https presigned urls
+                try:
+                    conn.execute("LOAD httpfs;")
+                except Exception:
+                    try:
+                        conn.execute("INSTALL httpfs;")
+                        conn.execute("LOAD httpfs;")
+                    except Exception:
+                        pass
+
+                try:
+                    conn.execute("SET http_timeout=120000;")
+                except Exception:
+                    pass
+
+                # Escape single quotes defensively (rare in URLs but safe)
+                purl = presigned_url.replace("'", "''")
+
+                # ---- FIXED: get actual columns (no root schema nodes) ----
+                desc_rows = conn.execute(
+                    f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
+                ).fetchall()
+
+                all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
                 available_columns = set(all_column_names)
 
                 # Schema validation - reject files with incorrect schema
@@ -499,7 +522,7 @@ class DuckDBSampledValidator:
                     SELECT
                         url,
                         CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
-                    FROM read_parquet('{presigned_url}')
+                    FROM read_parquet('{purl}')
                     TABLESAMPLE BERNOULLI(10%)
                     LIMIT {samples_per_file}
                 """
@@ -700,7 +723,13 @@ class DuckDBSampledValidator:
         presigned_urls: Dict[str, str],
         samples_per_file: int = 10
     ) -> Dict[str, Any]:
-        """Check if data matches job requirements (label/keyword/time)."""
+        """Check if data matches job requirements (label/keyword/time).
+
+        FIX:
+        - Stop using parquet_schema() for "column count" (it includes schema-tree nodes like duckdb_schema).
+        - Use DESCRIBE read_parquet(...) to get actual columns only.
+        - Ensure httpfs is loaded for presigned https URLs.
+        """
         total_checked = 0
         total_matched = 0
         mismatch_samples = []
@@ -748,12 +777,30 @@ class DuckDBSampledValidator:
                     conn = duckdb.connect(':memory:')
                     conn.execute("SET memory_limit='256MB';")
                     conn.execute("SET threads=1;")
+                    conn.execute("SET enable_progress_bar=false;")
 
-                    # Schema validation - verify column count matches expected
-                    schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
-                    schema_result = conn.execute(schema_query).fetchall()
-                    excluded_names = {'schema', 'list', 'element', 'model_config'}
-                    all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+                    # Ensure httpfs for https presigned urls
+                    try:
+                        conn.execute("LOAD httpfs;")
+                    except Exception:
+                        try:
+                            conn.execute("INSTALL httpfs;")
+                            conn.execute("LOAD httpfs;")
+                        except Exception:
+                            pass
+
+                    try:
+                        conn.execute("SET http_timeout=120000;")
+                    except Exception:
+                        pass
+
+                    purl = presigned_url.replace("'", "''")
+
+                    # ---- FIXED: get actual columns (no root schema nodes) ----
+                    desc_rows = conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
+                    ).fetchall()
+                    all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
 
                     if platform in ['x', 'twitter']:
                         max_columns = len(self.EXPECTED_COLUMNS_X)
@@ -765,7 +812,7 @@ class DuckDBSampledValidator:
                         continue
 
                     sample_df = conn.execute(f"""
-                        SELECT * FROM read_parquet('{presigned_url}')
+                        SELECT * FROM read_parquet('{purl}')
                         TABLESAMPLE BERNOULLI(10%)
                         LIMIT {samples_per_file}
                     """).fetchdf()
@@ -787,7 +834,7 @@ class DuckDBSampledValidator:
 
                     del sample_df  # Free DataFrame memory
 
-                except Exception as e:
+                except Exception:
                     continue
                 finally:
                     if conn:
@@ -876,7 +923,13 @@ class DuckDBSampledValidator:
         presigned_urls: Dict[str, str],
         num_entities: int = 10
     ) -> Dict[str, Any]:
-        """Validate random entities using real scrapers."""
+        """Validate random entities using real scrapers.
+
+        FIX:
+        - Stop using parquet_schema() for "column count" (it includes schema-tree nodes like duckdb_schema).
+        - Use DESCRIBE read_parquet(...) to get actual columns only.
+        - Ensure httpfs is loaded for presigned https URLs.
+        """
         all_entities = []
 
         for file_info in sampled_files:
@@ -904,12 +957,30 @@ class DuckDBSampledValidator:
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='256MB';")
                 conn.execute("SET threads=1;")
+                conn.execute("SET enable_progress_bar=false;")
 
-                # Schema validation - verify column count matches expected
-                schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
-                schema_result = conn.execute(schema_query).fetchall()
-                excluded_names = {'schema', 'list', 'element', 'model_config'}
-                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+                # Ensure httpfs for https presigned urls
+                try:
+                    conn.execute("LOAD httpfs;")
+                except Exception:
+                    try:
+                        conn.execute("INSTALL httpfs;")
+                        conn.execute("LOAD httpfs;")
+                    except Exception:
+                        pass
+
+                try:
+                    conn.execute("SET http_timeout=120000;")
+                except Exception:
+                    pass
+
+                purl = presigned_url.replace("'", "''")
+
+                # ---- FIXED: get actual columns (no root schema nodes) ----
+                desc_rows = conn.execute(
+                    f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
+                ).fetchall()
+                all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
 
                 if platform in ['x', 'twitter']:
                     max_columns = len(self.EXPECTED_COLUMNS_X)
@@ -921,7 +992,7 @@ class DuckDBSampledValidator:
                     continue
 
                 df = conn.execute(f"""
-                    SELECT * FROM read_parquet('{presigned_url}')
+                    SELECT * FROM read_parquet('{purl}')
                     TABLESAMPLE BERNOULLI(10%)
                     LIMIT 5
                 """).fetchdf()
