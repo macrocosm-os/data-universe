@@ -23,6 +23,7 @@ from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
+import asyncio
 
 
 @dataclass
@@ -126,15 +127,26 @@ class DuckDBSampledValidator:
         self._setup_duckdb()
 
     def _setup_duckdb(self):
-        """Configure DuckDB for HTTP parquet reading with memory limits"""
+        """Configure DuckDB for HTTP parquet reading with memory limits."""
         self.conn = duckdb.connect(':memory:')
+
+        # Track defaults so we can temporarily lower limits for sampling queries
+        self._default_duckdb_memory_limit = "4GB"
+        self._default_duckdb_threads = 2
+
         self.conn.execute("INSTALL httpfs;")
         self.conn.execute("LOAD httpfs;")
         self.conn.execute("SET http_timeout=120000;")
         self.conn.execute("SET enable_progress_bar=false;")
-        # Memory limit per connection - 15 validators × 4GB = 60GB max (but queries don't all run at once)
-        self.conn.execute("SET memory_limit='4GB';")
-        self.conn.execute("SET threads=2;")  # Limit threads per connection
+        self.conn.execute(f"SET memory_limit='{self._default_duckdb_memory_limit}';")
+        self.conn.execute(f"SET threads={self._default_duckdb_threads};")
+
+        # Optional: avoid accumulating cached objects when reusing a single connection.
+        # Not available in all DuckDB builds, so keep it best-effort.
+        try:
+            self.conn.execute("SET enable_object_cache=false;")
+        except Exception:
+            pass
 
     async def validate_miner_s3_data(
         self,
@@ -144,94 +156,91 @@ class DuckDBSampledValidator:
         """
         Validate miner using DuckDB with random sampling.
 
-        Returns S3ValidationResult with effective_size for competition scoring.
+        Changes:
+        - Compute active job coverage + size in ONE pass over the file listing.
+        - Keep active files list in same pass (no files_by_job build needed).
         """
         import time
         start_time = time.time()
 
         try:
-            # Step 1: List ALL files (for size calculation - no reading needed)
             bt.logging.info(f"{miner_hotkey}: DuckDB validation - listing files...")
 
             if not self.s3_reader:
                 return self._create_failed_result("S3 reader not available")
 
-            all_files = await self.s3_reader.list_all_files_with_metadata(miner_hotkey)
+            if not expected_jobs:
+                return self._create_failed_result("No expected jobs loaded (gravity total.json empty/missing)")
 
+            all_files = await self.s3_reader.list_all_files_with_metadata(miner_hotkey)
             if not all_files:
                 return self._create_failed_result("No files found")
 
-            # Group files by job
-            files_by_job = {}
+            # ---- ONE PASS: gather active jobs, active files, and active bytes ----
+            active_job_ids_set = set()
+            active_files_with_job: List[tuple] = []
+            total_size_bytes = 0
+
+            # Faster parse than split() chains in hot loops
+            marker = "/job_id="
+            mlen = len(marker)
+
             for f in all_files:
-                key = f.get('key', '')
-                if '/job_id=' in key:
-                    job_id = key.split('/job_id=')[1].split('/')[0]
-                    if job_id not in files_by_job:
-                        files_by_job[job_id] = []
-                    files_by_job[job_id].append(f)
+                key = f.get("key") or ""
+                idx = key.find(marker)
+                if idx == -1:
+                    continue
 
-            # Filter to active jobs only
-            active_job_ids = [jid for jid in files_by_job.keys() if jid in expected_jobs]
+                rest = key[idx + mlen:]
+                job_id = rest.split("/", 1)[0] if rest else ""
+                if not job_id:
+                    continue
 
-            if not active_job_ids:
+                if job_id in expected_jobs:
+                    active_job_ids_set.add(job_id)
+                    active_files_with_job.append((f, job_id))
+                    try:
+                        total_size_bytes += int(f.get("size") or 0)
+                    except Exception:
+                        pass
+
+            if not active_job_ids_set:
                 return self._create_failed_result("No active jobs found")
 
-            # Calculate size from active jobs only
-            total_size_bytes = 0
-            for job_id in active_job_ids:
-                for f in files_by_job[job_id]:
-                    total_size_bytes += f.get('size', 0)
+            if not active_files_with_job:
+                return self._create_failed_result("No files in active jobs")
 
-            job_coverage_rate = (len(active_job_ids) / len(expected_jobs) * 100) if expected_jobs else 0
+            job_coverage_rate = (len(active_job_ids_set) / len(expected_jobs) * 100.0) if expected_jobs else 0.0
 
             bt.logging.info(
                 f"{miner_hotkey}: {len(all_files)} total files, "
-                f"{len(active_job_ids)} active jobs, "
+                f"{len(active_job_ids_set)} active jobs, "
                 f"{total_size_bytes/(1024*1024):.1f}MB, "
                 f"{job_coverage_rate:.1f}% coverage"
             )
 
-            # Step 2: Random sample files from active jobs
-            active_files = []
-            for job_id in active_job_ids:
-                active_files.extend([(f, job_id) for f in files_by_job[job_id]])
+            # ---- Step 2: Random sample from active files ----
+            sample_count = max(10, int(len(active_files_with_job) * self.sample_percent / 100.0))
+            sample_count = min(sample_count, len(active_files_with_job), 200)  # cap at 200
 
-            if not active_files:
-                return self._create_failed_result("No files in active jobs")
-
-            sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
-            sample_count = min(sample_count, len(active_files), 200)  # Cap at 200 files max
-
-            sampled_files_with_job = random.sample(active_files, sample_count)
+            sampled_files_with_job = random.sample(active_files_with_job, sample_count)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
             bt.logging.info(f"{miner_hotkey}: Sampled {len(sampled_files)} files ({self.sample_percent}%)")
 
-            # Step 3: Get presigned URLs for sample
-            file_keys = [f['key'] for f in sampled_files]
+            # ---- Step 3: presigned URLs (non-blocking implementation) ----
+            file_keys = [f.get("key") for f in sampled_files if f.get("key")]
             presigned_urls = await self._get_presigned_urls_batch(miner_hotkey, file_keys)
 
             if not presigned_urls:
                 return self._create_failed_result("Failed to get presigned URLs")
 
-            # Group by job for DuckDB validation
-            urls_by_job = {}
-            for file_info, job_id in sampled_files_with_job:
-                file_key = file_info['key']
-                url = presigned_urls.get(file_key)
-                if not url:
-                    continue
+            # (Optional) drop sampled files that did not get a URL
+            sampled_files = [f for f in sampled_files if presigned_urls.get(f.get("key", ""))]
+            if not sampled_files:
+                return self._create_failed_result("No sampled files had presigned URLs")
 
-                job_config = expected_jobs.get(job_id, {})
-                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', 'unknown').lower()
-
-                if job_id not in urls_by_job:
-                    urls_by_job[job_id] = {'platform': platform, 'urls': []}
-                urls_by_job[job_id]['urls'].append(url)
-
-            # Step 4: Lightweight DuckDB validation (sampled - memory safe)
+            # ---- Step 4: DuckDB sampled validation ----
             bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
             duckdb_result = await self._sampled_duckdb_validation(
                 sampled_files, expected_jobs, presigned_urls, samples_per_file=100
@@ -240,30 +249,27 @@ class DuckDBSampledValidator:
             # If schema validation failed, skip remaining checks (fail fast)
             if duckdb_result.get("reason"):
                 bt.logging.warning(f"{miner_hotkey}: Schema validation failed - skipping remaining checks")
-                job_match_result = {'total_checked': 0, 'total_matched': 0, 'match_rate': 0.0}
-                scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0.0}
+                job_match_result = {'total_checked': 0, 'total_matched': 0, 'match_rate': 0.0, 'mismatch_samples': []}
+                scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0.0, 'sample_results': []}
             else:
-                # Step 5: Job content matching
                 bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
                 job_match_result = await self._perform_job_content_matching(
                     sampled_files, expected_jobs, presigned_urls
                 )
 
-                # Step 6: Scraper validation
                 bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
                 scraper_result = await self._perform_scraper_validation(
                     miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
                 )
 
-            # Step 7: Validation decision
+            # ---- Step 7: Decision ----
             issues = []
-            duplicate_rate = duckdb_result["duplicate_rate_within_job"]
-            empty_rate = duckdb_result["empty_rate"]
-            missing_uri_rate = duckdb_result["missing_url_rate"]
-            job_match_rate = job_match_result['match_rate']
-            scraper_success_rate = scraper_result['success_rate']
+            duplicate_rate = duckdb_result.get("duplicate_rate_within_job", 0.0)
+            empty_rate = duckdb_result.get("empty_rate", 0.0)
+            missing_uri_rate = duckdb_result.get("missing_url_rate", 0.0)
+            job_match_rate = job_match_result.get('match_rate', 0.0)
+            scraper_success_rate = scraper_result.get('success_rate', 0.0)
 
-            # Check for schema validation failure
             if duckdb_result.get("reason"):
                 issues.append(duckdb_result["reason"])
 
@@ -278,26 +284,20 @@ class DuckDBSampledValidator:
             if scraper_success_rate < self.MIN_SCRAPER_SUCCESS:
                 issues.append(f"Low scraper success: {scraper_success_rate:.1f}%")
 
-            is_valid = len(issues) == 0
+            is_valid = (len(issues) == 0)
 
-            # Calculate effective_size for competition scoring
             coverage_ratio = job_coverage_rate / 100.0
-            if is_valid:
-                effective_size_bytes = total_size_bytes * (coverage_ratio ** 2)
-            else:
-                effective_size_bytes = 0.0
+            effective_size_bytes = total_size_bytes * (coverage_ratio ** 2) if is_valid else 0.0
 
-            # Calculate validation percentage (for backward compatibility)
             if is_valid:
                 base_score = 100.0 - (duplicate_rate * 2) - (empty_rate * 0.5)
                 size_bonus = min(20, math.log10(max(1, total_size_bytes / (10 * 1024 * 1024))) * 10)
-                validation_percentage = max(0, base_score + size_bonus) * (coverage_ratio)
+                validation_percentage = max(0, base_score + size_bonus) * coverage_ratio
             else:
                 validation_percentage = 0.0
 
             elapsed = time.time() - start_time
 
-            # Log detailed results for miners to debug
             if is_valid:
                 bt.logging.success(
                     f"{miner_hotkey}: S3 validation PASSED in {elapsed:.1f}s - "
@@ -319,18 +319,18 @@ class DuckDBSampledValidator:
             return S3ValidationResult(
                 is_valid=is_valid,
                 validation_percentage=validation_percentage,
-                total_active_jobs=len(active_job_ids),
+                total_active_jobs=len(active_job_ids_set),
                 expected_jobs_count=len(expected_jobs),
-                recent_jobs_analyzed=len(active_job_ids),
+                recent_jobs_analyzed=len(active_job_ids_set),
                 recent_files_count=len(sampled_files),
                 total_size_bytes=total_size_bytes,
                 has_duplicates=(duplicate_rate > self.MAX_DUPLICATE_RATE),
                 duplicate_percentage=duplicate_rate,
-                entities_validated=scraper_result['entities_validated'],
-                entities_passed_scraper=scraper_result['entities_passed'],
+                entities_validated=scraper_result.get('entities_validated', 0),
+                entities_passed_scraper=scraper_result.get('entities_passed', 0),
                 scraper_success_rate=scraper_success_rate,
-                entities_checked_for_job_match=job_match_result['total_checked'],
-                entities_matched_job=job_match_result['total_matched'],
+                entities_checked_for_job_match=job_match_result.get('total_checked', 0),
+                entities_matched_job=job_match_result.get('total_matched', 0),
                 job_match_rate=job_match_rate,
                 validation_issues=issues,
                 reason=f"DuckDB validation: {'PASSED' if is_valid else 'FAILED'} - {', '.join(issues) if issues else 'All checks passed'}",
@@ -349,46 +349,88 @@ class DuckDBSampledValidator:
         self,
         miner_hotkey: str,
         file_keys: List[str],
-        batch_size: int = 500
+        batch_size: int = 500,
+        max_concurrency: int = 4,
+        timeout: int = 120
     ) -> Dict[str, str]:
-        """Get presigned URLs in batches"""
+        """
+        Get presigned URLs in batches.
 
-        all_urls = {}
+        Changes:
+        - Does NOT block the event loop: requests.post() runs in a thread via asyncio.to_thread().
+        - Optional bounded concurrency for multiple batches.
+        """
+        if not file_keys:
+            return {}
 
+        hotkey = self.wallet.hotkey.ss58_address
+        sem = asyncio.Semaphore(max_concurrency)
+
+        def _normalize_file_urls(file_urls: Any) -> Dict[str, str]:
+            out: Dict[str, str] = {}
+            if not isinstance(file_urls, dict):
+                return out
+            for key, data in file_urls.items():
+                if isinstance(data, dict):
+                    url = data.get("presigned_url") or data.get("url")
+                    if url:
+                        out[key] = url
+                elif isinstance(data, str) and data:
+                    out[key] = data
+            return out
+
+        async def _fetch_batch(batch: List[str]) -> Dict[str, str]:
+            async with sem:
+                try:
+                    timestamp = int(time.time())
+                    commitment = f"s3:validator:files:{miner_hotkey}:{hotkey}:{timestamp}"
+                    signature = self.wallet.hotkey.sign(commitment.encode())
+
+                    payload = {
+                        "hotkey": hotkey,
+                        "timestamp": timestamp,
+                        "signature": signature.hex(),
+                        "miner_hotkey": miner_hotkey,
+                        "file_keys": batch,
+                        "expiry_hours": 1
+                    }
+
+                    url = f"{self.s3_auth_url}/get-file-presigned-urls"
+
+                    def _do_request():
+                        return requests.post(url, json=payload, timeout=timeout)
+
+                    resp = await asyncio.to_thread(_do_request)
+
+                    if resp.status_code != 200:
+                        bt.logging.warning(f"Presigned URL batch failed (status={resp.status_code})")
+                        return {}
+
+                    try:
+                        body = resp.json()
+                    except Exception:
+                        bt.logging.warning("Presigned URL batch returned non-JSON response")
+                        return {}
+
+                    return _normalize_file_urls(body.get("file_urls", {}))
+
+                except Exception as e:
+                    bt.logging.warning(f"Presigned URL batch error: {e}")
+                    return {}
+
+        tasks = []
         for i in range(0, len(file_keys), batch_size):
             batch = file_keys[i:i + batch_size]
+            tasks.append(_fetch_batch(batch))
 
-            try:
-                hotkey = self.wallet.hotkey.ss58_address
-                timestamp = int(time.time())
-                commitment = f"s3:validator:files:{miner_hotkey}:{hotkey}:{timestamp}"
-                signature = self.wallet.hotkey.sign(commitment.encode())
+        results = await asyncio.gather(*tasks, return_exceptions=True)
 
-                payload = {
-                    "hotkey": hotkey,
-                    "timestamp": timestamp,
-                    "signature": signature.hex(),
-                    "miner_hotkey": miner_hotkey,
-                    "file_keys": batch,
-                    "expiry_hours": 1
-                }
-
-                response = requests.post(
-                    f"{self.s3_auth_url}/get-file-presigned-urls",
-                    json=payload,
-                    timeout=120
-                )
-
-                if response.status_code == 200:
-                    file_urls = response.json().get('file_urls', {})
-                    for key, data in file_urls.items():
-                        if isinstance(data, dict) and 'presigned_url' in data:
-                            all_urls[key] = data['presigned_url']
-                        elif isinstance(data, str):
-                            all_urls[key] = data
-
-            except Exception as e:
-                bt.logging.warning(f"Presigned URL batch error: {e}")
+        all_urls: Dict[str, str] = {}
+        for r in results:
+            if isinstance(r, Exception):
+                bt.logging.warning(f"Presigned URL gather error: {r}")
+                continue
+            all_urls.update(r)
 
         return all_urls
 
@@ -401,18 +443,14 @@ class DuckDBSampledValidator:
     ) -> Dict[str, Any]:
         """
         Lightweight DuckDB validation using TABLESAMPLE BERNOULLI.
-        Uses probabilistic sampling - memory efficient (~4MB per file).
-        Checks duplicates, empty content, and missing URLs on sampled rows.
 
-        FIX:
-        - DO NOT use parquet_schema() to derive "columns": it includes schema-tree nodes
-          (root message like duckdb_schema, list/element wrappers).
-        - Use DESCRIBE read_parquet(...) to get *actual data columns* only.
-        - Ensure httpfs is loaded for presigned https:// URLs.
+        Changes:
+        - Reuses self.conn (no per-file duckdb.connect()).
+        - Temporarily constrains DuckDB settings, then restores defaults.
         """
         total_rows = 0
         duplicate_urls = set()
-        all_urls_seen = []
+        seen_urls = set()
         empty_count = 0
         missing_url_count = 0
         schema_failures = 0
@@ -421,180 +459,158 @@ class DuckDBSampledValidator:
         # Limit to 20 files max for this check
         files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
 
-        for file_info in files_to_check:
-            # Fail fast - if we already found invalid schema, stop checking
-            if schema_failures > 0:
-                break
-
-            presigned_url = presigned_urls.get(file_info['key'])
-            if not presigned_url:
-                continue
-
-            # Get platform from job_id
-            file_key = file_info['key']
-            if '/job_id=' in file_key:
-                job_id = file_key.split('/job_id=')[1].split('/')[0]
-                job_config = expected_jobs.get(job_id, {})
-                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', '').lower()
-            else:
-                platform = 'unknown'
-
-            conn = None
+        # Temporarily tighten resource usage for sampling queries
+        try:
+            self.conn.execute("SET enable_progress_bar=false;")
+            self.conn.execute("SET memory_limit='256MB';")
+            self.conn.execute("SET threads=1;")
             try:
-                conn = duckdb.connect(':memory:')
-                conn.execute("SET memory_limit='256MB';")
-                conn.execute("SET threads=1;")
-                conn.execute("SET enable_progress_bar=false;")
+                self.conn.execute("SET enable_object_cache=false;")
+            except Exception:
+                pass
 
-                # Ensure httpfs for https presigned urls
-                try:
-                    conn.execute("LOAD httpfs;")
-                except Exception:
-                    try:
-                        conn.execute("INSTALL httpfs;")
-                        conn.execute("LOAD httpfs;")
-                    except Exception:
-                        pass
+            for file_info in files_to_check:
+                if schema_failures > 0:
+                    break
 
-                try:
-                    conn.execute("SET http_timeout=120000;")
-                except Exception:
-                    pass
-
-                # Escape single quotes defensively (rare in URLs but safe)
-                purl = presigned_url.replace("'", "''")
-
-                # ---- FIXED: get actual columns (no root schema nodes) ----
-                desc_rows = conn.execute(
-                    f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
-                ).fetchall()
-
-                all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
-                available_columns = set(all_column_names)
-
-                # Schema validation - reject files with incorrect schema
-                if platform in ['x', 'twitter']:
-                    expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_X}
-                    max_columns = len(self.EXPECTED_COLUMNS_X)
-                else:
-                    expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_REDDIT}
-                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
-
-                files_checked += 1
-
-                # Check total column count (reject duplicate columns) - fail fast
-                if len(all_column_names) > max_columns:
-                    bt.logging.warning(
-                        f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
-                        f"Sample columns: {all_column_names[:10]}..."
-                    )
-                    schema_failures += 1
-                    break  # Fail fast
-
-                # Check for unexpected column names - fail fast
-                unexpected_columns = available_columns - expected_columns
-                if unexpected_columns:
-                    bt.logging.warning(
-                        f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
-                    )
-                    schema_failures += 1
-                    break  # Fail fast
-
-                # Build empty check based on available columns (no media - often missing)
-                if platform in ['x', 'twitter']:
-                    if 'text' in available_columns:
-                        empty_check = "COALESCE(text, '') = ''"
-                    else:
-                        empty_check = "FALSE"
-                else:
-                    # Reddit - check body and title
-                    checks = []
-                    if 'body' in available_columns:
-                        checks.append("COALESCE(body, '') = ''")
-                    if 'title' in available_columns:
-                        checks.append("COALESCE(title, '') = ''")
-                    empty_check = " AND ".join(checks) if checks else "FALSE"
-
-                # Use TABLESAMPLE BERNOULLI - probabilistic sampling, memory efficient
-                # 10% sampling ensures we get rows even from smaller files
-                query = f"""
-                    SELECT
-                        url,
-                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
-                    FROM read_parquet('{purl}')
-                    TABLESAMPLE BERNOULLI(10%)
-                    LIMIT {samples_per_file}
-                """
-                rows = conn.execute(query).fetchall()
-
-                if not rows:
+                presigned_url = presigned_urls.get(file_info.get('key', ''))
+                if not presigned_url:
                     continue
 
-                for row in rows:
-                    total_rows += 1
-                    url = row[0]
-                    is_empty = row[1]
+                # Get platform from job_id (from file path)
+                file_key = file_info.get('key', '')
+                if '/job_id=' in file_key:
+                    job_id = file_key.split('/job_id=')[1].split('/')[0]
+                    job_config = expected_jobs.get(job_id, {})
+                    params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+                    platform = str(params.get('platform', '') or '').lower()
+                else:
+                    platform = 'unknown'
 
-                    if is_empty:
-                        empty_count += 1
+                try:
+                    purl = presigned_url.replace("'", "''")
 
-                    if url is None or url == '':
-                        missing_url_count += 1
+                    # Actual data columns only
+                    desc_rows = self.conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
+                    ).fetchall()
+
+                    all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
+                    available_columns = set(all_column_names)
+
+                    if platform in ['x', 'twitter']:
+                        expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_X}
+                        max_columns = len(self.EXPECTED_COLUMNS_X)
                     else:
-                        if url in all_urls_seen:
-                            duplicate_urls.add(url)
-                        all_urls_seen.append(url)
+                        expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_REDDIT}
+                        max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
 
-            except Exception as e:
-                bt.logging.debug(f"Sampled validation error for file: {e}")
-                continue
-            finally:
-                if conn:
-                    try:
-                        conn.close()
-                    except:
-                        pass
+                    files_checked += 1
 
-        # Zero tolerance for schema failures
-        if schema_failures > 0:
-            bt.logging.warning(
-                f"Schema validation FAILED: {schema_failures}/{files_checked} files have invalid schema"
+                    # Fail fast on column count mismatch
+                    if len(all_column_names) > max_columns:
+                        bt.logging.warning(
+                            f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
+                            f"Sample columns: {all_column_names[:10]}..."
+                        )
+                        schema_failures += 1
+                        break
+
+                    unexpected_columns = available_columns - expected_columns
+                    if unexpected_columns:
+                        bt.logging.warning(
+                            f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
+                        )
+                        schema_failures += 1
+                        break
+
+                    # Empty check
+                    if platform in ['x', 'twitter']:
+                        empty_check = "COALESCE(text, '') = ''" if 'text' in available_columns else "FALSE"
+                    else:
+                        checks = []
+                        if 'body' in available_columns:
+                            checks.append("COALESCE(body, '') = ''")
+                        if 'title' in available_columns:
+                            checks.append("COALESCE(title, '') = ''")
+                        empty_check = " AND ".join(checks) if checks else "FALSE"
+
+                    query = f"""
+                        SELECT
+                            url,
+                            CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
+                        FROM read_parquet('{purl}')
+                        TABLESAMPLE BERNOULLI(10%)
+                        LIMIT {int(samples_per_file)}
+                    """
+                    rows = self.conn.execute(query).fetchall()
+                    if not rows:
+                        continue
+
+                    for url, is_empty in rows:
+                        total_rows += 1
+
+                        if is_empty:
+                            empty_count += 1
+
+                        if url is None or url == '':
+                            missing_url_count += 1
+                        else:
+                            if url in seen_urls:
+                                duplicate_urls.add(url)
+                            else:
+                                seen_urls.add(url)
+
+                except Exception as e:
+                    bt.logging.debug(f"Sampled validation error for file: {e}")
+                    continue
+
+            if schema_failures > 0:
+                bt.logging.warning(
+                    f"Schema validation FAILED: {schema_failures}/{files_checked} files have invalid schema"
+                )
+                return {
+                    "success": False,
+                    "duplicate_rate_within_job": 100.0,
+                    "empty_rate": 100.0,
+                    "missing_url_rate": 100.0,
+                    "total_rows": 0,
+                    "reason": f"Invalid schema in {schema_failures} files"
+                }
+
+            if total_rows == 0:
+                return {
+                    "success": True,
+                    "duplicate_rate_within_job": 0.0,
+                    "empty_rate": 0.0,
+                    "missing_url_rate": 0.0,
+                    "total_rows": 0
+                }
+
+            duplicate_rate = (len(duplicate_urls) / total_rows * 100.0) if total_rows > 0 else 0.0
+            empty_rate = (empty_count / total_rows * 100.0) if total_rows > 0 else 0.0
+            missing_url_rate = (missing_url_count / total_rows * 100.0) if total_rows > 0 else 0.0
+
+            bt.logging.info(
+                f"Sampled DuckDB validation: {total_rows} rows, "
+                f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%"
             )
-            return {
-                "success": False,
-                "duplicate_rate_within_job": 100.0,  # Force failure
-                "empty_rate": 100.0,
-                "missing_url_rate": 100.0,
-                "total_rows": 0,
-                "reason": f"Invalid schema in {schema_failures} files"
-            }
 
-        if total_rows == 0:
             return {
                 "success": True,
-                "duplicate_rate_within_job": 0.0,
-                "empty_rate": 0.0,
-                "missing_url_rate": 0.0,
-                "total_rows": 0
+                "duplicate_rate_within_job": duplicate_rate,
+                "empty_rate": empty_rate,
+                "missing_url_rate": missing_url_rate,
+                "total_rows": total_rows
             }
 
-        duplicate_rate = (len(duplicate_urls) / total_rows * 100) if total_rows > 0 else 0
-        empty_rate = (empty_count / total_rows * 100) if total_rows > 0 else 0
-        missing_url_rate = (missing_url_count / total_rows * 100) if total_rows > 0 else 0
-
-        bt.logging.info(
-            f"Sampled DuckDB validation: {total_rows} rows, "
-            f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%"
-        )
-
-        return {
-            "success": True,
-            "duplicate_rate_within_job": duplicate_rate,
-            "empty_rate": empty_rate,
-            "missing_url_rate": missing_url_rate,
-            "total_rows": total_rows
-        }
+        finally:
+            # Restore defaults for other queries
+            try:
+                self.conn.execute(f"SET memory_limit='{self._default_duckdb_memory_limit}';")
+                self.conn.execute(f"SET threads={self._default_duckdb_threads};")
+            except Exception:
+                pass
 
     def _validate_sample_with_duckdb(
         self,
@@ -723,132 +739,111 @@ class DuckDBSampledValidator:
         presigned_urls: Dict[str, str],
         samples_per_file: int = 10
     ) -> Dict[str, Any]:
-        """Check if data matches job requirements (label/keyword/time).
+        """
+        Check if data matches job requirements (label/keyword/time).
 
-        FIX:
-        - Stop using parquet_schema() for "column count" (it includes schema-tree nodes like duckdb_schema).
-        - Use DESCRIBE read_parquet(...) to get actual columns only.
-        - Ensure httpfs is loaded for presigned https URLs.
+        Changes:
+        - Reuses self.conn (no per-file duckdb.connect()).
+        - Temporarily constrains DuckDB settings, then restores defaults.
         """
         total_checked = 0
         total_matched = 0
         mismatch_samples = []
 
-        files_by_job = {}
+        files_by_job: Dict[str, List[Dict]] = {}
         for file_info in sampled_files:
-            file_key = file_info['key']
+            file_key = file_info.get('key', '')
             if '/job_id=' in file_key:
                 job_id = file_key.split('/job_id=')[1].split('/')[0]
-                if job_id not in files_by_job:
-                    files_by_job[job_id] = []
-                files_by_job[job_id].append(file_info)
+                files_by_job.setdefault(job_id, []).append(file_info)
 
-        for job_id, files in files_by_job.items():
-            job_config = expected_jobs.get(job_id)
-            if not job_config:
-                continue
+        try:
+            self.conn.execute("SET enable_progress_bar=false;")
+            self.conn.execute("SET memory_limit='256MB';")
+            self.conn.execute("SET threads=1;")
+            try:
+                self.conn.execute("SET enable_object_cache=false;")
+            except Exception:
+                pass
 
-            # Access params nested structure (Gravity schema)
-            params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-            platform = params.get('platform', '').lower()
-            job_label = params.get('label')
-            job_keyword = params.get('keyword')
-            job_start_date = params.get('post_start_datetime')
-            job_end_date = params.get('post_end_datetime')
-
-            job_start_dt = self._parse_datetime(job_start_date)
-            job_end_dt = self._parse_datetime(job_end_date)
-
-            has_label = bool(job_label and str(job_label).strip())
-            has_keyword = bool(job_keyword and str(job_keyword).strip())
-            has_time = bool(job_start_dt or job_end_dt)
-
-            sample_files = random.sample(files, min(2, len(files)))
-
-            for file_info in sample_files:
-                presigned_url = presigned_urls.get(file_info['key'])
-                if not presigned_url:
+            for job_id, files in files_by_job.items():
+                job_config = expected_jobs.get(job_id)
+                if not job_config:
                     continue
 
-                conn = None
-                try:
-                    # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
-                    # 10% sampling ensures we get rows even from smaller files
-                    conn = duckdb.connect(':memory:')
-                    conn.execute("SET memory_limit='256MB';")
-                    conn.execute("SET threads=1;")
-                    conn.execute("SET enable_progress_bar=false;")
+                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+                platform = str(params.get('platform', '') or '').lower()
+                job_label = params.get('label')
+                job_keyword = params.get('keyword')
+                job_start_date = params.get('post_start_datetime')
+                job_end_date = params.get('post_end_datetime')
 
-                    # Ensure httpfs for https presigned urls
-                    try:
-                        conn.execute("LOAD httpfs;")
-                    except Exception:
-                        try:
-                            conn.execute("INSTALL httpfs;")
-                            conn.execute("LOAD httpfs;")
-                        except Exception:
-                            pass
+                job_start_dt = self._parse_datetime(job_start_date)
+                job_end_dt = self._parse_datetime(job_end_date)
 
-                    try:
-                        conn.execute("SET http_timeout=120000;")
-                    except Exception:
-                        pass
+                has_label = bool(job_label and str(job_label).strip())
+                has_keyword = bool(job_keyword and str(job_keyword).strip())
+                has_time = bool(job_start_dt or job_end_dt)
 
-                    purl = presigned_url.replace("'", "''")
+                sample_files = random.sample(files, min(2, len(files)))
 
-                    # ---- FIXED: get actual columns (no root schema nodes) ----
-                    desc_rows = conn.execute(
-                        f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
-                    ).fetchall()
-                    all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
-
-                    if platform in ['x', 'twitter']:
-                        max_columns = len(self.EXPECTED_COLUMNS_X)
-                    else:
-                        max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
-
-                    if len(all_column_names) > max_columns:
-                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                for file_info in sample_files:
+                    presigned_url = presigned_urls.get(file_info.get('key', ''))
+                    if not presigned_url:
                         continue
 
-                    sample_df = conn.execute(f"""
-                        SELECT * FROM read_parquet('{purl}')
-                        TABLESAMPLE BERNOULLI(10%)
-                        LIMIT {samples_per_file}
-                    """).fetchdf()
+                    try:
+                        purl = presigned_url.replace("'", "''")
 
-                    if sample_df is None or len(sample_df) == 0:
+                        desc_rows = self.conn.execute(
+                            f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
+                        ).fetchall()
+                        all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
+
+                        max_columns = len(self.EXPECTED_COLUMNS_X) if platform in ['x', 'twitter'] else len(self.EXPECTED_COLUMNS_REDDIT)
+                        if len(all_column_names) > max_columns:
+                            bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                            continue
+
+                        sample_df = self.conn.execute(f"""
+                            SELECT * FROM read_parquet('{purl}')
+                            TABLESAMPLE BERNOULLI(10%)
+                            LIMIT {int(samples_per_file)}
+                        """).fetchdf()
+
+                        if sample_df is None or len(sample_df) == 0:
+                            continue
+
+                        for _, row in sample_df.iterrows():
+                            total_checked += 1
+                            matches = self._check_row_matches_job(
+                                row, platform, job_label, job_keyword,
+                                job_start_dt, job_end_dt, has_label, has_keyword, has_time
+                            )
+                            if matches:
+                                total_matched += 1
+                            elif len(mismatch_samples) < 5:
+                                uri = row.get('url', row.get('uri', 'unknown'))
+                                mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
+
+                        del sample_df
+
+                    except Exception:
                         continue
 
-                    for _, row in sample_df.iterrows():
-                        total_checked += 1
-                        matches = self._check_row_matches_job(
-                            row, platform, job_label, job_keyword,
-                            job_start_dt, job_end_dt, has_label, has_keyword, has_time
-                        )
-                        if matches:
-                            total_matched += 1
-                        elif len(mismatch_samples) < 5:
-                            uri = row.get('url', row.get('uri', 'unknown'))
-                            mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
+            return {
+                'total_checked': total_checked,
+                'total_matched': total_matched,
+                'match_rate': (total_matched / total_checked * 100.0) if total_checked > 0 else 0.0,
+                'mismatch_samples': mismatch_samples
+            }
 
-                    del sample_df  # Free DataFrame memory
-
-                except Exception:
-                    continue
-                finally:
-                    if conn:
-                        try:
-                            conn.close()
-                        except:
-                            pass
-
-        return {
-            'total_checked': total_checked,
-            'total_matched': total_matched,
-            'match_rate': (total_matched / total_checked * 100) if total_checked > 0 else 0.0,
-            'mismatch_samples': mismatch_samples
-        }
+        finally:
+            try:
+                self.conn.execute(f"SET memory_limit='{self._default_duckdb_memory_limit}';")
+                self.conn.execute(f"SET threads={self._default_duckdb_threads};")
+            except Exception:
+                pass
 
     def _check_row_matches_job(
         self, row, platform, job_label, job_keyword,
@@ -923,100 +918,87 @@ class DuckDBSampledValidator:
         presigned_urls: Dict[str, str],
         num_entities: int = 10
     ) -> Dict[str, Any]:
-        """Validate random entities using real scrapers.
+        """
+        Validate random entities using real scrapers.
 
-        FIX:
-        - Stop using parquet_schema() for "column count" (it includes schema-tree nodes like duckdb_schema).
-        - Use DESCRIBE read_parquet(...) to get actual columns only.
-        - Ensure httpfs is loaded for presigned https URLs.
+        Changes:
+        - Reuses self.conn (no per-file duckdb.connect()).
+        - Temporarily constrains DuckDB settings, then restores defaults.
         """
         all_entities = []
 
-        for file_info in sampled_files:
-            if len(all_entities) >= num_entities * 2:
-                break
+        try:
+            self.conn.execute("SET enable_progress_bar=false;")
+            self.conn.execute("SET memory_limit='256MB';")
+            self.conn.execute("SET threads=1;")
+            try:
+                self.conn.execute("SET enable_object_cache=false;")
+            except Exception:
+                pass
 
-            file_key = file_info['key']
-            presigned_url = presigned_urls.get(file_key)
-            if not presigned_url:
-                continue
+            for file_info in sampled_files:
+                if len(all_entities) >= num_entities * 2:
+                    break
 
-            if '/job_id=' in file_key:
+                file_key = file_info.get('key', '')
+                presigned_url = presigned_urls.get(file_key)
+                if not presigned_url:
+                    continue
+
+                if '/job_id=' not in file_key:
+                    continue
+
                 job_id = file_key.split('/job_id=')[1].split('/')[0]
                 job_config = expected_jobs.get(job_id, {})
-                # Access params nested structure (Gravity schema)
                 params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', 'unknown').lower()
-            else:
-                continue
+                platform = str(params.get('platform', 'unknown') or 'unknown').lower()
 
-            conn = None
+                try:
+                    purl = presigned_url.replace("'", "''")
+
+                    desc_rows = self.conn.execute(
+                        f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
+                    ).fetchall()
+                    all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
+
+                    max_columns = len(self.EXPECTED_COLUMNS_X) if platform in ['x', 'twitter'] else len(self.EXPECTED_COLUMNS_REDDIT)
+                    if len(all_column_names) > max_columns:
+                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                        continue
+
+                    df = self.conn.execute(f"""
+                        SELECT * FROM read_parquet('{purl}')
+                        TABLESAMPLE BERNOULLI(10%)
+                        LIMIT 5
+                    """).fetchdf()
+
+                    if df is None or len(df) == 0:
+                        continue
+
+                    for _, row in df.iterrows():
+                        entity = self._create_data_entity(row, platform)
+                        if entity:
+                            all_entities.append((entity, platform, job_id))
+
+                    del df
+
+                except Exception:
+                    continue
+
+        finally:
             try:
-                # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
-                # Use 10% sampling to ensure we get rows even from smaller files
-                conn = duckdb.connect(':memory:')
-                conn.execute("SET memory_limit='256MB';")
-                conn.execute("SET threads=1;")
-                conn.execute("SET enable_progress_bar=false;")
-
-                # Ensure httpfs for https presigned urls
-                try:
-                    conn.execute("LOAD httpfs;")
-                except Exception:
-                    try:
-                        conn.execute("INSTALL httpfs;")
-                        conn.execute("LOAD httpfs;")
-                    except Exception:
-                        pass
-
-                try:
-                    conn.execute("SET http_timeout=120000;")
-                except Exception:
-                    pass
-
-                purl = presigned_url.replace("'", "''")
-
-                # ---- FIXED: get actual columns (no root schema nodes) ----
-                desc_rows = conn.execute(
-                    f"DESCRIBE SELECT * FROM read_parquet('{purl}')"
-                ).fetchall()
-                all_column_names = [str(r[0]).lower() for r in desc_rows if r and r[0]]
-
-                if platform in ['x', 'twitter']:
-                    max_columns = len(self.EXPECTED_COLUMNS_X)
-                else:
-                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
-
-                if len(all_column_names) > max_columns:
-                    bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
-                    continue
-
-                df = conn.execute(f"""
-                    SELECT * FROM read_parquet('{purl}')
-                    TABLESAMPLE BERNOULLI(10%)
-                    LIMIT 5
-                """).fetchdf()
-
-                if df is None or len(df) == 0:
-                    continue
-
-                for _, row in df.iterrows():
-                    entity = self._create_data_entity(row, platform)
-                    if entity:
-                        all_entities.append((entity, platform, job_id))
-
-                del df  # Free DataFrame memory
-            except:
-                continue
-            finally:
-                if conn:
-                    try:
-                        conn.close()
-                    except:
-                        pass
+                self.conn.execute(f"SET memory_limit='{self._default_duckdb_memory_limit}';")
+                self.conn.execute(f"SET threads={self._default_duckdb_threads};")
+            except Exception:
+                pass
 
         if not all_entities:
-            return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
+            return {
+                'entities_validated': 0,
+                'entities_passed': 0,
+                'success_rate': 0.0,
+                'sample_results': []
+            }
 
         entities_to_validate = random.sample(all_entities, min(num_entities, len(all_entities)))
 
@@ -1024,32 +1006,30 @@ class DuckDBSampledValidator:
         total_passed = 0
         sample_results = []
 
-        entities_by_platform = {}
+        entities_by_platform: Dict[str, List[Any]] = {}
         for entity, platform, job_id in entities_to_validate:
-            if platform not in entities_by_platform:
-                entities_by_platform[platform] = []
-            entities_by_platform[platform].append((entity, job_id))
+            entities_by_platform.setdefault(platform, []).append((entity, job_id))
 
         for platform, entities_with_jobs in entities_by_platform.items():
-            entities = [e[0] for e in entities_with_jobs]
-            job_ids = [e[1] for e in entities_with_jobs]
+            entities = [e for e, _ in entities_with_jobs]
+            job_ids = [jid for _, jid in entities_with_jobs]
+
             try:
                 results = await self._validate_with_scraper(entities, platform)
                 for i, result in enumerate(results):
-                    job_id = job_ids[i] if i < len(job_ids) else 'unknown'
+                    jid = job_ids[i] if i < len(job_ids) else 'unknown'
                     total_validated += 1
                     if result.is_valid:
                         total_passed += 1
-                        sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
+                        sample_results.append(f"✅ {platform} ({jid[:16]}): {result.reason}")
                     else:
-                        sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
+                        sample_results.append(f"❌ {platform} ({jid[:16]}): {result.reason}")
             except Exception as e:
                 total_validated += len(entities)
                 sample_results.append(f"❌ {platform}: Scraper error - {e}")
 
-        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+        success_rate = (total_passed / total_validated * 100.0) if total_validated > 0 else 0.0
 
-        # Log detailed results for miners to debug
         bt.logging.success(
             f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
         )
