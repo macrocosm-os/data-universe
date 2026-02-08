@@ -180,5 +180,98 @@ class TestUtils(unittest.TestCase):
         self.assertFalse(validation_result.is_valid)
 
 
+class TestValidateScrapedAt(unittest.TestCase):
+    """Tests for scraped_at validation on RedditContent."""
+
+    def _make_content_and_entity(self, scraped_at=None):
+        """Helper to create a valid RedditContent and DataEntity pair with optional scraped_at."""
+        content = RedditContent(
+            id="t3_test123",
+            url="https://www.reddit.com/r/test/comments/test123/test_post/",
+            username="test_user",
+            communityName="r/test",
+            body="Test body text",
+            createdAt=dt.datetime(2025, 1, 10, 12, 0, 0, tzinfo=dt.timezone.utc),
+            dataType=RedditDataType.POST,
+            title="Test post",
+            scrapedAt=scraped_at,
+        )
+        entity = RedditContent.to_data_entity(content)
+        return content, entity
+
+    def test_scraped_at_valid(self):
+        """scraped_at that is obfuscated, >= created_at, and <= now passes."""
+        scraped = dt.datetime(2025, 1, 10, 12, 5, 0, tzinfo=dt.timezone.utc)
+        content, entity = self._make_content_and_entity(scraped_at=scraped)
+        parsed = RedditContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNone(result)
+
+    def test_scraped_at_not_obfuscated(self):
+        """scraped_at with non-zero seconds fails validation."""
+        scraped = dt.datetime(2025, 1, 10, 12, 5, 30, tzinfo=dt.timezone.utc)
+        content = RedditContent(
+            id="t3_test123",
+            url="https://www.reddit.com/r/test/comments/test123/test_post/",
+            username="test_user",
+            communityName="r/test",
+            body="Test body text",
+            createdAt=dt.datetime(2025, 1, 10, 12, 0, 0, tzinfo=dt.timezone.utc),
+            dataType=RedditDataType.POST,
+            title="Test post",
+            scrapedAt=scraped,
+        )
+        # Build entity manually to bypass obfuscation
+        entity = DataEntity(
+            uri=content.url,
+            datetime=content.created_at,
+            source=DataSource.REDDIT,
+            label=DataLabel(value="r/test"),
+            content=content.json(by_alias=True).encode("utf-8"),
+            content_size_bytes=len(content.json(by_alias=True).encode("utf-8")),
+        )
+        parsed = RedditContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNotNone(result)
+        self.assertFalse(result.is_valid)
+        self.assertIn("obfuscated", result.reason)
+
+    def test_scraped_at_before_created_at(self):
+        """scraped_at before created_at fails validation."""
+        scraped = dt.datetime(2025, 1, 9, 12, 0, 0, tzinfo=dt.timezone.utc)
+        content, entity = self._make_content_and_entity(scraped_at=scraped)
+        parsed = RedditContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNotNone(result)
+        self.assertFalse(result.is_valid)
+        self.assertIn("before", result.reason)
+
+    def test_scraped_at_in_future(self):
+        """scraped_at in the future fails validation."""
+        future = dt.datetime(2099, 1, 1, 0, 0, 0, tzinfo=dt.timezone.utc)
+        content, entity = self._make_content_and_entity(scraped_at=future)
+        parsed = RedditContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNotNone(result)
+        self.assertFalse(result.is_valid)
+        self.assertIn("future", result.reason)
+
+    def test_scraped_at_none_before_deadline(self):
+        """scraped_at=None is allowed before the deadline."""
+        content, entity = self._make_content_and_entity(scraped_at=None)
+        parsed = RedditContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        # Before the deadline this should return None (skip)
+        self.assertIsNone(result)
+
+    def test_scraped_at_equal_to_created_at(self):
+        """scraped_at equal to created_at (obfuscated) is valid."""
+        ts = dt.datetime(2025, 1, 10, 12, 0, 0, tzinfo=dt.timezone.utc)
+        content, entity = self._make_content_and_entity(scraped_at=ts)
+        parsed = RedditContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()

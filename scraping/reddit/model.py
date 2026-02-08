@@ -79,11 +79,18 @@ class RedditContent(BaseModel):
         description="Number of comments on the post (submissions only). Can be None for backward compatibility.",
     )
 
+    # Scrape tracking
+    scraped_at: Optional[dt.datetime] = Field(default=None, alias="scrapedAt")
+
     @classmethod
     def to_data_entity(cls, content: "RedditContent") -> DataEntity:
         """Converts the RedditContent to a DataEntity."""
         entity_created_at = content.created_at
         content.created_at = utils.obfuscate_datetime_to_minute(entity_created_at)
+
+        if content.scraped_at is not None:
+            content.scraped_at = utils.obfuscate_datetime_to_minute(content.scraped_at)
+
         content_bytes = content.json(by_alias=True).encode("utf-8")
 
         return DataEntity(

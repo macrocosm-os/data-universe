@@ -475,6 +475,7 @@ class ApiDojoTwitterScraper(Scraper):
                         cover_picture_url=user_profile_data["cover_picture_url"],
                         user_followers_count=user_profile_data["user_followers_count"],
                         user_following_count=user_profile_data["user_following_count"],
+                        scraped_at=dt.datetime.now(dt.timezone.utc),
                     )
                 )
             except Exception:

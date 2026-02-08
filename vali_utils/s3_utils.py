@@ -102,14 +102,14 @@ class DuckDBSampledValidator:
         'in_reply_to_username', 'quoted_tweet_id', 'like_count', 'retweet_count',
         'reply_count', 'quote_count', 'view_count', 'bookmark_count', 'user_blue_verified',
         'user_description', 'user_location', 'profile_image_url', 'cover_picture_url',
-        'user_followers_count', 'user_following_count'
-    }  # 33 columns
+        'user_followers_count', 'user_following_count', 'scraped_at'
+    }  # 34 columns
 
     EXPECTED_COLUMNS_REDDIT = {
         'uri', 'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
         'createdAt', 'dataType', 'parentId', 'url', 'media', 'is_nsfw', 'score',
-        'upvote_ratio', 'num_comments'
-    }  # 17 columns
+        'upvote_ratio', 'num_comments', 'scrapedAt'
+    }  # 18 columns
 
     def __init__(
         self,

@@ -42,6 +42,9 @@ REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # 
 # Date after which backwards compatibility for nested X content format will be removed
 X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
 
+# Date after which scraped_at field is required on X and Reddit content
+SCRAPED_AT_REQUIRED_DATE = dt.datetime(2026, 3, 10, tzinfo=dt.timezone.utc)
+
 EVALUATION_ON_STARTUP = 10
 
 # Emission Control / Burn Configuration
