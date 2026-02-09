@@ -102,14 +102,14 @@ class DuckDBSampledValidator:
         'in_reply_to_username', 'quoted_tweet_id', 'like_count', 'retweet_count',
         'reply_count', 'quote_count', 'view_count', 'bookmark_count', 'user_blue_verified',
         'user_description', 'user_location', 'profile_image_url', 'cover_picture_url',
-        'user_followers_count', 'user_following_count'
-    }  # 33 columns
+        'user_followers_count', 'user_following_count', 'scraped_at'
+    }  # 34 columns
 
     EXPECTED_COLUMNS_REDDIT = {
         'uri', 'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
         'createdAt', 'dataType', 'parentId', 'url', 'media', 'is_nsfw', 'score',
-        'upvote_ratio', 'num_comments'
-    }  # 17 columns
+        'upvote_ratio', 'num_comments', 'scrapedAt'
+    }  # 18 columns
 
     def __init__(
         self,
@@ -1085,7 +1085,8 @@ class DuckDBSampledValidator:
                 profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url', None)) else None,
                 cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url', None)) else None,
                 user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count', None)) else None,
-                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count', None)) else None
+                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count', None)) else None,
+                scraped_at=pd.to_datetime(row.get('scraped_at')).to_pydatetime() if row.get('scraped_at') is not None and pd.notna(row.get('scraped_at')) else None,
             )
             return XContent.to_data_entity(x_content)
         except Exception:
@@ -1145,7 +1146,8 @@ class DuckDBSampledValidator:
                 is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
                 score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
                 upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
-                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None
+                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None,
+                scrapedAt=pd.to_datetime(row.get('scrapedAt')).to_pydatetime() if row.get('scrapedAt') is not None and pd.notna(row.get('scrapedAt')) else None,
             )
             return RedditContent.to_data_entity(reddit_content)
         except Exception:

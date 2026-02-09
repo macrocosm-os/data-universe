@@ -1,5 +1,6 @@
 import asyncio
 import os
+import datetime as dt
 import bittensor as bt
 from typing import List
 from datetime import datetime, timezone
@@ -75,7 +76,7 @@ class RedditMCScraper(Scraper):
                     item['is_nsfw'] = item.pop('isNsfw')
 
                 # Convert Apify output to RedditContent
-                content = RedditContent(**item)
+                content = RedditContent(**item, scrapedAt=dt.datetime.now(dt.timezone.utc))
                 entity = RedditContent.to_data_entity(content)
                 entities.append(entity)
             except Exception as e:
@@ -144,7 +145,7 @@ class RedditMCScraper(Scraper):
                     if 'isNsfw' in item:
                         item['is_nsfw'] = item.pop('isNsfw')
 
-                    live_content = RedditContent(**item)
+                    live_content = RedditContent(**item, scrapedAt=dt.datetime.now(dt.timezone.utc))
 
                     # Validate content matches using the same validation flow as reddit_custom_scraper
                     # 1) Field-by-field validation (same as custom scraper line 129-132)
@@ -338,7 +339,7 @@ async def test_scrape_and_validate():
                 item['is_nsfw'] = item.pop('isNsfw')
 
             # Convert to RedditContent and DataEntity
-            content = RedditContent(**item)
+            content = RedditContent(**item, scrapedAt=dt.datetime.now(dt.timezone.utc))
             entity = RedditContent.to_data_entity(content)
 
             bt.logging.info(f"   Created DataEntity:")
@@ -348,6 +349,7 @@ async def test_scrape_and_validate():
             bt.logging.info(f"     Score: {content.score}")
             bt.logging.info(f"     Comments: {content.num_comments}")
             bt.logging.info(f"     Media: {content.media}")
+            bt.logging.info(f"     Content: {entity.content}")
 
             # Now validate the entity we just scraped
             bt.logging.info(f"\n2. Validating the scraped entity")

@@ -450,6 +450,7 @@ class RedditCustomScraper(Scraper):
                 score=getattr(submission, 'score', None),
                 upvote_ratio=getattr(submission, 'upvote_ratio', None),
                 num_comments=getattr(submission, 'num_comments', None),
+                scrapedAt=dt.datetime.now(dt.timezone.utc),
             )
         except Exception:
             bt.logging.trace(
@@ -492,6 +493,7 @@ class RedditCustomScraper(Scraper):
                 score=getattr(comment, 'score', None),
                 upvote_ratio=None,  # Not available for comments
                 num_comments=None,  # Not applicable for comments
+                scrapedAt=dt.datetime.now(dt.timezone.utc),
             )
         except Exception:
             bt.logging.trace(

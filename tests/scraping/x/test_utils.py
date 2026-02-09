@@ -284,5 +284,94 @@ class TestUtils(unittest.TestCase):
         )
 
 
+class TestValidateScrapedAt(unittest.TestCase):
+    """Tests for scraped_at validation on XContent."""
+
+    def _make_tweet_and_entity(self, scraped_at=None):
+        """Helper to create a valid XContent and DataEntity pair with optional scraped_at."""
+        tweet = XContent(
+            username="@test_user",
+            text="Hello #world",
+            url="https://x.com/test_user/status/123456",
+            timestamp=dt.datetime(2025, 1, 10, 12, 0, 0, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#world"],
+            scraped_at=scraped_at,
+        )
+        entity = XContent.to_data_entity(tweet)
+        return tweet, entity
+
+    def test_scraped_at_valid(self):
+        """scraped_at that is obfuscated, >= timestamp, and <= now passes."""
+        scraped = dt.datetime(2025, 1, 10, 12, 5, 0, tzinfo=dt.timezone.utc)
+        tweet, entity = self._make_tweet_and_entity(scraped_at=scraped)
+        result = utils.validate_scraped_at(
+            XContent.from_data_entity(entity), entity
+        )
+        self.assertIsNone(result)
+
+    def test_scraped_at_not_obfuscated(self):
+        """scraped_at with non-zero seconds fails validation."""
+        scraped = dt.datetime(2025, 1, 10, 12, 5, 30, tzinfo=dt.timezone.utc)
+        tweet = XContent(
+            username="@test_user",
+            text="Hello #world",
+            url="https://x.com/test_user/status/123456",
+            timestamp=dt.datetime(2025, 1, 10, 12, 0, 0, tzinfo=dt.timezone.utc),
+            tweet_hashtags=["#world"],
+            scraped_at=scraped,
+        )
+        # Build entity manually to bypass obfuscation
+        entity = DataEntity(
+            uri=tweet.url,
+            datetime=tweet.timestamp,
+            source=DataSource.X,
+            label=DataLabel(value="#world"),
+            content=tweet.json(exclude_none=True).encode("utf-8"),
+            content_size_bytes=len(tweet.json(exclude_none=True).encode("utf-8")),
+        )
+        parsed = XContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNotNone(result)
+        self.assertFalse(result.is_valid)
+        self.assertIn("obfuscated", result.reason)
+
+    def test_scraped_at_before_timestamp(self):
+        """scraped_at before tweet timestamp fails validation."""
+        scraped = dt.datetime(2025, 1, 9, 12, 0, 0, tzinfo=dt.timezone.utc)
+        tweet, entity = self._make_tweet_and_entity(scraped_at=scraped)
+        parsed = XContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNotNone(result)
+        self.assertFalse(result.is_valid)
+        self.assertIn("before", result.reason)
+
+    def test_scraped_at_in_future(self):
+        """scraped_at in the future fails validation."""
+        future = dt.datetime(2099, 1, 1, 0, 0, 0, tzinfo=dt.timezone.utc)
+        tweet, entity = self._make_tweet_and_entity(scraped_at=future)
+        parsed = XContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNotNone(result)
+        self.assertFalse(result.is_valid)
+        self.assertIn("future", result.reason)
+
+    def test_scraped_at_none_before_deadline(self):
+        """scraped_at=None is allowed before the deadline."""
+        tweet, entity = self._make_tweet_and_entity(scraped_at=None)
+        parsed = XContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        # Before the deadline this should return None (skip)
+        # This test assumes we're running before 2026-03-10
+        self.assertIsNone(result)
+
+    def test_scraped_at_equal_to_timestamp(self):
+        """scraped_at equal to timestamp (obfuscated) is valid."""
+        ts = dt.datetime(2025, 1, 10, 12, 0, 0, tzinfo=dt.timezone.utc)
+        tweet, entity = self._make_tweet_and_entity(scraped_at=ts)
+        parsed = XContent.from_data_entity(entity)
+        result = utils.validate_scraped_at(parsed, entity)
+        self.assertIsNone(result)
+
+
 if __name__ == "__main__":
     unittest.main()
