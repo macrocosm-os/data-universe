@@ -105,11 +105,19 @@ class ApiDojoTwitterScraper(Scraper):
 
                 bt.logging.debug(actual_tweet)
                 if actual_tweet is None:
-                    # Only append a failed result if on final attempt.
                     if attempt == max_attempts:
+                        # NEW: if tweet was filtered out by engagement/spam logic, return the correct reason
+                        explain = self._explain_filtered_or_missing_from_raw_dataset(dataset, entity.uri)
+                        if explain:
+                            return ValidationResult(
+                                is_valid=False,
+                                reason=explain,
+                                content_size_bytes_validated=entity.content_size_bytes,
+                            )
+
                         return ValidationResult(
                             is_valid=False,
-                            reason="Tweet not found or is invalid.",
+                            reason="Tweet not found in Apify results (or URL invalid).",
                             content_size_bytes_validated=entity.content_size_bytes,
                         )
                 else:
@@ -484,6 +492,87 @@ class ApiDojoTwitterScraper(Scraper):
                 )
 
         return results, is_retweets, author_datas, view_counts
+
+    def _explain_filtered_or_missing_from_raw_dataset(
+        self,
+        dataset: list[dict],
+        target_url: str
+    ) -> Optional[str]:
+        """
+        If the target tweet exists in the raw Apify dataset but was filtered out by
+        engagement/spam checks, return a specific reason string.
+
+        If it does NOT exist in the raw dataset, return None (true "not found").
+        """
+
+        # Apify "no results" patterns
+        if not dataset or dataset == [{"zero_result": True}]:
+            return None
+
+        try:
+            target_norm = utils.normalize_url(target_url)
+        except Exception:
+            # If normalization fails, just fall back to raw compare
+            target_norm = target_url
+
+        for item in dataset:
+            if not isinstance(item, dict):
+                continue
+
+            raw_url = item.get("url")
+            if not raw_url:
+                continue
+
+            try:
+                raw_norm = utils.normalize_url(raw_url)
+            except Exception:
+                raw_norm = raw_url
+
+            if raw_norm != target_norm:
+                continue
+
+            # Found the target tweet in the *raw* dataset.
+            author = item.get("author", {}) if isinstance(item.get("author", {}), dict) else {}
+
+            # Check spam account reason
+            if utils.is_spam_account(author):
+                followers = author.get("followers", None)
+                created_at = author.get("createdAt", None)
+
+                # Try to compute age if possible (for clearer reason)
+                age_days_str = "unknown"
+                if created_at:
+                    try:
+                        created_dt = dt.datetime.strptime(created_at, "%a %b %d %H:%M:%S %z %Y")
+                        age_days = (dt.datetime.now(dt.timezone.utc) - created_dt).days
+                        age_days_str = str(age_days)
+                    except Exception:
+                        age_days_str = "unparseable"
+
+                return (
+                    "Tweet rejected: spam-account heuristics "
+                    "(requires followers>=50 and account_age>=30d). "
+                    f"followers={followers}, createdAt={created_at}, account_age_days={age_days_str}"
+                )
+
+            # Check low engagement reason
+            if utils.is_low_engagement_tweet(item):
+                view_count = item.get("viewCount", None)
+                return (
+                    "Tweet rejected: low engagement "
+                    "(requires viewCount>=50). "
+                    f"viewCount={view_count}"
+                )
+
+            # If it exists in raw dataset and doesn't trip the filters,
+            # then mismatch is due to parsing/normalization differences.
+            return (
+                "Tweet exists in Apify dataset but was not matched/parsed by validator "
+                "(unexpected)."
+            )
+
+        # Not present in raw dataset => genuine not found/deleted/private/URL mismatch in Apify output
+        return None
 
     def _extract_user_info(self, data: dict) -> dict:
         """Extract user information from tweet"""
