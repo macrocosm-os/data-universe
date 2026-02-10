@@ -76,11 +76,18 @@ class XContent(BaseModel):
     user_followers_count: Optional[int] = None
     user_following_count: Optional[int] = None
 
+    # Scrape tracking
+    scraped_at: Optional[dt.datetime] = None
+
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:
         """Converts the XContent to a DataEntity."""
         entity_timestamp = content.timestamp
         content.timestamp = utils.obfuscate_datetime_to_minute(entity_timestamp)
+
+        if content.scraped_at is not None:
+            content.scraped_at = utils.obfuscate_datetime_to_minute(content.scraped_at)
+
         content_bytes = content.json(exclude_none=True).encode("utf-8")
 
         return DataEntity(

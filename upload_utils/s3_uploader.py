@@ -100,22 +100,36 @@ class S3PartitionedUploader:
         except Exception as e:
             bt.logging.error(f"Failed to save processed state: {e}")
 
-    def _get_last_processed_offset(self, job_id: str) -> int:
-        """Get the last processed offset for a job"""
-        job_state = self.processed_state.get(job_id, {})
-        return job_state.get('last_offset', 0)
+    def _get_last_cursor(self, job_id: str) -> dict:
+        """Get the last processed cursor for a job.
 
-    def _update_processed_state(self, job_id: str, new_offset: int, records_processed: int):
-        """Update the processed state for a job"""
+        Returns dict with 'last_datetime' and 'last_uri' keys.
+        Falls back to legacy 'last_offset' by converting it on first run.
+        """
+        job_state = self.processed_state.get(job_id, {})
+        # New cursor-based state
+        if 'last_datetime' in job_state:
+            return {
+                'last_datetime': job_state['last_datetime'],
+                'last_uri': job_state.get('last_uri', ''),
+            }
+        # No state yet — start from beginning
+        return {'last_datetime': None, 'last_uri': None}
+
+    def _update_processed_state(self, job_id: str, last_datetime: str, last_uri: str, records_processed: int):
+        """Update the processed state for a job using cursor-based tracking."""
         if job_id not in self.processed_state:
             self.processed_state[job_id] = {}
 
         self.processed_state[job_id].update({
-            'last_offset': new_offset,
+            'last_datetime': last_datetime,
+            'last_uri': last_uri,
             'total_records_processed': self.processed_state[job_id].get('total_records_processed', 0) + records_processed,
             'last_processed_time': dt.datetime.now().isoformat(),
-            'processing_completed': False  # Never mark as "completed" - always check for new data
         })
+        # Clean up legacy offset key if present
+        self.processed_state[job_id].pop('last_offset', None)
+        self.processed_state[job_id].pop('processing_completed', None)
 
     def _load_dd_list(self) -> Dict[str, Dict]:
         """Load job configurations from Gravity and return by job_id"""
@@ -183,8 +197,11 @@ class S3PartitionedUploader:
             bt.logging.error(f"Failed to load jobs from Gravity: {e}")
             return {}
 
-    def _get_label_data(self, source: int, label: str, offset: int = 0) -> pd.DataFrame:
-        """Get data matching exact label"""
+    def _get_label_data(self, source: int, label: str, cursor: dict = None) -> pd.DataFrame:
+        """Get data matching exact label, using cursor-based pagination."""
+        if cursor is None:
+            cursor = {'last_datetime': None, 'last_uri': None}
+
         # Normalize label for SQL query
         normalized_label = label.lower().strip()
 
@@ -212,28 +229,34 @@ class S3PartitionedUploader:
 
         label_condition_sql = " OR ".join(label_conditions)
 
+        # Build cursor condition
+        cursor_condition, cursor_params = self._build_cursor_condition(cursor)
+
         query = f"""
             SELECT uri, datetime, label, content
             FROM DataEntity
-            WHERE source = ? AND ({label_condition_sql})
-            ORDER BY datetime ASC
-            LIMIT ? OFFSET ?
+            WHERE source = ? AND ({label_condition_sql}){cursor_condition}
+            ORDER BY datetime ASC, uri ASC
+            LIMIT ?
         """
-        params = [source, self.chunk_size, offset]
+        params = [source] + cursor_params + [self.chunk_size]
 
         try:
             with self.get_db_connection() as conn:
                 df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
 
-            bt.logging.debug(f"Found {len(df)} records for label '{label}' in source {source} (offset: {offset})")
+            bt.logging.debug(f"Found {len(df)} records for label '{label}' in source {source}")
             return df
 
         except Exception as e:
             bt.logging.error(f"Error querying label data for {source}/{label}: {e}")
             return pd.DataFrame()
 
-    def _get_keyword_data_chunk(self, source: int, keyword: str, offset: int = 0) -> pd.DataFrame:
-        """Get chunk of data where keyword appears in text content"""
+    def _get_keyword_data_chunk(self, source: int, keyword: str, cursor: dict = None) -> pd.DataFrame:
+        """Get chunk of data where keyword appears in text content, using cursor-based pagination."""
+        if cursor is None:
+            cursor = {'last_datetime': None, 'last_uri': None}
+
         # Normalize keyword
         normalized_keyword = keyword.lower().strip()
 
@@ -252,28 +275,35 @@ class S3PartitionedUploader:
 
         content_condition_sql = " OR ".join(content_conditions)
 
+        # Build cursor condition
+        cursor_condition, cursor_params = self._build_cursor_condition(cursor)
+
         query = f"""
             SELECT uri, datetime, label, content
             FROM DataEntity
-            WHERE source = ? AND ({content_condition_sql})
-            ORDER BY datetime ASC
-            LIMIT ? OFFSET ?
+            WHERE source = ? AND ({content_condition_sql}){cursor_condition}
+            ORDER BY datetime ASC, uri ASC
+            LIMIT ?
         """
-        params = [source, self.chunk_size, offset]
+        params = [source] + cursor_params + [self.chunk_size]
 
         try:
             with self.get_db_connection() as conn:
                 df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
 
-            bt.logging.debug(f"Found {len(df)} records for keyword '{keyword}' in source {source} (offset: {offset})")
+            bt.logging.debug(f"Found {len(df)} records for keyword '{keyword}' in source {source}")
             return df
 
         except Exception as e:
             bt.logging.error(f"Error querying keyword data for {source}/{keyword}: {e}")
             return pd.DataFrame()
 
-    def _get_label_and_keyword_data(self, source: int, label: str, keyword: str, offset: int = 0) -> pd.DataFrame:
-        """Get data where BOTH label matches AND keyword appears in text content (AND logic)"""
+    def _get_label_and_keyword_data(self, source: int, label: str, keyword: str, cursor: dict = None) -> pd.DataFrame:
+        """Get data where BOTH label matches AND keyword appears in text content (AND logic),
+        using cursor-based pagination."""
+        if cursor is None:
+            cursor = {'last_datetime': None, 'last_uri': None}
+
         # Normalize inputs
         normalized_label = label.lower().strip()
         normalized_keyword = keyword.lower().strip()
@@ -317,28 +347,51 @@ class S3PartitionedUploader:
 
         content_condition_sql = " OR ".join(content_conditions)
 
+        # Build cursor condition
+        cursor_condition, cursor_params = self._build_cursor_condition(cursor)
+
         # Combine with AND logic: (label conditions) AND (keyword conditions)
         query = f"""
             SELECT uri, datetime, label, content
             FROM DataEntity
             WHERE source = ?
                 AND ({label_condition_sql})
-                AND ({content_condition_sql})
-            ORDER BY datetime ASC
-            LIMIT ? OFFSET ?
+                AND ({content_condition_sql}){cursor_condition}
+            ORDER BY datetime ASC, uri ASC
+            LIMIT ?
         """
-        params = [source, self.chunk_size, offset]
+        params = [source] + cursor_params + [self.chunk_size]
 
         try:
             with self.get_db_connection() as conn:
                 df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
 
-            bt.logging.debug(f"Found {len(df)} records for label '{label}' AND keyword '{keyword}' in source {source} (offset: {offset})")
+            bt.logging.debug(f"Found {len(df)} records for label '{label}' AND keyword '{keyword}' in source {source}")
             return df
 
         except Exception as e:
             bt.logging.error(f"Error querying label+keyword data for {source}/{label}/{keyword}: {e}")
             return pd.DataFrame()
+
+    @staticmethod
+    def _build_cursor_condition(cursor: dict) -> tuple:
+        """Build a SQL WHERE clause fragment and params for cursor-based pagination.
+
+        Uses (datetime, uri) keyset pagination: returns rows strictly after the cursor position.
+        This is stable under data churn (inserts/deletes) unlike OFFSET.
+
+        Returns:
+            (sql_fragment, params_list) — fragment starts with ' AND' if non-empty.
+        """
+        last_dt = cursor.get('last_datetime')
+        last_uri = cursor.get('last_uri')
+        if last_dt is None:
+            return ('', [])
+        # Keyset pagination: (datetime > ?) OR (datetime = ? AND uri > ?)
+        return (
+            ' AND (datetime > ? OR (datetime = ? AND uri > ?))',
+            [last_dt, last_dt, last_uri or ''],
+        )
 
     def _create_raw_dataframe(self, df: pd.DataFrame, source: int) -> pd.DataFrame:
         """Create raw dataframe with decoded content - NO ENCODING"""
@@ -377,7 +430,8 @@ class S3PartitionedUploader:
                     'is_nsfw': df['decoded_content'].apply(lambda x: x.get('is_nsfw')),
                     'score': df['decoded_content'].apply(lambda x: x.get('score')),
                     'upvote_ratio': df['decoded_content'].apply(lambda x: x.get('upvote_ratio')),
-                    'num_comments': df['decoded_content'].apply(lambda x: x.get('num_comments'))
+                    'num_comments': df['decoded_content'].apply(lambda x: x.get('num_comments')),
+                    'scrapedAt': df['decoded_content'].apply(lambda x: x.get('scrapedAt')),
                 })
             else:
                 # X/Twitter data structure
@@ -414,7 +468,8 @@ class S3PartitionedUploader:
                     'profile_image_url': df['decoded_content'].apply(lambda x: x.get('profile_image_url')),
                     'cover_picture_url': df['decoded_content'].apply(lambda x: x.get('cover_picture_url')),
                     'user_followers_count': df['decoded_content'].apply(lambda x: x.get('user_followers_count')),
-                    'user_following_count': df['decoded_content'].apply(lambda x: x.get('user_following_count'))
+                    'user_following_count': df['decoded_content'].apply(lambda x: x.get('user_following_count')),
+                    'scraped_at': df['decoded_content'].apply(lambda x: x.get('scraped_at')),
                 })
 
             return result_df
@@ -482,20 +537,20 @@ class S3PartitionedUploader:
             value = job_config["value"]
             log_msg = f"{search_type}: {value}"
 
-        offset = self._get_last_processed_offset(job_id)
+        cursor = self._get_last_cursor(job_id)
 
-        bt.logging.info(f"Processing job {job_id} ({log_msg}), starting from offset: {offset}")
+        bt.logging.info(f"Processing job {job_id} ({log_msg}), cursor: datetime={cursor.get('last_datetime')}")
 
         total_processed = 0
 
         while True:
             # Get next chunk based on search type
             if search_type == "label":
-                chunk_df = self._get_label_data(source, value, offset)
+                chunk_df = self._get_label_data(source, value, cursor)
             elif search_type == "keyword":
-                chunk_df = self._get_keyword_data_chunk(source, value, offset)
+                chunk_df = self._get_keyword_data_chunk(source, value, cursor)
             elif search_type == "label_and_keyword":
-                chunk_df = self._get_label_and_keyword_data(source, label, keyword, offset)
+                chunk_df = self._get_label_and_keyword_data(source, label, keyword, cursor)
             else:
                 bt.logging.error(f"Unknown search type: {search_type}")
                 return False
@@ -511,10 +566,19 @@ class S3PartitionedUploader:
                 return False
 
             total_processed += len(chunk_df)
-            offset += len(chunk_df)
+
+            # Advance cursor to the last row in this chunk
+            last_row = chunk_df.iloc[-1]
+            last_datetime = last_row['datetime']
+            if hasattr(last_datetime, 'isoformat'):
+                last_datetime = last_datetime.isoformat()
+            else:
+                last_datetime = str(last_datetime)
+            last_uri = str(last_row['uri'])
+            cursor = {'last_datetime': last_datetime, 'last_uri': last_uri}
 
             # Update state after each successful chunk
-            self._update_processed_state(job_id, offset, len(chunk_df))
+            self._update_processed_state(job_id, last_datetime, last_uri, len(chunk_df))
             self._save_processed_state()
 
             bt.logging.info(f"Processed {total_processed} new records for job {job_id}")

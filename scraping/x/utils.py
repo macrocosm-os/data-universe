@@ -6,7 +6,7 @@ import bittensor as bt
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
 from common.data import DataEntity
-from common.constants import NO_TWITTER_URLS_DATE
+from common.constants import NO_TWITTER_URLS_DATE, SCRAPED_AT_REQUIRED_DATE
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -279,6 +279,51 @@ def validate_twitter_url_deadline(
     return None
 
 
+def validate_scraped_at(
+    tweet_to_verify: XContent, entity: DataEntity
+) -> Optional[ValidationResult]:
+    """Validate the scraped_at field on tweet content.
+
+    Returns ValidationResult if validation fails, None if validation passes or is skipped.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+
+    if tweet_to_verify.scraped_at is None:
+        if now >= SCRAPED_AT_REQUIRED_DATE:
+            return ValidationResult(
+                is_valid=False,
+                reason=f"scraped_at is required after {SCRAPED_AT_REQUIRED_DATE.isoformat()}",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        return None
+
+    # Must be obfuscated to the minute
+    if tweet_to_verify.scraped_at.second != 0 or tweet_to_verify.scraped_at.microsecond != 0:
+        return ValidationResult(
+            is_valid=False,
+            reason="scraped_at must be obfuscated to the minute",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Must be >= timestamp (can't scrape before creation)
+    if tweet_to_verify.scraped_at < tweet_to_verify.timestamp:
+        return ValidationResult(
+            is_valid=False,
+            reason="scraped_at cannot be before the tweet timestamp",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Must be <= now (can't be in the future)
+    if tweet_to_verify.scraped_at > now:
+        return ValidationResult(
+            is_valid=False,
+            reason="scraped_at cannot be in the future",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    return None
+
+
 def validate_media_content(
     tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity
 ) -> Optional[ValidationResult]:
@@ -471,6 +516,11 @@ def validate_tweet_content(
     )
     if timestamp_validation_result is not None:
         return timestamp_validation_result
+
+    # Validate scraped_at field
+    scraped_at_result = validate_scraped_at(tweet_to_verify, entity)
+    if scraped_at_result is not None:
+        return scraped_at_result
 
     # Validate twitter.com URL deadline
     url_deadline_result = validate_twitter_url_deadline(

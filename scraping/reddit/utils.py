@@ -3,13 +3,13 @@ import traceback
 import datetime as dt
 import random
 
-from typing import List
+from typing import List, Optional
 from urllib.parse import urlparse
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.reddit.model import RedditContent, RedditDataType
 from common.data import DataEntity, DataLabel
-from common.constants import REDDIT_MEDIA_REQUIRED_DATE
+from common.constants import REDDIT_MEDIA_REQUIRED_DATE, SCRAPED_AT_REQUIRED_DATE
 
 
 def is_valid_reddit_url(url: str) -> bool:
@@ -22,6 +22,51 @@ def is_valid_reddit_url(url: str) -> bool:
         return all([result.scheme, result.netloc]) and "reddit.com" in result.netloc
     except ValueError:
         return False
+
+
+def validate_scraped_at(
+    content_to_validate: RedditContent, entity: DataEntity
+) -> Optional[ValidationResult]:
+    """Validate the scraped_at field on Reddit content.
+
+    Returns ValidationResult if validation fails, None if validation passes or is skipped.
+    """
+    now = dt.datetime.now(dt.timezone.utc)
+
+    if content_to_validate.scraped_at is None:
+        if now >= SCRAPED_AT_REQUIRED_DATE:
+            return ValidationResult(
+                is_valid=False,
+                reason=f"scraped_at is required after {SCRAPED_AT_REQUIRED_DATE.isoformat()}",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
+        return None
+
+    # Must be obfuscated to the minute
+    if content_to_validate.scraped_at.second != 0 or content_to_validate.scraped_at.microsecond != 0:
+        return ValidationResult(
+            is_valid=False,
+            reason="scraped_at must be obfuscated to the minute",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Must be >= created_at (can't scrape before creation)
+    if content_to_validate.scraped_at < content_to_validate.created_at:
+        return ValidationResult(
+            is_valid=False,
+            reason="scraped_at cannot be before the content creation time",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    # Must be <= now (can't be in the future)
+    if content_to_validate.scraped_at > now:
+        return ValidationResult(
+            is_valid=False,
+            reason="scraped_at cannot be in the future",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
+    return None
 
 
 def validate_reddit_content(
@@ -121,6 +166,11 @@ def validate_reddit_content(
                 reason="Reddit timestamps do not match",
                 content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
+
+    # Validate scraped_at field
+    scraped_at_result = validate_scraped_at(content_to_validate, entity_to_validate)
+    if scraped_at_result is not None:
+        return scraped_at_result
 
     # Check Reddit data_type
     if content_to_validate.data_type != actual_content.data_type:
