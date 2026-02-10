@@ -94,6 +94,12 @@ class DuckDBSampledValidator:
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
     MIN_SCRAPER_SUCCESS = 70.0  # 70% min scraper success rate
 
+    # File size limits - prevent empty file exploit and oversized file OOM
+    MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
+    MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024        # 512MB - single file cap
+    # Activation date for file size cap enforcement (grace period for miners to comply)
+    FILE_SIZE_CAP_ACTIVATION_DATE = dt.datetime(2026, 2, 13, tzinfo=dt.timezone.utc)
+
     # Schema validation - expected columns per platform (from s3_uploader.py)
     EXPECTED_COLUMNS_X = {
         'uri', 'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
@@ -161,11 +167,23 @@ class DuckDBSampledValidator:
             if not all_files:
                 return self._create_failed_result("No files found")
 
-            # Group files by job
+            # Group files by job, filtering out empty/oversized files
+            enforce_size_cap = dt.datetime.now(dt.timezone.utc) >= self.FILE_SIZE_CAP_ACTIVATION_DATE
             files_by_job = {}
+            empty_files_skipped = 0
+            oversized_files_skipped = 0
             for f in all_files:
                 key = f.get('key', '')
                 if '/job_id=' in key:
+                    file_size = f.get('size', 0)
+                    # Always skip empty files (exploit prevention, no grace period)
+                    if file_size < self.MIN_FILE_SIZE_BYTES:
+                        empty_files_skipped += 1
+                        continue
+                    # Fully exclude oversized files after activation date
+                    if enforce_size_cap and file_size > self.MAX_FILE_SIZE_BYTES:
+                        oversized_files_skipped += 1
+                        continue
                     job_id = key.split('/job_id=')[1].split('/')[0]
                     if job_id not in files_by_job:
                         files_by_job[job_id] = []
@@ -184,6 +202,17 @@ class DuckDBSampledValidator:
                     total_size_bytes += f.get('size', 0)
 
             job_coverage_rate = (len(active_job_ids) / len(expected_jobs) * 100) if expected_jobs else 0
+
+            if empty_files_skipped > 0:
+                bt.logging.warning(
+                    f"{miner_hotkey}: {empty_files_skipped} empty files skipped "
+                    f"(< {self.MIN_FILE_SIZE_BYTES} bytes)"
+                )
+            if oversized_files_skipped > 0:
+                bt.logging.warning(
+                    f"{miner_hotkey}: {oversized_files_skipped} oversized files skipped "
+                    f"(> {self.MAX_FILE_SIZE_BYTES/(1024*1024):.0f}MB)"
+                )
 
             bt.logging.info(
                 f"{miner_hotkey}: {len(all_files)} total files, "
@@ -420,6 +449,12 @@ class DuckDBSampledValidator:
             if schema_failures > 0:
                 break
 
+            # Skip oversized files to prevent OOM
+            file_size = file_info.get('size', 0)
+            if file_size > self.MAX_FILE_SIZE_BYTES:
+                bt.logging.debug(f"Skipping oversized file for DuckDB validation ({file_size/(1024**2):.0f}MB)")
+                continue
+
             presigned_url = presigned_urls.get(file_info['key'])
             if not presigned_url:
                 continue
@@ -437,7 +472,7 @@ class DuckDBSampledValidator:
             conn = None
             try:
                 conn = duckdb.connect(':memory:')
-                conn.execute("SET memory_limit='256MB';")
+                conn.execute("SET memory_limit='2GB';")
                 conn.execute("SET threads=1;")
 
                 # First get schema to check available columns
@@ -737,6 +772,11 @@ class DuckDBSampledValidator:
             sample_files = random.sample(files, min(2, len(files)))
 
             for file_info in sample_files:
+                # Skip oversized files to prevent OOM
+                file_size = file_info.get('size', 0)
+                if file_size > self.MAX_FILE_SIZE_BYTES:
+                    continue
+
                 presigned_url = presigned_urls.get(file_info['key'])
                 if not presigned_url:
                     continue
@@ -746,7 +786,7 @@ class DuckDBSampledValidator:
                     # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
                     # 10% sampling ensures we get rows even from smaller files
                     conn = duckdb.connect(':memory:')
-                    conn.execute("SET memory_limit='256MB';")
+                    conn.execute("SET memory_limit='2GB';")
                     conn.execute("SET threads=1;")
 
                     # Schema validation - verify column count matches expected
@@ -883,6 +923,11 @@ class DuckDBSampledValidator:
             if len(all_entities) >= num_entities * 2:
                 break
 
+            # Skip oversized files to prevent OOM
+            file_size = file_info.get('size', 0)
+            if file_size > self.MAX_FILE_SIZE_BYTES:
+                continue
+
             file_key = file_info['key']
             presigned_url = presigned_urls.get(file_key)
             if not presigned_url:
@@ -902,7 +947,7 @@ class DuckDBSampledValidator:
                 # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
                 # Use 10% sampling to ensure we get rows even from smaller files
                 conn = duckdb.connect(':memory:')
-                conn.execute("SET memory_limit='256MB';")
+                conn.execute("SET memory_limit='2GB';")
                 conn.execute("SET threads=1;")
 
                 # Schema validation - verify column count matches expected
