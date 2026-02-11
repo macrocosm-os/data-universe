@@ -415,6 +415,9 @@ class RedditJsonScraper(Scraper):
                     if item.get("s", {}).get("u"):
                         media_urls.append(item["s"]["u"].replace("&amp;", "&"))
 
+            # Clean media URLs
+            media_urls = [url.split('?')[0].replace('preview.redd.it', 'i.redd.it') for url in media_urls]
+
             username = data.get("author", DELETED_USER)
             if username == "[deleted]":
                 username = DELETED_USER
