@@ -147,14 +147,15 @@ class Miner:
         self.lock = threading.RLock()
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
-        if self.use_uploader and not self.config.offline:
-            self.s3_partitioned_uploader = S3PartitionedUploader(
-                db_path=self.config.neuron.database_name,
-                subtensor=self.subtensor,
-                wallet=self.wallet,
-                s3_auth_url=self.config.s3_auth_url,
-                state_file=self.config.miner_upload_state_file,
-            )
+        # S3 upload disabled — data collection paused.
+        # if self.use_uploader and not self.config.offline:
+        #     self.s3_partitioned_uploader = S3PartitionedUploader(
+        #         db_path=self.config.neuron.database_name,
+        #         subtensor=self.subtensor,
+        #         wallet=self.wallet,
+        #         s3_auth_url=self.config.s3_auth_url,
+        #         state_file=self.config.miner_upload_state_file,
+        #     )
 
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
@@ -526,10 +527,11 @@ class Miner:
             )
             self.lookup_thread.start()
 
-            self.s3_partitioned_thread = threading.Thread(
-                target=self.upload_s3_partitioned, daemon=True
-            )
-            self.s3_partitioned_thread.start()
+            # S3 upload disabled — data collection paused.
+            # self.s3_partitioned_thread = threading.Thread(
+            #     target=self.upload_s3_partitioned, daemon=True
+            # )
+            # self.s3_partitioned_thread.start()
 
             self.on_demand_thread = threading.Thread(
                 target=self.run_on_demand, daemon=True
@@ -548,7 +550,7 @@ class Miner:
             self.should_exit = True
             self.thread.join(5)
             self.compressed_index_refresh_thread.join(5)
-            self.s3_partitioned_thread.join(5)
+            # self.s3_partitioned_thread.join(5)
             self.lookup_thread.join(5)
             self.on_demand_thread.join(5)
 
