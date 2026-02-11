@@ -100,22 +100,34 @@ class DuckDBSampledValidator:
     # Activation date for file size cap enforcement (grace period for miners to comply)
     FILE_SIZE_CAP_ACTIVATION_DATE = dt.datetime(2026, 2, 13, tzinfo=dt.timezone.utc)
 
+    # URI column removal: uri is deprecated and will be removed from parquet schema.
+    # Exploiters pad uri with hex garbage (~30MB/row) for size inflation.
+    # If uri column exists, it must equal url (instant fail otherwise).
+    # After URI_REMOVAL_DATE, files without uri are accepted (new schema).
+    # Before that date, uri is optional but validated if present.
+    URI_REMOVAL_DATE = dt.datetime(2026, 2, 17, tzinfo=dt.timezone.utc)
+
     # Schema validation - expected columns per platform (from s3_uploader.py)
+    # NOTE: 'uri' is NOT in the expected columns — it's an optional legacy column.
+    # If present, it's allowed but must equal 'url'. If absent, that's fine.
     EXPECTED_COLUMNS_X = {
-        'uri', 'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
+        'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
         'url', 'media', 'user_id', 'user_display_name', 'user_verified', 'tweet_id',
         'is_reply', 'is_quote', 'conversation_id', 'in_reply_to_user_id', 'language',
         'in_reply_to_username', 'quoted_tweet_id', 'like_count', 'retweet_count',
         'reply_count', 'quote_count', 'view_count', 'bookmark_count', 'user_blue_verified',
         'user_description', 'user_location', 'profile_image_url', 'cover_picture_url',
         'user_followers_count', 'user_following_count', 'scraped_at'
-    }  # 34 columns
+    }  # 33 columns
 
     EXPECTED_COLUMNS_REDDIT = {
-        'uri', 'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
+        'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
         'createdAt', 'dataType', 'parentId', 'url', 'media', 'is_nsfw', 'score',
         'upvote_ratio', 'num_comments', 'scrapedAt'
-    }  # 18 columns
+    }  # 17 columns
+
+    # Legacy columns that are allowed but not required (backward compat)
+    OPTIONAL_COLUMNS = {'uri'}
 
     def __init__(
         self,
@@ -493,19 +505,24 @@ class DuckDBSampledValidator:
                     expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_REDDIT}
                     max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
 
+                # Allow optional legacy columns (e.g. 'uri') — they don't count against max
+                optional_columns = {col.lower() for col in self.OPTIONAL_COLUMNS}
+                allowed_columns = expected_columns | optional_columns
+
                 files_checked += 1
 
                 # Check total column count (reject duplicate columns) - fail fast
-                if len(all_column_names) > max_columns:
+                # +len(optional) to allow for legacy columns
+                if len(all_column_names) > max_columns + len(optional_columns):
                     bt.logging.warning(
-                        f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
+                        f"Invalid schema: file has {len(all_column_names)} columns, expected max {max_columns + len(optional_columns)}. "
                         f"Sample columns: {all_column_names[:10]}..."
                     )
                     schema_failures += 1
                     break  # Fail fast
 
                 # Check for unexpected column names - fail fast
-                unexpected_columns = available_columns - expected_columns
+                unexpected_columns = available_columns - allowed_columns
                 if unexpected_columns:
                     bt.logging.warning(
                         f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
@@ -530,9 +547,13 @@ class DuckDBSampledValidator:
 
                 # Use TABLESAMPLE BERNOULLI - probabilistic sampling, memory efficient
                 # 10% sampling ensures we get rows even from smaller files
+                # Also check uri == url (exploit: padded uri with hex garbage for size inflation)
+                has_uri = 'uri' in available_columns
+                uri_select = "uri," if has_uri else ""
                 query = f"""
                     SELECT
                         url,
+                        {uri_select}
                         CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
                     FROM read_parquet('{presigned_url}')
                     TABLESAMPLE BERNOULLI(10%)
@@ -546,7 +567,23 @@ class DuckDBSampledValidator:
                 for row in rows:
                     total_rows += 1
                     url = row[0]
-                    is_empty = row[1]
+                    if has_uri:
+                        uri = row[1]
+                        is_empty = row[2]
+                    else:
+                        uri = None
+                        is_empty = row[1]
+
+                    # URI must equal URL — exploiters pad uri with hex garbage
+                    # for size inflation while url stays clean for scraper validation.
+                    # Legit miners always have uri == url (both from content.url).
+                    if has_uri and uri is not None and url is not None and uri != url:
+                        bt.logging.warning(
+                            f"URI padding exploit detected: uri != url. "
+                            f"url={str(url)[:80]}, uri={str(uri)[:80]}..."
+                        )
+                        schema_failures += 1
+                        break  # Fail fast — instant fail
 
                     if is_empty:
                         empty_count += 1
