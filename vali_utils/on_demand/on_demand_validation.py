@@ -218,26 +218,20 @@ class OnDemandValidator:
             post_text = x_content_dict.get("text", "").lower()
             keyword_mode = ctx.keyword_mode
             if keyword_mode == "all":
-                if not all(
-                    keyword.lower() in post_text for keyword in ctx.keywords
-                ):
+                if not all(keyword.lower() in post_text for keyword in ctx.keywords):
                     bt.logging.debug(
                         f"Miner {miner_uid}:{hotkey} not all keywords ({ctx.keywords}) found in post: {post_text}"
                     )
                     return False
             else:
-                if not any(
-                    keyword.lower() in post_text for keyword in ctx.keywords
-                ):
+                if not any(keyword.lower() in post_text for keyword in ctx.keywords):
                     bt.logging.debug(
                         f"Miner {miner_uid}:{hotkey} none of the keywords ({ctx.keywords}) found in post: {post_text}"
                     )
                     return False
 
         if not self._validate_time_range(ctx, x_entity.datetime):
-            bt.logging.debug(
-                f"Miner {miner_uid}:{hotkey} failed time range validation"
-            )
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
 
         return True
@@ -254,10 +248,7 @@ class OnDemandValidator:
         if ctx.usernames:
             requested_usernames = [u.lower() for u in ctx.usernames]
             post_username = reddit_content_dict.get("username")
-            if (
-                not post_username
-                or post_username.lower() not in requested_usernames
-            ):
+            if not post_username or post_username.lower() not in requested_usernames:
                 bt.logging.debug(
                     f"Miner {miner_uid}:{hotkey} Reddit username mismatch: {post_username} not in: {requested_usernames}"
                 )
@@ -281,19 +272,13 @@ class OnDemandValidator:
             keyword_mode = ctx.keyword_mode
             if keyword_mode == "all":
                 keyword_in_content = (
-                    all(
-                        keyword.lower() in content_text
-                        for keyword in ctx.keywords
-                    )
+                    all(keyword.lower() in content_text for keyword in ctx.keywords)
                     if content_text
                     else False
                 )
             else:
                 keyword_in_content = (
-                    any(
-                        keyword.lower() in content_text
-                        for keyword in ctx.keywords
-                    )
+                    any(keyword.lower() in content_text for keyword in ctx.keywords)
                     if content_text
                     else False
                 )
@@ -305,9 +290,7 @@ class OnDemandValidator:
                 return False
 
         if not self._validate_time_range(ctx, reddit_entity.datetime):
-            bt.logging.debug(
-                f"Miner {miner_uid}:{hotkey} failed time range validation"
-            )
+            bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
             return False
 
         return True
@@ -399,9 +382,7 @@ class OnDemandValidator:
                 return False
 
         except Exception as e:
-            bt.logging.error(
-                f"Scraper validation error for {post_id}: {str(e)}"
-            )
+            bt.logging.error(f"Scraper validation error for {post_id}: {str(e)}")
             return False
 
     def _get_scraper(self, source: str):
@@ -452,17 +433,13 @@ class OnDemandValidator:
             if miner_failed_validation:
                 miner_scores[uid] = 0
                 failed_miners.append(uid)
-                self.evaluator.scorer.apply_ondemand_penalty(
-                    uid=uid, mult_factor=1.0
-                )
+                self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
                 ORGANIC_MINER_RESULTS.labels(
                     miner_uid=uid, result_type="failure_content_validation"
                 ).inc()
             else:
                 successful_miners.append(uid)
-                ORGANIC_MINER_RESULTS.labels(
-                    miner_uid=uid, result_type="success"
-                ).inc()
+                ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="success").inc()
 
         bt.logging.info(f"Final miner scores: {miner_scores}")
         bt.logging.info(f"Failed validation miners: {failed_miners}")
@@ -479,9 +456,7 @@ class OnDemandValidator:
         if not miner_data_counts or len(miner_data_counts) < 2:
             return None
 
-        non_zero_counts = [
-            count for count in miner_data_counts.values() if count > 0
-        ]
+        non_zero_counts = [count for count in miner_data_counts.values() if count > 0]
         if len(non_zero_counts) < 2:
             return None
 
@@ -520,9 +495,7 @@ class OnDemandValidator:
             if post_count > 0 and post_count < consensus_count:
                 underperformance_ratio = 1.0 - (post_count / consensus_count)
                 if underperformance_ratio > 0.2:
-                    mult_factor = min(
-                        (underperformance_ratio - 0.2) / 0.8, 1.0
-                    )
+                    mult_factor = min((underperformance_ratio - 0.2) / 0.8, 1.0)
                     penalized_miners.append(uid)
                     bt.logging.info(
                         f"Miner {uid}:{self.metagraph.hotkeys[uid]}: {post_count} posts vs consensus {consensus_count:.1f} "
@@ -564,9 +537,7 @@ class OnDemandValidator:
                 submission_timestamp - job_created_at
             ).total_seconds()
             decay_rate = 0.05
-            speed_multiplier = max(
-                0.1, math.exp(-decay_rate * upload_time_seconds)
-            )
+            speed_multiplier = max(0.1, math.exp(-decay_rate * upload_time_seconds))
             bt.logging.trace(
                 f"Upload time: {upload_time_seconds:.0f}s "
                 f"-> speed multiplier (exponential): {speed_multiplier:.3f}"
