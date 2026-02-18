@@ -45,12 +45,13 @@ class OnDemandValidator:
     PER_MINER_VALIDATION_SAMPLE_SIZE = 2
     MIN_CONSENSUS = 0.3
 
-    def __init__(self, metagraph: bt.metagraph, evaluator):
-        self.metagraph = metagraph
+    def __init__(self, evaluator):
         self.evaluator = evaluator
 
-    def update_metagraph(self, metagraph: bt.metagraph):
-        self.metagraph = metagraph
+    @property
+    def metagraph(self):
+        """Always read the latest metagraph from the evaluator (kept in sync via metagraph_syncer)."""
+        return self.evaluator.metagraph
 
     # ------------------------------------------------------------------
     # Format validation

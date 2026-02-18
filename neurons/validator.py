@@ -178,9 +178,7 @@ class Validator:
         else:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
-        self.on_demand_validator = OnDemandValidator(
-            metagraph=self.metagraph, evaluator=self.evaluator
-        )
+        self.on_demand_validator = OnDemandValidator(evaluator=self.evaluator)
 
         self.is_setup = True
 
