@@ -523,6 +523,24 @@ class Validator:
                         f"{len(failed_miners)} miners failed validation"
                     )
 
+                    # Update on-demand credibility for ALL miners based on who submitted
+                    # (not just the 5 sampled for validation — uses full submission list)
+                    all_submitter_uids = set()
+                    for sub in job_with_submission.submissions:
+                        try:
+                            uid = self.metagraph.hotkeys.index(sub.miner_hotkey)
+                            all_submitter_uids.add(uid)
+                        except ValueError:
+                            pass
+
+                    all_miner_uids = utils.get_miner_uids(
+                        self.metagraph, self.evaluator.vpermit_rao_limit
+                    )
+                    self.evaluator.scorer.update_ondemand_credibility(
+                        submitter_uids=all_submitter_uids,
+                        all_miner_uids=all_miner_uids,
+                    )
+
                 if use_cache:
                     job_ids_processed_in_this_loop_not_already_in_cache = set(
                         [
