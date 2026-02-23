@@ -27,6 +27,12 @@ class MinerScorer:
     ONDEMAND_MAX_CRED_PENALTY = 0.0075   # 0.75%
     ONDEMAND_BASE_REWARD = 100_000_000  # 100M
 
+    # On-demand credibility: tracks job participation rate via EMA.
+    # Scales the entire final score — non-participants decay toward 0.
+    STARTING_ONDEMAND_CREDIBILITY = 0.5
+    ONDEMAND_CRED_ALPHA = 0.02          # EMA alpha: ~35 jobs (~70 sec) to halve
+    ONDEMAND_CRED_BAD_DATA_PENALTY = 0.05  # 5% direct penalty per bad submission
+
 
     def __init__(
         self,
@@ -56,6 +62,12 @@ class MinerScorer:
         self.ondemand_boosts = torch.zeros(num_neurons, dtype=torch.float32)
         self.ondemand_alpha = 0.3
 
+        # On-demand credibility: EMA of job participation (1=submitted, 0=skipped).
+        # Scales entire final score — non-participants decay toward 0.
+        self.ondemand_credibility = torch.full(
+            (num_neurons, 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32
+        )
+
         # Competition-based S3 scoring: stores effective_size for each miner
         # effective_size = total_size_bytes × coverage² (set during S3 validation)
         # S3 boost is calculated as: (my_effective_size / total_effective_size) × max_boost
@@ -76,6 +88,7 @@ class MinerScorer:
                     "s3_credibility": self.s3_credibility,
                     "scorable_bytes": self.scorable_bytes,
                     "ondemand_boosts": self.ondemand_boosts,
+                    "ondemand_credibility": self.ondemand_credibility,
                     "effective_sizes": self.effective_sizes,
                 },
                 filepath,
@@ -92,6 +105,9 @@ class MinerScorer:
                 (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
             ))
             self.ondemand_boosts = state.get("ondemand_boosts", torch.zeros_like(self.scores))
+            self.ondemand_credibility = state.get("ondemand_credibility", torch.full(
+                (self.scores.size(0), 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32
+            ))
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
     def get_scores(self) -> torch.Tensor:
@@ -114,6 +130,7 @@ class MinerScorer:
             self.s3_boosts[uid] = 0.0
             self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
             self.ondemand_boosts[uid] = 0.0
+            self.ondemand_credibility[uid] = MinerScorer.STARTING_ONDEMAND_CREDIBILITY
             self.effective_sizes[uid] = 0.0
 
     def penalize_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
@@ -185,6 +202,16 @@ class MinerScorer:
             )
             self.ondemand_boosts = torch.cat(
                 [self.ondemand_boosts, torch.zeros(to_add, dtype=torch.float32)]
+            )
+            self.ondemand_credibility = torch.cat(
+                [
+                    self.ondemand_credibility,
+                    torch.full(
+                        (to_add, 1),
+                        MinerScorer.STARTING_ONDEMAND_CREDIBILITY,
+                        dtype=torch.float32,
+                    ),
+                ]
             )
             self.effective_sizes = torch.cat(
                 [self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)]
@@ -333,6 +360,25 @@ class MinerScorer:
                 f"Total s3_boosts: {total_boosts:.0f}"
             )
 
+    def update_ondemand_credibility(self, submitter_uids: set, all_miner_uids: list):
+        """Update on-demand credibility for all miners based on job participation.
+
+        Called from validator.py for each expired job processed.
+        For miners who submitted: EMA toward 1.0 (trust builds).
+        For miners who didn't submit: EMA toward 0.0 (trust decays).
+
+        Args:
+            submitter_uids: Set of UIDs that submitted to this job (all, not just validated 5)
+            all_miner_uids: List of all active miner UIDs in the metagraph
+        """
+        with self.lock:
+            alpha = MinerScorer.ONDEMAND_CRED_ALPHA
+            for uid in all_miner_uids:
+                participated = 1.0 if uid in submitter_uids else 0.0
+                self.ondemand_credibility[uid] = (
+                    alpha * participated + (1 - alpha) * self.ondemand_credibility[uid]
+                )
+
     def apply_ondemand_penalty(self, uid: int, mult_factor: float):
         """Applies a credibility penalty to a given miner based on their ondemand result"""
         with self.lock:
@@ -352,6 +398,13 @@ class MinerScorer:
             )
             new_boost = float(self.ondemand_boosts[uid])
 
+            # Direct penalty to on-demand credibility for bad data
+            old_od_cred = float(self.ondemand_credibility[uid])
+            self.ondemand_credibility[uid] = max(
+                0, self.ondemand_credibility[uid] - MinerScorer.ONDEMAND_CRED_BAD_DATA_PENALTY * mult_factor
+            )
+            new_od_cred = float(self.ondemand_credibility[uid])
+
             # Adjust score based on the credibility ratio change
             if old_cred > 0:
                 cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
@@ -361,12 +414,14 @@ class MinerScorer:
                 bt.logging.info(
                     f"OnDemand penalty for Miner {uid}: "
                     f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
+                    f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
                     f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
                     f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
                 )
             else:
                 bt.logging.info(
                     f"OnDemand penalty for Miner {uid}: Credibility already at 0, "
+                    f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
                     f"Boost {old_boost:.2f} -> {new_boost:.2f}"
                 )
 
@@ -468,10 +523,16 @@ class MinerScorer:
                 # Finally, scale the miner's score by its credibility to the power of 2.5.
                 score *= self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP
 
+                # Scale by on-demand credibility — non-participants decay toward 0.
+                ondemand_cred = float(self.ondemand_credibility[uid])
+                score *= ondemand_cred
+
             self.scores[uid] = score
 
             bt.logging.success(
-                f"Evaluated Miner {uid}. Score={self.scores[uid].item()}. Credibility={self.miner_credibility[uid].item()}."
+                f"Evaluated Miner {uid}. Score={self.scores[uid].item()}. "
+                f"Credibility={self.miner_credibility[uid].item()}. "
+                f"OnDemand Cred={float(self.ondemand_credibility[uid]):.4f}."
             )
 
     def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
