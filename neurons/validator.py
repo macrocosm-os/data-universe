@@ -50,7 +50,7 @@ from typing import Dict
 from common import constants
 from common import utils
 from vali_utils.miner_evaluator import MinerEvaluator
-from vali_utils.on_demand.organic_query_processor import OrganicQueryProcessor
+from vali_utils.on_demand.on_demand_validation import OnDemandValidator, ValidationContext
 from vali_utils import metrics
 
 load_dotenv()
@@ -112,7 +112,7 @@ class Validator:
         )
         bt.logging.info(f"Metagraph: {self.metagraph}.")
 
-        self.organic_processor = None
+        self.on_demand_validator = None
 
         # Event loop is thread-affine; will be created inside the validator run thread.
         self.loop = None
@@ -136,41 +136,6 @@ class Validator:
         self.processed_job_ids_cache = utils.LRUSet(capacity=10_000)
 
         self.on_demand_thread: threading.Thread = None
-
-    def _create_validation_context_from_job(self, job):
-        """Convert OnDemandJob to OrganicRequest for validation purposes"""
-        from common.organic_protocol import OrganicRequest
-
-        # Extract usernames based on job platform
-        usernames = []
-        if hasattr(job.job, "usernames") and job.job.usernames:
-            usernames = job.job.usernames
-        elif hasattr(job.job, "channels") and job.job.channels:
-            usernames = job.job.channels
-
-        # Extract keywords based on job platform
-        keywords = []
-        if hasattr(job.job, "keywords") and job.job.keywords:
-            keywords = job.job.keywords
-        if hasattr(job.job, "subreddit") and job.job.subreddit:
-            keywords.insert(0, job.job.subreddit)
-
-        # Extract URL if present (for X or YouTube platforms)
-        url = None
-        if hasattr(job.job, "url") and job.job.url:
-            url = job.job.url
-
-        return OrganicRequest(
-            source=job.job.platform,
-            usernames=usernames,
-            keywords=keywords,
-            url=url,
-            keyword_mode=job.keyword_mode,
-            start_date=job.start_date.isoformat() if job.start_date else None,
-            end_date=job.end_date.isoformat() if job.end_date else None,
-            limit=job.limit,
-            data=[],
-        )
 
     def setup(self):
         """A one-time setup method that must be called before the Validator starts its main loop."""
@@ -213,9 +178,7 @@ class Validator:
         else:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
-        self.organic_processor = OrganicQueryProcessor(
-            wallet=self.wallet, metagraph=self.metagraph, evaluator=self.evaluator
-        )
+        self.on_demand_validator = OnDemandValidator(evaluator=self.evaluator)
 
         self.is_setup = True
 
@@ -397,8 +360,33 @@ class Validator:
                             submissions_with_valid_downloads[:5]
                         )
 
-                    # validate miner data
-                    validation_context = self._create_validation_context_from_job(job)
+                    # Build validation context from job
+                    usernames = []
+                    if hasattr(job.job, "usernames") and job.job.usernames:
+                        usernames = job.job.usernames
+                    elif hasattr(job.job, "channels") and job.job.channels:
+                        usernames = job.job.channels
+
+                    keywords = []
+                    if hasattr(job.job, "keywords") and job.job.keywords:
+                        keywords = job.job.keywords
+                    if hasattr(job.job, "subreddit") and job.job.subreddit:
+                        keywords.insert(0, job.job.subreddit)
+
+                    url = None
+                    if hasattr(job.job, "url") and job.job.url:
+                        url = job.job.url
+
+                    validation_context = ValidationContext(
+                        source=job.job.platform,
+                        usernames=usernames,
+                        keywords=keywords,
+                        url=url,
+                        keyword_mode=job.keyword_mode,
+                        start_date=job.start_date.isoformat() if job.start_date else None,
+                        end_date=job.end_date.isoformat() if job.end_date else None,
+                        limit=job.limit,
+                    )
 
                     # Prepare miner responses in the format expected by validation methods
                     miner_responses = {}
@@ -443,11 +431,11 @@ class Validator:
                             "row_count": len(miner_upload.data_entities),
                         }
 
-                    # Step 1: Format validation (reuse from OrganicQueryProcessor)
+                    # Step 1: Format validation
                     for uid, data in miner_responses.items():
                         if (
                             data
-                            and not self.organic_processor._validate_miner_data_format(
+                            and not self.on_demand_validator._validate_miner_data_format(
                                 validation_context, data, uid
                             )
                         ):
@@ -455,40 +443,39 @@ class Validator:
                             miner_responses[uid] = []  # Treat as empty
                             miner_data_counts[uid] = 0
 
-                    # Step 2: Perform detailed validation on sample posts (reuse from OrganicQueryProcessor)
+                    # Step 2: Perform detailed validation on sample posts
                     validation_results = {}
                     for uid, posts in miner_responses.items():
                         if not posts:
                             continue
 
-                        # Sample posts for validation (similar to _perform_validation)
                         num_to_validate = min(2, len(posts))
                         selected_posts = random.sample(posts, num_to_validate)
 
                         for post in selected_posts:
-                            post_id = self.organic_processor._get_post_id(post)
+                            post_id = self.on_demand_validator._get_post_id(post)
                             miner_post_key = f"{uid}:{post_id}"
-                            is_valid = await self.organic_processor._validate_entity(
+                            is_valid = await self.on_demand_validator._validate_entity(
                                 validation_context, post, post_id, uid
                             )
                             validation_results[miner_post_key] = is_valid
 
                     # Step 3: Apply validation penalties and get successful miners
                     miner_scores, failed_miners, successful_miners = (
-                        self.organic_processor._apply_validation_penalties(
+                        self.on_demand_validator._apply_validation_penalties(
                             miner_responses, validation_results
                         )
                     )
 
-                    # Step 4: Volume consensus validation (reuse from OrganicQueryProcessor)
+                    # Step 4: Volume consensus validation
                     consensus_count = (
-                        self.organic_processor._calculate_volume_consensus(
+                        self.on_demand_validator._calculate_volume_consensus(
                             miner_data_counts
                         )
                     )
                     if consensus_count:
                         penalized_miners = (
-                            self.organic_processor._apply_consensus_volume_penalties(
+                            self.on_demand_validator._apply_consensus_volume_penalties(
                                 miner_data_counts, job.limit, consensus_count
                             )
                         )
@@ -514,7 +501,7 @@ class Validator:
 
                         # Calculate reward multipliers
                         speed_mult, volume_mult = (
-                            self.organic_processor.calculate_ondemand_reward_multipliers(
+                            self.on_demand_validator.calculate_ondemand_reward_multipliers(
                                 job_created_at=job.created_at,
                                 submission_timestamp=metadata["submitted_at"],
                                 returned_count=metadata["row_count"],
@@ -524,7 +511,7 @@ class Validator:
                         )
 
                         # Apply reward (scaled by existing credibility internally)
-                        self.organic_processor.evaluator.scorer.apply_ondemand_reward(
+                        self.evaluator.scorer.apply_ondemand_reward(
                             uid=uid,
                             speed_multiplier=speed_mult,
                             volume_multiplier=volume_mult,
@@ -534,6 +521,24 @@ class Validator:
                         f"Job {job.id} validation complete: "
                         f"{len(successful_miners)} miners rewarded, "
                         f"{len(failed_miners)} miners failed validation"
+                    )
+
+                    # Update on-demand credibility for ALL miners based on who submitted
+                    # (not just the 5 sampled for validation — uses full submission list)
+                    all_submitter_uids = set()
+                    for sub in job_with_submission.submissions:
+                        try:
+                            uid = self.metagraph.hotkeys.index(sub.miner_hotkey)
+                            all_submitter_uids.add(uid)
+                        except ValueError:
+                            pass
+
+                    all_miner_uids = utils.get_miner_uids(
+                        self.metagraph, self.evaluator.vpermit_rao_limit
+                    )
+                    self.evaluator.scorer.update_ondemand_credibility(
+                        submitter_uids=all_submitter_uids,
+                        all_miner_uids=all_miner_uids,
                     )
 
                 if use_cache:
