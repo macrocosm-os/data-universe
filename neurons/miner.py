@@ -147,7 +147,7 @@ class Miner:
         self.lock = threading.RLock()
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
-        # S3 upload disabled — data collection paused.
+        # S3 upload disabled — data collection paused. todo uncomment
         # if self.use_uploader and not self.config.offline:
         #     self.s3_partitioned_uploader = S3PartitionedUploader(
         #         db_path=self.config.neuron.database_name,
@@ -253,15 +253,20 @@ class Miner:
                 time.sleep(300)  # Wait 5 minutes before trying again on error
 
     def upload_s3_partitioned(self):
-        """Upload DD data to S3 in partitioned format"""
-        # Wait 10 minutes before starting first upload
+        """Upload DD data to S3 via per-file presigned URLs."""
+        # Wait 30 minutes before starting first upload
         time_sleep_val = dt.timedelta(minutes=30).total_seconds()
         time.sleep(time_sleep_val)
+
+        # Create event loop for async API calls
+        loop = asyncio.new_event_loop()
 
         while not self.should_exit:
             try:
                 bt.logging.info("Starting S3 partitioned upload for DD data")
-                success = self.s3_partitioned_uploader.upload_dd_data()
+                success = loop.run_until_complete(
+                    self.s3_partitioned_uploader.upload_dd_data()
+                )
                 if success:
                     bt.logging.success("S3 partitioned upload completed successfully")
                 else:
@@ -274,6 +279,8 @@ class Miner:
             # Upload every 2 hours
             time_sleep_val = dt.timedelta(hours=2).total_seconds()
             time.sleep(time_sleep_val)
+
+        loop.close()
 
     def run_on_demand(self):
         loop = asyncio.new_event_loop()
