@@ -415,9 +415,8 @@ class S3PartitionedUploader:
 
             # Extract fields based on source type
             if source == DataSource.REDDIT.value:
-                # Reddit data structure
+                # Reddit data structure (uri removed — validator uses url column)
                 result_df = pd.DataFrame({
-                    'uri': df['uri'],
                     'datetime': df['datetime'],
                     'label': df['label'],
                     'id': df['decoded_content'].apply(lambda x: x.get('id')),
@@ -437,9 +436,8 @@ class S3PartitionedUploader:
                     'scrapedAt': df['decoded_content'].apply(lambda x: x.get('scrapedAt')),
                 })
             else:
-                # X/Twitter data structure
+                # X/Twitter data structure (uri removed — validator uses url column)
                 result_df = pd.DataFrame({
-                    'uri': df['uri'],
                     'datetime': df['datetime'],
                     'label': df['label'],
                     'username': df['decoded_content'].apply(lambda x: x.get('username')),

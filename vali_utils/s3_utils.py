@@ -4,6 +4,7 @@ Provides comprehensive validation of S3-stored miner data using metadata analysi
 """
 
 import random
+import re
 import requests
 import time
 import xml.etree.ElementTree as ET
@@ -15,7 +16,7 @@ import duckdb
 import datetime as dt
 import math
 import bittensor as bt
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 from dataclasses import dataclass
 
 from scraping.provider import ScraperProvider
@@ -100,22 +101,36 @@ class DuckDBSampledValidator:
     # Activation date for file size cap enforcement (grace period for miners to comply)
     FILE_SIZE_CAP_ACTIVATION_DATE = dt.datetime(2026, 2, 13, tzinfo=dt.timezone.utc)
 
+    # Standard bytes per row for effective_size (generous cap above legit benchmarks)
+    # Legit compressed: X=22-37 B/row, Reddit=39-196 B/row
+    STANDARD_BYTES_PER_ROW_X = 100
+    STANDARD_BYTES_PER_ROW_REDDIT = 200
+
+    # Compression check activation date (grace period for miners to re-upload with compression)
+    COMPRESSION_CHECK_ACTIVATION_DATE = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
+
+    # Filename pattern: data_YYYYMMDD_HHMMSS_{rowcount}_{hex16}.parquet
+    _FILENAME_ROW_COUNT_RE = re.compile(r"^data_\d{8}_\d{6}_(\d+)_[a-f0-9]{16}\.parquet$")
+
+    # Columns that may exist in old files but are no longer uploaded
+    OPTIONAL_COLUMNS: Set[str] = {'uri'}
+
     # Schema validation - expected columns per platform (from s3_uploader.py)
     EXPECTED_COLUMNS_X = {
-        'uri', 'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
+        'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
         'url', 'media', 'user_id', 'user_display_name', 'user_verified', 'tweet_id',
         'is_reply', 'is_quote', 'conversation_id', 'in_reply_to_user_id', 'language',
         'in_reply_to_username', 'quoted_tweet_id', 'like_count', 'retweet_count',
         'reply_count', 'quote_count', 'view_count', 'bookmark_count', 'user_blue_verified',
         'user_description', 'user_location', 'profile_image_url', 'cover_picture_url',
         'user_followers_count', 'user_following_count', 'scraped_at'
-    }  # 34 columns
+    }  # 33 columns (uri removed — now in OPTIONAL_COLUMNS)
 
     EXPECTED_COLUMNS_REDDIT = {
-        'uri', 'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
+        'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
         'createdAt', 'dataType', 'parentId', 'url', 'media', 'is_nsfw', 'score',
         'upvote_ratio', 'num_comments', 'scrapedAt'
-    }  # 18 columns
+    }  # 17 columns (uri removed — now in OPTIONAL_COLUMNS)
 
     def __init__(
         self,
@@ -291,6 +306,8 @@ class DuckDBSampledValidator:
             missing_uri_rate = duckdb_result["missing_url_rate"]
             job_match_rate = job_match_result['match_rate']
             scraper_success_rate = scraper_result['success_rate']
+            compression_failures = duckdb_result.get("compression_failures", 0)
+            uri_padding_failures = duckdb_result.get("uri_padding_failures", 0)
 
             # Check for schema validation failure
             if duckdb_result.get("reason"):
@@ -307,12 +324,48 @@ class DuckDBSampledValidator:
             if scraper_success_rate < self.MIN_SCRAPER_SUCCESS:
                 issues.append(f"Low scraper success: {scraper_success_rate:.1f}%")
 
+            # Compression exploit detection — fail after activation date
+            enforce_compression = dt.datetime.now(dt.timezone.utc) >= self.COMPRESSION_CHECK_ACTIVATION_DATE
+            if compression_failures > 0 and enforce_compression:
+                issues.append(f"Uncompressed files: {compression_failures}")
+            elif compression_failures > 0:
+                bt.logging.warning(
+                    f"{miner_hotkey}: {compression_failures} uncompressed files detected "
+                    f"(enforcement starts {self.COMPRESSION_CHECK_ACTIVATION_DATE.date()})"
+                )
+
+            # URI padding exploit detection — always fail
+            if uri_padding_failures > 0:
+                issues.append(f"URI padding detected: {uri_padding_failures} rows with uri!=url")
+
             is_valid = len(issues) == 0
 
             # Calculate effective_size for competition scoring
+            # Use row-count-based size estimate to neutralize compression/padding exploits
             coverage_ratio = job_coverage_rate / 100.0
             if is_valid:
-                effective_size_bytes = total_size_bytes * (coverage_ratio ** 2)
+                metadata_rows_x = duckdb_result.get("metadata_rows_x", 0)
+                metadata_rows_reddit = duckdb_result.get("metadata_rows_reddit", 0)
+
+                if metadata_rows_x > 0 or metadata_rows_reddit > 0:
+                    # Extrapolate sampled row counts to total file set
+                    sample_ratio = len(sampled_files) / max(len(active_files), 1)
+                    estimated_row_based_size = (
+                        metadata_rows_x * self.STANDARD_BYTES_PER_ROW_X +
+                        metadata_rows_reddit * self.STANDARD_BYTES_PER_ROW_REDDIT
+                    ) / max(sample_ratio, 0.01)
+
+                    effective_size_bytes = min(total_size_bytes, estimated_row_based_size) * (coverage_ratio ** 2)
+                    bt.logging.info(
+                        f"{miner_hotkey}: effective_size: file={total_size_bytes/(1024*1024):.1f}MB, "
+                        f"row_based={estimated_row_based_size/(1024*1024):.1f}MB "
+                        f"(x_rows={metadata_rows_x}, reddit_rows={metadata_rows_reddit}, "
+                        f"sample_ratio={sample_ratio:.2f}), "
+                        f"using min={min(total_size_bytes, estimated_row_based_size)/(1024*1024):.1f}MB"
+                    )
+                else:
+                    # Fallback: no metadata rows available (all metadata reads failed)
+                    effective_size_bytes = total_size_bytes * (coverage_ratio ** 2)
             else:
                 effective_size_bytes = 0.0
 
@@ -342,7 +395,8 @@ class DuckDBSampledValidator:
                     f"{miner_hotkey}: S3 validation details - "
                     f"dup={duplicate_rate:.1f}% (max {self.MAX_DUPLICATE_RATE}%), "
                     f"job_match={job_match_rate:.1f}% (min {self.MIN_JOB_MATCH_RATE}%), "
-                    f"scraper={scraper_success_rate:.1f}% (min {self.MIN_SCRAPER_SUCCESS}%)"
+                    f"scraper={scraper_success_rate:.1f}% (min {self.MIN_SCRAPER_SUCCESS}%), "
+                    f"compression_fails={compression_failures}, uri_padding={uri_padding_failures}"
                 )
 
             return S3ValidationResult(
@@ -421,6 +475,33 @@ class DuckDBSampledValidator:
 
         return all_urls
 
+    def _check_file_metadata(self, presigned_url: str, conn) -> Optional[Dict]:
+        """Read parquet metadata footer only (~1-10KB network read).
+        Returns {total_rows, codecs, has_uncompressed} or None on error."""
+        try:
+            result = conn.execute(f"""
+                SELECT SUM(row_group_num_rows), LIST(DISTINCT compression)
+                FROM parquet_metadata('{presigned_url}')
+            """).fetchone()
+            if result is None or result[0] is None:
+                return None
+            total_rows = int(result[0])
+            codecs = set(result[1]) if result[1] else set()
+            return {
+                'total_rows': total_rows,
+                'codecs': codecs,
+                'has_uncompressed': 'UNCOMPRESSED' in codecs
+            }
+        except Exception as e:
+            bt.logging.debug(f"parquet_metadata error: {e}")
+            return None
+
+    def _parse_row_count_from_filename(self, key: str) -> Optional[int]:
+        """Extract row count from new filename format: data_YYYYMMDD_HHMMSS_{count}_{hex16}.parquet"""
+        filename = key.rsplit('/', 1)[-1]
+        match = self._FILENAME_ROW_COUNT_RE.match(filename)
+        return int(match.group(1)) if match else None
+
     async def _sampled_duckdb_validation(
         self,
         sampled_files: List[Dict],
@@ -431,7 +512,8 @@ class DuckDBSampledValidator:
         """
         Lightweight DuckDB validation using TABLESAMPLE BERNOULLI.
         Uses probabilistic sampling - memory efficient (~4MB per file).
-        Checks duplicates, empty content, and missing URLs on sampled rows.
+        Checks duplicates, empty content, missing URLs, compression codec,
+        URI padding, and accumulates row counts per platform.
         """
         total_rows = 0
         duplicate_urls = set()
@@ -440,6 +522,14 @@ class DuckDBSampledValidator:
         missing_url_count = 0
         schema_failures = 0
         files_checked = 0
+
+        # New: metadata-based checks
+        compression_failures = 0
+        uri_padding_failures = 0
+        metadata_rows_x = 0
+        metadata_rows_reddit = 0
+        row_count_mismatches = 0
+        enforce_compression = dt.datetime.now(dt.timezone.utc) >= self.COMPRESSION_CHECK_ACTIVATION_DATE
 
         # Limit to 20 files max for this check
         files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
@@ -475,7 +565,34 @@ class DuckDBSampledValidator:
                 conn.execute("SET memory_limit='2GB';")
                 conn.execute("SET threads=1;")
 
-                # First get schema to check available columns
+                # --- NEW: Metadata check (footer-only read, ~1-10KB) ---
+                metadata = self._check_file_metadata(presigned_url, conn)
+                if metadata:
+                    file_rows = metadata['total_rows']
+                    # Accumulate rows by platform for effective_size
+                    if platform in ['x', 'twitter']:
+                        metadata_rows_x += file_rows
+                    elif platform == 'reddit':
+                        metadata_rows_reddit += file_rows
+
+                    # Check for UNCOMPRESSED codec
+                    if metadata['has_uncompressed']:
+                        compression_failures += 1
+                        bt.logging.warning(
+                            f"UNCOMPRESSED file detected: {file_key} "
+                            f"({file_rows} rows, codecs={metadata['codecs']})"
+                        )
+
+                    # Cross-check filename row count vs metadata row count
+                    filename_rows = self._parse_row_count_from_filename(file_key)
+                    if filename_rows is not None and file_rows != filename_rows:
+                        row_count_mismatches += 1
+                        bt.logging.warning(
+                            f"Row count mismatch: filename claims {filename_rows}, "
+                            f"metadata has {file_rows} in {file_key}"
+                        )
+
+                # --- Schema check (existing) ---
                 # parquet_schema returns 'name' column, not 'column_name'
                 # Note: it includes root 'schema' and nested elements ('list', 'element') we filter out
                 schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
@@ -486,32 +603,55 @@ class DuckDBSampledValidator:
                 available_columns = set(all_column_names)
 
                 # Schema validation - reject files with incorrect schema
+                # Allow OPTIONAL_COLUMNS (e.g. 'uri' from old files) in addition to expected
+                optional_lower = {col.lower() for col in self.OPTIONAL_COLUMNS}
                 if platform in ['x', 'twitter']:
                     expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_X}
-                    max_columns = len(self.EXPECTED_COLUMNS_X)
+                    max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                 else:
                     expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_REDDIT}
-                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
 
+                allowed_columns = expected_columns | optional_lower
                 files_checked += 1
 
                 # Check total column count (reject duplicate columns) - fail fast
                 if len(all_column_names) > max_columns:
                     bt.logging.warning(
-                        f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
+                        f"Invalid schema: file has {len(all_column_names)} columns, expected max {max_columns}. "
                         f"Sample columns: {all_column_names[:10]}..."
                     )
                     schema_failures += 1
                     break  # Fail fast
 
                 # Check for unexpected column names - fail fast
-                unexpected_columns = available_columns - expected_columns
+                unexpected_columns = available_columns - allowed_columns
                 if unexpected_columns:
                     bt.logging.warning(
                         f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
                     )
                     schema_failures += 1
                     break  # Fail fast
+
+                # --- NEW: URI padding check ---
+                # If 'uri' column exists, spot-check that uri == url (detect hex-padding exploit)
+                if 'uri' in available_columns and 'url' in available_columns:
+                    try:
+                        uri_check = conn.execute(f"""
+                            SELECT COUNT(*) FROM (
+                                SELECT uri, url
+                                FROM read_parquet('{presigned_url}')
+                                TABLESAMPLE BERNOULLI(10%)
+                                LIMIT 50
+                            ) WHERE uri IS NOT NULL AND url IS NOT NULL AND uri != url
+                        """).fetchone()
+                        if uri_check and uri_check[0] > 0:
+                            uri_padding_failures += uri_check[0]
+                            bt.logging.warning(
+                                f"URI padding detected: {uri_check[0]} rows with uri!=url in {file_key}"
+                            )
+                    except Exception as e:
+                        bt.logging.debug(f"URI padding check error: {e}")
 
                 # Build empty check based on available columns (no media - often missing)
                 if platform in ['x', 'twitter']:
@@ -588,7 +728,11 @@ class DuckDBSampledValidator:
                 "duplicate_rate_within_job": 0.0,
                 "empty_rate": 0.0,
                 "missing_url_rate": 0.0,
-                "total_rows": 0
+                "total_rows": 0,
+                "metadata_rows_x": metadata_rows_x,
+                "metadata_rows_reddit": metadata_rows_reddit,
+                "compression_failures": compression_failures,
+                "uri_padding_failures": uri_padding_failures,
             }
 
         duplicate_rate = (len(duplicate_urls) / total_rows * 100) if total_rows > 0 else 0
@@ -597,7 +741,9 @@ class DuckDBSampledValidator:
 
         bt.logging.info(
             f"Sampled DuckDB validation: {total_rows} rows, "
-            f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%"
+            f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%, "
+            f"compression_fails={compression_failures}, uri_padding={uri_padding_failures}, "
+            f"metadata_rows(x={metadata_rows_x}, reddit={metadata_rows_reddit})"
         )
 
         return {
@@ -605,7 +751,11 @@ class DuckDBSampledValidator:
             "duplicate_rate_within_job": duplicate_rate,
             "empty_rate": empty_rate,
             "missing_url_rate": missing_url_rate,
-            "total_rows": total_rows
+            "total_rows": total_rows,
+            "metadata_rows_x": metadata_rows_x,
+            "metadata_rows_reddit": metadata_rows_reddit,
+            "compression_failures": compression_failures,
+            "uri_padding_failures": uri_padding_failures,
         }
 
     def _validate_sample_with_duckdb(
@@ -796,12 +946,12 @@ class DuckDBSampledValidator:
                     all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
 
                     if platform in ['x', 'twitter']:
-                        max_columns = len(self.EXPECTED_COLUMNS_X)
+                        max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                     else:
-                        max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+                        max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
 
                     if len(all_column_names) > max_columns:
-                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected max {max_columns})")
                         continue
 
                     sample_df = conn.execute(f"""
@@ -957,12 +1107,12 @@ class DuckDBSampledValidator:
                 all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
 
                 if platform in ['x', 'twitter']:
-                    max_columns = len(self.EXPECTED_COLUMNS_X)
+                    max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                 else:
-                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
 
                 if len(all_column_names) > max_columns:
-                    bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                    bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected max {max_columns})")
                     continue
 
                 df = conn.execute(f"""
