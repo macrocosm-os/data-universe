@@ -162,6 +162,8 @@ class S3PartitionedUploader:
                         continue
 
                     # Store job configuration by job_id
+                    max_rows = item.get('max_rows')
+
                     if params.get('label') and params.get('keyword'):
                         # Both label and keyword required
                         result[job_id] = {
@@ -169,7 +171,8 @@ class S3PartitionedUploader:
                             "type": "label_and_keyword",
                             "label": params['label'],
                             "keyword": params['keyword'],
-                            "weight": weight
+                            "weight": weight,
+                            "max_rows": max_rows,
                         }
                     elif params.get('label'):
                         # Label only
@@ -177,7 +180,8 @@ class S3PartitionedUploader:
                             "source": source_int,
                             "type": "label",
                             "value": params['label'],
-                            "weight": weight
+                            "weight": weight,
+                            "max_rows": max_rows,
                         }
                     elif params.get('keyword'):
                         # Keyword only
@@ -185,7 +189,8 @@ class S3PartitionedUploader:
                             "source": source_int,
                             "type": "keyword",
                             "value": params['keyword'],
-                            "weight": weight
+                            "weight": weight,
+                            "max_rows": max_rows,
                         }
 
             # Handle old format for backward compatibility
@@ -530,6 +535,7 @@ class S3PartitionedUploader:
         """Process a single job using exact job_id as folder name."""
         source = job_config["source"]
         search_type = job_config["type"]
+        max_rows = job_config.get("max_rows")
 
         # Extract value(s) based on search type
         if search_type == "label_and_keyword":
@@ -542,7 +548,13 @@ class S3PartitionedUploader:
 
         cursor = self._get_last_cursor(job_id)
 
-        bt.logging.info(f"Processing job {job_id} ({log_msg}), cursor: datetime={cursor.get('last_datetime')}")
+        # Check already-uploaded rows against max_rows cap
+        already_uploaded = self.processed_state.get(job_id, {}).get('total_records_processed', 0)
+        if max_rows and already_uploaded >= max_rows:
+            bt.logging.info(f"Job {job_id} already at max_rows ({already_uploaded}/{max_rows}), skipping")
+            return True
+
+        bt.logging.info(f"Processing job {job_id} ({log_msg}), cursor: datetime={cursor.get('last_datetime')}, max_rows={max_rows}")
 
         total_processed = 0
 
@@ -561,6 +573,16 @@ class S3PartitionedUploader:
             if chunk_df.empty:
                 bt.logging.info(f"No new data for job {job_id}, total processed this run: {total_processed}")
                 break
+
+            # Enforce max_rows: truncate chunk if it would exceed the cap
+            if max_rows:
+                remaining = max_rows - already_uploaded - total_processed
+                if remaining <= 0:
+                    bt.logging.info(f"Job {job_id}: reached max_rows cap ({max_rows}), stopping")
+                    break
+                if len(chunk_df) > remaining:
+                    bt.logging.info(f"Job {job_id}: truncating chunk from {len(chunk_df)} to {remaining} rows (max_rows={max_rows})")
+                    chunk_df = chunk_df.iloc[:remaining]
 
             # Upload chunk via per-file presigned URL
             success = await self._upload_data_chunk(client, chunk_df, source, job_id)
@@ -585,6 +607,11 @@ class S3PartitionedUploader:
             self._save_processed_state()
 
             bt.logging.info(f"Processed {total_processed} new records for job {job_id}")
+
+            # Stop if we've hit the max_rows cap
+            if max_rows and (already_uploaded + total_processed) >= max_rows:
+                bt.logging.info(f"Job {job_id}: reached max_rows cap ({max_rows}), stopping")
+                break
 
             # If we got less than chunk_size, we've reached the end for now
             if len(chunk_df) < self.chunk_size:

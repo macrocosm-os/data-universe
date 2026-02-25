@@ -528,6 +528,7 @@ class DuckDBSampledValidator:
         uri_padding_failures = 0
         metadata_rows_x = 0
         metadata_rows_reddit = 0
+        metadata_rows_by_job = {}  # job_id -> total rows seen so far
         row_count_mismatches = 0
         enforce_compression = dt.datetime.now(dt.timezone.utc) >= self.COMPRESSION_CHECK_ACTIVATION_DATE
 
@@ -569,11 +570,21 @@ class DuckDBSampledValidator:
                 metadata = self._check_file_metadata(presigned_url, conn)
                 if metadata:
                     file_rows = metadata['total_rows']
-                    # Accumulate rows by platform for effective_size
+
+                    # Clamp per-job rows to max_rows (excess rows don't count toward effective_size)
+                    max_rows = job_config.get('max_rows') if isinstance(job_config, dict) else None
+                    job_rows_so_far = metadata_rows_by_job.get(job_id, 0)
+                    if max_rows and job_rows_so_far + file_rows > max_rows:
+                        clamped_rows = max(0, max_rows - job_rows_so_far)
+                    else:
+                        clamped_rows = file_rows
+                    metadata_rows_by_job[job_id] = job_rows_so_far + file_rows
+
+                    # Accumulate clamped rows by platform for effective_size
                     if platform in ['x', 'twitter']:
-                        metadata_rows_x += file_rows
+                        metadata_rows_x += clamped_rows
                     elif platform == 'reddit':
-                        metadata_rows_reddit += file_rows
+                        metadata_rows_reddit += clamped_rows
 
                     # Check for UNCOMPRESSED codec
                     if metadata['has_uncompressed']:

@@ -43,6 +43,7 @@ class DynamicDesirabilityListEntry(BaseModel):
     post_start_datetime: Optional[datetime] = None
     post_end_datetime: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    max_rows: Optional[int] = None
 
 
 class DynamicDesirabilityList(BaseModel):
