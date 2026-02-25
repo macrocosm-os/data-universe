@@ -507,10 +507,9 @@ class MinerScorer:
                 # Record raw score for next time.
                 self.scorable_bytes[uid] = score
 
-                # S3 boost disabled — data collection paused.
-                # s3_boost = self.s3_boosts[uid] * self.s3_credibility[uid]
-                # score += s3_boost
-                # bt.logging.info(f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}.")
+                s3_boost = self.s3_boosts[uid] * self.s3_credibility[uid]
+                score += s3_boost
+                bt.logging.info(f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}.")
 
                 # Awarding the miner their OnDemand boost based on recent on-demand performance.
                 ondemand_boost = float(self.ondemand_boosts[uid])

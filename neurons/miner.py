@@ -147,15 +147,14 @@ class Miner:
         self.lock = threading.RLock()
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
 
-        # S3 upload disabled — data collection paused. todo uncomment
-        # if self.use_uploader and not self.config.offline:
-        #     self.s3_partitioned_uploader = S3PartitionedUploader(
-        #         db_path=self.config.neuron.database_name,
-        #         subtensor=self.subtensor,
-        #         wallet=self.wallet,
-        #         s3_auth_url=self.config.s3_auth_url,
-        #         state_file=self.config.miner_upload_state_file,
-        #     )
+        if self.use_uploader and not self.config.offline:
+            self.s3_partitioned_uploader = S3PartitionedUploader(
+                db_path=self.config.neuron.database_name,
+                subtensor=self.subtensor,
+                wallet=self.wallet,
+                s3_auth_url=self.config.s3_auth_url,
+                state_file=self.config.miner_upload_state_file,
+            )
 
         # Instantiate storage.
         self.storage = SqliteMinerStorage(
