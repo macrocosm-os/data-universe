@@ -62,9 +62,6 @@ class S3ValidationResult:
     sample_validation_results: List[str]
     sample_job_mismatches: List[str]
 
-    # Empty file detection
-    empty_file_detected: bool = False
-
     # Competition-based scoring: effective_size = total_size_bytes × coverage²
     effective_size_bytes: float = 0.0
     job_coverage_rate: float = 0.0
@@ -191,6 +188,11 @@ class DuckDBSampledValidator:
                     if file_size > self.MAX_FILE_SIZE_BYTES:
                         oversized_files_skipped += 1
                         continue
+                    # Skip files claiming 0 rows in filename (header-only files)
+                    filename_rows = self._parse_row_count_from_filename(key)
+                    if filename_rows is not None and filename_rows == 0:
+                        empty_files_skipped += 1
+                        continue
                     job_id = key.split('/job_id=')[1].split('/')[0]
                     if job_id not in files_by_job:
                         files_by_job[job_id] = []
@@ -300,6 +302,7 @@ class DuckDBSampledValidator:
             scraper_success_rate = scraper_result['success_rate']
             compression_failures = duckdb_result.get("compression_failures", 0)
             uri_padding_failures = duckdb_result.get("uri_padding_failures", 0)
+            row_count_mismatches = duckdb_result.get("row_count_mismatches", 0)
 
             # Check for schema validation failure
             if duckdb_result.get("reason"):
@@ -323,6 +326,10 @@ class DuckDBSampledValidator:
             # URI padding exploit detection — always fail
             if uri_padding_failures > 0:
                 issues.append(f"URI padding detected: {uri_padding_failures} rows with uri!=url")
+
+            # Row count mismatch — filename claims different count than parquet metadata
+            if row_count_mismatches > 0:
+                issues.append(f"Row count mismatch: {row_count_mismatches} files with filename!=metadata rows")
 
             is_valid = len(issues) == 0
 
@@ -382,7 +389,8 @@ class DuckDBSampledValidator:
                     f"dup={duplicate_rate:.1f}% (max {self.MAX_DUPLICATE_RATE}%), "
                     f"job_match={job_match_rate:.1f}% (min {self.MIN_JOB_MATCH_RATE}%), "
                     f"scraper={scraper_success_rate:.1f}% (min {self.MIN_SCRAPER_SUCCESS}%), "
-                    f"compression_fails={compression_failures}, uri_padding={uri_padding_failures}"
+                    f"compression_fails={compression_failures}, uri_padding={uri_padding_failures}, "
+                    f"row_count_mismatches={row_count_mismatches}"
                 )
 
             return S3ValidationResult(
@@ -728,6 +736,7 @@ class DuckDBSampledValidator:
                 "metadata_rows_reddit": metadata_rows_reddit,
                 "compression_failures": compression_failures,
                 "uri_padding_failures": uri_padding_failures,
+                "row_count_mismatches": row_count_mismatches,
             }
 
         duplicate_rate = (len(duplicate_urls) / total_rows * 100) if total_rows > 0 else 0
@@ -751,6 +760,7 @@ class DuckDBSampledValidator:
             "metadata_rows_reddit": metadata_rows_reddit,
             "compression_failures": compression_failures,
             "uri_padding_failures": uri_padding_failures,
+            "row_count_mismatches": row_count_mismatches,
         }
 
     async def _perform_job_content_matching(

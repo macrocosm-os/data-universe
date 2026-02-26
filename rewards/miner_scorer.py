@@ -6,7 +6,7 @@ import datetime as dt
 from common.data import TimeBucket
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
-from scraping.scraper import ValidationResult, S3ValidationResult
+from scraping.scraper import ValidationResult
 
 
 class MinerScorer:
@@ -133,23 +133,6 @@ class MinerScorer:
             self.ondemand_credibility[uid] = MinerScorer.STARTING_ONDEMAND_CREDIBILITY
             self.effective_sizes[uid] = 0.0
 
-    def penalize_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
-        """
-        DEPRECATED: With competition-based scoring, empty files result in effective_size=0,
-        which naturally gives no boost. This method is kept for backward compatibility.
-
-        Sets S3 boost, S3 credibility, and effective_size to zero.
-        """
-        with self.lock:
-            self.s3_boosts[uid] = 0.0
-            self.s3_credibility[uid] = 0.0
-            self.effective_sizes[uid] = 0.0
-
-            bt.logging.info(
-                f"EMPTY FILE DETECTED - UID {uid} ({hotkey}): S3 boost and effective_size zeroed. "
-                f"Reason: {empty_file_reason}"
-            )
-
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
         with self.lock:
@@ -216,24 +199,6 @@ class MinerScorer:
             self.effective_sizes = torch.cat(
                 [self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)]
             )
-
-    def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float, job_match_failure = False) -> None:
-        """
-        DEPRECATED: Use update_s3_effective_size() for competition-based scoring.
-        Kept for backward compatibility during transition.
-        """
-        max_boost = 200 * 10**6
-        self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
-
-        if job_match_failure:
-            bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
-            self.s3_credibility[uid] = 0.0
-        else:
-            self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
-
-        bt.logging.info(
-            f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
-        )
 
     def update_s3_effective_size(
         self,
