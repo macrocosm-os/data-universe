@@ -533,11 +533,10 @@ class Miner:
             )
             self.lookup_thread.start()
 
-            # S3 upload disabled — data collection paused.
-            # self.s3_partitioned_thread = threading.Thread(
-            #     target=self.upload_s3_partitioned, daemon=True
-            # )
-            # self.s3_partitioned_thread.start()
+            self.s3_partitioned_thread = threading.Thread(
+                target=self.upload_s3_partitioned, daemon=True
+            )
+            self.s3_partitioned_thread.start()
 
             self.on_demand_thread = threading.Thread(
                 target=self.run_on_demand, daemon=True
