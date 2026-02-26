@@ -98,16 +98,11 @@ class DuckDBSampledValidator:
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
     MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024        # 512MB - single file cap
-    # Activation date for file size cap enforcement (grace period for miners to comply)
-    FILE_SIZE_CAP_ACTIVATION_DATE = dt.datetime(2026, 2, 13, tzinfo=dt.timezone.utc)
 
     # Standard bytes per row for effective_size (generous cap above legit benchmarks)
     # Legit compressed: X=22-37 B/row, Reddit=39-196 B/row
     STANDARD_BYTES_PER_ROW_X = 100
     STANDARD_BYTES_PER_ROW_REDDIT = 200
-
-    # Compression check activation date (grace period for miners to re-upload with compression)
-    COMPRESSION_CHECK_ACTIVATION_DATE = dt.datetime(2026, 3, 1, tzinfo=dt.timezone.utc)
 
     # Filename pattern: data_YYYYMMDD_HHMMSS_{rowcount}_{hex16}.parquet
     _FILENAME_ROW_COUNT_RE = re.compile(r"^data_\d{8}_\d{6}_(\d+)_[a-f0-9]{16}\.parquet$")
@@ -183,7 +178,6 @@ class DuckDBSampledValidator:
                 return self._create_failed_result("No files found")
 
             # Group files by job, filtering out empty/oversized files
-            enforce_size_cap = dt.datetime.now(dt.timezone.utc) >= self.FILE_SIZE_CAP_ACTIVATION_DATE
             files_by_job = {}
             empty_files_skipped = 0
             oversized_files_skipped = 0
@@ -191,12 +185,10 @@ class DuckDBSampledValidator:
                 key = f.get('key', '')
                 if '/job_id=' in key:
                     file_size = f.get('size', 0)
-                    # Always skip empty files (exploit prevention, no grace period)
                     if file_size < self.MIN_FILE_SIZE_BYTES:
                         empty_files_skipped += 1
                         continue
-                    # Fully exclude oversized files after activation date
-                    if enforce_size_cap and file_size > self.MAX_FILE_SIZE_BYTES:
+                    if file_size > self.MAX_FILE_SIZE_BYTES:
                         oversized_files_skipped += 1
                         continue
                     job_id = key.split('/job_id=')[1].split('/')[0]
@@ -324,15 +316,9 @@ class DuckDBSampledValidator:
             if scraper_success_rate < self.MIN_SCRAPER_SUCCESS:
                 issues.append(f"Low scraper success: {scraper_success_rate:.1f}%")
 
-            # Compression exploit detection — fail after activation date
-            enforce_compression = dt.datetime.now(dt.timezone.utc) >= self.COMPRESSION_CHECK_ACTIVATION_DATE
-            if compression_failures > 0 and enforce_compression:
+            # Compression exploit detection — always fail
+            if compression_failures > 0:
                 issues.append(f"Uncompressed files: {compression_failures}")
-            elif compression_failures > 0:
-                bt.logging.warning(
-                    f"{miner_hotkey}: {compression_failures} uncompressed files detected "
-                    f"(enforcement starts {self.COMPRESSION_CHECK_ACTIVATION_DATE.date()})"
-                )
 
             # URI padding exploit detection — always fail
             if uri_padding_failures > 0:
@@ -530,8 +516,6 @@ class DuckDBSampledValidator:
         metadata_rows_reddit = 0
         metadata_rows_by_job = {}  # job_id -> total rows seen so far
         row_count_mismatches = 0
-        enforce_compression = dt.datetime.now(dt.timezone.utc) >= self.COMPRESSION_CHECK_ACTIVATION_DATE
-
         # Limit to 20 files max for this check
         files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
 
