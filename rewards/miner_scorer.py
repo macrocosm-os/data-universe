@@ -33,6 +33,11 @@ class MinerScorer:
     ONDEMAND_CRED_ALPHA = 0.02          # EMA alpha: ~35 jobs (~70 sec) to halve
     ONDEMAND_CRED_BAD_DATA_PENALTY = 0.05  # 5% direct penalty per bad submission
 
+    # P2P dampener — DD job weights (1.0-5.0) inflate P2P scores far beyond S3/OD.
+    # DD jobs are designed for S3 uploads, not P2P index broadcasting.
+    # This factor scales down the raw P2P score so it stays the smallest component.
+    P2P_REWARD_SCALE = 0.05
+
 
     def __init__(
         self,
@@ -370,25 +375,21 @@ class MinerScorer:
             )
             new_od_cred = float(self.ondemand_credibility[uid])
 
-            # Adjust score based on the credibility ratio change
-            if old_cred > 0:
-                cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
-                old_score = float(self.scores[uid])
-                self.scores[uid] *= cred_ratio
+            # Recalculate composite score with updated credibilities
+            old_score = float(self.scores[uid])
+            p2p_raw = float(self.scorable_bytes[uid])
+            p2p_component = p2p_raw * MinerScorer.P2P_REWARD_SCALE * (new_cred ** MinerScorer._CREDIBILITY_EXP)
+            s3_component = float(self.s3_boosts[uid]) * (float(self.s3_credibility[uid]) ** MinerScorer._CREDIBILITY_EXP)
+            od_component = float(self.ondemand_boosts[uid]) * (new_od_cred ** MinerScorer._CREDIBILITY_EXP)
+            self.scores[uid] = p2p_component + s3_component + od_component
 
-                bt.logging.info(
-                    f"OnDemand penalty for Miner {uid}: "
-                    f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
-                    f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
-                    f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
-                    f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
-                )
-            else:
-                bt.logging.info(
-                    f"OnDemand penalty for Miner {uid}: Credibility already at 0, "
-                    f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
-                    f"Boost {old_boost:.2f} -> {new_boost:.2f}"
-                )
+            bt.logging.info(
+                f"OnDemand penalty for Miner {uid}: "
+                f"P2P Cred {old_cred:.4f} -> {new_cred:.4f}, "
+                f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
+                f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
+                f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
+            )
 
     def apply_ondemand_reward(
         self,
@@ -469,27 +470,30 @@ class MinerScorer:
                         f"Miner {uid}'s scorable bytes changed from {previous_raw_score} to {score}. Credibility changed from {previous_cred} to {self.miner_credibility[uid].item()}."
                     )
 
-                # Record raw score for next time.
+                # Record raw P2P score for next time.
                 self.scorable_bytes[uid] = score
 
-                s3_boost = self.s3_boosts[uid] * self.s3_credibility[uid]
-                score += s3_boost
-                bt.logging.info(f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}.")
-
-                # Awarding the miner their OnDemand boost based on recent on-demand performance.
-                ondemand_boost = float(self.ondemand_boosts[uid])
-                score += ondemand_boost
-                bt.logging.info(f"Awarded Miner {uid} an OnDemand boost of {ondemand_boost:.0f} based on recent on-demand performance, adjusting the score to {float(score)}.")
-
-                # Now update the credibility again based on the current validation results.
+                # Update P2P credibility based on current validation results.
                 self._update_credibility(uid, validation_results)
 
-                # Finally, scale the miner's score by its credibility to the power of 2.5.
-                score *= self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP
+                # Independent component scoring — each channel gated by its own credibility.
+                # This prevents one bad channel from zeroing out all rewards.
+                p2p_cred = float(self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
+                s3_cred = float(self.s3_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
+                od_cred = float(self.ondemand_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
 
-                # Scale by on-demand credibility — non-participants decay toward 0.
-                ondemand_cred = float(self.ondemand_credibility[uid])
-                score *= ondemand_cred
+                p2p_component = score * MinerScorer.P2P_REWARD_SCALE * p2p_cred
+                s3_component = float(self.s3_boosts[uid]) * s3_cred
+                od_component = float(self.ondemand_boosts[uid]) * od_cred
+
+                score = p2p_component + s3_component + od_component
+
+                bt.logging.info(
+                    f"Miner {uid} score breakdown: "
+                    f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
+                    f"S3={s3_component:.0f} (boost={float(self.s3_boosts[uid]):.0f}, cred={float(self.s3_credibility[uid]):.4f}), "
+                    f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={float(self.ondemand_credibility[uid]):.4f})"
+                )
 
             self.scores[uid] = score
 
