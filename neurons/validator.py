@@ -931,8 +931,7 @@ class Validator:
 
         scorer = self.evaluator.get_scorer()
 
-        # S3 boost disabled — data collection paused.
-        # scorer.recalculate_all_s3_boosts()
+        scorer.recalculate_all_s3_boosts()
 
         scores = scorer.get_scores()
         credibilities = scorer.get_credibilities()
@@ -972,7 +971,11 @@ class Validator:
         table.add_column("uid", justify="right", style="cyan", no_wrap=True)
         table.add_column("weight", style="magenta")
         table.add_column("score", style="magenta")
-        table.add_column("credibility", style="magenta")
+        table.add_column("p2p_cred", style="magenta")
+        table.add_column("s3_boost", style="green")
+        table.add_column("s3_cred", style="green")
+        table.add_column("od_boost", style="yellow")
+        table.add_column("od_cred", style="yellow")
         uids_and_weights = list(
             zip(processed_weight_uids.tolist(), processed_weights.tolist())
         )
@@ -986,6 +989,10 @@ class Validator:
                 str(round(weight, 4)),
                 str(int(scores[uid].item())),
                 str(round(credibilities[uid].item(), 4)),
+                str(int(scorer.s3_boosts[uid].item())),
+                str(round(float(scorer.s3_credibility[uid]), 4)),
+                str(int(scorer.ondemand_boosts[uid].item())),
+                str(round(float(scorer.ondemand_credibility[uid]), 4)),
             )
         console = Console()
         console.print(table)
