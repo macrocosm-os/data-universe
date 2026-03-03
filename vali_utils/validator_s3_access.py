@@ -15,12 +15,7 @@ class ValidatorS3Access:
     def __init__(self, wallet: bt.wallet, s3_auth_url: str, debug: bool = False):
         self.wallet = wallet
         self.s3_auth_url = s3_auth_url
-        self.debug = debug
         self._signer = TaoSigner(keypair=wallet.hotkey)
-
-    def _debug_print(self, message: str):
-        if self.debug:
-            print(f"DEBUG S3: {message}")
 
     async def _request_presigned_list_url(
         self, miner_hotkey: str, continuation_token: Optional[str] = None
@@ -47,7 +42,7 @@ class ValidatorS3Access:
             )
 
             if response.status_code != 200:
-                self._debug_print(
+                bt.logging.warning(
                     f"get-miner-list failed: {response.status_code} {response.text[:200]}"
                 )
                 return None
@@ -56,7 +51,7 @@ class ValidatorS3Access:
             return data.get("list_url", "")
 
         except Exception as e:
-            self._debug_print(f"get-miner-list exception: {e}")
+            bt.logging.error(f"get-miner-list exception: {e}")
             return None
 
     async def list_all_files_with_metadata(
@@ -70,9 +65,6 @@ class ValidatorS3Access:
         """
         try:
             target_prefix = f"data/hotkey={miner_hotkey}/"
-            self._debug_print(
-                f"Listing ALL files with metadata for miner: {miner_hotkey}"
-            )
 
             all_files = []
             continuation_token = None
@@ -126,8 +118,8 @@ class ValidatorS3Access:
                             )
                             page_files += 1
 
-                self._debug_print(
-                    f"Page {page}: collected {page_files} files (total: {len(all_files)})"
+                bt.logging.debug(
+                    f"S3 list page {page}: {page_files} files (total: {len(all_files)}) for {miner_hotkey}"
                 )
 
                 is_trunc = root.find(".//s3:IsTruncated", namespaces)
@@ -141,11 +133,11 @@ class ValidatorS3Access:
                 continuation_token = token_elem.text
                 page += 1
 
-            self._debug_print(
-                f"Found {len(all_files)} total files across {page} pages for {miner_hotkey}"
+            bt.logging.info(
+                f"S3 listing complete: {len(all_files)} files across {page} pages for {miner_hotkey}"
             )
             return all_files
 
         except Exception as e:
-            self._debug_print(f"Exception in list_all_files_with_metadata: {str(e)}")
+            bt.logging.error(f"Exception in list_all_files_with_metadata: {str(e)}")
             return []
