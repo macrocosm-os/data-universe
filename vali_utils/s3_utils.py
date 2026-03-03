@@ -24,6 +24,7 @@ from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
+from common.api_client import TaoSigner
 
 
 @dataclass
@@ -136,6 +137,7 @@ class DuckDBSampledValidator:
         self.s3_reader = s3_reader
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
+        self._signer = TaoSigner(keypair=wallet.hotkey)
         self._setup_duckdb()
 
     def _setup_duckdb(self):
@@ -428,7 +430,7 @@ class DuckDBSampledValidator:
         file_keys: List[str],
         batch_size: int = 500
     ) -> Dict[str, str]:
-        """Get presigned URLs in batches"""
+        """Get presigned download URLs in batches using Tao v2 auth."""
 
         all_urls = {}
 
@@ -436,23 +438,20 @@ class DuckDBSampledValidator:
             batch = file_keys[i:i + batch_size]
 
             try:
-                hotkey = self.wallet.hotkey.ss58_address
-                timestamp = int(time.time())
-                commitment = f"s3:validator:files:{miner_hotkey}:{hotkey}:{timestamp}"
-                signature = self.wallet.hotkey.sign(commitment.encode())
-
                 payload = {
-                    "hotkey": hotkey,
-                    "timestamp": timestamp,
-                    "signature": signature.hex(),
                     "miner_hotkey": miner_hotkey,
                     "file_keys": batch,
                     "expiry_hours": 1
                 }
 
+                body = json.dumps(payload).encode()
+                headers = self._signer.headers(body)
+                headers["Content-Type"] = "application/json"
+
                 response = requests.post(
                     f"{self.s3_auth_url}/get-file-presigned-urls",
-                    json=payload,
+                    data=body,
+                    headers=headers,
                     timeout=120
                 )
 
@@ -463,6 +462,10 @@ class DuckDBSampledValidator:
                             all_urls[key] = data['presigned_url']
                         elif isinstance(data, str):
                             all_urls[key] = data
+                else:
+                    bt.logging.warning(
+                        f"get-file-presigned-urls failed: {response.status_code}"
+                    )
 
             except Exception as e:
                 bt.logging.warning(f"Presigned URL batch error: {e}")

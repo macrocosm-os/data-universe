@@ -43,7 +43,7 @@ class ValidatorS3Access:
 
             if response.status_code != 200:
                 bt.logging.warning(
-                    f"get-miner-list failed: {response.status_code} {response.text[:200]}"
+                    f"get-miner-list failed: {response.status_code}"
                 )
                 return None
 
