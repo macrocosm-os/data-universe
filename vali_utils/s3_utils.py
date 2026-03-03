@@ -359,8 +359,11 @@ class DuckDBSampledValidator:
                         f"using min={min(total_size_bytes, estimated_row_based_size)/(1024*1024):.1f}MB"
                     )
                 else:
-                    # Fallback: no metadata rows available (all metadata reads failed)
-                    effective_size_bytes = total_size_bytes * (coverage_ratio ** 2)
+                    # No metadata rows — cannot verify row counts, no size credit
+                    bt.logging.warning(
+                        f"{miner_hotkey}: All metadata reads failed — effective_size set to 0"
+                    )
+                    effective_size_bytes = 0.0
             else:
                 effective_size_bytes = 0.0
 
