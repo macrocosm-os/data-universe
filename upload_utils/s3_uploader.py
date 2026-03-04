@@ -506,7 +506,7 @@ class S3PartitionedUploader:
             local_path = os.path.join(self.output_dir, filename)
 
             # Save to parquet with snappy compression
-            raw_df.to_parquet(local_path, index=False, compression='snappy')
+            raw_df.to_parquet(local_path, index=False, compression='snappy', row_group_size=10_000)
 
             # Request presigned URL and upload via API
             try:
