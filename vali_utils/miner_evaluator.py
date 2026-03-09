@@ -343,7 +343,6 @@ class MinerEvaluator:
                 job_match_rate=0.0,
                 validation_issues=[f"Validation error: {str(e)}"],
                 reason=f"S3 validation failed: {str(e)}",
-                sample_duplicate_uris=[],
                 sample_validation_results=[],
                 sample_job_mismatches=[]
             )
