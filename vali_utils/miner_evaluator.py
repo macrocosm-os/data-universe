@@ -259,8 +259,6 @@ class MinerEvaluator:
         metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
-            job_match_failure = (s3_validation_result.job_match_rate < 95)
-
             # Log validation result
             if s3_validation_result.is_valid:
                 bt.logging.info(
@@ -282,7 +280,6 @@ class MinerEvaluator:
                 uid=uid,
                 effective_size=s3_validation_result.effective_size_bytes,
                 validation_passed=s3_validation_result.is_valid,
-                job_match_failure=job_match_failure
             )
 
     async def _perform_s3_validation(

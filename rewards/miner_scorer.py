@@ -210,7 +210,6 @@ class MinerScorer:
         uid: int,
         effective_size: float,
         validation_passed: bool,
-        job_match_failure: bool = False
     ) -> None:
         """
         Update miner's effective_size for S3 competition scoring.
@@ -233,20 +232,13 @@ class MinerScorer:
             uid: Miner UID
             effective_size: total_size_bytes × coverage² (calculated from current validation)
             validation_passed: Whether the miner passed quality validation
-            job_match_failure: Whether job content matching failed (severe - zeros credibility)
         """
         with self.lock:
             old_effective = float(self.effective_sizes[uid])
             old_cred = float(self.s3_credibility[uid])
 
             # Update S3 credibility based on validation result
-            if job_match_failure:
-                # Job match failure is severe - zero credibility (cheating attempt)
-                bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
-                self.s3_credibility[uid] = 0.0
-                # Also zero effective_size for job match failures (clear cheating)
-                self.effective_sizes[uid] = 0.0
-            elif validation_passed:
+            if validation_passed:
                 # Success: Update effective_size and increase credibility
                 self.effective_sizes[uid] = effective_size
                 # EMA toward 1.0: new_cred = alpha * 1.0 + (1-alpha) * old_cred
