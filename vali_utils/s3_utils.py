@@ -188,9 +188,9 @@ class DuckDBSampledValidator:
                         empty_files_skipped += 1
                         continue
                     job_id = key.split('/job_id=')[1].split('/')[0]
-                    if job_id not in files_by_job:
-                        files_by_job[job_id] = []
-                    files_by_job[job_id].append(f)
+                    existing = files_by_job.get(job_id)
+                    if existing is None or f.get('last_modified', '') > existing[0].get('last_modified', ''):
+                        files_by_job[job_id] = [f]
 
             # Filter to active jobs only
             active_job_ids = [jid for jid in files_by_job.keys() if jid in expected_jobs]
