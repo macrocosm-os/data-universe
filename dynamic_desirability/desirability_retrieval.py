@@ -368,6 +368,7 @@ def _dd_list_to_jobs_json(dd_list: DynamicDesirabilityList, apply_floor: bool = 
         job = {
             "id": entry.id,
             "weight": weight,
+            "max_rows": entry.max_rows,
             "params": {
                 "keyword": entry.keyword,
                 "platform": entry.platform,
