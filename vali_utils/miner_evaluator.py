@@ -132,7 +132,7 @@ class MinerEvaluator:
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
         s3_validation_result = None
 
-        if s3_validation_info is None or (current_block - s3_validation_info['block']) > 600:  # ~2 hrs
+        if not s3_validation_info or (current_block - s3_validation_info['block']) > 600:  # ~2 hrs
             s3_validation_result = await self._perform_s3_validation(uid, hotkey, current_block)
 
         # From that index, find a data entity bucket to sample and get it from the miner.

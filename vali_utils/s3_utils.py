@@ -792,6 +792,8 @@ class DuckDBSampledValidator:
                 try:
                     # Schema validation — only reads parquet footer
                     conn = duckdb.connect(':memory:')
+                    conn.execute("SET memory_limit='2GB';")
+                    conn.execute("SET threads=1;")
                     schema_result = conn.execute(
                         f"SELECT name FROM parquet_schema('{presigned_url}')"
                     ).fetchall()
@@ -949,6 +951,8 @@ class DuckDBSampledValidator:
             try:
                 # Schema validation — only reads parquet footer
                 conn = duckdb.connect(':memory:')
+                conn.execute("SET memory_limit='2GB';")
+                conn.execute("SET threads=1;")
                 schema_result = conn.execute(
                     f"SELECT name FROM parquet_schema('{presigned_url}')"
                 ).fetchall()

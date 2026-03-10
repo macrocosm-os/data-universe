@@ -48,4 +48,4 @@ SCRAPED_AT_REQUIRED_DATE = dt.datetime(2026, 3, 10, tzinfo=dt.timezone.utc)
 EVALUATION_ON_STARTUP = 10
 
 # Emission Control / Burn Configuration
-EMISSION_CONTROL_PERCENTAGE = 0.70  # 60% of emissions redirected to subnet owner (burn)
+EMISSION_CONTROL_PERCENTAGE = 0.70  # 70% of emissions redirected to subnet owner (burn)
