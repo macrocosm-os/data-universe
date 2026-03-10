@@ -3,7 +3,9 @@ S3 validation utilities for enhanced miner data validation.
 Provides comprehensive validation of S3-stored miner data using metadata analysis.
 """
 
+import hashlib
 import random
+import re
 import requests
 import time
 import xml.etree.ElementTree as ET
@@ -15,7 +17,7 @@ import duckdb
 import datetime as dt
 import math
 import bittensor as bt
-from typing import Dict, List, Optional, Any
+from typing import Dict, List, Optional, Any, Set
 from dataclasses import dataclass
 
 from scraping.provider import ScraperProvider
@@ -23,6 +25,8 @@ from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
+from common.api_client import TaoSigner
+from vali_utils.parquet_reader import read_random_row_group
 
 
 @dataclass
@@ -57,12 +61,8 @@ class S3ValidationResult:
     reason: str
 
     # Sample data for transparency
-    sample_duplicate_uris: List[str]
     sample_validation_results: List[str]
     sample_job_mismatches: List[str]
-
-    # Empty file detection
-    empty_file_detected: bool = False
 
     # Competition-based scoring: effective_size = total_size_bytes × coverage²
     effective_size_bytes: float = 0.0
@@ -90,32 +90,44 @@ class DuckDBSampledValidator:
     # Validation thresholds
     MAX_DUPLICATE_RATE = 5.0    # 5% max duplicates within same job
     MAX_EMPTY_RATE = 10.0       # 10% max empty content
-    MAX_MISSING_URI_RATE = 5.0  # 5% max missing URIs
+    # Missing URLs = instant fail (no rate threshold needed)
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
     MIN_SCRAPER_SUCCESS = 70.0  # 70% min scraper success rate
 
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
     MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024        # 512MB - single file cap
-    # Activation date for file size cap enforcement (grace period for miners to comply)
-    FILE_SIZE_CAP_ACTIVATION_DATE = dt.datetime(2026, 2, 13, tzinfo=dt.timezone.utc)
+
+    # Scraper validation window — only files uploaded within this window are scraper-validated.
+    # Older files rely on credibility from previous validation cycles.
+    SCRAPER_MAX_AGE_HOURS = 6
+
+    # Standard bytes per row for effective_size cap.
+    # Real production data: X=77-515 B/row, Reddit=182-1682 B/row.
+    STANDARD_BYTES_PER_ROW = 300
+
+    # Filename pattern: data_YYYYMMDD_HHMMSS_{rowcount}_{hex16}.parquet
+    _FILENAME_ROW_COUNT_RE = re.compile(r"^data_\d{8}_\d{6}_(\d+)_[a-f0-9]{16}\.parquet$")
+
+    # No optional columns — files must match expected schema exactly
+    OPTIONAL_COLUMNS: Set[str] = set()
 
     # Schema validation - expected columns per platform (from s3_uploader.py)
     EXPECTED_COLUMNS_X = {
-        'uri', 'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
+        'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
         'url', 'media', 'user_id', 'user_display_name', 'user_verified', 'tweet_id',
         'is_reply', 'is_quote', 'conversation_id', 'in_reply_to_user_id', 'language',
         'in_reply_to_username', 'quoted_tweet_id', 'like_count', 'retweet_count',
         'reply_count', 'quote_count', 'view_count', 'bookmark_count', 'user_blue_verified',
         'user_description', 'user_location', 'profile_image_url', 'cover_picture_url',
         'user_followers_count', 'user_following_count', 'scraped_at'
-    }  # 34 columns
+    }  # 33 columns
 
     EXPECTED_COLUMNS_REDDIT = {
-        'uri', 'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
+        'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
         'createdAt', 'dataType', 'parentId', 'url', 'media', 'is_nsfw', 'score',
         'upvote_ratio', 'num_comments', 'scrapedAt'
-    }  # 18 columns
+    }  # 17 columns
 
     def __init__(
         self,
@@ -129,18 +141,7 @@ class DuckDBSampledValidator:
         self.s3_reader = s3_reader
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
-        self._setup_duckdb()
-
-    def _setup_duckdb(self):
-        """Configure DuckDB for HTTP parquet reading with memory limits"""
-        self.conn = duckdb.connect(':memory:')
-        self.conn.execute("INSTALL httpfs;")
-        self.conn.execute("LOAD httpfs;")
-        self.conn.execute("SET http_timeout=120000;")
-        self.conn.execute("SET enable_progress_bar=false;")
-        # Memory limit per connection - 15 validators × 4GB = 60GB max (but queries don't all run at once)
-        self.conn.execute("SET memory_limit='4GB';")
-        self.conn.execute("SET threads=2;")  # Limit threads per connection
+        self._signer = TaoSigner(keypair=wallet.hotkey)
 
     async def validate_miner_s3_data(
         self,
@@ -168,7 +169,6 @@ class DuckDBSampledValidator:
                 return self._create_failed_result("No files found")
 
             # Group files by job, filtering out empty/oversized files
-            enforce_size_cap = dt.datetime.now(dt.timezone.utc) >= self.FILE_SIZE_CAP_ACTIVATION_DATE
             files_by_job = {}
             empty_files_skipped = 0
             oversized_files_skipped = 0
@@ -176,13 +176,16 @@ class DuckDBSampledValidator:
                 key = f.get('key', '')
                 if '/job_id=' in key:
                     file_size = f.get('size', 0)
-                    # Always skip empty files (exploit prevention, no grace period)
                     if file_size < self.MIN_FILE_SIZE_BYTES:
                         empty_files_skipped += 1
                         continue
-                    # Fully exclude oversized files after activation date
-                    if enforce_size_cap and file_size > self.MAX_FILE_SIZE_BYTES:
+                    if file_size > self.MAX_FILE_SIZE_BYTES:
                         oversized_files_skipped += 1
+                        continue
+                    # Skip files claiming 0 rows in filename (header-only files)
+                    filename_rows = self._parse_row_count_from_filename(key)
+                    if filename_rows is not None and filename_rows == 0:
+                        empty_files_skipped += 1
                         continue
                     job_id = key.split('/job_id=')[1].split('/')[0]
                     if job_id not in files_by_job:
@@ -195,11 +198,24 @@ class DuckDBSampledValidator:
             if not active_job_ids:
                 return self._create_failed_result("No active jobs found")
 
-            # Calculate size from active jobs only
+            # Calculate size and total rows from active jobs only
+            # Per-job row clamping: if customer requested max_rows, excess rows don't count
             total_size_bytes = 0
+            total_rows_from_filenames = 0
             for job_id in active_job_ids:
+                job_config = expected_jobs.get(job_id, {})
+                max_rows = job_config.get('max_rows') if isinstance(job_config, dict) else None
+                job_rows = 0
                 for f in files_by_job[job_id]:
                     total_size_bytes += f.get('size', 0)
+                    fname_rows = self._parse_row_count_from_filename(f.get('key', ''))
+                    if fname_rows is not None:
+                        job_rows += fname_rows
+                # Clamp to max_rows if set
+                if max_rows and job_rows > max_rows:
+                    total_rows_from_filenames += max_rows
+                else:
+                    total_rows_from_filenames += job_rows
 
             job_coverage_rate = (len(active_job_ids) / len(expected_jobs) * 100) if expected_jobs else 0
 
@@ -244,22 +260,6 @@ class DuckDBSampledValidator:
             if not presigned_urls:
                 return self._create_failed_result("Failed to get presigned URLs")
 
-            # Group by job for DuckDB validation
-            urls_by_job = {}
-            for file_info, job_id in sampled_files_with_job:
-                file_key = file_info['key']
-                url = presigned_urls.get(file_key)
-                if not url:
-                    continue
-
-                job_config = expected_jobs.get(job_id, {})
-                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', 'unknown').lower()
-
-                if job_id not in urls_by_job:
-                    urls_by_job[job_id] = {'platform': platform, 'urls': []}
-                urls_by_job[job_id]['urls'].append(url)
-
             # Step 4: Lightweight DuckDB validation (sampled - memory safe)
             bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
             duckdb_result = await self._sampled_duckdb_validation(
@@ -278,19 +278,42 @@ class DuckDBSampledValidator:
                     sampled_files, expected_jobs, presigned_urls
                 )
 
-                # Step 6: Scraper validation
-                bt.logging.info(f"{miner_hotkey}: Running scraper validation...")
-                scraper_result = await self._perform_scraper_validation(
-                    miner_hotkey, sampled_files, expected_jobs, presigned_urls, num_entities=10
-                )
+                # Step 6: Scraper validation — only on recently uploaded files
+                cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=self.SCRAPER_MAX_AGE_HOURS)
+                recent_files = []
+                for f in sampled_files:
+                    last_mod = f.get('last_modified', '')
+                    if last_mod:
+                        try:
+                            file_dt = pd.to_datetime(last_mod, utc=True).to_pydatetime()
+                            if file_dt >= cutoff:
+                                recent_files.append(f)
+                        except Exception:
+                            pass
+
+                if recent_files:
+                    bt.logging.info(
+                        f"{miner_hotkey}: Running scraper validation on {len(recent_files)} "
+                        f"recent files (uploaded within {self.SCRAPER_MAX_AGE_HOURS}h)..."
+                    )
+                    scraper_result = await self._perform_scraper_validation(
+                        miner_hotkey, recent_files, expected_jobs, presigned_urls, num_entities=10
+                    )
+                else:
+                    bt.logging.info(
+                        f"{miner_hotkey}: No recent files within {self.SCRAPER_MAX_AGE_HOURS}h — "
+                        f"skipping scraper validation (credibility covers older data)"
+                    )
+                    scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 100.0, 'sample_results': []}
 
             # Step 7: Validation decision
             issues = []
             duplicate_rate = duckdb_result["duplicate_rate_within_job"]
             empty_rate = duckdb_result["empty_rate"]
-            missing_uri_rate = duckdb_result["missing_url_rate"]
             job_match_rate = job_match_result['match_rate']
             scraper_success_rate = scraper_result['success_rate']
+            compression_failures = duckdb_result.get("compression_failures", 0)
+            row_count_mismatches = duckdb_result.get("row_count_mismatches", 0)
 
             # Check for schema validation failure
             if duckdb_result.get("reason"):
@@ -300,19 +323,40 @@ class DuckDBSampledValidator:
                 issues.append(f"High duplicates: {duplicate_rate:.1f}%")
             if empty_rate > self.MAX_EMPTY_RATE:
                 issues.append(f"High empty content: {empty_rate:.1f}%")
-            if missing_uri_rate > self.MAX_MISSING_URI_RATE:
-                issues.append(f"High missing URIs: {missing_uri_rate:.1f}%")
             if job_match_rate < self.MIN_JOB_MATCH_RATE:
                 issues.append(f"Low job match: {job_match_rate:.1f}%")
             if scraper_success_rate < self.MIN_SCRAPER_SUCCESS:
                 issues.append(f"Low scraper success: {scraper_success_rate:.1f}%")
 
+            # Compression exploit detection — always fail
+            if compression_failures > 0:
+                issues.append(f"Uncompressed files: {compression_failures}")
+
+            # Row count mismatch — filename claims different count than parquet metadata
+            if row_count_mismatches > 0:
+                issues.append(f"Row count mismatch: {row_count_mismatches} files with filename!=metadata rows")
+
             is_valid = len(issues) == 0
 
             # Calculate effective_size for competition scoring
+            # Row-based: total rows from filenames × standard bytes per row × coverage²
+            # Filenames are validated against parquet metadata on sampled files (mismatch = fail)
             coverage_ratio = job_coverage_rate / 100.0
             if is_valid:
-                effective_size_bytes = total_size_bytes * (coverage_ratio ** 2)
+                if total_rows_from_filenames > 0:
+                    row_based_size = total_rows_from_filenames * self.STANDARD_BYTES_PER_ROW
+                    effective_size_bytes = row_based_size * (coverage_ratio ** 2)
+                    bt.logging.info(
+                        f"{miner_hotkey}: effective_size: "
+                        f"{total_rows_from_filenames} rows × {self.STANDARD_BYTES_PER_ROW} B/row "
+                        f"= {row_based_size/(1024*1024):.1f}MB × coverage²({coverage_ratio:.2f}) "
+                        f"= {effective_size_bytes/(1024*1024):.1f}MB"
+                    )
+                else:
+                    bt.logging.warning(
+                        f"{miner_hotkey}: No row counts from filenames — effective_size set to 0"
+                    )
+                    effective_size_bytes = 0.0
             else:
                 effective_size_bytes = 0.0
 
@@ -342,7 +386,9 @@ class DuckDBSampledValidator:
                     f"{miner_hotkey}: S3 validation details - "
                     f"dup={duplicate_rate:.1f}% (max {self.MAX_DUPLICATE_RATE}%), "
                     f"job_match={job_match_rate:.1f}% (min {self.MIN_JOB_MATCH_RATE}%), "
-                    f"scraper={scraper_success_rate:.1f}% (min {self.MIN_SCRAPER_SUCCESS}%)"
+                    f"scraper={scraper_success_rate:.1f}% (min {self.MIN_SCRAPER_SUCCESS}%), "
+                    f"compression_fails={compression_failures}, "
+                    f"row_count_mismatches={row_count_mismatches}"
                 )
 
             return S3ValidationResult(
@@ -363,7 +409,7 @@ class DuckDBSampledValidator:
                 job_match_rate=job_match_rate,
                 validation_issues=issues,
                 reason=f"DuckDB validation: {'PASSED' if is_valid else 'FAILED'} - {', '.join(issues) if issues else 'All checks passed'}",
-                sample_duplicate_uris=[],
+
                 sample_validation_results=scraper_result.get('sample_results', []),
                 sample_job_mismatches=job_match_result.get('mismatch_samples', []),
                 effective_size_bytes=effective_size_bytes,
@@ -380,7 +426,7 @@ class DuckDBSampledValidator:
         file_keys: List[str],
         batch_size: int = 500
     ) -> Dict[str, str]:
-        """Get presigned URLs in batches"""
+        """Get presigned download URLs in batches using Tao v2 auth."""
 
         all_urls = {}
 
@@ -388,23 +434,20 @@ class DuckDBSampledValidator:
             batch = file_keys[i:i + batch_size]
 
             try:
-                hotkey = self.wallet.hotkey.ss58_address
-                timestamp = int(time.time())
-                commitment = f"s3:validator:files:{miner_hotkey}:{hotkey}:{timestamp}"
-                signature = self.wallet.hotkey.sign(commitment.encode())
-
                 payload = {
-                    "hotkey": hotkey,
-                    "timestamp": timestamp,
-                    "signature": signature.hex(),
                     "miner_hotkey": miner_hotkey,
                     "file_keys": batch,
                     "expiry_hours": 1
                 }
 
+                body = json.dumps(payload).encode()
+                headers = self._signer.headers(body)
+                headers["Content-Type"] = "application/json"
+
                 response = requests.post(
                     f"{self.s3_auth_url}/get-file-presigned-urls",
-                    json=payload,
+                    data=body,
+                    headers=headers,
                     timeout=120
                 )
 
@@ -415,11 +458,48 @@ class DuckDBSampledValidator:
                             all_urls[key] = data['presigned_url']
                         elif isinstance(data, str):
                             all_urls[key] = data
+                else:
+                    bt.logging.warning(
+                        f"get-file-presigned-urls failed: {response.status_code}"
+                    )
 
             except Exception as e:
                 bt.logging.warning(f"Presigned URL batch error: {e}")
 
         return all_urls
+
+    # Max allowed rows per row group (must match uploader's row_group_size)
+    MAX_ROW_GROUP_SIZE = 10_000
+
+    def _check_file_metadata(self, presigned_url: str, conn) -> Optional[Dict]:
+        """Read parquet metadata footer only (~1-10KB network read).
+        Returns {total_rows, codecs, has_uncompressed, max_rg_rows} or None on error."""
+        try:
+            result = conn.execute(f"""
+                SELECT SUM(row_group_num_rows), LIST(DISTINCT compression), MAX(row_group_num_rows)
+                FROM parquet_metadata('{presigned_url}')
+                WHERE column_id = 0
+            """).fetchone()
+            if result is None or result[0] is None:
+                return None
+            total_rows = int(result[0])
+            codecs = set(result[1]) if result[1] else set()
+            max_rg_rows = int(result[2])
+            return {
+                'total_rows': total_rows,
+                'codecs': codecs,
+                'has_uncompressed': 'UNCOMPRESSED' in codecs,
+                'max_rg_rows': max_rg_rows
+            }
+        except Exception as e:
+            bt.logging.debug(f"parquet_metadata error: {e}")
+            return None
+
+    def _parse_row_count_from_filename(self, key: str) -> Optional[int]:
+        """Extract row count from new filename format: data_YYYYMMDD_HHMMSS_{count}_{hex16}.parquet"""
+        filename = key.rsplit('/', 1)[-1]
+        match = self._FILENAME_ROW_COUNT_RE.match(filename)
+        return int(match.group(1)) if match else None
 
     async def _sampled_duckdb_validation(
         self,
@@ -429,37 +509,41 @@ class DuckDBSampledValidator:
         samples_per_file: int = 100
     ) -> Dict[str, Any]:
         """
-        Lightweight DuckDB validation using TABLESAMPLE BERNOULLI.
-        Uses probabilistic sampling - memory efficient (~4MB per file).
-        Checks duplicates, empty content, and missing URLs on sampled rows.
+        Lightweight validation using DuckDB metadata + DuckDB url column read + PyArrow row-group reads.
+
+        Checks: schema, compression, row group size, empty content, missing URLs,
+        per-job duplicates (blake2b hash of ALL urls via DuckDB columnar read).
         """
         total_rows = 0
-        duplicate_urls = set()
-        all_urls_seen = []
         empty_count = 0
-        missing_url_count = 0
         schema_failures = 0
         files_checked = 0
 
-        # Limit to 20 files max for this check
+        # Metadata-based checks
+        compression_failures = 0
+        row_count_mismatches = 0
+
+        # Per-job dedup: separate hash set per job_id
+        # DuckDB reads only the url column (all row groups, columnar) — ~500KB per file
+        dedup_hashes_by_job: Dict[str, set] = {}
+        dedup_total = 0
+        dedup_duplicates = 0
+
+        # Limit to 20 files max for checks
         files_to_check = random.sample(sampled_files, min(20, len(sampled_files)))
 
         for file_info in files_to_check:
-            # Fail fast - if we already found invalid schema, stop checking
             if schema_failures > 0:
                 break
 
-            # Skip oversized files to prevent OOM
             file_size = file_info.get('size', 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
-                bt.logging.debug(f"Skipping oversized file for DuckDB validation ({file_size/(1024**2):.0f}MB)")
                 continue
 
             presigned_url = presigned_urls.get(file_info['key'])
             if not presigned_url:
                 continue
 
-            # Get platform from job_id
             file_key = file_info['key']
             if '/job_id=' in file_key:
                 job_id = file_key.split('/job_id=')[1].split('/')[0]
@@ -467,6 +551,7 @@ class DuckDBSampledValidator:
                 params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
                 platform = params.get('platform', '').lower()
             else:
+                job_id = 'unknown'
                 platform = 'unknown'
 
             conn = None
@@ -475,88 +560,122 @@ class DuckDBSampledValidator:
                 conn.execute("SET memory_limit='2GB';")
                 conn.execute("SET threads=1;")
 
-                # First get schema to check available columns
-                # parquet_schema returns 'name' column, not 'column_name'
-                # Note: it includes root 'schema' and nested elements ('list', 'element') we filter out
-                schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
-                schema_result = conn.execute(schema_query).fetchall()
-                # Filter out schema metadata and nested array elements
+                # --- Metadata check (footer-only read, ~1-10KB) ---
+                metadata = self._check_file_metadata(presigned_url, conn)
+                if metadata:
+                    file_rows = metadata['total_rows']
+
+                    if metadata['has_uncompressed']:
+                        compression_failures += 1
+                        bt.logging.warning(
+                            f"UNCOMPRESSED file detected: {file_key} "
+                            f"({file_rows} rows, codecs={metadata['codecs']})"
+                        )
+
+                    if metadata['max_rg_rows'] > self.MAX_ROW_GROUP_SIZE:
+                        schema_failures += 1
+                        bt.logging.warning(
+                            f"Row group too large: {metadata['max_rg_rows']} rows "
+                            f"(max {self.MAX_ROW_GROUP_SIZE}) in {file_key}"
+                        )
+                        break
+
+                    filename_rows = self._parse_row_count_from_filename(file_key)
+                    if filename_rows is not None and file_rows != filename_rows:
+                        row_count_mismatches += 1
+                        bt.logging.warning(
+                            f"Row count mismatch: filename claims {filename_rows}, "
+                            f"metadata has {file_rows} in {file_key}"
+                        )
+
+                # --- Schema check (footer-only read) ---
+                schema_result = conn.execute(
+                    f"SELECT name FROM parquet_schema('{presigned_url}')"
+                ).fetchall()
                 excluded_names = {'schema', 'list', 'element', 'model_config'}
                 all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
                 available_columns = set(all_column_names)
 
-                # Schema validation - reject files with incorrect schema
+                optional_lower = {col.lower() for col in self.OPTIONAL_COLUMNS}
                 if platform in ['x', 'twitter']:
                     expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_X}
-                    max_columns = len(self.EXPECTED_COLUMNS_X)
+                    max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                 else:
                     expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_REDDIT}
-                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
 
+                allowed_columns = expected_columns | optional_lower
                 files_checked += 1
 
-                # Check total column count (reject duplicate columns) - fail fast
                 if len(all_column_names) > max_columns:
                     bt.logging.warning(
-                        f"Invalid schema: file has {len(all_column_names)} columns, expected {max_columns}. "
+                        f"Invalid schema: file has {len(all_column_names)} columns, expected max {max_columns}. "
                         f"Sample columns: {all_column_names[:10]}..."
                     )
                     schema_failures += 1
-                    break  # Fail fast
+                    break
 
-                # Check for unexpected column names - fail fast
-                unexpected_columns = available_columns - expected_columns
+                unexpected_columns = available_columns - allowed_columns
                 if unexpected_columns:
                     bt.logging.warning(
                         f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
                     )
                     schema_failures += 1
-                    break  # Fail fast
+                    break
 
-                # Build empty check based on available columns (no media - often missing)
+                # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
+                if job_id not in dedup_hashes_by_job:
+                    dedup_hashes_by_job[job_id] = set()
+                job_hashes = dedup_hashes_by_job[job_id]
+
+                url_rows = conn.execute(
+                    f"SELECT url FROM read_parquet('{presigned_url}')"
+                ).fetchall()
+                for (url_val,) in url_rows:
+                    h = hashlib.blake2b(str(url_val).encode(), digest_size=8).digest()
+                    dedup_total += 1
+                    if h in job_hashes:
+                        dedup_duplicates += 1
+                    else:
+                        job_hashes.add(h)
+
+                # --- PyArrow row-group read for empty/missing content check ---
                 if platform in ['x', 'twitter']:
-                    if 'text' in available_columns:
-                        empty_check = "COALESCE(text, '') = ''"
-                    else:
-                        empty_check = "FALSE"
+                    read_cols = ['url', 'text']
                 else:
-                    # Reddit - check body and title
-                    checks = []
-                    if 'body' in available_columns:
-                        checks.append("COALESCE(body, '') = ''")
-                    if 'title' in available_columns:
-                        checks.append("COALESCE(title, '') = ''")
-                    empty_check = " AND ".join(checks) if checks else "FALSE"
+                    read_cols = ['url', 'body', 'title']
+                read_cols = [c for c in read_cols if c in available_columns]
+                if 'url' not in read_cols:
+                    read_cols.append('url')
 
-                # Use TABLESAMPLE BERNOULLI - probabilistic sampling, memory efficient
-                # 10% sampling ensures we get rows even from smaller files
-                query = f"""
-                    SELECT
-                        url,
-                        CASE WHEN {empty_check} THEN 1 ELSE 0 END as is_empty
-                    FROM read_parquet('{presigned_url}')
-                    TABLESAMPLE BERNOULLI(10%)
-                    LIMIT {samples_per_file}
-                """
-                rows = conn.execute(query).fetchall()
+                rg_df = read_random_row_group(
+                    presigned_url, file_size, columns=read_cols
+                )
+                if rg_df is not None and len(rg_df) > 0:
+                    rg_df.columns = [c.lower() for c in rg_df.columns]
+                    total_rows += len(rg_df)
 
-                if not rows:
-                    continue
+                    # Missing URL check — instant fail
+                    url_missing = rg_df['url'].isna() | (rg_df['url'].astype(str).str.strip() == '')
+                    missing_urls = int(url_missing.sum())
+                    if missing_urls > 0:
+                        bt.logging.warning(f"File has {missing_urls} rows with missing URL: {file_key}")
+                        return {
+                            "success": False,
+                            "duplicate_rate_within_job": 100.0,
+                            "empty_rate": 100.0,
+                            "total_rows": 0,
+                            "reason": f"File contains {missing_urls} rows with missing URL"
+                        }
 
-                for row in rows:
-                    total_rows += 1
-                    url = row[0]
-                    is_empty = row[1]
-
-                    if is_empty:
-                        empty_count += 1
-
-                    if url is None or url == '':
-                        missing_url_count += 1
+                    # Empty content check
+                    if platform in ['x', 'twitter']:
+                        empty_mask = rg_df.get('text', pd.Series(dtype=str)).fillna('').str.strip() == ''
                     else:
-                        if url in all_urls_seen:
-                            duplicate_urls.add(url)
-                        all_urls_seen.append(url)
+                        body_empty = rg_df.get('body', pd.Series(dtype=str)).fillna('').str.strip() == ''
+                        title_empty = rg_df.get('title', pd.Series(dtype=str)).fillna('').str.strip() == ''
+                        empty_mask = body_empty & title_empty
+                    empty_count += int(empty_mask.sum())
 
             except Exception as e:
                 bt.logging.debug(f"Sampled validation error for file: {e}")
@@ -575,158 +694,46 @@ class DuckDBSampledValidator:
             )
             return {
                 "success": False,
-                "duplicate_rate_within_job": 100.0,  # Force failure
+                "duplicate_rate_within_job": 100.0,
                 "empty_rate": 100.0,
-                "missing_url_rate": 100.0,
                 "total_rows": 0,
                 "reason": f"Invalid schema in {schema_failures} files"
             }
 
+        # Per-job duplicate rate
+        duplicate_rate = (dedup_duplicates / dedup_total * 100) if dedup_total > 0 else 0.0
+        if duplicate_rate > self.MAX_DUPLICATE_RATE:
+            bt.logging.warning(
+                f"Per-job dedup: {duplicate_rate:.1f}% duplicates "
+                f"({dedup_duplicates}/{dedup_total} urls across {len(dedup_hashes_by_job)} jobs)"
+            )
+
         if total_rows == 0:
             return {
                 "success": True,
-                "duplicate_rate_within_job": 0.0,
+                "duplicate_rate_within_job": duplicate_rate,
                 "empty_rate": 0.0,
-                "missing_url_rate": 0.0,
-                "total_rows": 0
+                "total_rows": 0,
+                "compression_failures": compression_failures,
+                "row_count_mismatches": row_count_mismatches,
             }
 
-        duplicate_rate = (len(duplicate_urls) / total_rows * 100) if total_rows > 0 else 0
         empty_rate = (empty_count / total_rows * 100) if total_rows > 0 else 0
-        missing_url_rate = (missing_url_count / total_rows * 100) if total_rows > 0 else 0
 
         bt.logging.info(
-            f"Sampled DuckDB validation: {total_rows} rows, "
-            f"dup={duplicate_rate:.1f}%, empty={empty_rate:.1f}%, missing={missing_url_rate:.1f}%"
+            f"Sampled validation: {total_rows} rows, "
+            f"dup={duplicate_rate:.1f}% (per-job, {len(dedup_hashes_by_job)} jobs), "
+            f"empty={empty_rate:.1f}%, compression_fails={compression_failures}"
         )
 
         return {
             "success": True,
             "duplicate_rate_within_job": duplicate_rate,
             "empty_rate": empty_rate,
-            "missing_url_rate": missing_url_rate,
-            "total_rows": total_rows
+            "total_rows": total_rows,
+            "compression_failures": compression_failures,
+            "row_count_mismatches": row_count_mismatches,
         }
-
-    def _validate_sample_with_duckdb(
-        self,
-        urls_by_job: Dict[str, Dict[str, List[str]]]
-    ) -> Dict[str, Any]:
-        """
-        Run DuckDB validation on sampled files.
-        Batch by platform for efficiency.
-        """
-        total_rows = 0
-        total_duplicates = 0
-        total_with_url = 0
-        empty_content = 0
-        missing_url = 0
-
-        try:
-            # Group by platform
-            x_jobs = {}
-            reddit_jobs = {}
-            for job_id, job_data in urls_by_job.items():
-                platform = job_data['platform']
-                urls = job_data['urls']
-                if not urls:
-                    continue
-                if platform in ['x', 'twitter']:
-                    x_jobs[job_id] = urls
-                elif platform == 'reddit':
-                    reddit_jobs[job_id] = urls
-
-            # Process X/Twitter
-            if x_jobs:
-                x_result = self._batch_validate_platform(x_jobs, 'x')
-                total_rows += x_result['total_rows']
-                total_duplicates += x_result['duplicates']
-                total_with_url += x_result['with_url']
-                empty_content += x_result['empty_content']
-                missing_url += x_result['missing_url']
-
-            # Process Reddit
-            if reddit_jobs:
-                reddit_result = self._batch_validate_platform(reddit_jobs, 'reddit')
-                total_rows += reddit_result['total_rows']
-                total_duplicates += reddit_result['duplicates']
-                total_with_url += reddit_result['with_url']
-                empty_content += reddit_result['empty_content']
-                missing_url += reddit_result['missing_url']
-
-            return {
-                "success": True,
-                "total_rows": total_rows,
-                "duplicate_rate_within_job": (total_duplicates / total_rows * 100) if total_rows > 0 else 0,
-                "empty_rate": (empty_content / total_rows * 100) if total_rows > 0 else 0,
-                "missing_url_rate": (missing_url / total_rows * 100) if total_rows > 0 else 0,
-            }
-
-        except Exception as e:
-            bt.logging.error(f"DuckDB validation error: {e}")
-            return {"success": False, "error": str(e)}
-
-    def _batch_validate_platform(
-        self,
-        jobs_urls: Dict[str, List[str]],
-        platform: str,
-        batch_size: int = 3
-    ) -> Dict[str, int]:
-        """Validate all jobs for a platform in batched DuckDB queries to limit memory."""
-        result = {
-            'total_rows': 0,
-            'duplicates': 0,
-            'with_url': 0,
-            'empty_content': 0,
-            'missing_url': 0
-        }
-
-        all_urls = []
-        for job_id, urls in jobs_urls.items():
-            all_urls.extend(urls)
-
-        if not all_urls:
-            return result
-
-        # Platform-specific empty check (includes media)
-        if platform in ['x', 'twitter']:
-            # Twitter: empty if no text AND no media
-            empty_check = "COALESCE(text, '') = '' AND (media IS NULL OR len(media) = 0)"
-        else:
-            # Reddit: empty if no body AND no title AND no media
-            empty_check = "COALESCE(body, '') = '' AND COALESCE(title, '') = '' AND (media IS NULL OR len(media) = 0)"
-
-        # Process in batches - use DuckDB aggregation to avoid loading all rows into Python
-        for i in range(0, len(all_urls), batch_size):
-            batch_urls = all_urls[i:i + batch_size]
-            url_list_str = ", ".join([f"'{url}'" for url in batch_urls])
-
-            try:
-                # DuckDB auto-projects: only url/text/body/title/media columns are read (~80% memory savings)
-                # Full schema is still read in _perform_scraper_validation() for content validation
-                query = f"""
-                    SELECT
-                        COUNT(*) as total_rows,
-                        SUM(CASE WHEN {empty_check} THEN 1 ELSE 0 END) as empty_count,
-                        SUM(CASE WHEN COALESCE(url, '') = '' THEN 1 ELSE 0 END) as missing_url_count,
-                        COUNT(url) - COUNT(DISTINCT url) as duplicate_count,
-                        COUNT(DISTINCT url) as unique_urls
-                    FROM read_parquet([{url_list_str}], union_by_name=true)
-                """
-                batch_result = self.conn.execute(query).fetchone()
-
-                if batch_result:
-                    result['total_rows'] += batch_result[0] or 0
-                    result['empty_content'] += batch_result[1] or 0
-                    result['missing_url'] += batch_result[2] or 0
-                    result['duplicates'] += batch_result[3] or 0
-                    result['with_url'] += batch_result[4] or 0
-
-            except Exception as e:
-                bt.logging.warning(f"Batch query error for {platform} batch {i//batch_size}: {e}")
-                continue
-
-        return result
 
     async def _perform_job_content_matching(
         self,
@@ -783,32 +790,30 @@ class DuckDBSampledValidator:
 
                 conn = None
                 try:
-                    # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
-                    # 10% sampling ensures we get rows even from smaller files
+                    # Schema validation — only reads parquet footer
                     conn = duckdb.connect(':memory:')
                     conn.execute("SET memory_limit='2GB';")
                     conn.execute("SET threads=1;")
-
-                    # Schema validation - verify column count matches expected
-                    schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
-                    schema_result = conn.execute(schema_query).fetchall()
+                    schema_result = conn.execute(
+                        f"SELECT name FROM parquet_schema('{presigned_url}')"
+                    ).fetchall()
                     excluded_names = {'schema', 'list', 'element', 'model_config'}
-                    all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+                    all_column_names = [r[0].lower() for r in schema_result if r[0].lower() not in excluded_names]
 
                     if platform in ['x', 'twitter']:
-                        max_columns = len(self.EXPECTED_COLUMNS_X)
+                        max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                     else:
-                        max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+                        max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
 
                     if len(all_column_names) > max_columns:
-                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected max {max_columns})")
                         continue
 
-                    sample_df = conn.execute(f"""
-                        SELECT * FROM read_parquet('{presigned_url}')
-                        TABLESAMPLE BERNOULLI(10%)
-                        LIMIT {samples_per_file}
-                    """).fetchdf()
+                    # Read 1 random row group via Range requests (~3MB vs full scan)
+                    sample_df = read_random_row_group(
+                        presigned_url, file_size,
+                        columns=None, max_rows=samples_per_file
+                    )
 
                     if sample_df is None or len(sample_df) == 0:
                         continue
@@ -822,10 +827,10 @@ class DuckDBSampledValidator:
                         if matches:
                             total_matched += 1
                         elif len(mismatch_samples) < 5:
-                            uri = row.get('url', row.get('uri', 'unknown'))
+                            uri = row.get('url', 'unknown')
                             mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
 
-                    del sample_df  # Free DataFrame memory
+                    del sample_df
 
                 except Exception as e:
                     continue
@@ -944,32 +949,30 @@ class DuckDBSampledValidator:
 
             conn = None
             try:
-                # Read random rows using TABLESAMPLE BERNOULLI (memory efficient ~4MB)
-                # Use 10% sampling to ensure we get rows even from smaller files
+                # Schema validation — only reads parquet footer
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='2GB';")
                 conn.execute("SET threads=1;")
-
-                # Schema validation - verify column count matches expected
-                schema_query = f"SELECT name FROM parquet_schema('{presigned_url}')"
-                schema_result = conn.execute(schema_query).fetchall()
+                schema_result = conn.execute(
+                    f"SELECT name FROM parquet_schema('{presigned_url}')"
+                ).fetchall()
                 excluded_names = {'schema', 'list', 'element', 'model_config'}
-                all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
+                all_column_names = [r[0].lower() for r in schema_result if r[0].lower() not in excluded_names]
 
                 if platform in ['x', 'twitter']:
-                    max_columns = len(self.EXPECTED_COLUMNS_X)
+                    max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                 else:
-                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT)
+                    max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
 
                 if len(all_column_names) > max_columns:
-                    bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected {max_columns})")
+                    bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected max {max_columns})")
                     continue
 
-                df = conn.execute(f"""
-                    SELECT * FROM read_parquet('{presigned_url}')
-                    TABLESAMPLE BERNOULLI(10%)
-                    LIMIT 5
-                """).fetchdf()
+                # Read 1 random row group via Range requests (~3MB vs full scan)
+                df = read_random_row_group(
+                    presigned_url, file_size,
+                    columns=None, max_rows=5
+                )
 
                 if df is None or len(df) == 0:
                     continue
@@ -979,7 +982,7 @@ class DuckDBSampledValidator:
                     if entity:
                         all_entities.append((entity, platform, job_id))
 
-                del df  # Free DataFrame memory
+                del df
             except:
                 continue
             finally:
@@ -1054,7 +1057,7 @@ class DuckDBSampledValidator:
         try:
             username = row.get('username', '')
             text = row.get('text', '')
-            url = row.get('url', row.get('uri', ''))
+            url = row.get('url', '')
             if not all([username, text, url]):
                 return None
 
@@ -1141,7 +1144,7 @@ class DuckDBSampledValidator:
         """Create Reddit DataEntity. Accept if title OR body is present."""
         try:
             username = row.get('username', '')
-            url = row.get('url', row.get('uri', ''))
+            url = row.get('url', '')
             reddit_id = row.get('id', '')
 
             body = row.get('body', row.get('text', ''))
@@ -1248,7 +1251,6 @@ class DuckDBSampledValidator:
             job_match_rate=0.0,
             validation_issues=[reason],
             reason=reason,
-            sample_duplicate_uris=[],
             sample_validation_results=[],
             sample_job_mismatches=[],
             effective_size_bytes=0.0,
@@ -1256,13 +1258,8 @@ class DuckDBSampledValidator:
         )
 
     def close(self):
-        """Close DuckDB connection to free memory."""
-        if self.conn:
-            try:
-                self.conn.close()
-            except:
-                pass
-            self.conn = None
+        """Cleanup resources."""
+        pass
 
 
 def load_expected_jobs_from_gravity() -> Dict:
@@ -1346,7 +1343,6 @@ async def validate_s3_miner_data(
             job_match_rate=0.0,
             validation_issues=[f"Validation error: {str(e)}"],
             reason=f"Validation failed: {str(e)}",
-            sample_duplicate_uris=[],
             sample_validation_results=[],
             sample_job_mismatches=[]
         )

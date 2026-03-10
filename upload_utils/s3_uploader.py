@@ -5,6 +5,8 @@ hotkey={hotkey_id}/job_id={job_id}/parquet_files
 
 NO ENCODING - Raw data upload to S3
 Uses offset-based tracking for continuous processing of new data
+
+Upload flow: per-file presigned URL via POST /get-file-upload-url
 """
 
 import os
@@ -17,7 +19,7 @@ import re
 import secrets
 from contextlib import contextmanager
 from typing import List, Dict
-from upload_utils.s3_utils import S3Auth
+from common.api_client import DataUniverseApiClient
 from common.data import DataSource
 
 
@@ -62,7 +64,8 @@ class S3PartitionedUploader:
         self.wallet = wallet
         self.subtensor = subtensor
         self.miner_hotkey = self.wallet.hotkey.ss58_address
-        self.s3_auth = S3Auth(s3_auth_url)
+        self.api_base_url = s3_auth_url
+        self.keypair = wallet.hotkey
         self.state_file = f"{state_file.split('.json')[0]}_s3_partitioned.json"
         self.output_dir = os.path.join(output_dir, self.miner_hotkey)
         self.chunk_size = chunk_size
@@ -159,6 +162,8 @@ class S3PartitionedUploader:
                         continue
 
                     # Store job configuration by job_id
+                    max_rows = item.get('max_rows')
+
                     if params.get('label') and params.get('keyword'):
                         # Both label and keyword required
                         result[job_id] = {
@@ -166,7 +171,8 @@ class S3PartitionedUploader:
                             "type": "label_and_keyword",
                             "label": params['label'],
                             "keyword": params['keyword'],
-                            "weight": weight
+                            "weight": weight,
+                            "max_rows": max_rows,
                         }
                     elif params.get('label'):
                         # Label only
@@ -174,7 +180,8 @@ class S3PartitionedUploader:
                             "source": source_int,
                             "type": "label",
                             "value": params['label'],
-                            "weight": weight
+                            "weight": weight,
+                            "max_rows": max_rows,
                         }
                     elif params.get('keyword'):
                         # Keyword only
@@ -182,7 +189,8 @@ class S3PartitionedUploader:
                             "source": source_int,
                             "type": "keyword",
                             "value": params['keyword'],
-                            "weight": weight
+                            "weight": weight,
+                            "max_rows": max_rows,
                         }
 
             # Handle old format for backward compatibility
@@ -412,9 +420,8 @@ class S3PartitionedUploader:
 
             # Extract fields based on source type
             if source == DataSource.REDDIT.value:
-                # Reddit data structure
+                # Reddit data structure (uri removed — validator uses url column)
                 result_df = pd.DataFrame({
-                    'uri': df['uri'],
                     'datetime': df['datetime'],
                     'label': df['label'],
                     'id': df['decoded_content'].apply(lambda x: x.get('id')),
@@ -434,9 +441,8 @@ class S3PartitionedUploader:
                     'scrapedAt': df['decoded_content'].apply(lambda x: x.get('scrapedAt')),
                 })
             else:
-                # X/Twitter data structure
+                # X/Twitter data structure (uri removed — validator uses url column)
                 result_df = pd.DataFrame({
-                    'uri': df['uri'],
                     'datetime': df['datetime'],
                     'label': df['label'],
                     'username': df['decoded_content'].apply(lambda x: x.get('username')),
@@ -478,8 +484,8 @@ class S3PartitionedUploader:
             bt.logging.error(f"Error creating raw dataframe: {e}")
             return pd.DataFrame()
 
-    def _upload_data_chunk(self, df: pd.DataFrame, source: int, job_id: str, s3_creds: Dict) -> bool:
-        """Upload chunk directly to job_id folder (no source or date partitioning)"""
+    async def _upload_data_chunk(self, client: DataUniverseApiClient, df: pd.DataFrame, source: int, job_id: str) -> bool:
+        """Upload chunk via per-file presigned URL from /get-file-upload-url."""
         if df.empty:
             return True
 
@@ -499,34 +505,37 @@ class S3PartitionedUploader:
             filename = f"data_{timestamp}_{len(raw_df)}_{random_hash}.parquet"
             local_path = os.path.join(self.output_dir, filename)
 
-            # Save to parquet
-            raw_df.to_parquet(local_path, index=False)
+            # Save to parquet with snappy compression
+            raw_df.to_parquet(local_path, index=False, compression='snappy', row_group_size=10_000)
 
-            # Create S3 path: hotkey={hotkey_id}/job_id={job_id}/{filename}.parquet
-            s3_path = f"job_id={job_id}/{filename}"
-
-            # Upload to S3
-            upload_success = self.s3_auth.upload_file_with_path(local_path, s3_path, s3_creds)
-
-            if upload_success:
+            # Request presigned URL and upload via API
+            try:
+                await client.miner_upload_parquet_file(
+                    job_id=job_id, filename=filename, file_path=local_path
+                )
                 bt.logging.success(f"Uploaded {len(raw_df)} records to job {job_id}")
-            else:
-                bt.logging.error(f"Failed to upload {len(raw_df)} records to job {job_id}")
+            except Exception as upload_err:
+                err_str = str(upload_err)
+                if "409" in err_str:
+                    bt.logging.warning(f"File already exists for job {job_id}/{filename}, skipping")
+                else:
+                    raise
 
             # Clean up local file
             if os.path.exists(local_path):
                 os.remove(local_path)
 
-            return upload_success
+            return True
 
         except Exception as e:
             bt.logging.error(f"Error uploading data chunk for job {job_id}: {e}")
             return False
 
-    def _process_job(self, job_id: str, job_config: Dict, s3_creds: Dict) -> bool:
-        """Process a single job using exact job_id as folder name"""
+    async def _process_job(self, client: DataUniverseApiClient, job_id: str, job_config: Dict) -> bool:
+        """Process a single job using exact job_id as folder name."""
         source = job_config["source"]
         search_type = job_config["type"]
+        max_rows = job_config.get("max_rows")
 
         # Extract value(s) based on search type
         if search_type == "label_and_keyword":
@@ -539,7 +548,13 @@ class S3PartitionedUploader:
 
         cursor = self._get_last_cursor(job_id)
 
-        bt.logging.info(f"Processing job {job_id} ({log_msg}), cursor: datetime={cursor.get('last_datetime')}")
+        # Check already-uploaded rows against max_rows cap
+        already_uploaded = self.processed_state.get(job_id, {}).get('total_records_processed', 0)
+        if max_rows and already_uploaded >= max_rows:
+            bt.logging.info(f"Job {job_id} already at max_rows ({already_uploaded}/{max_rows}), skipping")
+            return True
+
+        bt.logging.info(f"Processing job {job_id} ({log_msg}), cursor: datetime={cursor.get('last_datetime')}, max_rows={max_rows}")
 
         total_processed = 0
 
@@ -559,8 +574,18 @@ class S3PartitionedUploader:
                 bt.logging.info(f"No new data for job {job_id}, total processed this run: {total_processed}")
                 break
 
-            # Upload chunk using job_id as folder name
-            success = self._upload_data_chunk(chunk_df, source, job_id, s3_creds)
+            # Enforce max_rows: truncate chunk if it would exceed the cap
+            if max_rows:
+                remaining = max_rows - already_uploaded - total_processed
+                if remaining <= 0:
+                    bt.logging.info(f"Job {job_id}: reached max_rows cap ({max_rows}), stopping")
+                    break
+                if len(chunk_df) > remaining:
+                    bt.logging.info(f"Job {job_id}: truncating chunk from {len(chunk_df)} to {remaining} rows (max_rows={max_rows})")
+                    chunk_df = chunk_df.iloc[:remaining]
+
+            # Upload chunk via per-file presigned URL
+            success = await self._upload_data_chunk(client, chunk_df, source, job_id)
             if not success:
                 bt.logging.error(f"Failed to upload chunk for job {job_id}")
                 return False
@@ -583,6 +608,11 @@ class S3PartitionedUploader:
 
             bt.logging.info(f"Processed {total_processed} new records for job {job_id}")
 
+            # Stop if we've hit the max_rows cap
+            if max_rows and (already_uploaded + total_processed) >= max_rows:
+                bt.logging.info(f"Job {job_id}: reached max_rows cap ({max_rows}), stopping")
+                break
+
             # If we got less than chunk_size, we've reached the end for now
             if len(chunk_df) < self.chunk_size:
                 break
@@ -590,8 +620,12 @@ class S3PartitionedUploader:
         bt.logging.info(f"Completed job {job_id}: {total_processed} records processed")
         return True
 
-    def upload_dd_data(self) -> bool:
-        """Main method to upload data using job_ids from Gravity"""
+    async def upload_dd_data(self) -> bool:
+        """Main method to upload data using job_ids from Gravity.
+
+        Each file upload requests its own presigned URL via POST /get-file-upload-url.
+        No up-front credential fetch needed.
+        """
         bt.logging.info("Starting S3 upload using Gravity job IDs")
 
         try:
@@ -601,28 +635,20 @@ class S3PartitionedUploader:
                 bt.logging.warning("No jobs found from Gravity")
                 return False
 
-            # Get credentials once for all jobs (no source-specific credentials needed)
-            bt.logging.info("Getting S3 credentials for all job uploads")
-            s3_creds = self.s3_auth.get_credentials(
-                subtensor=self.subtensor,
-                wallet=self.wallet,
-            )
-
-            if not s3_creds:
-                bt.logging.error("Failed to get S3 credentials")
-                return False
-
-            bt.logging.success("Got S3 credentials for all jobs")
-
             overall_success = True
 
-            # Process each job using the same credentials
-            for job_id, job_config in jobs.items():
-                bt.logging.info(f"Processing job: {job_id}")
+            # Each file upload gets its own presigned URL via the API
+            async with DataUniverseApiClient(
+                base_url=self.api_base_url,
+                keypair=self.keypair,
+                verify_ssl="localhost" not in self.api_base_url,
+            ) as client:
+                for job_id, job_config in jobs.items():
+                    bt.logging.info(f"Processing job: {job_id}")
 
-                job_success = self._process_job(job_id, job_config, s3_creds)
-                if not job_success:
-                    overall_success = False
+                    job_success = await self._process_job(client, job_id, job_config)
+                    if not job_success:
+                        overall_success = False
 
             bt.logging.info("Completed S3 upload using job IDs")
             return overall_success

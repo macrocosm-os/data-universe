@@ -35,39 +35,6 @@ class ValidationResult(StrictBaseModel):
     )
 
 
-class S3ValidationResult(StrictBaseModel):
-    """Data class to contain the result of a validation for a miner's S3 uploads."""
-
-    model_config = ConfigDict(frozen=True)
-
-    is_valid: bool
-    validation_percentage: float = Field(
-        description="The percentage of successfully validated S3 data.",
-        ge=0.0,
-        le=100.0
-    )
-    job_count: int = Field(
-        description="The number of jobs found in S3 for this miner.",
-        ge=0
-    )
-    total_files: int = Field(
-        description="The total number of files validated.",
-        ge=0
-    )
-    reason: str = Field(
-        description="An optional reason for the validation result.",
-        default=""
-    )
-    empty_file_detected: bool = Field(
-        description="Whether an empty file (0 rows) was detected.",
-        default=False
-    )
-    empty_file_key: str = Field(
-        description="The S3 key of the empty file if detected.",
-        default=""
-    )
-
-
 class ScrapeConfig(StrictBaseModel):
     """Data class to contain the configuration to be used for scraping."""
 

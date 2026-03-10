@@ -18,6 +18,20 @@ import bittensor as bt
 FIFTEEN_MB_BYTES = 15 * 1_000_000
 
 
+class MinerFileUploadRequest(BaseModel):
+    """Request body for POST /get-file-upload-url."""
+    job_id: str
+    filename: str
+
+
+class MinerFileUploadResponse(BaseModel):
+    """Response from POST /get-file-upload-url."""
+    s3_key: str
+    url: str
+    fields: Dict[str, str]
+    expires_in_seconds: int
+
+
 class DynamicDesirabilityListEntry(BaseModel):
     """A single entry in the Dynamic Desirability list."""
 
@@ -29,6 +43,7 @@ class DynamicDesirabilityListEntry(BaseModel):
     post_start_datetime: Optional[datetime] = None
     post_end_datetime: Optional[datetime] = None
     expires_at: Optional[datetime] = None
+    max_rows: Optional[int] = None
 
 
 class DynamicDesirabilityList(BaseModel):
@@ -347,6 +362,50 @@ class DataUniverseApiClient:
             )
 
         return submit_resp
+
+    async def miner_request_file_upload_url(
+        self, job_id: str, filename: str
+    ) -> MinerFileUploadResponse:
+        """
+        POST /get-file-upload-url
+
+        Request a presigned POST URL for uploading a single parquet file.
+        Server validates filename format, checks S3 for duplicates.
+        """
+        if not self._signer:
+            raise RuntimeError("miner_keypair was not provided.")
+        req = MinerFileUploadRequest(job_id=job_id, filename=filename)
+        payload_json = req.model_dump_json()
+        resp = await self._post_signed_json(
+            "/get-file-upload-url", self._signer, payload_json
+        )
+        _raise_for_status(resp)
+        return MinerFileUploadResponse.model_validate_json(resp.text)
+
+    async def miner_upload_parquet_file(
+        self, *, job_id: str, filename: str, file_path: str
+    ) -> MinerFileUploadResponse:
+        """
+        1) POST /get-file-upload-url to get a presigned POST
+        2) Upload the parquet file to S3 using the presigned POST fields
+
+        Returns the MinerFileUploadResponse from step (1).
+        """
+        upload_info = await self.miner_request_file_upload_url(job_id, filename)
+
+        fields = dict(upload_info.fields)
+        client = self._ensure_client()
+
+        with open(file_path, "rb") as f:
+            files = {"file": (filename, f, "application/octet-stream")}
+            post_resp = await client.post(upload_info.url, data=fields, files=files)
+
+        if not post_resp.is_success:
+            raise RuntimeError(
+                f"S3 upload failed: {post_resp.status_code} {post_resp.text}"
+            )
+
+        return upload_info
 
     async def validator_list_jobs_with_submissions(
         self, req: ListJobsWithSubmissionsForValidationRequest

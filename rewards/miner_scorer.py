@@ -6,7 +6,7 @@ import datetime as dt
 from common.data import TimeBucket
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
-from scraping.scraper import ValidationResult, S3ValidationResult
+from scraping.scraper import ValidationResult
 
 
 class MinerScorer:
@@ -32,6 +32,11 @@ class MinerScorer:
     STARTING_ONDEMAND_CREDIBILITY = 0.5
     ONDEMAND_CRED_ALPHA = 0.02          # EMA alpha: ~35 jobs (~70 sec) to halve
     ONDEMAND_CRED_BAD_DATA_PENALTY = 0.05  # 5% direct penalty per bad submission
+
+    # P2P dampener — DD job weights (1.0-5.0) inflate P2P scores far beyond S3/OD.
+    # DD jobs are designed for S3 uploads, not P2P index broadcasting.
+    # This factor scales down the raw P2P score so it stays the smallest component.
+    P2P_REWARD_SCALE = 0.05
 
 
     def __init__(
@@ -133,23 +138,6 @@ class MinerScorer:
             self.ondemand_credibility[uid] = MinerScorer.STARTING_ONDEMAND_CREDIBILITY
             self.effective_sizes[uid] = 0.0
 
-    def penalize_empty_file(self, uid: int, hotkey: str, empty_file_reason: str) -> None:
-        """
-        DEPRECATED: With competition-based scoring, empty files result in effective_size=0,
-        which naturally gives no boost. This method is kept for backward compatibility.
-
-        Sets S3 boost, S3 credibility, and effective_size to zero.
-        """
-        with self.lock:
-            self.s3_boosts[uid] = 0.0
-            self.s3_credibility[uid] = 0.0
-            self.effective_sizes[uid] = 0.0
-
-            bt.logging.info(
-                f"EMPTY FILE DETECTED - UID {uid} ({hotkey}): S3 boost and effective_size zeroed. "
-                f"Reason: {empty_file_reason}"
-            )
-
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
         with self.lock:
@@ -217,30 +205,11 @@ class MinerScorer:
                 [self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)]
             )
 
-    def update_s3_boost_and_cred(self, uid: int, s3_vali_percentage: float, job_match_failure = False) -> None:
-        """
-        DEPRECATED: Use update_s3_effective_size() for competition-based scoring.
-        Kept for backward compatibility during transition.
-        """
-        max_boost = 200 * 10**6
-        self.s3_boosts[uid] = s3_vali_percentage/100 * max_boost
-
-        if job_match_failure:
-            bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
-            self.s3_credibility[uid] = 0.0
-        else:
-            self.s3_credibility[uid] = min(1, s3_vali_percentage/100 * self.s3_cred_alpha + (1-self.s3_cred_alpha) * self.s3_credibility[uid])
-
-        bt.logging.info(
-            f"After S3 evaluation for miner {uid}: Raw S3 Boost = {float(self.s3_boosts[uid])}. S3 Credibility = {float(self.s3_credibility[uid])}."
-        )
-
     def update_s3_effective_size(
         self,
         uid: int,
         effective_size: float,
         validation_passed: bool,
-        job_match_failure: bool = False
     ) -> None:
         """
         Update miner's effective_size for S3 competition scoring.
@@ -263,20 +232,13 @@ class MinerScorer:
             uid: Miner UID
             effective_size: total_size_bytes × coverage² (calculated from current validation)
             validation_passed: Whether the miner passed quality validation
-            job_match_failure: Whether job content matching failed (severe - zeros credibility)
         """
         with self.lock:
             old_effective = float(self.effective_sizes[uid])
             old_cred = float(self.s3_credibility[uid])
 
             # Update S3 credibility based on validation result
-            if job_match_failure:
-                # Job match failure is severe - zero credibility (cheating attempt)
-                bt.logging.info(f"S3 Job Match Failure for miner {uid}: Setting credibility to 0.")
-                self.s3_credibility[uid] = 0.0
-                # Also zero effective_size for job match failures (clear cheating)
-                self.effective_sizes[uid] = 0.0
-            elif validation_passed:
+            if validation_passed:
                 # Success: Update effective_size and increase credibility
                 self.effective_sizes[uid] = effective_size
                 # EMA toward 1.0: new_cred = alpha * 1.0 + (1-alpha) * old_cred
@@ -405,25 +367,21 @@ class MinerScorer:
             )
             new_od_cred = float(self.ondemand_credibility[uid])
 
-            # Adjust score based on the credibility ratio change
-            if old_cred > 0:
-                cred_ratio = (new_cred / old_cred) ** MinerScorer._CREDIBILITY_EXP
-                old_score = float(self.scores[uid])
-                self.scores[uid] *= cred_ratio
+            # Recalculate composite score with updated credibilities
+            old_score = float(self.scores[uid])
+            p2p_raw = float(self.scorable_bytes[uid])
+            p2p_component = p2p_raw * MinerScorer.P2P_REWARD_SCALE * (new_cred ** MinerScorer._CREDIBILITY_EXP)
+            s3_component = float(self.s3_boosts[uid]) * (float(self.s3_credibility[uid]) ** MinerScorer._CREDIBILITY_EXP)
+            od_component = float(self.ondemand_boosts[uid]) * (new_od_cred ** MinerScorer._CREDIBILITY_EXP)
+            self.scores[uid] = p2p_component + s3_component + od_component
 
-                bt.logging.info(
-                    f"OnDemand penalty for Miner {uid}: "
-                    f"Credibility {old_cred:.4f} -> {new_cred:.4f}, "
-                    f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
-                    f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
-                    f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
-                )
-            else:
-                bt.logging.info(
-                    f"OnDemand penalty for Miner {uid}: Credibility already at 0, "
-                    f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
-                    f"Boost {old_boost:.2f} -> {new_boost:.2f}"
-                )
+            bt.logging.info(
+                f"OnDemand penalty for Miner {uid}: "
+                f"P2P Cred {old_cred:.4f} -> {new_cred:.4f}, "
+                f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
+                f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
+                f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
+            )
 
     def apply_ondemand_reward(
         self,
@@ -504,28 +462,30 @@ class MinerScorer:
                         f"Miner {uid}'s scorable bytes changed from {previous_raw_score} to {score}. Credibility changed from {previous_cred} to {self.miner_credibility[uid].item()}."
                     )
 
-                # Record raw score for next time.
+                # Record raw P2P score for next time.
                 self.scorable_bytes[uid] = score
 
-                # S3 boost disabled — data collection paused.
-                # s3_boost = self.s3_boosts[uid] * self.s3_credibility[uid]
-                # score += s3_boost
-                # bt.logging.info(f"Awarded Miner {uid} a S3 boost of {float(s3_boost)} based off of the last performed S3 evaluation, adjusting the score to {float(score)}.")
-
-                # Awarding the miner their OnDemand boost based on recent on-demand performance.
-                ondemand_boost = float(self.ondemand_boosts[uid])
-                score += ondemand_boost
-                bt.logging.info(f"Awarded Miner {uid} an OnDemand boost of {ondemand_boost:.0f} based on recent on-demand performance, adjusting the score to {float(score)}.")
-
-                # Now update the credibility again based on the current validation results.
+                # Update P2P credibility based on current validation results.
                 self._update_credibility(uid, validation_results)
 
-                # Finally, scale the miner's score by its credibility to the power of 2.5.
-                score *= self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP
+                # Independent component scoring — each channel gated by its own credibility.
+                # This prevents one bad channel from zeroing out all rewards.
+                p2p_cred = float(self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
+                s3_cred = float(self.s3_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
+                od_cred = float(self.ondemand_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
 
-                # Scale by on-demand credibility — non-participants decay toward 0.
-                ondemand_cred = float(self.ondemand_credibility[uid])
-                score *= ondemand_cred
+                p2p_component = score * MinerScorer.P2P_REWARD_SCALE * p2p_cred
+                s3_component = float(self.s3_boosts[uid]) * s3_cred
+                od_component = float(self.ondemand_boosts[uid]) * od_cred
+
+                score = p2p_component + s3_component + od_component
+
+                bt.logging.info(
+                    f"Miner {uid} score breakdown: "
+                    f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
+                    f"S3={s3_component:.0f} (boost={float(self.s3_boosts[uid]):.0f}, cred={float(self.s3_credibility[uid]):.4f}), "
+                    f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={float(self.ondemand_credibility[uid]):.4f})"
+                )
 
             self.scores[uid] = score
 
