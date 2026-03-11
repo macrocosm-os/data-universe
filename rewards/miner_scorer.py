@@ -15,6 +15,11 @@ class MinerScorer:
     Thread safe.
     """
 
+    # State version — bump this when saved state needs migration.
+    # v1: Initial (no version key in state dict)
+    # v2: Reset effective_sizes and s3_boosts to zero (exploit inflated sizes)
+    STATE_VERSION = 2
+
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
 
@@ -87,6 +92,7 @@ class MinerScorer:
         with self.lock:
             torch.save(
                 {
+                    "state_version": MinerScorer.STATE_VERSION,
                     "scores": self.scores,
                     "credibility": self.miner_credibility,
                     "s3_boosts": self.s3_boosts,
@@ -102,6 +108,8 @@ class MinerScorer:
     def load_state(self, filepath):
         """Load the state from the provided filepath."""
         state = torch.load(filepath, weights_only=True)
+        saved_version = state.get("state_version", 1)
+
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
@@ -114,6 +122,24 @@ class MinerScorer:
                 (self.scores.size(0), 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32
             ))
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
+
+            # --- State migrations ---
+            if saved_version < 2:
+                # v1 -> v2: Full reset — pre-v2 scores were inflated by
+                # compression/URI-padding exploits. Clean slate for all miners.
+                bt.logging.warning(
+                    f"State migration v{saved_version} -> v{MinerScorer.STATE_VERSION}: "
+                    f"Full state reset."
+                )
+                num = self.scores.size(0)
+                self.scores.zero_()
+                self.miner_credibility.fill_(MinerScorer.STARTING_CREDIBILITY)
+                self.scorable_bytes.zero_()
+                self.s3_boosts.zero_()
+                self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
+                self.ondemand_boosts.zero_()
+                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
+                self.effective_sizes.zero_()
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
