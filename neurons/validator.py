@@ -435,9 +435,19 @@ class Validator:
                                 f"Miner {uid}:{miner_hotkey} submitted empty data for job {job.id}"
                             )
 
+                        # Cap to requested limit — miners shouldn't be rewarded
+                        # for returning more rows than the job asked for.
+                        entities = miner_upload.data_entities
+                        if job.limit and len(entities) > job.limit:
+                            bt.logging.info(
+                                f"Miner {uid}:{miner_hotkey} returned {len(entities)} rows "
+                                f"but job limit is {job.limit} — capping"
+                            )
+                            entities = entities[:job.limit]
+
                         # Store in format expected by validation methods
-                        miner_responses[uid] = miner_upload.data_entities
-                        miner_data_counts[uid] = len(miner_upload.data_entities)
+                        miner_responses[uid] = entities
+                        miner_data_counts[uid] = len(entities)
 
                         # Track submission metadata for reward calculation
                         miner_submission_metadata[uid] = {
