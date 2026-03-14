@@ -419,7 +419,21 @@ class Validator:
                             bt.logging.warning(
                                 f"Miner {miner_hotkey} (UID {uid}) data validation failed: {e}"
                             )
+                            # Treat parse failures as empty — will be penalized as failed validation
+                            miner_responses[uid] = []
+                            miner_data_counts[uid] = 0
+                            miner_submission_metadata[uid] = {
+                                "submitted_at": sub.submitted_at,
+                                "row_count": 0,
+                            }
                             continue
+
+                        # Empty submissions (0-byte or empty data_entities) are kept
+                        # in miner_responses so they flow through validation as failures
+                        if not miner_upload.data_entities:
+                            bt.logging.info(
+                                f"Miner {uid}:{miner_hotkey} submitted empty data for job {job.id}"
+                            )
 
                         # Store in format expected by validation methods
                         miner_responses[uid] = miner_upload.data_entities
@@ -523,15 +537,17 @@ class Validator:
                         f"{len(failed_miners)} miners failed validation"
                     )
 
-                    # Update on-demand credibility for ALL miners based on who submitted
-                    # (not just the 5 sampled for validation — uses full submission list)
+                    # Update on-demand credibility only for miners who submitted NON-EMPTY data.
+                    # Empty submissions (0-byte or empty data_entities) do not earn credibility.
                     all_submitter_uids = set()
                     for sub in job_with_submission.submissions:
                         try:
                             uid = self.metagraph.hotkeys.index(sub.miner_hotkey)
-                            all_submitter_uids.add(uid)
                         except ValueError:
-                            pass
+                            continue
+                        # Only grant credibility if miner had actual data
+                        if uid in miner_data_counts and miner_data_counts[uid] > 0:
+                            all_submitter_uids.add(uid)
 
                     all_miner_uids = utils.get_miner_uids(
                         self.metagraph, self.evaluator.vpermit_rao_limit
