@@ -18,7 +18,8 @@ class MinerScorer:
     # State version — bump this when saved state needs migration.
     # v1: Initial (no version key in state dict)
     # v2: Reset effective_sizes and s3_boosts to zero (exploit inflated sizes)
-    STATE_VERSION = 2
+    # v3: Reset on-demand boosts/credibility (empty submissions were earning free credibility)
+    STATE_VERSION = 3
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -128,7 +129,7 @@ class MinerScorer:
                 # v1 -> v2: Full reset — pre-v2 scores were inflated by
                 # compression/URI-padding exploits. Clean slate for all miners.
                 bt.logging.warning(
-                    f"State migration v{saved_version} -> v{MinerScorer.STATE_VERSION}: "
+                    f"State migration v{saved_version} -> v2: "
                     f"Full state reset."
                 )
                 num = self.scores.size(0)
@@ -140,6 +141,16 @@ class MinerScorer:
                 self.ondemand_boosts.zero_()
                 self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
                 self.effective_sizes.zero_()
+
+            if saved_version < 3:
+                # v2 -> v3: Reset on-demand state only — empty submissions were
+                # earning free credibility, inflating on-demand scores.
+                bt.logging.warning(
+                    f"State migration v{saved_version} -> v3: "
+                    f"Resetting on-demand boosts and credibility."
+                )
+                self.ondemand_boosts.zero_()
+                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
