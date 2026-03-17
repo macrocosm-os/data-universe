@@ -496,6 +496,13 @@ class Miner:
                 f"Scraped (through synapse) on demand data entities for job_id: {job_request.id}, payload:\n\n{data}"
             )
 
+            # Don't submit empty results — no data found for this job.
+            if not data:
+                bt.logging.info(
+                    f"Job {job_request.id}: scraper returned no data, skipping submission"
+                )
+                return
+
             miner_upload = OnDemandMinerUpload(data_entities=data)
             bt.logging.debug(f"\nprocessed data (DataContent form): {miner_upload}")
 
