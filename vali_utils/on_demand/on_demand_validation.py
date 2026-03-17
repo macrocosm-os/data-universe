@@ -417,6 +417,10 @@ class OnDemandValidator:
             if not miner_responses[uid]:
                 miner_scores[uid] = 0
                 failed_miners.append(uid)
+                self.evaluator.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                ORGANIC_MINER_RESULTS.labels(
+                    miner_uid=uid, result_type="failure_empty_submission"
+                ).inc()
                 continue
 
             miner_failed_validation = False
