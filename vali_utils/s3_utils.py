@@ -1166,8 +1166,9 @@ class DuckDBSampledValidator:
             if not username_str or not url_str or not reddit_id_str:
                 return None
 
-            # Use body if available, otherwise use title
-            content_str = body_str if body_str else title_str
+            # Keep body as-is; don't substitute title into body.
+            # Title-only posts (empty body) are valid — title is passed separately.
+            content_str = body_str
 
             datetime_val = row.get('datetime', row.get('createdAt', ''))
             if datetime_val is not None and pd.notna(datetime_val):

@@ -15,6 +15,7 @@ from scraping.provider import ScraperProvider
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
+from scraping.reddit.reddit_json_scraper import RedditJsonScraper
 from vali_utils.on_demand import utils as on_demand_utils
 from vali_utils.on_demand.output_models import validate_metadata_completeness
 from vali_utils.metrics import ORGANIC_MINER_RESULTS
@@ -518,6 +519,70 @@ class OnDemandValidator:
             f"Applied consensus volume penalties to {len(penalized_miners)} miners"
         )
         return penalized_miners
+
+    # ------------------------------------------------------------------
+    # Data existence probe
+    # ------------------------------------------------------------------
+
+    async def check_data_exists(self, ctx: ValidationContext) -> bool:
+        """Quick probe to check if data exists for the given query.
+
+        Uses the validator's own scraper with limit=1 to verify independently
+        whether the requested data exists. Returns True if at least 1 result
+        is found, False otherwise.
+        """
+        try:
+            scraper = self._get_scraper(ctx.source)
+            if not scraper:
+                bt.logging.warning(f"No scraper for {ctx.source}, assuming data exists")
+                return True
+
+            start_dt = (
+                dt.datetime.fromisoformat(ctx.start_date)
+                if ctx.start_date
+                else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
+            )
+            end_dt = (
+                dt.datetime.fromisoformat(ctx.end_date)
+                if ctx.end_date
+                else dt.datetime.now(dt.timezone.utc)
+            )
+
+            if ctx.source.upper() == "X":
+                results = await scraper.on_demand_scrape(
+                    usernames=ctx.usernames or [],
+                    keywords=ctx.keywords or [],
+                    url=ctx.url,
+                    keyword_mode=ctx.keyword_mode,
+                    start_datetime=start_dt,
+                    end_datetime=end_dt,
+                    limit=1,
+                )
+            elif ctx.source.upper() == "REDDIT":
+                results = await scraper.on_demand_scrape(
+                    usernames=ctx.usernames or [],
+                    subreddit=ctx.keywords[0] if ctx.keywords else None,
+                    keywords=ctx.keywords[1:] if len(ctx.keywords) > 1 else None,
+                    keyword_mode=ctx.keyword_mode,
+                    start_datetime=start_dt,
+                    end_datetime=end_dt,
+                    limit=1,
+                )
+            else:
+                bt.logging.warning(f"Unknown source {ctx.source}, assuming data exists")
+                return True
+
+            exists = len(results) > 0
+            bt.logging.info(
+                f"Data existence probe for {ctx.source}: "
+                f"{'found' if exists else 'not found'} "
+                f"(usernames={ctx.usernames}, keywords={ctx.keywords}, url={ctx.url})"
+            )
+            return exists
+
+        except Exception as e:
+            bt.logging.warning(f"Data existence probe failed: {e}, assuming data exists")
+            return True
 
     # ------------------------------------------------------------------
     # Reward multipliers

@@ -455,6 +455,24 @@ class Validator:
                             "row_count": len(miner_upload.data_entities),
                         }
 
+                    # If no miner returned data, verify independently whether
+                    # the data exists using the validator's own scraper.
+                    if not any(c > 0 for c in miner_data_counts.values()):
+                        data_exists = await self.on_demand_validator.check_data_exists(
+                            validation_context
+                        )
+                        if not data_exists:
+                            bt.logging.info(
+                                f"Job {job.id}: no miner returned data and validator "
+                                f"probe confirms data doesn't exist — skipping job"
+                            )
+                            continue
+                        else:
+                            bt.logging.warning(
+                                f"Job {job.id}: no miner returned data but validator "
+                                f"probe found data — miners failed to scrape"
+                            )
+
                     # Step 1: Format validation
                     for uid, data in miner_responses.items():
                         if (

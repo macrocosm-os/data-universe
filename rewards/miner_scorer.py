@@ -19,7 +19,8 @@ class MinerScorer:
     # v1: Initial (no version key in state dict)
     # v2: Reset effective_sizes and s3_boosts to zero (exploit inflated sizes)
     # v3: Reset on-demand boosts/credibility (empty submissions were earning free credibility)
-    STATE_VERSION = 3
+    # v4: Reset on-demand again after data existence probe + reddit body fix
+    STATE_VERSION = 4
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -147,6 +148,16 @@ class MinerScorer:
                 # earning free credibility, inflating on-demand scores.
                 bt.logging.warning(
                     f"State migration v{saved_version} -> v3: "
+                    f"Resetting on-demand boosts and credibility."
+                )
+                self.ondemand_boosts.zero_()
+                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
+
+            if saved_version < 4:
+                # v3 -> v4: Reset on-demand again after data existence probe
+                # and reddit body/title validation fix.
+                bt.logging.warning(
+                    f"State migration v{saved_version} -> v4: "
                     f"Resetting on-demand boosts and credibility."
                 )
                 self.ondemand_boosts.zero_()
