@@ -71,6 +71,7 @@ class XOrganicOutput(BaseModel):
     tweet: TweetInfo
     content_size_bytes: int
     user: UserInfo
+    media: Optional[List[str]] = None
     label: Optional[str] = None
 
     @classmethod
@@ -121,6 +122,7 @@ class XOrganicOutput(BaseModel):
             tweet=tweet_info,
             content_size_bytes=int(data_entity.content_size_bytes or 0),
             user=user_info,
+            media=x_content.media,
             label=data_entity.label.value if data_entity.label else None,
         )
 
