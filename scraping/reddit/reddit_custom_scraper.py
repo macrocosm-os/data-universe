@@ -24,7 +24,7 @@ from scraping.reddit import model
 from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from common.protocol import KeywordMode
 from scraping.reddit.model import RedditContent, RedditDataType
-from typing import List
+from typing import List, Optional
 from dotenv import load_dotenv
 
 
@@ -37,6 +37,35 @@ class RedditCustomScraper(Scraper):
     """
 
     USER_AGENT = f"User-Agent: python: {os.getenv('REDDIT_USERNAME')}"
+
+    @staticmethod
+    def _normalize_ondemand_subreddit(subreddit: Optional[str]) -> Optional[str]:
+        value = (subreddit or "").strip()
+        if not value or value.lower() == "all":
+            return None
+        if value.lower().startswith("/r/"):
+            value = value[1:]
+        return value[2:] if value.lower().startswith("r/") else value
+
+    @classmethod
+    def _split_ondemand_subreddit_and_keywords(
+        cls,
+        subreddit: Optional[str],
+        keywords: Optional[List[str]],
+    ) -> tuple[Optional[str], List[str]]:
+        normalized_subreddit = cls._normalize_ondemand_subreddit(subreddit)
+        normalized_keywords: List[str] = []
+
+        for keyword in keywords or []:
+            value = (keyword or "").strip()
+            if not value:
+                continue
+            if normalized_subreddit is None and value.lower().startswith(("r/", "/r/")):
+                normalized_subreddit = cls._normalize_ondemand_subreddit(value)
+                continue
+            normalized_keywords.append(value)
+
+        return normalized_subreddit, normalized_keywords
 
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """
@@ -263,15 +292,24 @@ class RedditCustomScraper(Scraper):
         Returns:
             List of DataEntity objects matching the criteria
         """
+
+        subreddit_name, normalized_keywords = self._split_ondemand_subreddit_and_keywords(
+            subreddit,
+            keywords,
+        )
         
         # Return empty list if all key search parameters are None
-        if all(param is None for param in [usernames, keywords, start_datetime, end_datetime]) and subreddit == "all":
+        if (
+            all(param is None for param in [usernames, start_datetime, end_datetime])
+            and subreddit_name is None
+            and not normalized_keywords
+        ):
             bt.logging.trace("All search parameters are None, returning empty list")
             return []
         
         bt.logging.trace(
-            f"On-demand scrape with usernames={usernames}, subreddit={subreddit}, "
-            f"keywords={keywords}, keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
+            f"On-demand scrape with usernames={usernames}, subreddit={subreddit_name}, "
+            f"keywords={normalized_keywords}, keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
         )
         
         contents = []
@@ -294,13 +332,13 @@ class RedditCustomScraper(Scraper):
                             # Get user's posts (submissions)
                             async for submission in user.submissions.new(limit=limit):
                                 content = self._best_effort_parse_submission(submission)
-                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                                if content and self._matches_criteria(content, normalized_keywords, keyword_mode, start_datetime, end_datetime):
                                     contents.append(content)
                             
                             # Get user's comments
                             async for comment in user.comments.new(limit=limit):
                                 content = self._best_effort_parse_comment(comment)
-                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                                if content and self._matches_criteria(content, normalized_keywords, keyword_mode, start_datetime, end_datetime):
                                     contents.append(content)
                         except Exception as e:
                             bt.logging.warning(f"Failed to scrape user '{username}': {e}")
@@ -308,15 +346,22 @@ class RedditCustomScraper(Scraper):
                 
                 # Case 2: Search by subreddit (with optional keywords)
                 else:
-                    subreddit_name = subreddit.removeprefix("r/") if subreddit.startswith('r/') else subreddit
-                    sub = await reddit.subreddit(subreddit_name)
+                    if subreddit_name:
+                        sub = await reddit.subreddit(subreddit_name)
+                    else:
+                        if not normalized_keywords:
+                            bt.logging.trace(
+                                "Reddit on-demand scrape has no subreddit and no keywords, returning empty list."
+                            )
+                            return []
+                        sub = await reddit.subreddit("all")
                     
                     # If we have keywords, use Reddit's search functionality
-                    if keywords:
+                    if normalized_keywords:
                         if keyword_mode == "all":
-                            search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
+                            search_query = ' AND '.join(f'"{keyword}"' for keyword in normalized_keywords)
                         else:  # keyword_mode == "any"
-                            search_query = ' OR '.join(f'"{keyword}"' for keyword in keywords)
+                            search_query = ' OR '.join(f'"{keyword}"' for keyword in normalized_keywords)
                         search_results = sub.search(search_query, sort='new', limit=limit)
                         
                         async for item in search_results:
@@ -325,7 +370,7 @@ class RedditCustomScraper(Scraper):
                             else: 
                                 content = self._best_effort_parse_comment(item)
                             
-                            if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                            if content and self._matches_criteria(content, normalized_keywords, keyword_mode, start_datetime, end_datetime):
                                 contents.append(content)
                     else:
                         # No keywords, just get recent posts

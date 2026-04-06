@@ -32,6 +32,35 @@ class RedditJsonScraper(Scraper):
     MAX_RETRIES = 3
     RETRY_DELAY = 2  # seconds
 
+    @staticmethod
+    def _normalize_ondemand_subreddit(subreddit: Optional[str]) -> Optional[str]:
+        value = (subreddit or "").strip()
+        if not value or value.lower() == "all":
+            return None
+        if value.lower().startswith("/r/"):
+            value = value[1:]
+        return value[2:] if value.lower().startswith("r/") else value
+
+    @classmethod
+    def _split_ondemand_subreddit_and_keywords(
+        cls,
+        subreddit: Optional[str],
+        keywords: Optional[List[str]],
+    ) -> tuple[Optional[str], List[str]]:
+        normalized_subreddit = cls._normalize_ondemand_subreddit(subreddit)
+        normalized_keywords: List[str] = []
+
+        for keyword in keywords or []:
+            value = (keyword or "").strip()
+            if not value:
+                continue
+            if normalized_subreddit is None and value.lower().startswith(("r/", "/r/")):
+                normalized_subreddit = cls._normalize_ondemand_subreddit(value)
+                continue
+            normalized_keywords.append(value)
+
+        return normalized_subreddit, normalized_keywords
+
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """
         Validate a list of DataEntity objects using Reddit's public JSON API.
@@ -191,14 +220,23 @@ class RedditJsonScraper(Scraper):
             List of DataEntity objects matching the criteria
         """
 
+        subreddit_name, normalized_keywords = self._split_ondemand_subreddit_and_keywords(
+            subreddit,
+            keywords,
+        )
+
         # Return empty list if all key search parameters are None
-        if all(param is None for param in [usernames, keywords, start_datetime, end_datetime]) and subreddit == "all":
+        if (
+            all(param is None for param in [usernames, start_datetime, end_datetime])
+            and subreddit_name is None
+            and not normalized_keywords
+        ):
             bt.logging.trace("All search parameters are None, returning empty list")
             return []
 
         bt.logging.trace(
-            f"On-demand scrape with usernames={usernames}, subreddit={subreddit}, "
-            f"keywords={keywords}, keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
+            f"On-demand scrape with usernames={usernames}, subreddit={subreddit_name}, "
+            f"keywords={normalized_keywords}, keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
         )
 
         contents = []
@@ -218,7 +256,7 @@ class RedditJsonScraper(Scraper):
 
                             for post_data in posts:
                                 content = self._parse_post(post_data)
-                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                                if content and self._matches_criteria(content, normalized_keywords, keyword_mode, start_datetime, end_datetime):
                                     contents.append(content)
 
                             # Get user's comments
@@ -227,7 +265,7 @@ class RedditJsonScraper(Scraper):
 
                             for comment_data in comments:
                                 content = self._parse_comment(comment_data)
-                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                                if content and self._matches_criteria(content, normalized_keywords, keyword_mode, start_datetime, end_datetime):
                                     contents.append(content)
                         except Exception as e:
                             bt.logging.warning(f"Failed to scrape user '{username}': {e}")
@@ -235,20 +273,30 @@ class RedditJsonScraper(Scraper):
 
                 # Case 2: Search by subreddit (with optional keywords)
                 else:
-                    subreddit_name = subreddit.removeprefix("r/") if subreddit.startswith('r/') else subreddit
+                    if subreddit_name:
+                        # If we have keywords, use Reddit's search functionality
+                        # raw_json=1 returns unescaped text to match PRAW output
+                        if normalized_keywords:
+                            if keyword_mode == "all":
+                                search_query = ' AND '.join(f'"{keyword}"' for keyword in normalized_keywords)
+                            else:  # keyword_mode == "any"
+                                search_query = ' OR '.join(f'"{keyword}"' for keyword in normalized_keywords)
 
-                    # If we have keywords, use Reddit's search functionality
-                    # raw_json=1 returns unescaped text to match PRAW output
-                    if keywords:
-                        if keyword_mode == "all":
-                            search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
-                        else:  # keyword_mode == "any"
-                            search_query = ' OR '.join(f'"{keyword}"' for keyword in keywords)
-
-                        url = f"{self.BASE_URL}/r/{subreddit_name}/search.json?q={search_query}&restrict_sr=1&limit={limit}&sort=new&raw_json=1"
+                            url = f"{self.BASE_URL}/r/{subreddit_name}/search.json?q={search_query}&restrict_sr=1&limit={limit}&sort=new&raw_json=1"
+                        else:
+                            # No keywords, just get recent posts
+                            url = f"{self.BASE_URL}/r/{subreddit_name}/new.json?limit={limit}&raw_json=1"
                     else:
-                        # No keywords, just get recent posts
-                        url = f"{self.BASE_URL}/r/{subreddit_name}/new.json?limit={limit}&raw_json=1"
+                        if not normalized_keywords:
+                            bt.logging.trace(
+                                "Reddit on-demand scrape has no subreddit and no keywords, returning empty list."
+                            )
+                            return []
+                        if keyword_mode == "all":
+                            search_query = ' AND '.join(f'"{keyword}"' for keyword in normalized_keywords)
+                        else:  # keyword_mode == "any"
+                            search_query = ' OR '.join(f'"{keyword}"' for keyword in normalized_keywords)
+                        url = f"{self.BASE_URL}/search.json?q={search_query}&limit={limit}&sort=new&raw_json=1"
 
                     posts = await self._fetch_posts(session, url)
 
@@ -262,7 +310,7 @@ class RedditJsonScraper(Scraper):
                         else:
                             content = self._parse_post(post_data)  # Default to post parsing
 
-                        if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                        if content and self._matches_criteria(content, normalized_keywords, keyword_mode, start_datetime, end_datetime):
                             contents.append(content)
 
         except Exception as e:

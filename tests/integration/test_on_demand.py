@@ -65,8 +65,8 @@ class TestOnDemandProtocol(unittest.TestCase):
         """Test the complete on-demand data flow for Reddit"""
 
         async def run_test():
-            # Create OnDemand request for Reddit
-            # First keyword is the subreddit, remaining keywords are search terms
+            # Create OnDemand request for Reddit.
+            # This legacy packed form remains supported for backward compatibility.
             test_request = OnDemandRequest(
                 source=DataSource.REDDIT,
                 keywords=["cryptocurrency", "bitcoin"],  # First: subreddit, rest: search terms
@@ -79,8 +79,8 @@ class TestOnDemandProtocol(unittest.TestCase):
             scraper = RedditJsonScraper()
 
             try:
-                # Use on_demand_scrape method for Reddit
-                # First keyword is subreddit, remaining are search keywords
+                # Use on_demand_scrape method for Reddit.
+                # New callers may also send keyword-only Reddit queries without a subreddit.
                 subreddit = test_request.keywords[0]
                 search_keywords = test_request.keywords[1:] if len(test_request.keywords) > 1 else None
                 

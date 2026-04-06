@@ -63,6 +63,17 @@ The implementation uses the standard `ApiDojoTwitterScraper` with the unified `X
 ### Reddit Scraping (Unchanged)
 The Reddit implementation remains the same, using the Reddit API.
 
+For Reddit request routing, miners and validators should accept both of these
+shapes:
+
+- explicit subreddit plus optional search keywords
+- keyword-only queries with no subreddit
+
+If a Reddit keyword token is actually subreddit-shaped (for example
+`r/CryptoCurrency`), it should be promoted back into the subreddit slot instead
+of being treated like a plain keyword. Keyword-only Reddit requests should use
+global Reddit search rather than forcing the first keyword into `/r/<keyword>`.
+
 ## Implementation Options
 
 You can:

@@ -624,6 +624,38 @@ class Miner:
         )
         bt.logging.info(log)
 
+    @staticmethod
+    def _normalize_reddit_subreddit(
+        value: typing.Optional[str],
+    ) -> typing.Optional[str]:
+        if not value:
+            return None
+        normalized = value.strip().lower()
+        if not normalized:
+            return None
+        return normalized if normalized.startswith("r/") else f"r/{normalized}"
+
+    @staticmethod
+    def _normalize_reddit_request(
+        subreddit: typing.Optional[str],
+        keywords: typing.Optional[typing.List[str]],
+    ) -> typing.Tuple[typing.Optional[str], typing.List[str]]:
+        normalized_subreddit = Miner._normalize_reddit_subreddit(subreddit)
+        normalized_keywords: typing.List[str] = []
+
+        for keyword in keywords or []:
+            value = (keyword or "").strip()
+            if not value:
+                continue
+
+            if normalized_subreddit is None and value.lower().startswith(("r/", "/r/")):
+                normalized_subreddit = Miner._normalize_reddit_subreddit(value)
+                continue
+
+            normalized_keywords.append(value)
+
+        return normalized_subreddit, normalized_keywords
+
     async def get_index(self, synapse: GetMinerIndex) -> GetMinerIndex:
         """Runs after the GetMinerIndex synapse has been deserialized (i.e. after synapse.data is available)."""
         bt.logging.info(
@@ -749,12 +781,15 @@ class Miner:
                     synapse.data = []
                     return synapse
 
+                reddit_subreddit, reddit_keywords = self._normalize_reddit_request(
+                    subreddit=getattr(synapse, "subreddit", None),
+                    keywords=synapse.keywords,
+                )
+
                 data = await scraper.on_demand_scrape(
                     usernames=synapse.usernames,
-                    subreddit=synapse.keywords[0] if synapse.keywords else None,
-                    keywords=(
-                        synapse.keywords[1:] if len(synapse.keywords) > 1 else None
-                    ),
+                    subreddit=reddit_subreddit,
+                    keywords=reddit_keywords or None,
                     keyword_mode=synapse.keyword_mode,
                     start_datetime=start_dt,
                     end_datetime=end_dt,

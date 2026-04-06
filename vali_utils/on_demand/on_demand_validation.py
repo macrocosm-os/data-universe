@@ -559,10 +559,14 @@ class OnDemandValidator:
                     limit=1,
                 )
             elif ctx.source.upper() == "REDDIT":
+                subreddit, keywords = RedditJsonScraper._split_ondemand_subreddit_and_keywords(
+                    None,
+                    ctx.keywords,
+                )
                 results = await scraper.on_demand_scrape(
                     usernames=ctx.usernames or [],
-                    subreddit=ctx.keywords[0] if ctx.keywords else None,
-                    keywords=ctx.keywords[1:] if len(ctx.keywords) > 1 else None,
+                    subreddit=subreddit,
+                    keywords=keywords or None,
                     keyword_mode=ctx.keyword_mode,
                     start_datetime=start_dt,
                     end_datetime=end_dt,
