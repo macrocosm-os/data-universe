@@ -1,3 +1,4 @@
+import math
 import threading
 from typing import List, Optional
 import torch
@@ -41,6 +42,11 @@ class MinerScorer:
     STARTING_ONDEMAND_CREDIBILITY = 0.5
     ONDEMAND_CRED_ALPHA = 0.02          # EMA alpha: ~35 jobs (~70 sec) to halve
     ONDEMAND_CRED_BAD_DATA_PENALTY = 0.05  # 5% direct penalty per bad submission
+
+    # S3 independent scoring constants (log2-based, no OD dependency)
+    S3_RAW_SCALE = 10_000_000          # base scaling factor
+    S3_LOG_BASE  = 1_000_000           # 1M
+    S3_HARD_CAP  = 100_000_000         # cap
 
     # P2P dampener — DD job weights (1.0-5.0) inflate P2P scores far beyond S3/OD.
     # DD jobs are designed for S3 uploads, not P2P index broadcasting.
@@ -398,18 +404,11 @@ class MinerScorer:
             old_score = float(self.scores[uid])
             p2p_raw = float(self.scorable_bytes[uid])
             p2p_component = p2p_raw * MinerScorer.P2P_REWARD_SCALE * (new_cred ** MinerScorer._CREDIBILITY_EXP)
-            s3_component = float(self.s3_boosts[uid]) * (float(self.s3_credibility[uid]) ** MinerScorer._CREDIBILITY_EXP)
+            s3_boost_val = float(self.s3_boosts[uid])
+            s3_cred_val = float(self.s3_credibility[uid])
+            s3_log = math.log2(1 + s3_boost_val / MinerScorer.S3_LOG_BASE) * MinerScorer.S3_RAW_SCALE
+            s3_component = min(s3_log, MinerScorer.S3_HARD_CAP) * (s3_cred_val ** MinerScorer._CREDIBILITY_EXP)
             od_component = float(self.ondemand_boosts[uid]) * (new_od_cred ** MinerScorer._CREDIBILITY_EXP)
-
-            # TEMPORARY: S3 capped at 2x on-demand component.
-            # Prevents fabricators from profiting purely off S3 volume.
-            # Legit miners with real OD participation still get rewarded for S3.
-            # Will be replaced by proper incentive redesign.
-            s3_uncapped = s3_component
-            if od_component > 0:
-                s3_component = min(s3_component, od_component * 2)
-            else:
-                s3_component = 0.0
 
             self.scores[uid] = p2p_component + s3_component + od_component
 
@@ -419,8 +418,7 @@ class MinerScorer:
                 f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
                 f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
                 f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
-                f"S3={s3_component:.0f} (boost={float(self.s3_boosts[uid]):.0f}, cred={float(self.s3_credibility[uid]):.4f})"
-                f"{f', capped from {s3_uncapped:.0f}' if s3_uncapped != s3_component else ''}, "
+                f"S3={s3_component:.0f} (boost={s3_boost_val:.0f}, cred={s3_cred_val:.4f}), "
                 f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={new_od_cred:.4f}), "
                 f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
             )
@@ -517,26 +515,20 @@ class MinerScorer:
                 od_cred = float(self.ondemand_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
 
                 p2p_component = score * MinerScorer.P2P_REWARD_SCALE * p2p_cred
-                s3_component = float(self.s3_boosts[uid]) * s3_cred
-                od_component = float(self.ondemand_boosts[uid]) * od_cred
 
-                # TEMPORARY: S3 capped at 2x on-demand component.
-                # Prevents fabricators from profiting purely off S3 volume.
-                # Legit miners with real OD participation still get rewarded for S3.
-                # Will be replaced by proper incentive redesign.
-                s3_uncapped = s3_component
-                if od_component > 0:
-                    s3_component = min(s3_component, od_component * 2)
-                else:
-                    s3_component = 0.0
+                s3_boost_val = float(self.s3_boosts[uid])
+                s3_cred_val = float(self.s3_credibility[uid])
+                s3_log = math.log2(1 + s3_boost_val / MinerScorer.S3_LOG_BASE) * MinerScorer.S3_RAW_SCALE
+                s3_component = min(s3_log, MinerScorer.S3_HARD_CAP) * (s3_cred_val ** MinerScorer._CREDIBILITY_EXP)
+
+                od_component = float(self.ondemand_boosts[uid]) * od_cred
 
                 score = p2p_component + s3_component + od_component
 
                 bt.logging.info(
                     f"Miner {uid} score breakdown: "
                     f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
-                    f"S3={s3_component:.0f} (boost={float(self.s3_boosts[uid]):.0f}, cred={float(self.s3_credibility[uid]):.4f})"
-                    f"{f', capped from {s3_uncapped:.0f}' if s3_uncapped != s3_component else ''}, "
+                    f"S3={s3_component:.0f} (boost={s3_boost_val:.0f}, cred={s3_cred_val:.4f}), "
                     f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={float(self.ondemand_credibility[uid]):.4f})"
                 )
 
