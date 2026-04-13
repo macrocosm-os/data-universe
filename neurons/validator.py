@@ -20,7 +20,6 @@ import warnings
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
 import copy
-import random
 import sys
 import torch
 import numpy as np
@@ -37,7 +36,6 @@ from neurons import __spec_version__ as spec_version
 from common.api_client import (
     ListJobsWithSubmissionsForValidationRequest,
     DataUniverseApiClient,
-    OnDemandMinerUpload,
 )
 from vali_utils.validator_s3_access import ValidatorS3Access
 from rewards.data_value_calculator import DataValueCalculator
@@ -50,7 +48,8 @@ from typing import Dict
 from common import constants
 from common import utils
 from vali_utils.miner_evaluator import MinerEvaluator
-from vali_utils.on_demand.on_demand_validation import OnDemandValidator, ValidationContext
+from vali_utils.on_demand.on_demand_validation import OnDemandValidator
+from vali_utils.on_demand.od_job_cache import ODJobCache, CachedMinerODResult
 from vali_utils import metrics
 
 load_dotenv()
@@ -133,7 +132,7 @@ class Validator:
 
         # Add counter for evaluation cycles since startup
         self.evaluation_cycles_since_startup = 0
-        self.processed_job_ids_cache = utils.LRUSet(capacity=10_000)
+        self.od_cache = ODJobCache()
 
         self.on_demand_thread: threading.Thread = None
 
@@ -179,6 +178,10 @@ class Validator:
             bt.logging.warning("Axon off, not serving ip to chain.")
 
         self.on_demand_validator = OnDemandValidator(evaluator=self.evaluator)
+
+        # Wire OD components into the evaluator so eval_miner() can drain and validate
+        self.evaluator.od_cache = self.od_cache
+        self.evaluator.on_demand_validator = self.on_demand_validator
 
         self.is_setup = True
 
@@ -276,24 +279,22 @@ class Validator:
         bt.logging.debug(f"Started a new wandb run: {name}")
 
     async def loop_poll_on_demand_jobs_with_submissions(self):
-        use_cache = True  # change to false for dev testing
-
         while not self.should_exit:
             bt.logging.info("Pulling on demand jobs with submissions")
 
             try:
                 async with self._on_demand_client() as client:
-                    jobs_with_submissions_downloaded_response = (
-                        await client.validator_list_and_download_submission_json(
+                    # Metadata-only call — no S3 downloads.
+                    # We only need submission timestamps and content_length
+                    # to compute speed multipliers and detect empty submissions.
+                    job_list_resp = (
+                        await client.validator_list_jobs_with_submissions(
                             req=ListJobsWithSubmissionsForValidationRequest(
                                 expired_since=dt.datetime.now(dt.timezone.utc)
                                 - dt.timedelta(minutes=45),
                                 expired_until=dt.datetime.now(dt.timezone.utc)
                                 - dt.timedelta(minutes=2),
                                 limit=10,
-                            ),
-                            job_ids_to_skip_downloading=set(
-                                self.processed_job_ids_cache.data.keys()
                             ),
                         )
                     )
@@ -303,304 +304,83 @@ class Validator:
                 continue
 
             try:
-                # co locate each job id and miner hotkey
-                job_list_with_submissions_resp, downloads = (
-                    jobs_with_submissions_downloaded_response
+                total_submissions = sum(
+                    len(jws.submissions)
+                    for jws in job_list_resp.jobs_with_submissions
                 )
-
-                job_data_per_job_id_and_miner_hotkey: Dict[
-                    str, Dict[str, Dict]
-                ] = {}  # d[job id][miner hotkey]{download data}
-
-                for (
-                    job_with_submissions
-                ) in job_list_with_submissions_resp.jobs_with_submissions:
-                    job_data_per_job_id_and_miner_hotkey[
-                        job_with_submissions.job.id
-                    ] = {}  # job id -> hotkey
-
-                for download in downloads:
-                    job_id = download["job_id"]
-                    miner_hotkey = download["miner_hotkey"]
-
-                    job_data_per_job_id_and_miner_hotkey[job_id][miner_hotkey] = (
-                        download
-                    )
-
                 bt.logging.info(
-                    f"Pulled in: {len(job_data_per_job_id_and_miner_hotkey)} jobs with {sum([len(v) for v in job_data_per_job_id_and_miner_hotkey.values()])} total submissions"
+                    f"Pulled {len(job_list_resp.jobs_with_submissions)} jobs "
+                    f"with {total_submissions} total submissions"
                 )
 
-                # validate
                 for (
                     job_with_submission
-                ) in job_list_with_submissions_resp.jobs_with_submissions:
+                ) in job_list_resp.jobs_with_submissions:
                     job = job_with_submission.job
 
-                    if use_cache and job.id in self.processed_job_ids_cache:
+                    if self.od_cache.is_job_processed(job.id):
                         continue
 
                     submissions = job_with_submission.submissions
-                    submissions_with_valid_downloads = [
-                        sub
-                        for sub in submissions
-                        if sub.miner_hotkey
-                        in job_data_per_job_id_and_miner_hotkey[job.id]
-                        and job_data_per_job_id_and_miner_hotkey[job.id][
-                            sub.miner_hotkey
-                        ]["error"]
-                        is None
-                    ]
 
-                    if (
-                        len(submissions_with_valid_downloads) > 5
-                    ):  # amount of miners to validate per job id
-                        random.shuffle(submissions_with_valid_downloads)
-                        submissions_with_valid_downloads = (
-                            submissions_with_valid_downloads[:5]
-                        )
+                    # No validation / downloading — just record who submitted
+                    # and their speed based on submission timestamp.
+                    # S3 validation already catches data quality issues;
+                    # OD just tracks participation and response speed.
+                    cache_results: Dict[str, CachedMinerODResult] = {}
 
-                    # Build validation context from job
-                    usernames = []
-                    if hasattr(job.job, "usernames") and job.job.usernames:
-                        usernames = job.job.usernames
-                    elif hasattr(job.job, "channels") and job.job.channels:
-                        usernames = job.job.channels
+                    for sub in submissions:
+                        hotkey = sub.miner_hotkey
 
-                    keywords = []
-                    if hasattr(job.job, "keywords") and job.job.keywords:
-                        keywords = job.job.keywords
-                    if hasattr(job.job, "subreddit") and job.job.subreddit:
-                        keywords.insert(0, job.job.subreddit)
-
-                    url = None
-                    if hasattr(job.job, "url") and job.job.url:
-                        url = job.job.url
-
-                    validation_context = ValidationContext(
-                        source=job.job.platform,
-                        usernames=usernames,
-                        keywords=keywords,
-                        url=url,
-                        keyword_mode=job.keyword_mode,
-                        start_date=job.start_date.isoformat() if job.start_date else None,
-                        end_date=job.end_date.isoformat() if job.end_date else None,
-                        limit=job.limit,
-                    )
-
-                    # Prepare miner responses in the format expected by validation methods
-                    miner_responses = {}
-                    miner_data_counts = {}
-                    miner_submission_metadata = {}
-
-                    for sub in submissions_with_valid_downloads:
-                        miner_hotkey = sub.miner_hotkey
-
-                        # Convert hotkey to UID
+                        # Skip miners not in metagraph
                         try:
-                            uid = self.metagraph.hotkeys.index(miner_hotkey)
+                            self.metagraph.hotkeys.index(hotkey)
                         except ValueError:
-                            bt.logging.warning(
-                                f"Miner hotkey {miner_hotkey} not found in metagraph"
+                            continue
+
+                        # Empty submission (0 bytes) → penalize
+                        is_empty = (sub.s3_content_length or 0) == 0
+                        if is_empty:
+                            cache_results[hotkey] = CachedMinerODResult(
+                                job_id=job.id,
+                                submitted_at=sub.submitted_at,
+                                returned_count=0,
+                                requested_limit=job.limit,
+                                passed_validation=False,
+                                speed_multiplier=0.0,
+                                volume_multiplier=0.0,
+                                failure_reason="empty_submission",
                             )
                             continue
 
-                        # Get and validate uploaded data
-                        try:
-                            miner_uploaded_raw_json = (
-                                job_data_per_job_id_and_miner_hotkey[job.id][
-                                    miner_hotkey
-                                ]["data"]
-                            )
-                            miner_upload = OnDemandMinerUpload.model_validate(
-                                miner_uploaded_raw_json
-                            )
-                        except Exception as e:
-                            bt.logging.warning(
-                                f"Miner {miner_hotkey} (UID {uid}) data validation failed: {e}"
-                            )
-                            # Treat parse failures as empty — will be penalized as failed validation
-                            miner_responses[uid] = []
-                            miner_data_counts[uid] = 0
-                            miner_submission_metadata[uid] = {
-                                "submitted_at": sub.submitted_at,
-                                "row_count": 0,
-                            }
-                            continue
-
-                        # Empty submissions (0-byte or empty data_entities) are kept
-                        # in miner_responses so they flow through validation as failures
-                        if not miner_upload.data_entities:
-                            bt.logging.info(
-                                f"Miner {uid}:{miner_hotkey} submitted empty data for job {job.id}"
-                            )
-
-                        # Cap to requested limit — miners shouldn't be rewarded
-                        # for returning more rows than the job asked for.
-                        entities = miner_upload.data_entities
-                        if job.limit and len(entities) > job.limit:
-                            bt.logging.info(
-                                f"Miner {uid}:{miner_hotkey} returned {len(entities)} rows "
-                                f"but job limit is {job.limit} — capping"
-                            )
-                            entities = entities[:job.limit]
-
-                        # Store in format expected by validation methods
-                        miner_responses[uid] = entities
-                        miner_data_counts[uid] = len(entities)
-
-                        # Track submission metadata for reward calculation
-                        miner_submission_metadata[uid] = {
-                            "submitted_at": sub.submitted_at,
-                            "row_count": len(miner_upload.data_entities),
-                        }
-
-                    # If no miner returned data, verify independently whether
-                    # the data exists using the validator's own scraper.
-                    if not any(c > 0 for c in miner_data_counts.values()):
-                        data_exists = await self.on_demand_validator.check_data_exists(
-                            validation_context
-                        )
-                        if not data_exists:
-                            bt.logging.info(
-                                f"Job {job.id}: no miner returned data and validator "
-                                f"probe confirms data doesn't exist — skipping job"
-                            )
-                            continue
-                        else:
-                            bt.logging.warning(
-                                f"Job {job.id}: no miner returned data but validator "
-                                f"probe found data — miners failed to scrape"
-                            )
-
-                    # Step 1: Format validation
-                    for uid, data in miner_responses.items():
-                        if (
-                            data
-                            and not self.on_demand_validator._validate_miner_data_format(
-                                validation_context, data, uid
-                            )
-                        ):
-                            bt.logging.info(f"Miner {uid} failed format validation")
-                            miner_responses[uid] = []  # Treat as empty
-                            miner_data_counts[uid] = 0
-
-                    # Step 2: Perform detailed validation on sample posts
-                    validation_results = {}
-                    for uid, posts in miner_responses.items():
-                        if not posts:
-                            continue
-
-                        num_to_validate = min(2, len(posts))
-                        selected_posts = random.sample(posts, num_to_validate)
-
-                        for post in selected_posts:
-                            post_id = self.on_demand_validator._get_post_id(post)
-                            miner_post_key = f"{uid}:{post_id}"
-                            is_valid = await self.on_demand_validator._validate_entity(
-                                validation_context, post, post_id, uid
-                            )
-                            validation_results[miner_post_key] = is_valid
-
-                    # Step 3: Apply validation penalties and get successful miners
-                    miner_scores, failed_miners, successful_miners = (
-                        self.on_demand_validator._apply_validation_penalties(
-                            miner_responses, validation_results
-                        )
-                    )
-
-                    # Step 4: Volume consensus validation
-                    consensus_count = (
-                        self.on_demand_validator._calculate_volume_consensus(
-                            miner_data_counts
-                        )
-                    )
-                    if consensus_count:
-                        penalized_miners = (
-                            self.on_demand_validator._apply_consensus_volume_penalties(
-                                miner_data_counts, job.limit, consensus_count
-                            )
-                        )
-                        bt.logging.info(
-                            f"Applied volume penalties to {len(penalized_miners)} miners"
-                        )
-                        # Remove consensus-penalized miners from successful list
-                        successful_miners = [
-                            uid
-                            for uid in successful_miners
-                            if uid not in penalized_miners
-                        ]
-
-                    # Step 5: Apply rewards to successful miners
-                    for uid in successful_miners:
-                        if uid not in miner_submission_metadata:
-                            bt.logging.warning(
-                                f"Missing metadata for successful miner {uid}"
-                            )
-                            continue
-
-                        metadata = miner_submission_metadata[uid]
-
-                        # Calculate reward multipliers
+                        # Calculate speed multiplier from submission time
                         speed_mult, volume_mult = (
                             self.on_demand_validator.calculate_ondemand_reward_multipliers(
                                 job_created_at=job.created_at,
-                                submission_timestamp=metadata["submitted_at"],
-                                returned_count=metadata["row_count"],
+                                submission_timestamp=sub.submitted_at,
+                                returned_count=job.limit or 100,  # trust they filled the job
                                 requested_limit=job.limit,
-                                consensus_count=consensus_count,
                             )
                         )
 
-                        # Apply reward (scaled by existing credibility internally)
-                        self.evaluator.scorer.apply_ondemand_reward(
-                            uid=uid,
+                        cache_results[hotkey] = CachedMinerODResult(
+                            job_id=job.id,
+                            submitted_at=sub.submitted_at,
+                            returned_count=job.limit or 100,
+                            requested_limit=job.limit,
+                            passed_validation=True,
                             speed_multiplier=speed_mult,
                             volume_multiplier=volume_mult,
                         )
 
+                    # Write all results to the shared OD cache
+                    self.od_cache.add_results(job.id, cache_results)
+
                     bt.logging.info(
-                        f"Job {job.id} validation complete: "
-                        f"{len(successful_miners)} miners rewarded, "
-                        f"{len(failed_miners)} miners failed validation"
+                        f"Job {job.id}: cached {len(cache_results)} submitter results "
+                        f"({sum(1 for r in cache_results.values() if r.passed_validation)} non-empty, "
+                        f"{sum(1 for r in cache_results.values() if not r.passed_validation)} empty)"
                     )
-
-                    # Update on-demand credibility only for miners who submitted NON-EMPTY data.
-                    # Empty submissions (0-byte or empty data_entities) do not earn credibility.
-                    all_submitter_uids = set()
-                    for sub in job_with_submission.submissions:
-                        try:
-                            uid = self.metagraph.hotkeys.index(sub.miner_hotkey)
-                        except ValueError:
-                            continue
-                        # Only grant credibility if miner had actual data
-                        if uid in miner_data_counts and miner_data_counts[uid] > 0:
-                            all_submitter_uids.add(uid)
-
-                    all_miner_uids = utils.get_miner_uids(
-                        self.metagraph, self.evaluator.vpermit_rao_limit
-                    )
-                    self.evaluator.scorer.update_ondemand_credibility(
-                        submitter_uids=all_submitter_uids,
-                        all_miner_uids=all_miner_uids,
-                    )
-
-                if use_cache:
-                    job_ids_processed_in_this_loop_not_already_in_cache = set(
-                        [
-                            job_id
-                            for job_id in set(
-                                job_data_per_job_id_and_miner_hotkey.keys()
-                            )
-                            if job_id not in self.processed_job_ids_cache
-                        ]
-                    )
-                    bt.logging.info(
-                        f"Adding processed on demand job ids to cache: {job_ids_processed_in_this_loop_not_already_in_cache}"
-                    )
-                    for job_id in job_ids_processed_in_this_loop_not_already_in_cache:
-                        if job_id not in self.processed_job_ids_cache:
-                            self.processed_job_ids_cache.add(job_id)
             except:
                 bt.logging.exception(
                     "Error while validating on demand jobs and submissions"
@@ -977,7 +757,7 @@ class Validator:
 
         scorer.recalculate_all_s3_boosts()
 
-        scores = scorer.get_scores()
+        scores = scorer.get_scores_for_weights()
         credibilities = scorer.get_credibilities()
 
         # Check if scores contains any NaN values and log a warning if it does.

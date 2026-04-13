@@ -23,7 +23,8 @@ class MinerScorer:
     # v4: Reset on-demand again after data existence probe + reddit body fix
     # v5: Full reset — engagement/uniqueness/URL checks reveal widespread exploit
     # v6: Reset S3 — .head() → .sample() fix (scraper sampling bypass)
-    STATE_VERSION = 6
+    # v7: Reset OD — moved scoring to evaluator, dropped ^2.5 exponent, fixed credibility decay
+    STATE_VERSION = 7
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -148,11 +149,60 @@ class MinerScorer:
                 self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
                 self.effective_sizes.zero_()
 
+            if saved_version < 7:
+                # -> v7: Full reset — OD scoring moved to evaluator, ^2.5 exponent
+                # dropped, credibility decay fixed. P2P cap (min(p2p, s3+od)) means
+                # all scores computed under broken OD are wrong. Clean slate.
+                bt.logging.warning(
+                    f"State migration v{saved_version} -> v7: "
+                    f"Full score reset (OD fix changes all weights)."
+                )
+                self.scores.zero_()
+                self.miner_credibility.fill_(MinerScorer.STARTING_CREDIBILITY)
+                self.scorable_bytes.zero_()
+                self.s3_boosts.zero_()
+                self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
+                self.effective_sizes.zero_()
+                self.ondemand_boosts.zero_()
+                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
+
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
         # Return a copy to ensure outside code can't modify the scores.
         with self.lock:
             return self.scores.clone()
+
+    def get_scores_for_weights(self) -> torch.Tensor:
+        """Returns scores with P2P capped at (S3 + OD) for weight setting.
+        """
+        with self.lock:
+            capped_scores = torch.zeros_like(self.scores)
+
+            for uid in range(len(self.scores)):
+                p2p_cred = float(self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
+                s3_cred = float(self.s3_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
+                # OD: no exponent — ondemand_boosts EMA already decays non-participants.
+                # The ^2.5 combined with broken per-job credibility polling was destroying
+                # OD scores for all miners.
+                od_cred = float(self.ondemand_credibility[uid])
+
+                p2p_component = float(self.scorable_bytes[uid]) * MinerScorer.P2P_REWARD_SCALE * p2p_cred
+                s3_component = float(self.s3_boosts[uid]) * s3_cred
+                od_component = float(self.ondemand_boosts[uid]) * od_cred
+
+                # S3 cap (existing): S3 <= 2x OD
+                if od_component > 0:
+                    s3_component = min(s3_component, od_component * 2)
+                else:
+                    s3_component = 0.0
+
+                # P2P cap: P2P can't exceed S3 + OD
+                service_component = s3_component + od_component
+                p2p_capped = min(p2p_component, service_component) if service_component > 0 else 0.0
+
+                capped_scores[uid] = p2p_capped + s3_component + od_component
+
+            return capped_scores
 
     def get_credibilities(self) -> torch.Tensor:
         """Returns the raw credibilities of all miners."""
@@ -355,42 +405,16 @@ class MinerScorer:
                 f"Total s3_boosts: {total_boosts:.0f}"
             )
 
-    def update_ondemand_credibility(self, submitter_uids: set, all_miner_uids: list):
-        """Update on-demand credibility for all miners based on job participation.
+    def apply_ondemand_penalty(self, uid: int, mult_factor: float):
+        """Applies an OD-only penalty: decays boost and OD credibility.
 
-        Called from validator.py for each expired job processed.
-        For miners who submitted: EMA toward 1.0 (trust builds).
-        For miners who didn't submit: EMA toward 0.0 (trust decays).
-
-        Args:
-            submitter_uids: Set of UIDs that submitted to this job (all, not just validated 5)
-            all_miner_uids: List of all active miner UIDs in the metagraph
+        Does NOT touch P2P credibility — OD failures should not contaminate
+        P2P scoring. The composite score is recalculated after the update.
         """
         with self.lock:
-            alpha = MinerScorer.ONDEMAND_CRED_ALPHA
-            for uid in all_miner_uids:
-                participated = 1.0 if uid in submitter_uids else 0.0
-                self.ondemand_credibility[uid] = (
-                    alpha * participated + (1 - alpha) * self.ondemand_credibility[uid]
-                )
-
-    def apply_ondemand_penalty(self, uid: int, mult_factor: float):
-        """Applies a credibility penalty to a given miner based on their ondemand result"""
-        with self.lock:
-            cred_penalty = MinerScorer.ONDEMAND_MAX_CRED_PENALTY * mult_factor
-            old_cred = float(self.miner_credibility[uid])
-
-            # Apply credibility penalty
-            self.miner_credibility[uid] = max(self.miner_credibility[uid] - cred_penalty, 0)
-            new_cred = float(self.miner_credibility[uid])
-
             # EMA the ondemand boost with 0 reward for failures
             old_boost = float(self.ondemand_boosts[uid])
-            failure_reward = 0
-            self.ondemand_boosts[uid] = (
-                self.ondemand_alpha * failure_reward +
-                (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
-            )
+            self.ondemand_boosts[uid] = (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
             new_boost = float(self.ondemand_boosts[uid])
 
             # Direct penalty to on-demand credibility for bad data
@@ -400,27 +424,10 @@ class MinerScorer:
             )
             new_od_cred = float(self.ondemand_credibility[uid])
 
-            # Recalculate composite score with updated credibilities
-            old_score = float(self.scores[uid])
-            p2p_raw = float(self.scorable_bytes[uid])
-            p2p_component = p2p_raw * MinerScorer.P2P_REWARD_SCALE * (new_cred ** MinerScorer._CREDIBILITY_EXP)
-            s3_boost_val = float(self.s3_boosts[uid])
-            s3_cred_val = float(self.s3_credibility[uid])
-            s3_log = math.log2(1 + s3_boost_val / MinerScorer.S3_LOG_BASE) * MinerScorer.S3_RAW_SCALE
-            s3_component = min(s3_log, MinerScorer.S3_HARD_CAP) * (s3_cred_val ** MinerScorer._CREDIBILITY_EXP)
-            od_component = float(self.ondemand_boosts[uid]) * (new_od_cred ** MinerScorer._CREDIBILITY_EXP)
-
-            self.scores[uid] = p2p_component + s3_component + od_component
-
             bt.logging.info(
                 f"OnDemand penalty for Miner {uid}: "
-                f"P2P Cred {old_cred:.4f} -> {new_cred:.4f}, "
-                f"OnDemand Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
-                f"Boost {old_boost:.2f} -> {new_boost:.2f}, "
-                f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
-                f"S3={s3_component:.0f} (boost={s3_boost_val:.0f}, cred={s3_cred_val:.4f}), "
-                f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={new_od_cred:.4f}), "
-                f"Score {old_score:.2f} -> {float(self.scores[uid]):.2f}"
+                f"OD Cred {old_od_cred:.4f} -> {new_od_cred:.4f}, "
+                f"Boost {old_boost:.0f} -> {new_boost:.0f}"
             )
 
     def apply_ondemand_reward(
@@ -451,11 +458,40 @@ class MinerScorer:
             )
             new_boost = float(self.ondemand_boosts[uid])
 
+            # Also bump OD credibility toward 1.0 on success (mirrors S3 credibility pattern)
+            old_od_cred = float(self.ondemand_credibility[uid])
+            alpha = MinerScorer.ONDEMAND_CRED_ALPHA
+            self.ondemand_credibility[uid] = min(
+                1.0, alpha * 1.0 + (1 - alpha) * self.ondemand_credibility[uid]
+            )
+            new_od_cred = float(self.ondemand_credibility[uid])
+
             bt.logging.info(
                 f"OnDemand reward for Miner {uid}: "
                 f"Speed={speed_multiplier:.3f}, Volume={volume_multiplier:.3f}, "
                 f"Raw reward={raw_reward:.0f}, "
-                f"OnDemand boost (EMA'd): {old_boost:.0f} -> {new_boost:.0f}"
+                f"OnDemand boost (EMA'd): {old_boost:.0f} -> {new_boost:.0f}, "
+                f"OD cred: {old_od_cred:.4f} -> {new_od_cred:.4f}"
+            )
+
+    def apply_ondemand_credibility_bump(self, uid: int) -> None:
+        """Small credibility bump for miners who submitted to an OD job but weren't sampled.
+
+        They participated (good signal) but we didn't verify their data,
+        so we give a smaller credibility increase than a validated success.
+        """
+        with self.lock:
+            old_od_cred = float(self.ondemand_credibility[uid])
+            # Half the normal alpha — participated but unverified
+            alpha = MinerScorer.ONDEMAND_CRED_ALPHA * 0.5
+            self.ondemand_credibility[uid] = min(
+                1.0, alpha * 1.0 + (1 - alpha) * self.ondemand_credibility[uid]
+            )
+            new_od_cred = float(self.ondemand_credibility[uid])
+
+            bt.logging.trace(
+                f"OnDemand credibility bump (unsampled) for Miner {uid}: "
+                f"OD cred: {old_od_cred:.4f} -> {new_od_cred:.4f}"
             )
 
     def on_miner_evaluated(
@@ -512,7 +548,9 @@ class MinerScorer:
                 # This prevents one bad channel from zeroing out all rewards.
                 p2p_cred = float(self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
                 s3_cred = float(self.s3_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
-                od_cred = float(self.ondemand_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
+                # OD: no exponent — the EMA-based credibility already decays non-participants.
+                # The ^2.5 was destroying OD scores (near-zero values raised to 2.5 → effectively zero).
+                od_cred = float(self.ondemand_credibility[uid])
 
                 p2p_component = score * MinerScorer.P2P_REWARD_SCALE * p2p_cred
 
