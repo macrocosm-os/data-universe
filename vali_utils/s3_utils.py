@@ -364,11 +364,14 @@ class DuckDBSampledValidator:
 
                 if recent_files:
                     bt.logging.info(
-                        f"{miner_hotkey}: Running scraper validation on {len(recent_files)} "
-                        f"recent files (uploaded within {self.SCRAPER_MAX_AGE_HOURS}h)..."
+                        f"{miner_hotkey}: Running scraper validation — "
+                        f"{len(recent_files)} recent + {len(sampled_files) - len(recent_files)} old files "
+                        f"(old files: null-rate check only, no entity scraping)"
                     )
+                    recent_file_keys = {f['key'] for f in recent_files}
                     scraper_result = await self._perform_scraper_validation(
-                        miner_hotkey, recent_files, expected_jobs, presigned_urls, num_entities=15
+                        miner_hotkey, sampled_files, expected_jobs, presigned_urls,
+                        recent_file_keys=recent_file_keys, num_entities=15
                     )
                 else:
                     bt.logging.info(
@@ -722,7 +725,7 @@ class DuckDBSampledValidator:
                 if platform in ['x', 'twitter']:
                     read_cols = ['url', 'text', 'view_count', 'tweet_id', 'username']
                 else:
-                    read_cols = ['url', 'body', 'title', 'id']
+                    read_cols = ['url', 'body', 'title', 'id', 'username']
                 read_cols = [c for c in read_cols if c in available_columns]
                 if 'url' not in read_cols:
                     read_cols.append('url')
@@ -768,6 +771,34 @@ class DuckDBSampledValidator:
                                 "empty_rate": 100.0,
                                 "total_rows": 0,
                                 "reason": f"Empty username in {empty_user_pct:.0f}% of X rows"
+                            }
+
+                    # Reddit: empty username = instant fail (same exploit vector as X)
+                    if platform == 'reddit' and 'username' in rg_df.columns:
+                        empty_user = rg_df['username'].fillna('').astype(str).str.strip() == ''
+                        empty_user_pct = empty_user.sum() / len(rg_df) * 100
+                        if empty_user_pct > 50:
+                            bt.logging.warning(f"Empty username: {empty_user_pct:.0f}% Reddit rows have no username: {file_key}")
+                            return {
+                                "success": False,
+                                "duplicate_rate_within_job": 100.0,
+                                "empty_rate": 100.0,
+                                "total_rows": 0,
+                                "reason": f"Empty username in {empty_user_pct:.0f}% of Reddit rows"
+                            }
+
+                    # Reddit: empty id = instant fail (empty id skips entity creation)
+                    if platform == 'reddit' and 'id' in rg_df.columns:
+                        empty_id = rg_df['id'].fillna('').astype(str).str.strip() == ''
+                        empty_id_pct = empty_id.sum() / len(rg_df) * 100
+                        if empty_id_pct > 50:
+                            bt.logging.warning(f"Empty id: {empty_id_pct:.0f}% Reddit rows have no id: {file_key}")
+                            return {
+                                "success": False,
+                                "duplicate_rate_within_job": 100.0,
+                                "empty_rate": 100.0,
+                                "total_rows": 0,
+                                "reason": f"Empty id in {empty_id_pct:.0f}% of Reddit rows"
                             }
 
                     # X-only: engagement, uniqueness, and URL↔tweet_id consistency
@@ -1093,13 +1124,29 @@ class DuckDBSampledValidator:
         sampled_files: List[Dict],
         expected_jobs: Dict[str, Dict],
         presigned_urls: Dict[str, str],
+        recent_file_keys: set = None,
         num_entities: int = 10
     ) -> Dict[str, Any]:
-        """Validate random entities using real scrapers."""
-        all_entities = []
+        """
+        Validate random entities using real scrapers.
 
+        Scans ALL sampled_files (both recent and old) to compute a comprehensive null-rate:
+          - Recent files (key in recent_file_keys): entities are collected for scraper validation
+            AND rows count towards null-rate.
+          - Old files (key NOT in recent_file_keys): rows count towards null-rate ONLY.
+            They are NOT submitted to the scraper (too old to verify), but malformed rows
+            in old files still trigger a FAIL — miners cannot hide fake data in aged files.
+
+        Loop breaks once enough entities are collected from recent files (entity_limit).
+        Null-rate check: if > 5 rows fail entity parsing across all scanned files → FAIL.
+        """
+        all_entities = []
+        total_rows_sampled = 0
+        null_entity_rows = 0
+
+        entity_limit = num_entities * 2
         for file_info in sampled_files:
-            if len(all_entities) >= num_entities * 2:
+            if len(all_entities) >= entity_limit:
                 break
 
             # Skip oversized files to prevent OOM
@@ -1151,10 +1198,33 @@ class DuckDBSampledValidator:
                 if df is None or len(df) == 0:
                     continue
 
+                # Recent files: collect entities for scraper validation.
+                # Old files: scan for null-rate only (entities not added to all_entities).
+                is_recent = recent_file_keys is None or file_key in recent_file_keys
                 for _, row in df.iterrows():
+                    total_rows_sampled += 1
                     entity = self._create_data_entity(row, platform)
                     if entity:
-                        all_entities.append((entity, platform, job_id))
+                        if is_recent:
+                            all_entities.append((entity, platform, job_id))
+                    else:
+                        null_entity_rows += 1
+                        # Fail fast: any miner with properly formatted data should parse cleanly
+                        if null_entity_rows > 5:
+                            bt.logging.warning(
+                                f"{miner_hotkey}: {null_entity_rows} rows failed entity parsing "
+                                f"(total_sampled={total_rows_sampled}, file={file_key}) — "
+                                f"malformed/fabricated data"
+                            )
+                            return {
+                                'entities_validated': num_entities,
+                                'entities_passed': 0,
+                                'success_rate': 0.0,
+                                'sample_results': [
+                                    f"\u274c {null_entity_rows} rows failed entity parsing "
+                                    f"(total_sampled={total_rows_sampled}) — malformed/fabricated data"
+                                ]
+                            }
 
                 del df
             except:
@@ -1167,7 +1237,12 @@ class DuckDBSampledValidator:
                         pass
 
         if not all_entities:
-            return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
+            return {
+                'entities_validated': num_entities,
+                'entities_passed': 0,
+                'success_rate': 0.0,
+                'sample_results': ["\u274c No valid entities parsed from sampled rows — malformed data"]
+            }
 
         entities_to_validate = random.sample(all_entities, min(num_entities, len(all_entities)))
 
