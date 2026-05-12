@@ -410,9 +410,17 @@ class S3PartitionedUploader:
         last_uri = cursor.get('last_uri')
         if last_dt is None:
             return ('', [])
-        # Keyset pagination: (datetime > ?) OR (datetime = ? AND uri > ?)
+        # Keyset pagination: (datetime > ?) OR (datetime = ? AND uri > ?).
+        # The DataEntity.datetime column is stored space-separated
+        # ("2026-05-12 17:11:53+00:00") while cursors derived from
+        # pd.Timestamp.isoformat() use the ISO 'T' separator. SQLite string
+        # compare is lexicographic and ASCII space (0x20) < 'T' (0x54), so
+        # a 'T'-form cursor causes `datetime > ?` to return FALSE for every
+        # row, silently uploading 0 records. REPLACE() normalizes at compare
+        # time and is robust to any cursor format on disk (including state
+        # files written by older versions).
         return (
-            ' AND (datetime > ? OR (datetime = ? AND uri > ?))',
+            " AND (datetime > REPLACE(?, 'T', ' ') OR (datetime = REPLACE(?, 'T', ' ') AND uri > ?))",
             [last_dt, last_dt, last_uri or ''],
         )
 
@@ -607,11 +615,14 @@ class S3PartitionedUploader:
 
             total_processed += len(chunk_df)
 
-            # Advance cursor to the last row in this chunk
+            # Advance cursor to the last row in this chunk.
+            # Use space-separator isoformat (sep=' ') so the cursor matches
+            # the DataEntity.datetime column format; see _build_cursor_condition
+            # for context on the T-vs-space lex compare bug this avoids.
             last_row = chunk_df.iloc[-1]
             last_datetime = last_row['datetime']
             if hasattr(last_datetime, 'isoformat'):
-                last_datetime = last_datetime.isoformat()
+                last_datetime = last_datetime.isoformat(sep=' ')
             else:
                 last_datetime = str(last_datetime)
             last_uri = str(last_row['uri'])
