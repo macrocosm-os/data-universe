@@ -24,7 +24,6 @@ from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
-from common.constants import SCRAPED_AT_STRING_REQUIRED_DATE
 from common.data import DataEntity, DataSource
 from common.api_client import TaoSigner
 from vali_utils.parquet_reader import read_random_row_group
@@ -744,34 +743,6 @@ class DuckDBSampledValidator:
                     )
                     schema_failures += 1
                     break
-
-                # --- scraped_at dtype gate: reject post-deadline files where
-                # scraped_at/scrapedAt is a parquet timestamp instead of a string.
-                # Pre-deadline files are grandfathered (miners can't rewrite parquet).
-                now_utc = dt.datetime.now(dt.timezone.utc)
-                if now_utc >= SCRAPED_AT_STRING_REQUIRED_DATE:
-                    last_mod = file_info.get('last_modified', '')
-                    try:
-                        file_dt = pd.to_datetime(last_mod, utc=True).to_pydatetime() if last_mod else None
-                    except Exception:
-                        file_dt = None
-                    if file_dt and file_dt >= SCRAPED_AT_STRING_REQUIRED_DATE:
-                        target_col = 'scraped_at' if platform in ['x', 'twitter'] else 'scrapedat'
-                        # DuckDB parquet_schema reports physical types: BYTE_ARRAY
-                        # for strings, INT64 for parquet timestamps. Strings must
-                        # be BYTE_ARRAY — anything else (INT64, INT96, etc.) means
-                        # the value was written as a real timestamp dtype.
-                        bad_dtype = any(
-                            name.lower() == target_col and str(ptype).upper() != 'BYTE_ARRAY'
-                            for name, ptype in schema_result
-                        )
-                        if bad_dtype:
-                            bt.logging.warning(
-                                f"scraped_at must be string after "
-                                f"{SCRAPED_AT_STRING_REQUIRED_DATE.date()}: "
-                                f"{file_key} (uploaded {last_mod})"
-                            )
-                            continue
 
                 # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
                 if job_id not in dedup_hashes_by_job:

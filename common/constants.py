@@ -42,13 +42,6 @@ REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # 
 # Date after which backwards compatibility for nested X content format will be removed
 X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
 
-# Date after which uploaded parquet files must store scraped_at / scrapedAt
-# as a string (ISO format), not a parquet timestamp dtype. Files uploaded
-# before this date are grandfathered — miners cannot rewrite already-uploaded
-# parquet. Sampled files violating this post-deadline are dropped from
-# validation totals (size and row count).
-SCRAPED_AT_STRING_REQUIRED_DATE = dt.datetime(2026, 5, 13, tzinfo=dt.timezone.utc)
-
 EVALUATION_ON_STARTUP = 10
 
 # Emission Control / Burn Configuration
