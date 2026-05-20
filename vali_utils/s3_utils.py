@@ -400,7 +400,7 @@ class DuckDBSampledValidator:
                         f"({len(recent_files)} recent + {len(scraper_files) - len(recent_files)} older)..."
                     )
                     scraper_result = await self._perform_scraper_validation(
-                        miner_hotkey, scraper_files, expected_jobs, presigned_urls, num_entities=15
+                        miner_hotkey, scraper_files, expected_jobs, presigned_urls, num_entities=20
                     )
                 else:
                     bt.logging.info(
