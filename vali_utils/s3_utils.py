@@ -744,6 +744,19 @@ class DuckDBSampledValidator:
                     schema_failures += 1
                     break
 
+                # scraped_at / scrapedAt must be stored as a string (BYTE_ARRAY),
+                # not a parquet timestamp dtype.
+                target_col = 'scraped_at' if platform in ['x', 'twitter'] else 'scrapedat'
+                bad_dtype = any(
+                    name.lower() == target_col and str(ptype).upper() != 'BYTE_ARRAY'
+                    for name, ptype in schema_result
+                )
+                if bad_dtype:
+                    bt.logging.warning(
+                        f"scraped_at must be string: {file_key}"
+                    )
+                    continue
+
                 # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
                 if job_id not in dedup_hashes_by_job:
                     dedup_hashes_by_job[job_id] = set()
