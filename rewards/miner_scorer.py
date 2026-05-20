@@ -26,7 +26,11 @@ class MinerScorer:
     # v7: Reset OD — moved scoring to evaluator, dropped ^2.5 exponent, fixed credibility decay
     # v8: Reset S3 — strict schema check catches fabricated data; old inflated scores are invalid
     # v9: Reset OD — per-miner endpoint replaces poller; old boost/credibility based on broken lottery
-    STATE_VERSION = 9
+    # v10: Reset S3 — per-file fabrication detection (user/dt diversity, templated text,
+    #      hex-pad, synthetic users, short status IDs, within-file dup) catches the
+    #      164-hotkey sybil cluster; pre-fix effective_size/credibility is inflated by
+    #      fabricated bulk uploads.
+    STATE_VERSION = 10
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -132,64 +136,15 @@ class MinerScorer:
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
             # --- State migrations ---
-            if saved_version < 6:
-                # -> v6: S3 reset — .head() → .sample() fix +
-                # engagement/uniqueness/URL checks. Clean slate for S3.
+            if saved_version < 10:
                 bt.logging.warning(
-                    f"State migration v{saved_version} -> v6: "
-                    f"S3 score reset."
+                    f"State migration v{saved_version} -> v10: "
+                    f"S3 boost/credibility/effective_size reset "
+                    f"(per-file fabrication detection)."
                 )
-                self.scores.zero_()
-                self.miner_credibility.fill_(MinerScorer.STARTING_CREDIBILITY)
-                self.scorable_bytes.zero_()
                 self.s3_boosts.zero_()
                 self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
                 self.effective_sizes.zero_()
-
-            if saved_version < 7:
-                # -> v7: Full reset — OD scoring moved to evaluator, ^2.5 exponent
-                # dropped, credibility decay fixed. P2P cap (min(p2p, s3+od)) means
-                # all scores computed under broken OD are wrong. Clean slate.
-                bt.logging.warning(
-                    f"State migration v{saved_version} -> v7: "
-                    f"Full score reset (OD fix changes all weights)."
-                )
-                self.scores.zero_()
-                self.miner_credibility.fill_(MinerScorer.STARTING_CREDIBILITY)
-                self.scorable_bytes.zero_()
-                self.s3_boosts.zero_()
-                self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
-                self.effective_sizes.zero_()
-                self.ondemand_boosts.zero_()
-                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
-
-            if saved_version < 8:
-                # -> v8: Full reset — strict schema check (missing columns = fail)
-                # catches fabricated S3 data; OD was blindly rewarding unvalidated
-                # submissions. Both channels have tainted scores that must be wiped.
-                bt.logging.warning(
-                    f"State migration v{saved_version} -> v8: "
-                    f"Full score reset (strict schema + OD validation fix)."
-                )
-                self.scores.zero_()
-                self.miner_credibility.fill_(MinerScorer.STARTING_CREDIBILITY)
-                self.scorable_bytes.zero_()
-                self.s3_boosts.zero_()
-                self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
-                self.effective_sizes.zero_()
-                self.ondemand_boosts.zero_()
-                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
-
-            if saved_version < 9:
-                # -> v9: Reset OD only. Per-miner endpoint replaces poller; old
-                # boost/credibility reflect the broken lottery scoring, not
-                # real miner OD behavior. S3/P2P state is still valid.
-                bt.logging.warning(
-                    f"State migration v{saved_version} -> v9: "
-                    f"OD boost/credibility reset (new per-miner scoring)."
-                )
-                self.ondemand_boosts.zero_()
-                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
