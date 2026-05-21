@@ -406,15 +406,7 @@ class DuckDBSampledValidator:
                     bt.logging.info(
                         f"{miner_hotkey}: No files available for scraper validation"
                     )
-                    scraper_result = {
-                        'entities_validated': 0,
-                        'entities_passed': 0,
-                        'success_rate': None,
-                        'sample_results': [],
-                        'files_inspected': 0,
-                        'files_failed': 0,
-                        'failed_file_ratio': 0.0,
-                    }
+                    scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': None, 'sample_results': []}
 
             # Step 7: Validation decision
             issues = []
@@ -438,18 +430,6 @@ class DuckDBSampledValidator:
                 issues.append(f"Low job match: {job_match_rate:.1f}%")
             if scraper_success_rate is not None and scraper_success_rate < self.MIN_SCRAPER_SUCCESS:
                 issues.append(f"Low scraper success: {scraper_success_rate:.1f}%")
-
-            # Per-file scraper kill: if too many sampled files fail scraper
-            # validation, the miner is uploading fab data even if aggregate
-            # success rate looks ok.
-            failed_file_ratio = scraper_result.get('failed_file_ratio', 0.0)
-            files_inspected = scraper_result.get('files_inspected', 0)
-            if files_inspected > 0 and failed_file_ratio > self.SCRAPER_MAX_FAILED_FILE_RATIO:
-                files_failed = scraper_result.get('files_failed', 0)
-                issues.append(
-                    f"Per-file scraper failure: {files_failed}/{files_inspected} files "
-                    f"({failed_file_ratio*100:.1f}%)"
-                )
 
             # Compression exploit detection — always fail
             if compression_failures > 0:
@@ -1172,18 +1152,6 @@ class DuckDBSampledValidator:
             (not has_time or time_matches)
         )
 
-    # Per-file scraper validation tuning.
-    # The fab cluster mixes ~5% real "bait" SMALL files with ~95% BIG fab files.
-    # Old behavior: collect entities from sampled_files in order until budget,
-    # then break — only 6-8 files inspected of ~50 sampled. Bait at the front of
-    # the shuffle → all entities came from real bait → cluster passed.
-    # New behavior: pre-pick N files uniformly, K entities per file, no break.
-    # Each file is judged on its own scraper results. Cluster can't hide BIG
-    # fab files behind a few real bait ones.
-    SCRAPER_ENTITIES_PER_FILE = 2          # entities pulled per scraper-sampled file
-    SCRAPER_PER_FILE_MIN_PASS = 0.50       # ≥50% of a file's entities must pass scraper
-    SCRAPER_MAX_FAILED_FILE_RATIO = 0.30   # whole miner fails if >30% of scraper-sampled files failed
-
     async def _perform_scraper_validation(
         self,
         miner_hotkey: str,
@@ -1192,43 +1160,13 @@ class DuckDBSampledValidator:
         presigned_urls: Dict[str, str],
         num_entities: int = 10
     ) -> Dict[str, Any]:
-        """Validate random entities using real scrapers, with PER-FILE accounting.
+        """Validate random entities using real scrapers."""
+        all_entities = []
 
-        Routing:
-          - Pre-pick min(len(sampled_files), num_entities // SCRAPER_ENTITIES_PER_FILE)
-            files uniformly at random from sampled_files.
-          - Read SCRAPER_ENTITIES_PER_FILE entities from each (= num_entities total).
-          - No break-mid-loop. Every chosen file gets inspected.
-          - Per-file verdict: a file passes if ≥SCRAPER_PER_FILE_MIN_PASS of its
-            entities verify. Returns failed_file_ratio so the caller can drop
-            failed files' rows or whole-miner-fail.
+        for file_info in sampled_files:
+            if len(all_entities) >= num_entities * 2:
+                break
 
-        Apify cost is bounded by num_entities (unchanged budget).
-        """
-        # Number of files to actually pull entities from.
-        # For num_entities=20, ENTITIES_PER_FILE=2 → 10 files inspected.
-        files_to_inspect = min(
-            len(sampled_files),
-            max(1, num_entities // self.SCRAPER_ENTITIES_PER_FILE),
-        )
-        if files_to_inspect == 0 or not sampled_files:
-            return {
-                'entities_validated': 0,
-                'entities_passed': 0,
-                'success_rate': 0,
-                'sample_results': [],
-                'files_inspected': 0,
-                'files_failed': 0,
-                'failed_file_ratio': 0.0,
-            }
-
-        # Uniform pre-pick — no positional bias from caller's shuffle.
-        files_pool = random.sample(sampled_files, files_to_inspect)
-
-        # entities_per_file[file_key] = list[(entity, platform, job_id)]
-        entities_per_file: Dict[str, list] = {}
-
-        for file_info in files_pool:
             # Skip oversized files to prevent OOM
             file_size = file_info.get('size', 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
@@ -1278,26 +1216,22 @@ class DuckDBSampledValidator:
                 if required - available_cols:
                     continue
 
-                # Read 1 random row group, take SCRAPER_ENTITIES_PER_FILE rows.
+                # Read 1 random row group via Range requests (~3MB vs full scan)
                 df = read_random_row_group(
                     presigned_url, file_size,
-                    columns=None, max_rows=self.SCRAPER_ENTITIES_PER_FILE,
+                    columns=None, max_rows=5
                 )
 
                 if df is None or len(df) == 0:
                     continue
 
-                file_entities = []
                 for _, row in df.iterrows():
                     entity = self._create_data_entity(row, platform)
                     if entity:
-                        file_entities.append((entity, platform, job_id))
-
-                if file_entities:
-                    entities_per_file[file_key] = file_entities
+                        all_entities.append((entity, platform, job_id))
 
                 del df
-            except Exception:
+            except:
                 continue
             finally:
                 if conn:
@@ -1306,74 +1240,43 @@ class DuckDBSampledValidator:
                     except:
                         pass
 
-        if not entities_per_file:
-            return {
-                'entities_validated': 0,
-                'entities_passed': 0,
-                'success_rate': 0,
-                'sample_results': [],
-                'files_inspected': 0,
-                'files_failed': 0,
-                'failed_file_ratio': 0.0,
-            }
+        if not all_entities:
+            return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
 
-        # Batch all entities by platform for the Apify call (cost-efficient),
-        # but track which file each result came from.
-        entity_records = []  # list of (file_key, entity, platform, job_id)
-        for file_key, file_entities in entities_per_file.items():
-            for entity, platform, job_id in file_entities:
-                entity_records.append((file_key, entity, platform, job_id))
+        entities_to_validate = random.sample(all_entities, min(num_entities, len(all_entities)))
 
-        # Group by platform for the scraper call
-        by_platform = {}
-        for fk, entity, platform, job_id in entity_records:
-            by_platform.setdefault(platform, []).append((fk, entity, job_id))
-
-        # entity_results: file_key -> list[(passed: bool, reason: str)]
-        per_file_results: Dict[str, list] = {fk: [] for fk in entities_per_file}
+        total_validated = 0
+        total_passed = 0
         sample_results = []
 
-        for platform, recs in by_platform.items():
-            entities = [r[1] for r in recs]
-            file_keys = [r[0] for r in recs]
-            job_ids = [r[2] for r in recs]
+        entities_by_platform = {}
+        for entity, platform, job_id in entities_to_validate:
+            if platform not in entities_by_platform:
+                entities_by_platform[platform] = []
+            entities_by_platform[platform].append((entity, job_id))
+
+        for platform, entities_with_jobs in entities_by_platform.items():
+            entities = [e[0] for e in entities_with_jobs]
+            job_ids = [e[1] for e in entities_with_jobs]
             try:
                 results = await self._validate_with_scraper(entities, platform)
                 for i, result in enumerate(results):
-                    fk = file_keys[i]
-                    jid = job_ids[i] if i < len(job_ids) else 'unknown'
-                    per_file_results[fk].append((result.is_valid, result.reason))
-                    mark = '✅' if result.is_valid else '❌'
-                    sample_results.append(f"{mark} {platform} ({jid[:16]}): {result.reason}")
+                    job_id = job_ids[i] if i < len(job_ids) else 'unknown'
+                    total_validated += 1
+                    if result.is_valid:
+                        total_passed += 1
+                        sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
+                    else:
+                        sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
             except Exception as e:
-                # On scraper error, mark every entity in this platform batch as failed
-                for fk in file_keys:
-                    per_file_results[fk].append((False, f"scraper error: {e}"))
+                total_validated += len(entities)
                 sample_results.append(f"❌ {platform}: Scraper error - {e}")
 
-        # Per-file verdict
-        files_inspected = len(per_file_results)
-        files_failed = 0
-        total_validated = 0
-        total_passed = 0
-        for fk, results in per_file_results.items():
-            if not results:
-                continue
-            passed = sum(1 for ok, _ in results if ok)
-            total_validated += len(results)
-            total_passed += passed
-            file_pass_rate = passed / len(results)
-            if file_pass_rate < self.SCRAPER_PER_FILE_MIN_PASS:
-                files_failed += 1
-
         success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
-        failed_file_ratio = (files_failed / files_inspected) if files_inspected > 0 else 0.0
 
         # Log detailed results for miners to debug
         bt.logging.success(
-            f"{miner_hotkey}: S3 scraper validation finished: "
-            f"{total_passed}/{total_validated} entities passed ({success_rate:.1f}%), "
-            f"{files_failed}/{files_inspected} files failed ({failed_file_ratio*100:.1f}%)"
+            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
         )
         bt.logging.info(
             f"{miner_hotkey}: S3 scraper validation details: {sample_results}"
@@ -1383,10 +1286,7 @@ class DuckDBSampledValidator:
             'entities_validated': total_validated,
             'entities_passed': total_passed,
             'success_rate': success_rate,
-            'sample_results': sample_results,
-            'files_inspected': files_inspected,
-            'files_failed': files_failed,
-            'failed_file_ratio': failed_file_ratio,
+            'sample_results': sample_results
         }
 
     def _create_data_entity(self, row, platform: str) -> Optional[DataEntity]:
