@@ -274,6 +274,7 @@ class DuckDBSampledValidator:
             # Per-job row clamping: if customer requested max_rows, excess rows don't count
             total_size_bytes = 0
             total_rows_from_filenames = 0
+            jobs_with_content = 0
             for job_id in active_job_ids:
                 job_config = expected_jobs.get(job_id, {})
                 max_rows = job_config.get('max_rows') if isinstance(job_config, dict) else None
@@ -288,9 +289,18 @@ class DuckDBSampledValidator:
                     total_rows_from_filenames += max_rows
                 else:
                     total_rows_from_filenames += job_rows
+                # Only count jobs with actual content toward coverage
+                if job_rows > 0:
+                    jobs_with_content += 1
 
-            job_coverage_rate = (len(active_job_ids) / len(expected_jobs) * 100) if expected_jobs else 0
+            job_coverage_rate = (jobs_with_content / len(expected_jobs) * 100) if expected_jobs else 0
 
+            empty_content_jobs = len(active_job_ids) - jobs_with_content
+            if empty_content_jobs > 0:
+                bt.logging.warning(
+                    f"{miner_hotkey}: {empty_content_jobs} jobs with files but zero rows "
+                    f"excluded from coverage (possible inflation attempt)"
+                )
             if empty_files_skipped > 0:
                 bt.logging.warning(
                     f"{miner_hotkey}: {empty_files_skipped} empty files skipped "
@@ -313,7 +323,7 @@ class DuckDBSampledValidator:
 
             bt.logging.info(
                 f"{miner_hotkey}: {len(all_files)} total files, "
-                f"{len(active_job_ids)} active jobs, "
+                f"{len(active_job_ids)} active jobs ({jobs_with_content} with content), "
                 f"{total_size_bytes/(1024*1024):.1f}MB, "
                 f"{job_coverage_rate:.1f}% coverage"
             )
