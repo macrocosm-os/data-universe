@@ -147,16 +147,6 @@ class DuckDBSampledValidator:
     MIN_ENGAGEMENT_RATE = 95.0  # 95% of X rows must have non-null view_count
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
 
-    # Fabrication-detection floors (data-driven from SN13 sybil cluster corpus, May 2026):
-    #   Recipe A files: text repeats verbatim across all rows (text_uniq ≈ 0.0005%)
-    #   Recipe B files: 5 usernames repeated for 400K rows  (user_uniq ≈ 0.001%)
-    # Legitimate files measured: text_uniq ≥ 86.7%, user_uniq ≥ 41.7%
-    # Margin between fab and legit is enormous; thresholds chosen well above
-    # fab maxima but well below legit minima.
-    MIN_TEXT_UNIQ_RATIO = 50.0     # <50% distinct text rows = templated fab
-    MIN_USER_UNIQ_RATIO = 30.0     # <30% distinct usernames = recycled-user fab
-    UNIQ_RATIO_ROW_FLOOR = 1000    # Don't apply to small files (natural repetition OK)
-
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
     MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024        # 512MB - single file cap
@@ -901,58 +891,6 @@ class DuckDBSampledValidator:
                             ids = rg_df['id'].dropna().astype(str)
                             total_content_id_rows += len(ids)
                             unique_content_ids.update(ids.tolist())
-
-                # --- Fabrication kill: text_uniq + user_uniq per file ---
-                # Run on full file (columnar scan, ~MB-scale). Catches the SN13
-                # sybil cluster fab recipes whose templated text or 5-user pool
-                # makes the ratios collapse to <0.001.
-                if platform in ('x', 'twitter', 'reddit'):
-                    text_col = 'text' if platform in ('x', 'twitter') else 'body'
-                    if text_col in available_columns and 'username' in available_columns:
-                        try:
-                            uniq_row = conn.execute(
-                                f"SELECT COUNT(*), COUNT(DISTINCT {text_col}), "
-                                f"COUNT(DISTINCT username) "
-                                f"FROM read_parquet('{presigned_url}')"
-                            ).fetchone()
-                            file_total, uniq_text, uniq_user = uniq_row
-                            if file_total > self.UNIQ_RATIO_ROW_FLOOR:
-                                text_uniq_pct = uniq_text / file_total * 100
-                                user_uniq_pct = uniq_user / file_total * 100
-                                if text_uniq_pct < self.MIN_TEXT_UNIQ_RATIO:
-                                    bt.logging.warning(
-                                        f"FAB: low text uniqueness in {file_key}: "
-                                        f"{uniq_text}/{file_total} = {text_uniq_pct:.2f}% "
-                                        f"(min {self.MIN_TEXT_UNIQ_RATIO}%)"
-                                    )
-                                    return {
-                                        "success": False,
-                                        "duplicate_rate_within_job": 100.0,
-                                        "empty_rate": 100.0,
-                                        "total_rows": 0,
-                                        "reason": (
-                                            f"Low text uniqueness: {text_uniq_pct:.2f}% "
-                                            f"({uniq_text}/{file_total} distinct)"
-                                        ),
-                                    }
-                                if user_uniq_pct < self.MIN_USER_UNIQ_RATIO:
-                                    bt.logging.warning(
-                                        f"FAB: low user uniqueness in {file_key}: "
-                                        f"{uniq_user}/{file_total} = {user_uniq_pct:.2f}% "
-                                        f"(min {self.MIN_USER_UNIQ_RATIO}%)"
-                                    )
-                                    return {
-                                        "success": False,
-                                        "duplicate_rate_within_job": 100.0,
-                                        "empty_rate": 100.0,
-                                        "total_rows": 0,
-                                        "reason": (
-                                            f"Low user uniqueness: {user_uniq_pct:.2f}% "
-                                            f"({uniq_user}/{file_total} distinct)"
-                                        ),
-                                    }
-                        except Exception as e:
-                            bt.logging.debug(f"fab uniq-check failed for {file_key}: {e}")
 
             except Exception as e:
                 bt.logging.debug(f"Sampled validation error for file: {e}")
