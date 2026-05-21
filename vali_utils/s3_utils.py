@@ -1186,6 +1186,10 @@ class DuckDBSampledValidator:
         )
 
         for file_info in sampled_files:
+
+            if len(all_entities) >= num_entities * 2:
+                break
+
             # Skip oversized files to prevent OOM
             file_size = file_info.get('size', 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
