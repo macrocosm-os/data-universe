@@ -136,7 +136,7 @@ class MinerScorer:
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
             # --- State migrations ---
-            if saved_version < 10:
+            if saved_version < 11:
                 bt.logging.warning(
                     f"State migration v{saved_version} -> v10: "
                     f"S3 boost/credibility/effective_size reset "
