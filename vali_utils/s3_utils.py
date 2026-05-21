@@ -1160,13 +1160,32 @@ class DuckDBSampledValidator:
         presigned_urls: Dict[str, str],
         num_entities: int = 10
     ) -> Dict[str, Any]:
-        """Validate random entities using real scrapers."""
+        """Validate random entities using real scrapers.
+
+        Invariant: a row sampled from a parquet file must either become a
+        DataEntity and be checked by the scraper, or count as a failed
+        scraper validation. Rows must never disappear silently.
+
+        Previously, `_create_data_entity` returning None (e.g., fab files
+        with `bookmark_count = array([N, 0])` crashing Pydantic field
+        validation) silently dropped the row. Fab files contributed 0
+        entities, the bait files filled `all_entities`, and the miner
+        passed at 100% scraper success. Now the first None returns
+        immediate scraper failure → MIN_SCRAPER_SUCCESS gate kills the
+        miner. Honest miners produce scalar columns and never trip this.
+        """
         all_entities = []
 
-        for file_info in sampled_files:
-            if len(all_entities) >= num_entities * 2:
-                break
+        # BIG-first iteration: cluster's 25MB fab files inspected before 25KB
+        # bait files. Combined with the None → fail return below, this ensures
+        # fab miners fail on their first sampled fab row.
+        sampled_files = sorted(
+            sampled_files,
+            key=lambda f: f.get('size', 0),
+            reverse=True,
+        )
 
+        for file_info in sampled_files:
             # Skip oversized files to prevent OOM
             file_size = file_info.get('size', 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
@@ -1227,8 +1246,31 @@ class DuckDBSampledValidator:
 
                 for _, row in df.iterrows():
                     entity = self._create_data_entity(row, platform)
-                    if entity:
-                        all_entities.append((entity, platform, job_id))
+                    if entity is None:
+                        # The invariant: a sampled row must never disappear
+                        # silently. None means entity construction failed
+                        # (e.g., fab files with array-typed numeric columns
+                        # crash Pydantic's int() coercion, swallowed by the
+                        # bare except in _create_twitter_entity). Treat as
+                        # immediate scraper failure — honest miners produce
+                        # scalar columns and never hit this path.
+                        fname = file_key.split('/')[-1]
+                        bt.logging.warning(
+                            f"{miner_hotkey}: _create_data_entity returned None "
+                            f"for sampled {platform} row in {fname} "
+                            f"(likely malformed/fab data). Failing scraper "
+                            f"validation immediately."
+                        )
+                        return {
+                            'entities_validated': 1,
+                            'entities_passed': 0,
+                            'success_rate': 0.0,
+                            'sample_results': [
+                                f"❌ {platform} ({job_id[:16]}): "
+                                f"Failed to create DataEntity for sampled row ({fname})"
+                            ],
+                        }
+                    all_entities.append((entity, platform, job_id))
 
                 del df
             except:
