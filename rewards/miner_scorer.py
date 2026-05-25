@@ -30,7 +30,7 @@ class MinerScorer:
     #      hex-pad, synthetic users, short status IDs, within-file dup) catches the
     #      164-hotkey sybil cluster; pre-fix effective_size/credibility is inflated by
     #      fabricated bulk uploads.
-    STATE_VERSION = 10
+    STATE_VERSION = 11
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -138,7 +138,7 @@ class MinerScorer:
             # --- State migrations ---
             if saved_version < 11:
                 bt.logging.warning(
-                    f"State migration v{saved_version} -> v10: "
+                    f"State migration v{saved_version} -> v11: "
                     f"S3 boost/credibility/effective_size reset "
                     f"(per-file fabrication detection)."
                 )
