@@ -794,7 +794,7 @@ class DuckDBSampledValidator:
                     url_missing = rg_df['url'].isna() | (rg_df['url'].astype(str).str.strip() == '')
                     missing_urls = int(url_missing.sum())
                     if missing_urls > 0:
-                        bt.logging.warning(f"File has {missing_urls} rows with missing URL: {file_key}")
+                        bt.logging.warning(f"File has {missing_urls} rows with missing URL")
                         return {
                             "success": False,
                             "duplicate_rate_within_job": 100.0,
@@ -817,7 +817,7 @@ class DuckDBSampledValidator:
                         empty_user = rg_df['username'].fillna('').astype(str).str.strip() == ''
                         empty_user_pct = empty_user.sum() / len(rg_df) * 100
                         if empty_user_pct > 50:
-                            bt.logging.warning(f"Empty username: {empty_user_pct:.0f}% rows have no username: {file_key}")
+                            bt.logging.warning(f"Empty username: {empty_user_pct:.0f}% rows have no username")
                             return {
                                 "success": False,
                                 "duplicate_rate_within_job": 100.0,
@@ -1176,12 +1176,15 @@ class DuckDBSampledValidator:
         """
         all_entities = []
 
-        # BIG-first iteration: cluster's 25MB fab files inspected before 25KB
-        # bait files. Combined with the None → fail return below, this ensures
-        # fab miners fail on their first sampled fab row.
+        # Size-weighted random shuffle: bigger files are MORE LIKELY to be
+        # examined first, but not deterministically. A miner cannot position
+        # one specific bait file at the top by ordering or naming because each
+        # file's effective rank is `size * random()` — big files almost always
+        # win, but the exact ordering changes per validation cycle. Same math
+        # idea as `choose_data_entity_bucket_to_query` in P2P validation.
         sampled_files = sorted(
             sampled_files,
-            key=lambda f: f.get('size', 0),
+            key=lambda f: f.get('size', 1) * random.random(),
             reverse=True,
         )
 
@@ -1258,10 +1261,9 @@ class DuckDBSampledValidator:
                         # bare except in _create_twitter_entity). Treat as
                         # immediate scraper failure — honest miners produce
                         # scalar columns and never hit this path.
-                        fname = file_key.split('/')[-1]
                         bt.logging.warning(
                             f"{miner_hotkey}: _create_data_entity returned None "
-                            f"for sampled {platform} row in {fname} "
+                            f"for sampled {platform} row "
                             f"(likely malformed/fab data). Failing scraper "
                             f"validation immediately."
                         )
@@ -1271,7 +1273,7 @@ class DuckDBSampledValidator:
                             'success_rate': 0.0,
                             'sample_results': [
                                 f"❌ {platform} ({job_id[:16]}): "
-                                f"Failed to create DataEntity for sampled row ({fname})"
+                                f"Failed to create DataEntity for sampled row"
                             ],
                         }
                     all_entities.append((entity, platform, job_id))
@@ -1411,7 +1413,7 @@ class DuckDBSampledValidator:
                 is_reply=bool(row.get('is_reply', False)),
                 is_quote=bool(row.get('is_quote', False)),
                 conversation_id=str(row.get('conversation_id', '')),
-                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')),
+                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')) if pd.notna(row.get('in_reply_to_user_id', None)) else None,
                 language=str(row.get('language', '')) if pd.notna(row.get('language', None)) else None,
                 in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username', None)) else None,
                 quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id', None)) else None,
@@ -1431,7 +1433,8 @@ class DuckDBSampledValidator:
                 scraped_at=pd.to_datetime(row.get('scraped_at')).to_pydatetime() if row.get('scraped_at') is not None and pd.notna(row.get('scraped_at')) else None,
             )
             return XContent.to_data_entity(x_content)
-        except Exception:
+        except Exception as e:
+            bt.logging.warning(f"_create_twitter_entity failed: {type(e).__name__}: {e}")
             return None
 
     def _create_reddit_entity(self, row) -> Optional[DataEntity]:
@@ -1493,7 +1496,8 @@ class DuckDBSampledValidator:
                 scrapedAt=pd.to_datetime(row.get('scrapedAt')).to_pydatetime() if row.get('scrapedAt') is not None and pd.notna(row.get('scrapedAt')) else None,
             )
             return RedditContent.to_data_entity(reddit_content)
-        except Exception:
+        except Exception as e:
+            bt.logging.warning(f"_create_reddit_entity failed: {type(e).__name__}: {e}")
             return None
 
     async def _validate_with_scraper(
