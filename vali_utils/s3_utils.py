@@ -755,7 +755,8 @@ class DuckDBSampledValidator:
                     bt.logging.warning(
                         f"scraped_at must be string: {file_key}"
                     )
-                    continue
+                    schema_failures += 1
+                    break
 
                 # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
                 if job_id not in dedup_hashes_by_job:
