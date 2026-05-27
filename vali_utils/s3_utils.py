@@ -755,7 +755,8 @@ class DuckDBSampledValidator:
                     bt.logging.warning(
                         f"scraped_at must be string: {file_key}"
                     )
-                    continue
+                    schema_failures += 1
+                    break
 
                 # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
                 if job_id not in dedup_hashes_by_job:
@@ -899,9 +900,16 @@ class DuckDBSampledValidator:
         duplicate_rate = (dedup_duplicates / dedup_total * 100) if dedup_total > 0 else 0.0
         if duplicate_rate > self.MAX_DUPLICATE_RATE:
             bt.logging.warning(
-                f"Per-job dedup: {duplicate_rate:.1f}% duplicates "
+                f"Per-job dedup FAILED: {duplicate_rate:.1f}% duplicates "
                 f"({dedup_duplicates}/{dedup_total} urls across {len(dedup_hashes_by_job)} jobs)"
             )
+            return {
+                "success": False,
+                "duplicate_rate_within_job": duplicate_rate,
+                "empty_rate": 100.0,
+                "total_rows": 0,
+                "reason": f"High duplicate rate: {duplicate_rate:.1f}% (max {self.MAX_DUPLICATE_RATE}%)"
+            }
 
         # Engagement check (X only): legit scrapers always return view_count
         engagement_rate = 0.0
@@ -1478,6 +1486,21 @@ class DuckDBSampledValidator:
             else:
                 created_at = dt.datetime.now(dt.timezone.utc)
 
+            # Handle media array field (same robust handling as _create_twitter_entity)
+            raw_media = row.get('media', None)
+            if raw_media is None:
+                media_value = None
+            elif hasattr(raw_media, '__iter__') and not isinstance(raw_media, str):
+                try:
+                    media_value = list(raw_media)
+                except TypeError:
+                    media_value = None
+            else:
+                try:
+                    media_value = None if pd.isna(raw_media) else [raw_media]
+                except Exception:
+                    media_value = [raw_media]
+
             reddit_content = RedditContent(
                 id=reddit_id_str,
                 username=username_str,
@@ -1488,7 +1511,7 @@ class DuckDBSampledValidator:
                 dataType=str(row.get('dataType', 'post') or 'post'),
                 parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None,
                 title=str(row.get('title', '')) if pd.notna(row.get('title')) else None,
-                media=row.get('media', None) if pd.notna(row.get('media')) else None,
+                media=media_value,
                 is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
                 score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
                 upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
