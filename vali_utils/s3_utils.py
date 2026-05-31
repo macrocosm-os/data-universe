@@ -27,6 +27,7 @@ from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
 from common.api_client import TaoSigner
 from vali_utils.parquet_reader import read_random_row_group
+from vali_utils.validator_s3_access import S3InfraError
 from urllib.parse import urlparse
 
 
@@ -118,6 +119,10 @@ class S3ValidationResult:
     # Competition-based scoring: effective_size = total_size_bytes × coverage²
     effective_size_bytes: float = 0.0
     job_coverage_rate: float = 0.0
+
+    # True ⇒ failure was a validator-side API error (issue #805); caller must NOT
+    # update miner credibility on this result.
+    infra_error: bool = False
 
 
 # Mapping of scrapers to use based on the data source to validate
@@ -519,6 +524,12 @@ class DuckDBSampledValidator:
                 job_coverage_rate=job_coverage_rate
             )
 
+        except S3InfraError as e:
+            # Validator-side API failure (list or presign). Do NOT penalize the miner. (#805)
+            bt.logging.warning(
+                f"{miner_hotkey}: validator-side S3 API error — credibility left unchanged: {e}"
+            )
+            return self._create_failed_result(f"S3 infra error: {e}", infra_error=True)
         except Exception as e:
             bt.logging.error(f"{miner_hotkey}: DuckDB validation error: {str(e)}")
             return self._create_failed_result(f"Validation error: {str(e)}")
@@ -561,11 +572,22 @@ class DuckDBSampledValidator:
                             all_urls[key] = data['presigned_url']
                         elif isinstance(data, str):
                             all_urls[key] = data
+                elif response.status_code >= 500:
+                    # Server-side failure of the validator's presign API — infra, not the
+                    # miner's fault. Surface as S3InfraError so credibility is left unchanged (#805).
+                    raise S3InfraError(
+                        f"get-file-presigned-urls {response.status_code} (server-side)"
+                    )
                 else:
+                    # 4xx — request/data problem; treat as a genuine validation failure.
                     bt.logging.warning(
                         f"get-file-presigned-urls failed: {response.status_code}"
                     )
 
+            except S3InfraError:
+                raise  # propagate to the validate-level handler (#805)
+            except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+                raise S3InfraError(f"get-file-presigned-urls network error: {e}")
             except Exception as e:
                 bt.logging.warning(f"Presigned URL batch error: {e}")
 
@@ -1553,8 +1575,12 @@ class DuckDBSampledValidator:
         except:
             return None
 
-    def _create_failed_result(self, reason: str) -> S3ValidationResult:
-        """Create a failed validation result."""
+    def _create_failed_result(self, reason: str, infra_error: bool = False) -> S3ValidationResult:
+        """Create a failed validation result.
+
+        infra_error=True marks a validator-side API failure (issue #805) so the
+        caller leaves miner credibility unchanged instead of penalizing.
+        """
         return S3ValidationResult(
             is_valid=False,
             validation_percentage=0.0,
@@ -1576,7 +1602,8 @@ class DuckDBSampledValidator:
             sample_validation_results=[],
             sample_job_mismatches=[],
             effective_size_bytes=0.0,
-            job_coverage_rate=0.0
+            job_coverage_rate=0.0,
+            infra_error=infra_error
         )
 
     def close(self):

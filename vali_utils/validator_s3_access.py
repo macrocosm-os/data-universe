@@ -9,6 +9,13 @@ import asyncio
 from common.api_client import TaoSigner
 
 
+class S3InfraError(Exception):
+    """Raised when the validator's own S3 listing/presign API is unreachable or the
+    listing did not complete. Distinct from a miner genuinely having no data — callers
+    MUST NOT decay miner credibility on this (issue #805)."""
+    pass
+
+
 class ValidatorS3Access:
     """S3 access for validators — lists miner files via presigned URLs."""
 
@@ -70,6 +77,7 @@ class ValidatorS3Access:
             continuation_token = None
             page = 1
             max_pages = 200
+            pagination_completed = False  # True only on natural end (IsTruncated=false)
 
             loop = asyncio.get_event_loop()
 
@@ -124,6 +132,7 @@ class ValidatorS3Access:
 
                 is_trunc = root.find(".//s3:IsTruncated", namespaces)
                 if is_trunc is None or str(is_trunc.text).lower() != "true":
+                    pagination_completed = True  # read every page successfully
                     break
 
                 token_elem = root.find(".//s3:NextContinuationToken", namespaces)
@@ -133,11 +142,22 @@ class ValidatorS3Access:
                 continuation_token = token_elem.text
                 page += 1
 
+            if not pagination_completed:
+                # Listing stopped early (presign/API failure, parse error, or hit
+                # max_pages while IsTruncated=true). Treat as validator-side infra,
+                # NOT as "miner has no/partial data" — see issue #805.
+                raise S3InfraError(
+                    f"S3 listing did not complete for {miner_hotkey} "
+                    f"(stopped at page {page}/{max_pages})"
+                )
+
             bt.logging.info(
                 f"S3 listing complete: {len(all_files)} files across {page} pages for {miner_hotkey}"
             )
             return all_files
 
+        except S3InfraError:
+            raise  # propagate — do not swallow into []
         except Exception as e:
             bt.logging.error(f"Exception in list_all_files_with_metadata: {str(e)}")
-            return []
+            raise S3InfraError(f"S3 listing failed for {miner_hotkey}: {e}")

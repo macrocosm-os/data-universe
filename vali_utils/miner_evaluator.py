@@ -511,12 +511,20 @@ class MinerEvaluator:
                     f"Reason: {s3_validation_result.reason}"
                 )
 
-            # Update scorer with competition-based effective_size
-            self.scorer.update_s3_effective_size(
-                uid=uid,
-                effective_size=s3_validation_result.effective_size_bytes,
-                validation_passed=s3_validation_result.is_valid,
-            )
+            # Update scorer with competition-based effective_size.
+            # Skip the update entirely on a validator-side API failure (#805): a timeout/5xx
+            # in our own S3 listing/presign service must not decay the miner's credibility.
+            if s3_validation_result.infra_error:
+                bt.logging.warning(
+                    f"UID:{uid} - HOTKEY:{hotkey}: S3 validation hit a validator-side API error; "
+                    f"leaving S3 credibility unchanged ({s3_validation_result.reason})"
+                )
+            else:
+                self.scorer.update_s3_effective_size(
+                    uid=uid,
+                    effective_size=s3_validation_result.effective_size_bytes,
+                    validation_passed=s3_validation_result.is_valid,
+                )
 
     async def _perform_s3_validation(
         self, uid: int, hotkey: str, current_block: int
