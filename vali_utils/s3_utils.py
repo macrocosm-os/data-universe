@@ -922,16 +922,16 @@ class DuckDBSampledValidator:
 
             except (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException) as e:
                 # Transient S3/network errors — log and skip, do NOT fail the miner
-                bt.logging.warning(f"Transient S3/IO error on {file_key}: {type(e).__name__}: {e}")
+                bt.logging.warning(f"Transient S3/IO error: {type(e).__name__}: {e}")
                 continue
             except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
                 page_decode_failures += 1
                 bt.logging.warning(
-                    f"Page-decode failure on {file_key}: {type(e).__name__}: {e}"
+                    f"Page-decode failure: {type(e).__name__}: {e}"
                 )
                 continue
             except Exception as e:
-                bt.logging.warning(f"Sampled validation error for {file_key}: {e}")
+                bt.logging.warning(f"Sampled validation error: {e}")
                 continue
             finally:
                 if conn:
