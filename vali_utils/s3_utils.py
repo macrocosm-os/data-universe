@@ -7,10 +7,8 @@ import hashlib
 import random
 import re
 import requests
-import time
-import xml.etree.ElementTree as ET
-import urllib.parse
 import pandas as pd
+import pyarrow
 import json
 import os
 import duckdb
@@ -331,9 +329,41 @@ class DuckDBSampledValidator:
             # Fill remaining slots from the other pool
             big_sample_count = min(len(big_files), sample_count - small_sample_count)
 
-            sampled_big = random.sample(big_files, big_sample_count) if big_sample_count > 0 else []
+            # L2: rows-weighted sampling for big files (files driving effective_size
+            # are nearly always sampled), plus force-include top-N by claimed rows.
+            def _claimed_rows(item):
+                f, _ = item
+                r = self._parse_row_count_from_filename(f.get('key', ''))
+                return r if r and r > 0 else 1
+
+            if big_sample_count > 0:
+                weights = [_claimed_rows(item) for item in big_files]
+                seen_keys = set()
+                sampled_big = []
+                # weighted-without-replacement
+                pool = list(zip(big_files, weights))
+                while pool and len(sampled_big) < big_sample_count:
+                    items, ws = zip(*pool)
+                    pick = random.choices(items, weights=ws, k=1)[0]
+                    key = pick[0].get('key')
+                    if key in seen_keys:
+                        pool = [(it, w) for it, w in pool if it[0].get('key') != key]
+                        continue
+                    seen_keys.add(key)
+                    sampled_big.append(pick)
+                    pool = [(it, w) for it, w in pool if it[0].get('key') != key]
+            else:
+                sampled_big = []
+
             sampled_small = random.sample(small_files, small_sample_count) if small_sample_count > 0 else []
-            sampled_files_with_job = sampled_big + sampled_small
+
+            # L2: force-include top-N by claimed rows (these drive effective_size)
+            top_n = sorted(active_files, key=lambda item: -_claimed_rows(item))[:5]
+            top_n_keys = {f.get('key') for f, _ in top_n}
+            already_keys = {f.get('key') for f, _ in (sampled_big + sampled_small)}
+            forced = [item for item in top_n if item[0].get('key') not in already_keys]
+
+            sampled_files_with_job = sampled_big + sampled_small + forced
             random.shuffle(sampled_files_with_job)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
@@ -417,6 +447,7 @@ class DuckDBSampledValidator:
             scraper_success_rate_display = scraper_success_rate if scraper_success_rate is not None else -1.0
             compression_failures = duckdb_result.get("compression_failures", 0)
             row_count_mismatches = duckdb_result.get("row_count_mismatches", 0)
+            decode_ratio = duckdb_result.get("decode_ratio", 1.0)
 
             # Check for schema validation failure
             if duckdb_result.get("reason"):
@@ -448,11 +479,12 @@ class DuckDBSampledValidator:
             if is_valid:
                 if total_rows_from_filenames > 0:
                     row_based_size = total_rows_from_filenames * self.STANDARD_BYTES_PER_ROW
-                    effective_size_bytes = row_based_size * (coverage_ratio ** 2)
+                    effective_size_bytes = row_based_size * (coverage_ratio ** 2) * decode_ratio
                     bt.logging.info(
                         f"{miner_hotkey}: effective_size: "
                         f"{total_rows_from_filenames} rows × {self.STANDARD_BYTES_PER_ROW} B/row "
                         f"= {row_based_size/(1024*1024):.1f}MB × coverage²({coverage_ratio:.2f}) "
+                        f"× decode_ratio({decode_ratio:.2f}) "
                         f"= {effective_size_bytes/(1024*1024):.1f}MB"
                     )
                 else:
@@ -595,7 +627,7 @@ class DuckDBSampledValidator:
                 'max_rg_rows': max_rg_rows
             }
         except Exception as e:
-            bt.logging.debug(f"parquet_metadata error: {e}")
+            bt.logging.warning(f"parquet_metadata error: {e}")
             return None
 
     def _parse_row_count_from_filename(self, key: str) -> Optional[int]:
@@ -621,6 +653,13 @@ class DuckDBSampledValidator:
         empty_count = 0
         schema_failures = 0
         files_checked = 0
+
+        # v3 page-decode failures (valid footer, corrupt data pages)
+        page_decode_failures = 0
+
+        # L3: decodable rows vs claimed rows (sampled-file scope)
+        sum_decodable_rows = 0
+        sum_sampled_claimed_rows = 0
 
         # Metadata-based checks
         compression_failures = 0
@@ -766,6 +805,14 @@ class DuckDBSampledValidator:
                 url_rows = conn.execute(
                     f"SELECT url FROM read_parquet('{presigned_url}')"
                 ).fetchall()
+
+                # L3: decodable rows vs filename-claimed rows
+                file_decodable = sum(1 for (u,) in url_rows if u and str(u).strip())
+                file_claimed = self._parse_row_count_from_filename(file_key)
+                if file_claimed is not None and file_claimed > 0:
+                    sum_decodable_rows += file_decodable
+                    sum_sampled_claimed_rows += file_claimed
+
                 for (url_val,) in url_rows:
                     normalized = normalize_url_for_dedup(url_val)
                     h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
@@ -873,8 +920,18 @@ class DuckDBSampledValidator:
                             total_content_id_rows += len(ids)
                             unique_content_ids.update(ids.tolist())
 
+            except (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException) as e:
+                # Transient S3/network errors — log and skip, do NOT fail the miner
+                bt.logging.warning(f"Transient S3/IO error on {file_key}: {type(e).__name__}: {e}")
+                continue
+            except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
+                page_decode_failures += 1
+                bt.logging.warning(
+                    f"Page-decode failure on {file_key}: {type(e).__name__}: {e}"
+                )
+                continue
             except Exception as e:
-                bt.logging.debug(f"Sampled validation error for file: {e}")
+                bt.logging.warning(f"Sampled validation error for {file_key}: {e}")
                 continue
             finally:
                 if conn:
@@ -894,6 +951,19 @@ class DuckDBSampledValidator:
                 "empty_rate": 100.0,
                 "total_rows": 0,
                 "reason": f"Invalid schema in {schema_failures} files"
+            }
+
+        # Zero tolerance for v3 page-decode failures (valid footer, corrupt data pages)
+        if page_decode_failures > 0:
+            bt.logging.warning(
+                f"Page-decode FAILED: {page_decode_failures} files have unreadable data pages"
+            )
+            return {
+                "success": False,
+                "duplicate_rate_within_job": 100.0,
+                "empty_rate": 100.0,
+                "total_rows": 0,
+                "reason": f"Corrupt data pages in {page_decode_failures} files"
             }
 
         # Per-job duplicate rate
@@ -945,6 +1015,12 @@ class DuckDBSampledValidator:
                     "reason": f"Low content uniqueness: {unique_ratio:.1f}% unique content IDs"
                 }
 
+        # L3: decodable-rows ratio across sampled files
+        decode_ratio = (
+            min(1.0, sum_decodable_rows / sum_sampled_claimed_rows)
+            if sum_sampled_claimed_rows > 0 else 1.0
+        )
+
         if total_rows == 0:
             return {
                 "success": True,
@@ -953,6 +1029,9 @@ class DuckDBSampledValidator:
                 "total_rows": 0,
                 "compression_failures": compression_failures,
                 "row_count_mismatches": row_count_mismatches,
+                "decode_ratio": decode_ratio,
+                "sum_decodable_rows": sum_decodable_rows,
+                "sum_sampled_claimed_rows": sum_sampled_claimed_rows,
             }
 
         empty_rate = (empty_count / total_rows * 100) if total_rows > 0 else 0
@@ -961,7 +1040,9 @@ class DuckDBSampledValidator:
             f"Sampled validation: {total_rows} rows, "
             f"dup={duplicate_rate:.1f}% (per-job, {len(dedup_hashes_by_job)} jobs), "
             f"empty={empty_rate:.1f}%, engagement={engagement_rate:.1f}%, "
-            f"unique_ids={unique_ratio:.1f}%, compression_fails={compression_failures}"
+            f"unique_ids={unique_ratio:.1f}%, compression_fails={compression_failures}, "
+            f"decode_ratio={decode_ratio:.3f} "
+            f"({sum_decodable_rows}/{sum_sampled_claimed_rows} sampled-claimed rows)"
         )
 
         return {
@@ -971,6 +1052,9 @@ class DuckDBSampledValidator:
             "total_rows": total_rows,
             "compression_failures": compression_failures,
             "row_count_mismatches": row_count_mismatches,
+            "decode_ratio": decode_ratio,
+            "sum_decodable_rows": sum_decodable_rows,
+            "sum_sampled_claimed_rows": sum_sampled_claimed_rows,
         }
 
     async def _perform_job_content_matching(
