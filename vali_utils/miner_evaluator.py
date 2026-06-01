@@ -183,7 +183,7 @@ class MinerEvaluator:
         not_sampled_count = len(non_empty) - len(to_validate)
 
         # Validate sampled jobs concurrently
-        validation_results: List[Tuple[bool, int]] = await asyncio.gather(*[
+        validation_results: List[Tuple[Optional[bool], int]] = await asyncio.gather(*[
             self._validate_od_submission(
                 uid, hotkey, j.job, j.submission, j.submission.job_id
             )
@@ -193,8 +193,19 @@ class MinerEvaluator:
         # Apply per-job rewards/penalties based on validation results
         validated_pass = 0
         validated_fail = 0
+        validated_skipped = 0
 
         for j, (passed, entity_count) in zip(to_validate, validation_results):
+            if passed is None:
+                # Validator-side download failure (5xx/timeout) — neither reward nor
+                # penalize; the miner is not at fault for our infrastructure. (companion to #805)
+                validated_skipped += 1
+                bt.logging.warning(
+                    f"UID:{uid} - OD: job {j.submission.job_id} skipped — validator-side "
+                    f"download failure, no reward/penalty"
+                )
+                continue
+
             speed_mult, vol_mult = (
                 self.on_demand_validator.calculate_ondemand_reward_multipliers(
                     job_created_at=j.job.created_at,
@@ -228,11 +239,13 @@ class MinerEvaluator:
         job: OnDemandJob,
         submission: OnDemandJobSubmission,
         job_id: str,
-    ) -> Tuple[bool, int]:
+    ) -> Tuple[Optional[bool], int]:
         """Download and validate a single OD submission.
 
         Returns (passed, entity_count) — entity_count is the number of
         entities the miner actually returned (used for volume_multiplier).
+        passed=None signals a validator-side download failure (5xx/timeout):
+        the caller leaves credibility unchanged (neither reward nor penalty). (#805)
         """
         try:
             async with httpx.AsyncClient(timeout=30.0) as http:
@@ -242,6 +255,9 @@ class MinerEvaluator:
                         f"UID:{uid} - OD validate: download failed ({dl_resp.status_code}) "
                         f"for job {job_id}"
                     )
+                    if dl_resp.status_code >= 500:
+                        # Validator/AWS server-side error — not the miner's fault.
+                        return None, 0
                     return False, 0
 
                 miner_upload = OnDemandMinerUpload.model_validate(dl_resp.json())
@@ -313,6 +329,12 @@ class MinerEvaluator:
             )
             return True, entity_count
 
+        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+            # Validator-side network failure downloading the submission — neutral, not miner's fault (#805)
+            bt.logging.warning(
+                f"UID:{uid} - OD validate: network error for job {job_id}: {e}"
+            )
+            return None, 0
         except Exception as e:
             bt.logging.warning(
                 f"UID:{uid} - OD validate: error for job {job_id}: {e}"
