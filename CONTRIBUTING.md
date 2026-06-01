@@ -40,7 +40,7 @@ Data Universe is a data-scraping and sentiment analysis subnet that collects and
 
 3. Install dependencies:
    ```bash
-   pip install -e
+   pip install -e .
    ```
 
 4. Set up your development environment:
