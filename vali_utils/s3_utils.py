@@ -78,6 +78,20 @@ def normalize_url_for_dedup(url_str: str) -> str:
     return f"{parsed.scheme}://{netloc}{path.rstrip('/')}"
 
 
+def _weighted_sample_without_replacement(items, weights, k):
+    """Sample k items without replacement, probability proportional to weight.
+    Uses the exponential-rank trick: key = -log(U) / w, take k smallest keys."""
+    if k <= 0 or not items:
+        return []
+    k = min(k, len(items))
+    keys = []
+    for it, w in zip(items, weights):
+        w_eff = max(w, 1)
+        keys.append((-math.log(max(random.random(), 1e-12)) / w_eff, it))
+    keys.sort(key=lambda x: x[0])
+    return [it for _, it in keys[:k]]
+
+
 @dataclass
 class S3ValidationResult:
     """S3 validation result structure"""
@@ -318,58 +332,37 @@ class DuckDBSampledValidator:
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
             sample_count = min(sample_count, len(active_files), 200)  # Cap at 200 files max
 
-            # Split into big (>1MB) and small files — guarantee big files are sampled
-            # since they carry the vast majority of rows/effective_size
-            big_files = [(f, j) for f, j in active_files if f.get('size', 0) > 1_000_000]
-            small_files = [(f, j) for f, j in active_files if f.get('size', 0) <= 1_000_000]
+            # Byte-weighted sampling: file selection probability proportional to its
+            # byte share of the total submitted size. Prior 50:50 big/small split let
+            # miners hide fab content behind a thin layer of real "bait" big files —
+            # uniform sampling across thousands of fab small files gave each fab file
+            # a ~0% chance of inspection. Byte-weighted weights tie validation effort
+            # to where the bytes (and the effective_size claim) actually live.
+            weights = [max(1, f.get('size', 0)) for f, _ in active_files]
+            sampled_files_with_job = _weighted_sample_without_replacement(
+                active_files, weights, sample_count
+            )
 
-            # Reserve half the sample for big files (if available)
-            big_sample_count = min(len(big_files), sample_count // 2)
-            small_sample_count = min(len(small_files), sample_count - big_sample_count)
-            # Fill remaining slots from the other pool
-            big_sample_count = min(len(big_files), sample_count - small_sample_count)
-
-            # L2: rows-weighted sampling for big files (files driving effective_size
-            # are nearly always sampled), plus force-include top-N by claimed rows.
+            # Force-include top-N by claimed rows (these drive effective_size and must
+            # always be inspected even if byte-weights would have skipped them).
             def _claimed_rows(item):
                 f, _ = item
                 r = self._parse_row_count_from_filename(f.get('key', ''))
                 return r if r and r > 0 else 1
 
-            if big_sample_count > 0:
-                weights = [_claimed_rows(item) for item in big_files]
-                seen_keys = set()
-                sampled_big = []
-                # weighted-without-replacement
-                pool = list(zip(big_files, weights))
-                while pool and len(sampled_big) < big_sample_count:
-                    items, ws = zip(*pool)
-                    pick = random.choices(items, weights=ws, k=1)[0]
-                    key = pick[0].get('key')
-                    if key in seen_keys:
-                        pool = [(it, w) for it, w in pool if it[0].get('key') != key]
-                        continue
-                    seen_keys.add(key)
-                    sampled_big.append(pick)
-                    pool = [(it, w) for it, w in pool if it[0].get('key') != key]
-            else:
-                sampled_big = []
-
-            sampled_small = random.sample(small_files, small_sample_count) if small_sample_count > 0 else []
-
-            # L2: force-include top-N by claimed rows (these drive effective_size)
             top_n = sorted(active_files, key=lambda item: -_claimed_rows(item))[:5]
-            top_n_keys = {f.get('key') for f, _ in top_n}
-            already_keys = {f.get('key') for f, _ in (sampled_big + sampled_small)}
+            already_keys = {f.get('key') for f, _ in sampled_files_with_job}
             forced = [item for item in top_n if item[0].get('key') not in already_keys]
 
-            sampled_files_with_job = sampled_big + sampled_small + forced
+            sampled_files_with_job = sampled_files_with_job + forced
             random.shuffle(sampled_files_with_job)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
+            sampled_bytes = sum(f.get('size', 0) for f, _ in sampled_files_with_job)
             bt.logging.info(
                 f"{miner_hotkey}: Sampled {len(sampled_files)} files "
-                f"({len(sampled_big)} big + {len(sampled_small)} small)"
+                f"({sampled_bytes/(1024*1024):.1f}MB / {total_size_bytes/(1024*1024):.1f}MB, "
+                f"{sampled_bytes/max(total_size_bytes,1)*100:.1f}% of bytes)"
             )
 
             # Step 3: Get presigned URLs for sample
@@ -1268,17 +1261,28 @@ class DuckDBSampledValidator:
         """
         all_entities = []
 
-        # Size-weighted random shuffle: bigger files are MORE LIKELY to be
-        # examined first, but not deterministically. A miner cannot position
-        # one specific bait file at the top by ordering or naming because each
-        # file's effective rank is `size * random()` — big files almost always
-        # win, but the exact ordering changes per validation cycle. Same math
-        # idea as `choose_data_entity_bucket_to_query` in P2P validation.
-        sampled_files = sorted(
-            sampled_files,
-            key=lambda f: f.get('size', 1) * random.random(),
-            reverse=True,
+        # Byte-weighted random ordering: each file's rank is exponential(weight=size),
+        # the same trick used for file sampling. Larger files come first on average
+        # without deterministic ordering — and tiny fab files retain a real probability
+        # of being inspected, preventing bait-saturation of the entity pool.
+        file_weights = [max(f.get('size', 0), 1) for f in sampled_files]
+        ranked = _weighted_sample_without_replacement(
+            sampled_files, file_weights, len(sampled_files)
         )
+        sampled_files = ranked
+
+        # Size-proportional per-file row budget: a file holding 50% of the bytes
+        # contributes ~50% of the rows we sample. Total entity budget is
+        # `num_entities * 2` (the existing pool-size target); allocate it pro-rata.
+        sample_total_bytes = max(sum(file_weights), 1)
+        entity_budget = num_entities * 2
+        MIN_ROWS_PER_FILE = 2
+        MAX_ROWS_PER_FILE = 20
+
+        def _rows_for_file(f):
+            share = f.get('size', 0) / sample_total_bytes
+            target = int(round(share * entity_budget))
+            return max(MIN_ROWS_PER_FILE, min(MAX_ROWS_PER_FILE, target))
 
         for file_info in sampled_files:
 
@@ -1334,10 +1338,10 @@ class DuckDBSampledValidator:
                 if required - available_cols:
                     continue
 
-                # Read 1 random row group via Range requests (~3MB vs full scan)
+                # Read 1 random row group; sample size scales with file's byte share.
                 df = read_random_row_group(
                     presigned_url, file_size,
-                    columns=None, max_rows=5
+                    columns=None, max_rows=_rows_for_file(file_info)
                 )
 
                 if df is None or len(df) == 0:
