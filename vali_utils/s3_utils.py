@@ -1399,6 +1399,7 @@ class DuckDBSampledValidator:
                 entities_by_platform[platform] = []
             entities_by_platform[platform].append((entity, job_id))
 
+        scraper_errored = False
         for platform, entities_with_jobs in entities_by_platform.items():
             entities = [e[0] for e in entities_with_jobs]
             job_ids = [e[1] for e in entities_with_jobs]
@@ -1413,14 +1414,28 @@ class DuckDBSampledValidator:
                     else:
                         sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
             except Exception as e:
-                total_validated += len(entities)
-                sample_results.append(f"❌ {platform}: Scraper error - {e}")
+                # A validator-side scraper failure (timeout / 5xx / rate-limit / network)
+                # is NOT a miner data failure. Counting these entities as validated would
+                # drive success_rate below MIN_SCRAPER_SUCCESS during an outage in the
+                # VALIDATOR's own scraper, zeroing an honest miner's effective_size. Skip
+                # them instead — same infra-neutral handling as the on-demand path (#844).
+                scraper_errored = True
+                sample_results.append(f"⚠️ {platform}: Scraper error (validator-side, not counted) - {e}")
 
-        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+        if total_validated > 0:
+            success_rate = total_passed / total_validated * 100
+        elif scraper_errored:
+            # Every scraper call errored: return None so the caller skips the success-rate
+            # gate and relies on prior-cycle credibility, rather than treating the
+            # validator's infra failure as a 0% miner score. (Caller already handles None.)
+            success_rate = None
+        else:
+            success_rate = 0
 
         # Log detailed results for miners to debug
+        success_rate_display = success_rate if success_rate is not None else -1.0
         bt.logging.success(
-            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
+            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate_display:.1f}%)"
         )
         bt.logging.info(
             f"{miner_hotkey}: S3 scraper validation details: {sample_results}"
