@@ -1,6 +1,8 @@
 import os
 import gc
 import copy
+import json
+import math
 import asyncio
 import datetime
 import random
@@ -34,7 +36,7 @@ from vali_utils import metrics, utils as vali_utils
 
 from typing import Dict, List, Optional, Tuple
 from vali_utils.validator_s3_access import ValidatorS3Access
-from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
+from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult, normalize_url_for_dedup
 from vali_utils.s3_logging_utils import log_s3_validation_table
 
 import httpx
@@ -120,6 +122,23 @@ class MinerEvaluator:
     OD_MAX_JOBS_TO_VALIDATE = 3
     # Number of entities to schema-check per downloaded submission.
     OD_SCHEMA_SAMPLE_SIZE = 5
+    # Upper bound on scraper (Apify) checks per submission. Phase 3 scrapes
+    # ~10% of the returned volume, but each check is a paid API call, so cap it.
+    # 8 checks over a 5-entity-real submission already gives strong coverage;
+    # over a 600-entity submission it forces the cheater to make ≥8 of the
+    # sampled entities real, which compounds with the schema/job-match checks.
+    OD_MAX_SCRAPER_CHECKS = 8
+    # Hard cap on a single OD submission download (mirrors the API client's
+    # FIFTEEN_MB_BYTES). The OD payload is miner-controlled S3 content; without a
+    # cap a multi-GB upload OOM-kills the validator. (SECURITY_FINDINGS C1)
+    OD_MAX_DOWNLOAD_BYTES = 15 * 1_000_000
+    # Minimum fraction of a submission's URIs that must be unique. The unique
+    # ratio across live submissions is sharply bimodal: honest miners cluster at
+    # ~100% unique, padded submissions at a low fixed ratio — almost nothing in
+    # between. 0.5 sits in that empty gap, so it fails padding without touching
+    # honest miners (even those with some duplicate-URL posts). The volume reward
+    # is always computed on the UNIQUE count regardless. (Appendix C / H-1)
+    OD_MIN_UNIQUE_RATIO = 0.5
 
     async def _evaluate_od(self, uid: int, hotkey: str) -> None:
         """Evaluate a miner's on-demand submissions by querying the API directly.
@@ -248,19 +267,42 @@ class MinerEvaluator:
         the caller leaves credibility unchanged (neither reward nor penalty). (#805)
         """
         try:
-            async with httpx.AsyncClient(timeout=30.0) as http:
-                dl_resp = await http.get(submission.s3_presigned_url, follow_redirects=True)
-                if dl_resp.status_code != 200:
-                    bt.logging.warning(
-                        f"UID:{uid} - OD validate: download failed ({dl_resp.status_code}) "
-                        f"for job {job_id}"
-                    )
-                    if dl_resp.status_code >= 500:
-                        # Validator/AWS server-side error — not the miner's fault.
-                        return None, 0
-                    return False, 0
+            # Reject up front if the API-reported size already exceeds the cap,
+            # so we never even start a multi-GB download. (SECURITY_FINDINGS C1)
+            if (submission.s3_content_length or 0) > self.OD_MAX_DOWNLOAD_BYTES:
+                bt.logging.warning(
+                    f"UID:{uid} - OD validate: submission {job_id} too large "
+                    f"({submission.s3_content_length} bytes > {self.OD_MAX_DOWNLOAD_BYTES}) — failing"
+                )
+                return False, 0
 
-                miner_upload = OnDemandMinerUpload.model_validate(dl_resp.json())
+            async with httpx.AsyncClient(timeout=30.0) as http:
+                async with http.stream(
+                    "GET", submission.s3_presigned_url, follow_redirects=True
+                ) as dl_resp:
+                    if dl_resp.status_code != 200:
+                        bt.logging.warning(
+                            f"UID:{uid} - OD validate: download failed ({dl_resp.status_code}) "
+                            f"for job {job_id}"
+                        )
+                        if dl_resp.status_code >= 500:
+                            # Validator/AWS server-side error — not the miner's fault.
+                            return None, 0
+                        return False, 0
+
+                    # Stream with a hard byte cap — the payload is miner-controlled
+                    # S3 content; an unbounded read would OOM the validator.
+                    buf = bytearray()
+                    async for chunk in dl_resp.aiter_bytes():
+                        buf.extend(chunk)
+                        if len(buf) > self.OD_MAX_DOWNLOAD_BYTES:
+                            bt.logging.warning(
+                                f"UID:{uid} - OD validate: submission {job_id} exceeded "
+                                f"{self.OD_MAX_DOWNLOAD_BYTES} bytes mid-download — failing"
+                            )
+                            return False, 0
+
+                miner_upload = OnDemandMinerUpload.model_validate(json.loads(bytes(buf)))
 
             entities = miner_upload.data_entities
 
@@ -282,9 +324,36 @@ class MinerEvaluator:
 
             entity_count = len(entities)
 
-            # Cap to job limit
-            if job.limit and entity_count > job.limit:
+            # Uniqueness gate FIRST, on the full returned set — before any volume
+            # cap — so the padding signal is measured on everything the miner sent.
+            # Capping to job.limit first would let a cheater hide padding outside
+            # the truncation window (e.g. 100 real ordered ahead of 500 dupes).
+            # Fabricators pad a few real posts up to the cap with duplicates
+            # (live: 600 returned / 100 unique). (SECURITY_FINDINGS Appendix C / H-1)
+            seen_uris = set()
+            unique_entities = []
+            for e in entities:
+                uri = getattr(e, "uri", None) or ""
+                key = normalize_url_for_dedup(uri) if uri else self.on_demand_validator._get_post_id(e)
+                if key in seen_uris:
+                    continue
+                seen_uris.add(key)
+                unique_entities.append(e)
+
+            if entity_count > 0 and (len(unique_entities) / entity_count) < self.OD_MIN_UNIQUE_RATIO:
+                bt.logging.warning(
+                    f"UID:{uid} - OD validate: PADDING FAILED for job {job_id} — "
+                    f"{len(unique_entities)} unique / {entity_count} returned "
+                    f"(< {self.OD_MIN_UNIQUE_RATIO:.0%} unique)"
+                )
+                return False, len(unique_entities)
+
+            # Now cap the de-duplicated set to the job limit. Volume is paid on
+            # this unique, capped count — never the claimed count.
+            entities = unique_entities
+            if job.limit and len(entities) > job.limit:
                 entities = entities[:job.limit]
+            unique_count = len(entities)
 
             # Phase 1: Schema validation on a sample
             sample_size = min(self.OD_SCHEMA_SAMPLE_SIZE, len(entities))
@@ -298,7 +367,7 @@ class MinerEvaluator:
                     f"UID:{uid} - OD validate: SCHEMA FAILED for job {job_id} "
                     f"(wrong XContent format)"
                 )
-                return False, entity_count
+                return False, unique_count
 
             # Phase 2: Job match — check request fields on a sample
             for entity in schema_sample:
@@ -308,26 +377,36 @@ class MinerEvaluator:
                         f"UID:{uid} - OD validate: JOB MATCH FAILED for job {job_id}, "
                         f"post {post_id} (wrong username/keyword/date)"
                     )
-                    return False, entity_count
+                    return False, unique_count
 
-            # Phase 3: Scraper validation on 1 entity from the schema-validated sample
-            entity = random.choice(schema_sample)
-            post_id = self.on_demand_validator._get_post_id(entity)
-            is_valid = await self.on_demand_validator._validate_entity(
-                ctx, entity, post_id, uid
-            )
-            if not is_valid:
-                bt.logging.warning(
-                    f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
-                    f"post {post_id}"
+            # Phase 3: Scraper validation on a volume-scaled sample drawn from the
+            # FULL unique/capped set (not the 5-entity schema sample). Checking one
+            # entity let a fabricator hide fakes behind a single real post; checking
+            # ~10% of the volume (min 3, capped at OD_MAX_SCRAPER_CHECKS for Apify
+            # cost) makes the per-fake escape probability compound: to keep a
+            # meaningful escape chance a cheater must keep most sampled entities
+            # real. Any failure fails the whole submission.
+            scraper_k = max(3, math.ceil(0.10 * len(entities)))
+            scraper_k = min(scraper_k, self.OD_MAX_SCRAPER_CHECKS, len(entities))
+            to_scrape = random.sample(entities, scraper_k)
+            for entity in to_scrape:
+                post_id = self.on_demand_validator._get_post_id(entity)
+                is_valid = await self.on_demand_validator._validate_entity(
+                    ctx, entity, post_id, uid
                 )
-                return False, entity_count
+                if not is_valid:
+                    bt.logging.warning(
+                        f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
+                        f"post {post_id}"
+                    )
+                    return False, unique_count
 
             bt.logging.info(
                 f"UID:{uid} - OD validate: PASSED job {job_id} "
-                f"({entity_count} entities, schema OK, job match OK, scraper OK)"
+                f"({unique_count} unique / {entity_count} returned, "
+                f"schema OK, job match OK, scraper OK on {len(to_scrape)})"
             )
-            return True, entity_count
+            return True, unique_count
 
         except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
             # Validator-side network failure downloading the submission — neutral, not miner's fault (#805)
