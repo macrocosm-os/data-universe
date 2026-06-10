@@ -23,6 +23,11 @@ from vali_utils.metrics import ORGANIC_MINER_RESULTS
 
 # Reward multiplier tuning constants (see docs/od_reward_formula.md)
 SPEED_HALF_LIFE_S = 45.0
+# Practical floor: a full request/process/submit cycle cannot realistically
+# complete in under a second, so submissions faster than this are treated as
+# exactly this fast. This removes the reward for implausible sub-second
+# responses (serving pre-cached jobs) without penalising genuinely fast miners.
+SPEED_FLOOR_S = 1.0
 VOLUME_SHORTFALL_EXPONENT = 1.3
 VOLUME_OVER_LOG_COEF = 0.15
 VOLUME_OVER_BONUS_CAP = 0.25
@@ -31,8 +36,9 @@ VOLUME_OPEN_MAX = 1.5
 
 
 def _speed_multiplier(upload_seconds: float) -> float:
-    """Half-life decay; clamps to [0, 1]. See docs/od_reward_formula.md §3."""
-    t = max(0.0, float(upload_seconds))
+    """Half-life decay with a practical floor; clamps to [0, 1].
+    See docs/od_reward_formula.md §3."""
+    t = max(SPEED_FLOOR_S, float(upload_seconds))
     return min(1.0, 0.5 ** (t / SPEED_HALF_LIFE_S))
 
 

@@ -44,6 +44,12 @@ class MinerScorer:
     ONDEMAND_MAX_CRED_PENALTY = 0.0075   # 0.75%
     ONDEMAND_BASE_REWARD = 100_000_000  # 100M
 
+    # Floor for the OD-anchored service caps (S3/P2P <= 2x max(FLOOR, od)). When
+    # OD is healthy this floor is negligible (od ~120M >> 1M) so OD stays the
+    # dominant lever; when OD drops to ~0 it keeps S3/P2P from collapsing to
+    # zero so honest miners can still compete while OD recovers. (Leon)
+    SERVICE_CAP_FLOOR = 1_000_000  # 1M
+
     # On-demand credibility: tracks job participation rate via EMA.
     # Scales the entire final score — non-participants decay toward 0.
     STARTING_ONDEMAND_CREDIBILITY = 0.5
@@ -169,15 +175,17 @@ class MinerScorer:
                 s3_component = float(self.s3_boosts[uid]) * s3_cred
                 od_component = float(self.ondemand_boosts[uid]) * od_cred
 
-                # S3 cap (existing): S3 <= 2x OD
-                if od_component > 0:
-                    s3_component = min(s3_component, od_component * 2)
-                else:
-                    s3_component = 0.0
+                # Service caps are anchored to OD, but with a small floor so a
+                # transient OD outage doesn't zero out S3/P2P entirely — honest
+                # miners can still compete on S3/P2P while OD recovers. When OD is
+                # healthy it remains the dominant lever (floor << typical od). (Leon)
+                cap_anchor = max(MinerScorer.SERVICE_CAP_FLOOR, od_component)
 
-                # P2P cap: P2P can't exceed S3 + OD
-                service_component = s3_component + od_component
-                p2p_capped = min(p2p_component, service_component) if service_component > 0 else 0.0
+                # S3 cap: S3 <= 2x the anchor
+                s3_component = min(s3_component, cap_anchor * 2)
+
+                # P2P cap: P2P can't exceed 2x the anchor either
+                p2p_capped = min(p2p_component, cap_anchor * 2)
 
                 capped_scores[uid] = p2p_capped + s3_component + od_component
 

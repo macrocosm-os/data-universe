@@ -128,6 +128,14 @@ class MinerEvaluator:
     # over a 600-entity submission it forces the cheater to make ≥8 of the
     # sampled entities real, which compounds with the schema/job-match checks.
     OD_MAX_SCRAPER_CHECKS = 8
+    # Fraction of the scraper sample allowed to fail before the whole submission
+    # fails. OD jobs accumulate over hours and real posts get deleted/edited, so
+    # some non-zero natural churn is expected on honest submissions. With zero
+    # tolerance, an honest miner answering an 80+ post job (k=8 checks) fails ~34%
+    # of the time at just 5% post-churn. Allowing floor(0.25*k) failures
+    # (k=8 -> 2) drops that to <1% while still forcing a fabricator to keep most
+    # sampled entities real. (Leon feedback / H-1 follow-up)
+    OD_SCRAPER_FAIL_TOLERANCE = 0.25
     # Hard cap on a single OD submission download (mirrors the API client's
     # FIFTEEN_MB_BYTES). The OD payload is miner-controlled S3 content; without a
     # cap a multi-GB upload OOM-kills the validator. (SECURITY_FINDINGS C1)
@@ -385,26 +393,34 @@ class MinerEvaluator:
             # ~10% of the volume (min 3, capped at OD_MAX_SCRAPER_CHECKS for Apify
             # cost) makes the per-fake escape probability compound: to keep a
             # meaningful escape chance a cheater must keep most sampled entities
-            # real. Any failure fails the whole submission.
+            # real. A small failure tolerance (floor(0.25*k)) absorbs natural
+            # post-churn (deletes/edits) so honest miners answering large jobs
+            # aren't failed on a single stale post.
             scraper_k = max(3, math.ceil(0.10 * len(entities)))
             scraper_k = min(scraper_k, self.OD_MAX_SCRAPER_CHECKS, len(entities))
+            allowed_failures = math.floor(self.OD_SCRAPER_FAIL_TOLERANCE * scraper_k)
             to_scrape = random.sample(entities, scraper_k)
+            scraper_failures = 0
             for entity in to_scrape:
                 post_id = self.on_demand_validator._get_post_id(entity)
                 is_valid = await self.on_demand_validator._validate_entity(
                     ctx, entity, post_id, uid
                 )
                 if not is_valid:
-                    bt.logging.warning(
-                        f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
-                        f"post {post_id}"
-                    )
-                    return False, unique_count
+                    scraper_failures += 1
+                    if scraper_failures > allowed_failures:
+                        bt.logging.warning(
+                            f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
+                            f"post {post_id} ({scraper_failures}/{scraper_k} failed, "
+                            f"tolerance {allowed_failures})"
+                        )
+                        return False, unique_count
 
             bt.logging.info(
                 f"UID:{uid} - OD validate: PASSED job {job_id} "
                 f"({unique_count} unique / {entity_count} returned, "
-                f"schema OK, job match OK, scraper OK on {len(to_scrape)})"
+                f"schema OK, job match OK, scraper OK on {len(to_scrape)} "
+                f"({scraper_failures} tolerated failures))"
             )
             return True, unique_count
 
