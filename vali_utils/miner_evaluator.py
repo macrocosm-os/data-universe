@@ -36,6 +36,11 @@ from typing import Dict, List, Optional, Tuple
 from vali_utils.validator_s3_access import ValidatorS3Access
 from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
 from vali_utils.s3_logging_utils import log_s3_validation_table
+from vali_utils.s3_validation_results_client import (
+    MACROCOSMOS_VALIDATOR_UID,
+    PublishedScore,
+    S3ValidationResultsClient,
+)
 
 import httpx
 
@@ -61,7 +66,14 @@ class MinerEvaluator:
         DataSource.REDDIT: ScraperId.REDDIT_MC,
     }
 
-    def __init__(self, config: bt.config, uid: int, metagraph_syncer: MetagraphSyncer, s3_reader: ValidatorS3Access):
+    def __init__(
+        self,
+        config: bt.config,
+        uid: int,
+        metagraph_syncer: MetagraphSyncer,
+        s3_reader: ValidatorS3Access,
+        s3_results_client: Optional[S3ValidationResultsClient] = None,
+    ):
         self.config = config
         self.uid = uid
         self.metagraph_syncer = metagraph_syncer
@@ -71,6 +83,13 @@ class MinerEvaluator:
         )
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
         self.wallet = bt.wallet(config=self.config)
+
+        # API-backed S3 validation results. Used by non-macrocosmos validators
+        # to fetch what UID 89 published; UID 89 uses it to publish results.
+        self.s3_results_client = s3_results_client
+        self._published_scores_cache: Dict[str, PublishedScore] = {}
+        self._published_scores_cache_ts: float = 0.0
+        self._published_scores_cache_ttl_s: float = 300.0
 
         # Set up initial scoring weights for validation
         self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
@@ -549,12 +568,18 @@ class MinerEvaluator:
         Returns:
             An S3ValidationResult with validation details or None if no S3 data is found.
         """
+        # Non-macrocosmos validators fetch results published by UID 89 instead of
+        # running S3 validation themselves (which they can no longer do — the API
+        # restricts the underlying S3 endpoints to UID 89).
+        if self.uid != MACROCOSMOS_VALIDATOR_UID:
+            return await self._fetch_published_s3_result(uid, hotkey, current_block)
+
         bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Starting comprehensive S3 validation")
 
         try:
             # Use S3 auth URL from config
             s3_auth_url = self.config.s3_auth_url
-            
+
             s3_validation_result = await validate_s3_miner_data(
                 self.wallet, s3_auth_url, hotkey,
                 config=self.config, s3_reader=self.s3_reader
@@ -606,7 +631,78 @@ class MinerEvaluator:
         if s3_validation_result:
             self.s3_storage.update_validation_info(hotkey, s3_validation_result.total_active_jobs, current_block)
 
+        # UID 89 publishes its result so other validators can fetch it.
+        if s3_validation_result and self.s3_results_client is not None:
+            try:
+                await self.s3_results_client.publish(
+                    {
+                        hotkey: {
+                            "effective_size_bytes": float(
+                                s3_validation_result.effective_size_bytes
+                            ),
+                            "validation_passed": bool(s3_validation_result.is_valid),
+                        }
+                    }
+                )
+            except Exception as e:
+                bt.logging.warning(f"{hotkey}: publish S3 validation result failed: {e}")
+
         return s3_validation_result
+
+    async def _fetch_published_s3_result(
+        self, uid: int, hotkey: str, current_block: int
+    ) -> Optional[S3ValidationResult]:
+        """Fetch the score published by UID 89 and synthesize an S3ValidationResult.
+
+        Non-macrocosmos validators call this instead of running local S3 validation.
+        Only effective_size_bytes and is_valid matter to the scorer — other fields
+        are filled with zeros.
+        """
+        if self.s3_results_client is None:
+            return None
+
+        now = time.time()
+        if (
+            not self._published_scores_cache
+            or (now - self._published_scores_cache_ts) > self._published_scores_cache_ttl_s
+        ):
+            try:
+                self._published_scores_cache = await self.s3_results_client.fetch_all()
+                self._published_scores_cache_ts = now
+            except Exception as e:
+                bt.logging.warning(f"fetch published S3 scores failed: {e}")
+                return None
+
+        published = self._published_scores_cache.get(hotkey)
+        if published is None:
+            bt.logging.debug(f"UID:{uid} - HOTKEY:{hotkey}: no published S3 score yet")
+            return None
+
+        result = S3ValidationResult(
+            is_valid=published.validation_passed,
+            validation_percentage=0.0,
+            total_active_jobs=0,
+            expected_jobs_count=0,
+            recent_jobs_analyzed=0,
+            recent_files_count=0,
+            total_size_bytes=0,
+            has_duplicates=False,
+            duplicate_percentage=0.0,
+            entities_validated=0,
+            entities_passed_scraper=0,
+            scraper_success_rate=0.0,
+            entities_checked_for_job_match=0,
+            entities_matched_job=0,
+            job_match_rate=0.0,
+            validation_issues=[],
+            reason="Result fetched from data-universe-api",
+            sample_validation_results=[],
+            sample_job_mismatches=[],
+            effective_size_bytes=published.effective_size_bytes,
+            job_coverage_rate=0.0,
+        )
+        self.s3_storage.update_validation_info(hotkey, 0, current_block)
+        return result
 
     async def run_next_eval_batch(self) -> int:
         """Asynchronously runs the next batch of miner evaluations and returns the number of seconds to wait until the next batch.
