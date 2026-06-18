@@ -30,7 +30,10 @@ class MinerScorer:
     #      hex-pad, synthetic users, short status IDs, within-file dup) catches the
     #      164-hotkey sybil cluster; pre-fix effective_size/credibility is inflated by
     #      fabricated bulk uploads.
-    STATE_VERSION = 13
+    # v15: Reset S3 — latest-file-per-job validation + whole-job-snapshot miner uploads.
+    #      Old effective_size/credibility was computed across all historical chunks; new
+    #      model counts only the latest snapshot per job, so prior scores are not comparable.
+    STATE_VERSION = 15
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -136,10 +139,11 @@ class MinerScorer:
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
             # --- State migrations ---
-            if saved_version < 13:
+            if saved_version < 15:
                 bt.logging.warning(
-                    f"State migration v{saved_version} -> v13: "
-                    f"S3 boost/credibility/effective_size reset"
+                    f"State migration v{saved_version} -> v15: "
+                    f"S3 boost/credibility/effective_size reset "
+                    f"(latest-file-per-job validation + whole-job-snapshot uploads)"
                 )
                 self.s3_boosts.zero_()
                 self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)

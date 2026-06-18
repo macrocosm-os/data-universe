@@ -35,6 +35,7 @@ from dynamic_desirability.desirability_retrieval import run_retrieval_from_api
 from neurons import __spec_version__ as spec_version
 from common.api_client import DataUniverseApiClient
 from vali_utils.validator_s3_access import ValidatorS3Access
+from vali_utils.s3_validation_results_client import S3ValidationResultsClient
 from rewards.data_value_calculator import DataValueCalculator
 from rich.table import Table
 from rich.console import Console
@@ -743,8 +744,15 @@ def main():
     metagraph_syncer.start()
 
     s3_reader = ValidatorS3Access(wallet=wallet, s3_auth_url=config.s3_auth_url)
+    s3_results_client = S3ValidationResultsClient(
+        wallet=wallet, api_base_url=config.s3_auth_url
+    )
     evaluator = MinerEvaluator(
-        config=config, uid=uid, metagraph_syncer=metagraph_syncer, s3_reader=s3_reader
+        config=config,
+        uid=uid,
+        metagraph_syncer=metagraph_syncer,
+        s3_reader=s3_reader,
+        s3_results_client=s3_results_client,
     )
 
     with Validator(
