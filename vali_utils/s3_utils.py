@@ -616,13 +616,14 @@ class DuckDBSampledValidator:
 
         Returns (filtered_files_by_job, stale_files_dropped).
         """
+        def _newest_key(f):
+            return f.get('last_modified', '')
         stale_dropped = 0
         out: Dict[str, List[dict]] = {}
         for job_id, files in files_by_job.items():
             if len(files) > 1:
-                newest = max(files, key=lambda f: f.get('last_modified', ''))
+                out[job_id] = [max(files, key=_newest_key)]
                 stale_dropped += len(files) - 1
-                out[job_id] = [newest]
             else:
                 out[job_id] = files
         return out, stale_dropped

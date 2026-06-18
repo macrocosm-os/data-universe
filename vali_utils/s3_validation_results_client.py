@@ -24,7 +24,6 @@ class PublishedScore:
     validator_uid: int
     effective_size_bytes: float
     validation_passed: bool
-    raw: dict
 
 
 class S3ValidationResultsClient:
@@ -119,6 +118,5 @@ class S3ValidationResultsClient:
                 validator_uid=int(entry.get("validator_uid", -1)),
                 effective_size_bytes=float(score.get("effective_size_bytes", 0.0)),
                 validation_passed=bool(score.get("validation_passed", False)),
-                raw=score,
             )
         return out
