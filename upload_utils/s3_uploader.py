@@ -1,12 +1,12 @@
 """
-S3 Partitioned Uploader for Dynamic Desirability data using Job IDs from Gravity
-Uploads data using exact job IDs from Gravity as folder names:
-hotkey={hotkey_id}/job_id={job_id}/parquet_files
+S3 Partitioned Uploader for Dynamic Desirability data using Job IDs from Gravity.
 
-NO ENCODING - Raw data upload to S3
-Uses offset-based tracking for continuous processing of new data
+Each cycle, for every job, queries all matching rows from the miner's local
+SQLite (capped at max_rows) and uploads them as a single parquet file under
+hotkey={hotkey}/job_id={job_id}/. The validator keeps only the newest file
+per job_id, so the snapshot model matches its semantics directly.
 
-Upload flow: per-file presigned URL via POST /get-file-upload-url
+Upload flow: per-file presigned URL via POST /get-file-upload-url.
 """
 
 import os
@@ -15,7 +15,6 @@ import datetime as dt
 import pandas as pd
 import bittensor as bt
 import sqlite3
-import re
 import secrets
 from contextlib import contextmanager
 from typing import List, Dict
@@ -62,8 +61,11 @@ def load_dynamic_lookup() -> Dict[str, List[Dict]]:
 class S3PartitionedUploader:
     """
     S3 Partitioned uploader using job IDs from Gravity.
-    Handles both label matching and keyword text search.
+    Each cycle re-snapshots the whole job into a single parquet file.
     """
+
+    # Fallback row cap when a job config doesn't specify max_rows.
+    DEFAULT_JOB_MAX_ROWS = 2_000_000
 
     def __init__(
         self,
@@ -73,7 +75,6 @@ class S3PartitionedUploader:
         s3_auth_url: str,
         state_file: str,
         output_dir: str = 's3_partitioned_storage',
-        chunk_size: int = 1_000_000,
     ):
         self.db_path = db_path
         self.wallet = wallet
@@ -83,9 +84,8 @@ class S3PartitionedUploader:
         self.keypair = wallet.hotkey
         self.state_file = f"{state_file.split('.json')[0]}_s3_partitioned.json"
         self.output_dir = os.path.join(output_dir, self.miner_hotkey)
-        self.chunk_size = chunk_size
 
-        # Load processed state - tracks last processed info per job
+        # Load processed state - records last snapshot stats per job (for logging).
         self.processed_state = self._load_processed_state()
 
     @contextmanager
@@ -117,37 +117,6 @@ class S3PartitionedUploader:
                 json.dump(self.processed_state, f, indent=2)
         except Exception as e:
             bt.logging.error(f"Failed to save processed state: {e}")
-
-    def _get_last_cursor(self, job_id: str) -> dict:
-        """Get the last processed cursor for a job.
-
-        Returns dict with 'last_datetime' and 'last_uri' keys.
-        Falls back to legacy 'last_offset' by converting it on first run.
-        """
-        job_state = self.processed_state.get(job_id, {})
-        # New cursor-based state
-        if 'last_datetime' in job_state:
-            return {
-                'last_datetime': job_state['last_datetime'],
-                'last_uri': job_state.get('last_uri', ''),
-            }
-        # No state yet — start from beginning
-        return {'last_datetime': None, 'last_uri': None}
-
-    def _update_processed_state(self, job_id: str, last_datetime: str, last_uri: str, records_processed: int):
-        """Update the processed state for a job using cursor-based tracking."""
-        if job_id not in self.processed_state:
-            self.processed_state[job_id] = {}
-
-        self.processed_state[job_id].update({
-            'last_datetime': last_datetime,
-            'last_uri': last_uri,
-            'total_records_processed': self.processed_state[job_id].get('total_records_processed', 0) + records_processed,
-            'last_processed_time': dt.datetime.now().isoformat(),
-        })
-        # Clean up legacy offset key if present
-        self.processed_state[job_id].pop('last_offset', None)
-        self.processed_state[job_id].pop('processing_completed', None)
 
     def _load_dd_list(self) -> Dict[str, Dict]:
         """Load job configurations from Gravity and return by job_id"""
@@ -220,49 +189,51 @@ class S3PartitionedUploader:
             bt.logging.error(f"Failed to load jobs from Gravity: {e}")
             return {}
 
-    def _get_label_data(self, source: int, label: str, cursor: dict = None) -> pd.DataFrame:
-        """Get data matching exact label, using cursor-based pagination."""
-        if cursor is None:
-            cursor = {'last_datetime': None, 'last_uri': None}
-
-        # Normalize label for SQL query
-        normalized_label = label.lower().strip()
-
-        # Build label conditions based on source
+    @staticmethod
+    def _build_label_conditions(source: int, label: str) -> str:
+        """Source-aware SQL WHERE fragment matching ``label`` (joined by OR)."""
+        normalized = label.lower().strip()
         if source == DataSource.REDDIT.value:
-            # For Reddit: check both with and without r/ prefix
-            label_conditions = [
-                f"LOWER(label) = '{normalized_label}'",
-                f"LOWER(label) = 'r/{normalized_label.removeprefix('r/')}'",
+            parts = [
+                f"LOWER(label) = '{normalized}'",
+                f"LOWER(label) = 'r/{normalized.removeprefix('r/')}'",
             ]
         else:
-            # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
-            label_without_hash = normalized_label.lstrip('#')
-            label_with_hash = f"#{label_without_hash}"
-
-            label_conditions = [
-                # Check if hashtag (with #) appears in the tweet_hashtags JSON array inside content
-                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_with_hash}')",
-                # Check if hashtag (without #) appears in the tweet_hashtags JSON array
-                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_without_hash}')",
-                # Fallback: check main label field (stores first hashtag)
-                f"LOWER(label) = '{label_with_hash}'",
-                f"LOWER(label) = '{label_without_hash}'",
+            without_hash = normalized.lstrip('#')
+            with_hash = f"#{without_hash}"
+            parts = [
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{with_hash}')",
+                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{without_hash}')",
+                f"LOWER(label) = '{with_hash}'",
+                f"LOWER(label) = '{without_hash}'",
             ]
+        return " OR ".join(parts)
 
-        label_condition_sql = " OR ".join(label_conditions)
+    @staticmethod
+    def _build_keyword_conditions(source: int, keyword: str) -> str:
+        """Source-aware SQL WHERE fragment matching ``keyword`` in text fields (joined by OR)."""
+        normalized = keyword.lower().strip()
+        if source == DataSource.REDDIT.value:
+            parts = [
+                f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized}%'",
+                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized}%'",
+            ]
+        else:
+            parts = [f"LOWER(JSON_EXTRACT(content, '$.text')) LIKE '%{normalized}%'"]
+        return " OR ".join(parts)
 
-        # Build cursor condition
-        cursor_condition, cursor_params = self._build_cursor_condition(cursor)
+    def _get_label_data(self, source: int, label: str, limit: int) -> pd.DataFrame:
+        """Get all rows matching exact label, capped at ``limit``."""
+        label_condition_sql = self._build_label_conditions(source, label)
 
         query = f"""
             SELECT uri, datetime, label, content
             FROM DataEntity
-            WHERE source = ? AND ({label_condition_sql}){cursor_condition}
+            WHERE source = ? AND ({label_condition_sql})
             ORDER BY datetime ASC, uri ASC
             LIMIT ?
         """
-        params = [source] + cursor_params + [self.chunk_size]
+        params = [source, limit]
 
         try:
             with self.get_db_connection() as conn:
@@ -275,40 +246,18 @@ class S3PartitionedUploader:
             bt.logging.error(f"Error querying label data for {source}/{label}: {e}")
             return pd.DataFrame()
 
-    def _get_keyword_data_chunk(self, source: int, keyword: str, cursor: dict = None) -> pd.DataFrame:
-        """Get chunk of data where keyword appears in text content, using cursor-based pagination."""
-        if cursor is None:
-            cursor = {'last_datetime': None, 'last_uri': None}
-
-        # Normalize keyword
-        normalized_keyword = keyword.lower().strip()
-
-        # Build content search conditions - focus on main text fields
-        if source == DataSource.REDDIT.value:
-            # Search Reddit body field specifically
-            content_conditions = [
-                f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
-                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
-            ]
-        else:
-            # Search X text field specifically
-            content_conditions = [
-                f"LOWER(JSON_EXTRACT(content, '$.text')) LIKE '%{normalized_keyword}%'"
-            ]
-
-        content_condition_sql = " OR ".join(content_conditions)
-
-        # Build cursor condition
-        cursor_condition, cursor_params = self._build_cursor_condition(cursor)
+    def _get_keyword_data(self, source: int, keyword: str, limit: int) -> pd.DataFrame:
+        """Get all rows where the keyword appears in text content, capped at ``limit``."""
+        content_condition_sql = self._build_keyword_conditions(source, keyword)
 
         query = f"""
             SELECT uri, datetime, label, content
             FROM DataEntity
-            WHERE source = ? AND ({content_condition_sql}){cursor_condition}
+            WHERE source = ? AND ({content_condition_sql})
             ORDER BY datetime ASC, uri ASC
             LIMIT ?
         """
-        params = [source] + cursor_params + [self.chunk_size]
+        params = [source, limit]
 
         try:
             with self.get_db_connection() as conn:
@@ -321,69 +270,21 @@ class S3PartitionedUploader:
             bt.logging.error(f"Error querying keyword data for {source}/{keyword}: {e}")
             return pd.DataFrame()
 
-    def _get_label_and_keyword_data(self, source: int, label: str, keyword: str, cursor: dict = None) -> pd.DataFrame:
-        """Get data where BOTH label matches AND keyword appears in text content (AND logic),
-        using cursor-based pagination."""
-        if cursor is None:
-            cursor = {'last_datetime': None, 'last_uri': None}
+    def _get_label_and_keyword_data(self, source: int, label: str, keyword: str, limit: int) -> pd.DataFrame:
+        """Get all rows matching BOTH the label AND the keyword, capped at ``limit``."""
+        label_condition_sql = self._build_label_conditions(source, label)
+        content_condition_sql = self._build_keyword_conditions(source, keyword)
 
-        # Normalize inputs
-        normalized_label = label.lower().strip()
-        normalized_keyword = keyword.lower().strip()
-
-        # Build label conditions based on source (same as _get_label_data)
-        if source == DataSource.REDDIT.value:
-            # For Reddit: check both with and without r/ prefix
-            label_conditions = [
-                f"LOWER(label) = '{normalized_label}'",
-                f"LOWER(label) = 'r/{normalized_label.removeprefix('r/')}'",
-            ]
-        else:
-            # For X: check if label is in tweet_hashtags array (handles tweets with multiple hashtags)
-            label_without_hash = normalized_label.lstrip('#')
-            label_with_hash = f"#{label_without_hash}"
-
-            label_conditions = [
-                # Check if hashtag (with #) appears in the tweet_hashtags JSON array inside content
-                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_with_hash}')",
-                # Check if hashtag (without #) appears in the tweet_hashtags JSON array
-                f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{label_without_hash}')",
-                # Fallback: check main label field (stores first hashtag)
-                f"LOWER(label) = '{label_with_hash}'",
-                f"LOWER(label) = '{label_without_hash}'",
-            ]
-
-        label_condition_sql = " OR ".join(label_conditions)
-
-        # Build content search conditions based on source (same as _get_keyword_data_chunk)
-        if source == DataSource.REDDIT.value:
-            # Search Reddit body field specifically
-            content_conditions = [
-                f"LOWER(JSON_EXTRACT(content, '$.body')) LIKE '%{normalized_keyword}%'",
-                f"LOWER(JSON_EXTRACT(content, '$.title')) LIKE '%{normalized_keyword}%'"
-            ]
-        else:
-            # Search X text field specifically
-            content_conditions = [
-                f"LOWER(JSON_EXTRACT(content, '$.text')) LIKE '%{normalized_keyword}%'"
-            ]
-
-        content_condition_sql = " OR ".join(content_conditions)
-
-        # Build cursor condition
-        cursor_condition, cursor_params = self._build_cursor_condition(cursor)
-
-        # Combine with AND logic: (label conditions) AND (keyword conditions)
         query = f"""
             SELECT uri, datetime, label, content
             FROM DataEntity
             WHERE source = ?
                 AND ({label_condition_sql})
-                AND ({content_condition_sql}){cursor_condition}
+                AND ({content_condition_sql})
             ORDER BY datetime ASC, uri ASC
             LIMIT ?
         """
-        params = [source] + cursor_params + [self.chunk_size]
+        params = [source, limit]
 
         try:
             with self.get_db_connection() as conn:
@@ -395,26 +296,6 @@ class S3PartitionedUploader:
         except Exception as e:
             bt.logging.error(f"Error querying label+keyword data for {source}/{label}/{keyword}: {e}")
             return pd.DataFrame()
-
-    @staticmethod
-    def _build_cursor_condition(cursor: dict) -> tuple:
-        """Build a SQL WHERE clause fragment and params for cursor-based pagination.
-
-        Uses (datetime, uri) keyset pagination: returns rows strictly after the cursor position.
-        This is stable under data churn (inserts/deletes) unlike OFFSET.
-
-        Returns:
-            (sql_fragment, params_list) — fragment starts with ' AND' if non-empty.
-        """
-        last_dt = cursor.get('last_datetime')
-        last_uri = cursor.get('last_uri')
-        if last_dt is None:
-            return ('', [])
-        # Keyset pagination: (datetime > ?) OR (datetime = ? AND uri > ?)
-        return (
-            ' AND (datetime > ? OR (datetime = ? AND uri > ?))',
-            [last_dt, last_dt, last_uri or ''],
-        )
 
     def _create_raw_dataframe(self, df: pd.DataFrame, source: int) -> pd.DataFrame:
         """Create raw dataframe with decoded content - NO ENCODING"""
@@ -499,8 +380,8 @@ class S3PartitionedUploader:
             bt.logging.error(f"Error creating raw dataframe: {e}")
             return pd.DataFrame()
 
-    async def _upload_data_chunk(self, client: DataUniverseApiClient, df: pd.DataFrame, source: int, job_id: str) -> bool:
-        """Upload chunk via per-file presigned URL from /get-file-upload-url."""
+    async def _upload_job_snapshot(self, client: DataUniverseApiClient, df: pd.DataFrame, source: int, job_id: str) -> bool:
+        """Upload the snapshot DataFrame as one parquet file via per-file presigned URL."""
         if df.empty:
             return True
 
@@ -547,92 +428,46 @@ class S3PartitionedUploader:
             return False
 
     async def _process_job(self, client: DataUniverseApiClient, job_id: str, job_config: Dict) -> bool:
-        """Process a single job using exact job_id as folder name."""
+        """Re-snapshot a single job: query all matching rows up to max_rows and upload as one file."""
         source = job_config["source"]
         search_type = job_config["type"]
-        max_rows = job_config.get("max_rows")
+        max_rows = job_config.get("max_rows") or self.DEFAULT_JOB_MAX_ROWS
 
-        # Extract value(s) based on search type
         if search_type == "label_and_keyword":
             label = job_config["label"]
             keyword = job_config["keyword"]
             log_msg = f"label='{label}' AND keyword='{keyword}'"
-        else:
+            df = self._get_label_and_keyword_data(source, label, keyword, max_rows)
+        elif search_type == "label":
             value = job_config["value"]
-            log_msg = f"{search_type}: {value}"
+            log_msg = f"label: {value}"
+            df = self._get_label_data(source, value, max_rows)
+        elif search_type == "keyword":
+            value = job_config["value"]
+            log_msg = f"keyword: {value}"
+            df = self._get_keyword_data(source, value, max_rows)
+        else:
+            bt.logging.error(f"Unknown search type: {search_type}")
+            return False
 
-        cursor = self._get_last_cursor(job_id)
+        bt.logging.info(f"Snapshotting job {job_id} ({log_msg}), max_rows={max_rows}, rows={len(df)}")
 
-        # Check already-uploaded rows against max_rows cap
-        already_uploaded = self.processed_state.get(job_id, {}).get('total_records_processed', 0)
-        if max_rows and already_uploaded >= max_rows:
-            bt.logging.info(f"Job {job_id} already at max_rows ({already_uploaded}/{max_rows}), skipping")
+        if df.empty:
+            bt.logging.info(f"No data for job {job_id}, skipping upload")
             return True
 
-        bt.logging.info(f"Processing job {job_id} ({log_msg}), cursor: datetime={cursor.get('last_datetime')}, max_rows={max_rows}")
+        success = await self._upload_job_snapshot(client, df, source, job_id)
+        if not success:
+            bt.logging.error(f"Failed to upload snapshot for job {job_id}")
+            return False
 
-        total_processed = 0
+        self.processed_state[job_id] = {
+            'last_snapshot_rows': len(df),
+            'last_snapshot_time': dt.datetime.now().isoformat(),
+        }
+        self._save_processed_state()
 
-        while True:
-            # Get next chunk based on search type
-            if search_type == "label":
-                chunk_df = self._get_label_data(source, value, cursor)
-            elif search_type == "keyword":
-                chunk_df = self._get_keyword_data_chunk(source, value, cursor)
-            elif search_type == "label_and_keyword":
-                chunk_df = self._get_label_and_keyword_data(source, label, keyword, cursor)
-            else:
-                bt.logging.error(f"Unknown search type: {search_type}")
-                return False
-
-            if chunk_df.empty:
-                bt.logging.info(f"No new data for job {job_id}, total processed this run: {total_processed}")
-                break
-
-            # Enforce max_rows: truncate chunk if it would exceed the cap
-            if max_rows:
-                remaining = max_rows - already_uploaded - total_processed
-                if remaining <= 0:
-                    bt.logging.info(f"Job {job_id}: reached max_rows cap ({max_rows}), stopping")
-                    break
-                if len(chunk_df) > remaining:
-                    bt.logging.info(f"Job {job_id}: truncating chunk from {len(chunk_df)} to {remaining} rows (max_rows={max_rows})")
-                    chunk_df = chunk_df.iloc[:remaining]
-
-            # Upload chunk via per-file presigned URL
-            success = await self._upload_data_chunk(client, chunk_df, source, job_id)
-            if not success:
-                bt.logging.error(f"Failed to upload chunk for job {job_id}")
-                return False
-
-            total_processed += len(chunk_df)
-
-            # Advance cursor to the last row in this chunk
-            last_row = chunk_df.iloc[-1]
-            last_datetime = last_row['datetime']
-            if hasattr(last_datetime, 'isoformat'):
-                last_datetime = last_datetime.isoformat()
-            else:
-                last_datetime = str(last_datetime)
-            last_uri = str(last_row['uri'])
-            cursor = {'last_datetime': last_datetime, 'last_uri': last_uri}
-
-            # Update state after each successful chunk
-            self._update_processed_state(job_id, last_datetime, last_uri, len(chunk_df))
-            self._save_processed_state()
-
-            bt.logging.info(f"Processed {total_processed} new records for job {job_id}")
-
-            # Stop if we've hit the max_rows cap
-            if max_rows and (already_uploaded + total_processed) >= max_rows:
-                bt.logging.info(f"Job {job_id}: reached max_rows cap ({max_rows}), stopping")
-                break
-
-            # If we got less than chunk_size, we've reached the end for now
-            if len(chunk_df) < self.chunk_size:
-                break
-
-        bt.logging.info(f"Completed job {job_id}: {total_processed} records processed")
+        bt.logging.info(f"Completed job {job_id}: {len(df)} records snapshotted")
         return True
 
     async def upload_dd_data(self) -> bool:

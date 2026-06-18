@@ -266,6 +266,16 @@ class DuckDBSampledValidator:
                         files_by_job[job_id] = []
                     files_by_job[job_id].append(f)
 
+            # Per-job latest-only: keep only the newest upload per job_id.
+            # Miners reupload whole-job snapshots; older files in the same job_id are
+            # stale and will be reaped by the external cleanup script.
+            files_by_job, stale_files_dropped = self._keep_latest_per_job(files_by_job)
+            if stale_files_dropped > 0:
+                bt.logging.info(
+                    f"{miner_hotkey}: latest-only filter dropped {stale_files_dropped} "
+                    f"stale files across {len(files_by_job)} jobs"
+                )
+
             # Filter to active jobs only
             active_job_ids = [jid for jid in files_by_job.keys() if jid in expected_jobs]
 
@@ -390,37 +400,14 @@ class DuckDBSampledValidator:
                     sampled_files, expected_jobs, presigned_urls
                 )
 
-                # Step 6: Scraper validation — mix of recent and older files.
-                # Validating only recent files allowed miners to upload small correct
-                # files recently while bulk fabricated data (older) was never checked.
-                cutoff = dt.datetime.now(dt.timezone.utc) - dt.timedelta(hours=self.SCRAPER_MAX_AGE_HOURS)
-                recent_files = []
-                older_files = []
-                for f in sampled_files:
-                    last_mod = f.get('last_modified', '')
-                    if last_mod:
-                        try:
-                            file_dt = pd.to_datetime(last_mod, utc=True).to_pydatetime()
-                            if file_dt >= cutoff:
-                                recent_files.append(f)
-                            else:
-                                older_files.append(f)
-                        except Exception:
-                            older_files.append(f)
-                    else:
-                        older_files.append(f)
-
-                # Always include some older files in scraper validation so old data can't hide
-                scraper_files = list(recent_files)
-                if older_files:
-                    older_sample = random.sample(older_files, min(len(older_files), max(5, len(recent_files))))
-                    scraper_files.extend(older_sample)
+                # Step 6: Scraper validation — sampled_files is already latest-per-job,
+                # so no recent/older split is needed.
+                scraper_files = list(sampled_files)
                 random.shuffle(scraper_files)
 
                 if scraper_files:
                     bt.logging.info(
-                        f"{miner_hotkey}: Running scraper validation on {len(scraper_files)} files "
-                        f"({len(recent_files)} recent + {len(scraper_files) - len(recent_files)} older)..."
+                        f"{miner_hotkey}: Running scraper validation on {len(scraper_files)} files..."
                     )
                     scraper_result = await self._perform_scraper_validation(
                         miner_hotkey, scraper_files, expected_jobs, presigned_urls, num_entities=20
@@ -622,6 +609,24 @@ class DuckDBSampledValidator:
         except Exception as e:
             bt.logging.warning(f"parquet_metadata error: {e}")
             return None
+
+    @staticmethod
+    def _keep_latest_per_job(files_by_job: Dict[str, List[dict]]) -> tuple:
+        """Keep only the newest file per job_id (by last_modified desc).
+
+        Returns (filtered_files_by_job, stale_files_dropped).
+        """
+        def _newest_key(f):
+            return f.get('last_modified', '')
+        stale_dropped = 0
+        out: Dict[str, List[dict]] = {}
+        for job_id, files in files_by_job.items():
+            if len(files) > 1:
+                out[job_id] = [max(files, key=_newest_key)]
+                stale_dropped += len(files) - 1
+            else:
+                out[job_id] = files
+        return out, stale_dropped
 
     def _parse_row_count_from_filename(self, key: str) -> Optional[int]:
         """Extract row count from new filename format: data_YYYYMMDD_HHMMSS_{count}_{hex16}.parquet"""
