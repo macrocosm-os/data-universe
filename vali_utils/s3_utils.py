@@ -78,6 +78,24 @@ def normalize_url_for_dedup(url_str: str) -> str:
     return f"{parsed.scheme}://{netloc}{path.rstrip('/')}"
 
 
+_PRESIGNED_URL_RE = re.compile(
+    r"https?://[^\s'\"]+?\?[^\s'\"]*X-Amz-Signature=[A-Fa-f0-9]+[^\s'\"]*"
+)
+
+
+def scrub_log(text: object) -> str:
+    """Strip presigned-URL query strings (signatures, credentials, expiry) from log messages.
+
+    R2/S3 presigned URLs embed an HMAC signature in the query string. The signature
+    itself is not the secret (it's a one-way HMAC, the secret key never leaves the
+    server), but the URL is still replayable within its TTL and the X-Amz-Credential
+    leaks the access key ID. We never want either in validator logs that may be
+    aggregated, pasted, or screenshotted.
+    """
+    s = str(text)
+    return _PRESIGNED_URL_RE.sub(lambda m: m.group(0).split("?", 1)[0] + "?[scrubbed]", s)
+
+
 def _weighted_sample_without_replacement(items, weights, k):
     """Sample k items without replacement, probability proportional to weight.
     Uses the exponential-rank trick: key = -log(U) / w, take k smallest keys."""
@@ -532,7 +550,7 @@ class DuckDBSampledValidator:
             )
 
         except Exception as e:
-            bt.logging.error(f"{miner_hotkey}: DuckDB validation error: {str(e)}")
+            bt.logging.error(scrub_log(f"{miner_hotkey}: DuckDB validation error: {str(e)}"))
             return self._create_failed_result(f"Validation error: {str(e)}")
 
     async def _get_presigned_urls_batch(
@@ -549,10 +567,13 @@ class DuckDBSampledValidator:
             batch = file_keys[i:i + batch_size]
 
             try:
+                # TODO: decrease back to 1h once validation runtimes stabilise. Bumped to 3h
+                # because long validation passes (large miners + retries) were hitting 403s
+                # on presigned URLs minted at the start of the run.
                 payload = {
                     "miner_hotkey": miner_hotkey,
                     "file_keys": batch,
-                    "expiry_hours": 1
+                    "expiry_hours": 3
                 }
 
                 body = json.dumps(payload).encode()
@@ -579,7 +600,7 @@ class DuckDBSampledValidator:
                     )
 
             except Exception as e:
-                bt.logging.warning(f"Presigned URL batch error: {e}")
+                bt.logging.warning(scrub_log(f"Presigned URL batch error: {e}"))
 
         return all_urls
 
@@ -607,7 +628,7 @@ class DuckDBSampledValidator:
                 'max_rg_rows': max_rg_rows
             }
         except Exception as e:
-            bt.logging.warning(f"parquet_metadata error: {e}")
+            bt.logging.warning(scrub_log(f"parquet_metadata error: {e}"))
             return None
 
     @staticmethod
@@ -919,17 +940,18 @@ class DuckDBSampledValidator:
                             unique_content_ids.update(ids.tolist())
 
             except (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException) as e:
-                # Transient S3/network errors — log and skip, do NOT fail the miner
-                bt.logging.warning(f"Transient S3/IO error: {type(e).__name__}: {e}")
+                # Transient S3/network errors — log and skip, do NOT fail the miner.
+                # scrub_log strips R2 presigned-URL query strings (signature + key id).
+                bt.logging.warning(scrub_log(f"Transient S3/IO error: {type(e).__name__}: {e}"))
                 continue
             except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
                 page_decode_failures += 1
                 bt.logging.warning(
-                    f"Page-decode failure: {type(e).__name__}: {e}"
+                    scrub_log(f"Page-decode failure: {type(e).__name__}: {e}")
                 )
                 continue
             except Exception as e:
-                bt.logging.warning(f"Sampled validation error: {e}")
+                bt.logging.warning(scrub_log(f"Sampled validation error: {e}"))
                 continue
             finally:
                 if conn:
