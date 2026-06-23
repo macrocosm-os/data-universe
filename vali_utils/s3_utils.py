@@ -179,7 +179,7 @@ class DuckDBSampledValidator:
 
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
-    MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024        # 512MB - single file cap
+    MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024       # 1GB - single file cap
     MIN_BYTES_PER_ROW = 50                         # Legit: 80-1300 B/row. Exploits: 8-25 B/row.
 
     # Scraper validation window — only files uploaded within this window are scraper-validated.
