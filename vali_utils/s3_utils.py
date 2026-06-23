@@ -357,8 +357,14 @@ class DuckDBSampledValidator:
             if not active_files:
                 return self._create_failed_result("No files in active jobs")
 
+            # Cap at 30 jobs/cycle. Post-snapshot each file == one whole job (up to
+            # 1GB / 3M rows). The economic-detection math is r/N ≤ D: with the
+            # top-5 force-include collapsing per-fab-job reward inflation to r≈10
+            # and a single failed validation costing ≥1 cycle of effective_size,
+            # N=30 makes any fab strategy net-negative EV. Coverage of 381 active
+            # jobs is ~8%/cycle → ~95% within 25 cycles (≈ a day at hourly runs).
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
-            sample_count = min(sample_count, len(active_files), 200)  # Cap at 200 files max
+            sample_count = min(sample_count, len(active_files), 30)
 
             # Byte-weighted sampling: file selection probability proportional to its
             # byte share of the total submitted size. Prior 50:50 big/small split let
@@ -698,9 +704,11 @@ class DuckDBSampledValidator:
         compression_failures = 0
         row_count_mismatches = 0
 
-        # Per-job dedup: separate hash set per job_id
-        # DuckDB reads only the url column (all row groups, columnar) — ~500KB per file
-        dedup_hashes_by_job: Dict[str, set] = {}
+        # Per-file URL dedup (presence-only — actual hash set lives locally
+        # in the loop iteration so memory is bounded). After
+        # _keep_latest_per_job each job has exactly one file, so within-job
+        # dedup is structurally within-file dedup.
+        dedup_hashes_by_job: Dict[str, bool] = {}
         dedup_total = 0
         dedup_duplicates = 0
 
@@ -845,30 +853,46 @@ class DuckDBSampledValidator:
                     schema_failures += 1
                     break
 
-                # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
+                # --- Per-file URL dedup: stream the url column via DuckDB fetchmany.
+                # Post-snapshot files can be 3M rows × ~150 B/URL ≈ 450 MB as a
+                # single Python list; fetchall() OOM-crashed validators. Stream in
+                # 10K-row batches so per-file Python heap stays at ~1.5 MB.
+                #
+                # _keep_latest_per_job collapses each job to one file, so the
+                # hash set is per-FILE in practice (not cross-file per-job).
+                # Building it locally and discarding when the file's loop
+                # iteration ends bounds cumulative dedup state to one set at a
+                # time. dedup_hashes_by_job is retained only for the cross-job
+                # log line in _check_dedup at the end of the pass.
                 if job_id not in dedup_hashes_by_job:
-                    dedup_hashes_by_job[job_id] = set()
-                job_hashes = dedup_hashes_by_job[job_id]
+                    dedup_hashes_by_job[job_id] = True  # presence marker for log only
+                file_hashes: set = set()
 
-                url_rows = conn.execute(
+                file_decodable = 0
+                cur = conn.execute(
                     f"SELECT url FROM read_parquet('{presigned_url}')"
-                ).fetchall()
+                )
+                while True:
+                    batch = cur.fetchmany(10_000)
+                    if not batch:
+                        break
+                    for (url_val,) in batch:
+                        if url_val and str(url_val).strip():
+                            file_decodable += 1
+                        normalized = normalize_url_for_dedup(url_val)
+                        h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
+                        dedup_total += 1
+                        if h in file_hashes:
+                            dedup_duplicates += 1
+                        else:
+                            file_hashes.add(h)
+                    del batch
 
                 # L3: decodable rows vs filename-claimed rows
-                file_decodable = sum(1 for (u,) in url_rows if u and str(u).strip())
                 file_claimed = self._parse_row_count_from_filename(file_key)
                 if file_claimed is not None and file_claimed > 0:
                     sum_decodable_rows += file_decodable
                     sum_sampled_claimed_rows += file_claimed
-
-                for (url_val,) in url_rows:
-                    normalized = normalize_url_for_dedup(url_val)
-                    h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
-                    dedup_total += 1
-                    if h in job_hashes:
-                        dedup_duplicates += 1
-                    else:
-                        job_hashes.add(h)
 
                 # --- PyArrow row-group read for empty/missing content check ---
                 if platform in ['x', 'twitter']:
