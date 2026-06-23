@@ -609,23 +609,37 @@ class DuckDBSampledValidator:
 
     def _check_file_metadata(self, presigned_url: str, conn) -> Optional[Dict]:
         """Read parquet metadata footer only (~1-10KB network read).
-        Returns {total_rows, codecs, has_uncompressed, max_rg_rows} or None on error."""
+        Returns metadata dict or None on error.
+
+        Row-group shape: pandas/pyarrow writing with row_group_size=10_000
+        produces groups of exactly 10K rows, with at most a single shorter
+        final group holding the remainder. Anything else (interior short
+        groups, or millions of tiny groups) is non-standard and an attacker
+        could weaponize it to inflate row-group count and slow validator
+        scans.
+        """
         try:
             result = conn.execute(f"""
-                SELECT SUM(row_group_num_rows), LIST(DISTINCT compression), MAX(row_group_num_rows)
+                SELECT
+                    SUM(row_group_num_rows),
+                    LIST(DISTINCT compression),
+                    MAX(row_group_num_rows),
+                    COUNT(*),
+                    SUM(CASE WHEN row_group_num_rows < {self.MAX_ROW_GROUP_SIZE} THEN 1 ELSE 0 END),
+                    MAX(CASE WHEN row_group_num_rows < {self.MAX_ROW_GROUP_SIZE} THEN row_group_id ELSE -1 END)
                 FROM parquet_metadata('{presigned_url}')
                 WHERE column_id = 0
             """).fetchone()
             if result is None or result[0] is None:
                 return None
-            total_rows = int(result[0])
-            codecs = set(result[1]) if result[1] else set()
-            max_rg_rows = int(result[2])
             return {
-                'total_rows': total_rows,
-                'codecs': codecs,
-                'has_uncompressed': 'UNCOMPRESSED' in codecs,
-                'max_rg_rows': max_rg_rows
+                'total_rows': int(result[0]),
+                'codecs': set(result[1]) if result[1] else set(),
+                'has_uncompressed': 'UNCOMPRESSED' in (set(result[1]) if result[1] else set()),
+                'max_rg_rows': int(result[2]),
+                'num_row_groups': int(result[3]),
+                'short_rg_count': int(result[4]),
+                'last_short_rg_id': int(result[5]),
             }
         except Exception as e:
             bt.logging.warning(scrub_log(f"parquet_metadata error: {e}"))
@@ -746,6 +760,21 @@ class DuckDBSampledValidator:
                         bt.logging.warning(
                             f"Row group too large: {metadata['max_rg_rows']} rows "
                             f"(max {self.MAX_ROW_GROUP_SIZE}) in {file_key}"
+                        )
+                        break
+
+                    # Row-group shape: only the last group may be shorter than
+                    # MAX_ROW_GROUP_SIZE. Blocks the "2M rows in 2M groups of 1"
+                    # attack that would otherwise pass the MAX check.
+                    short_rg = metadata['short_rg_count']
+                    num_rg = metadata['num_row_groups']
+                    if short_rg > 1 or (
+                        short_rg == 1 and metadata['last_short_rg_id'] != num_rg - 1
+                    ):
+                        schema_failures += 1
+                        bt.logging.warning(
+                            f"Non-uniform row groups: {short_rg} short of {num_rg} "
+                            f"(only the last may be < {self.MAX_ROW_GROUP_SIZE}) in {file_key}"
                         )
                         break
 
