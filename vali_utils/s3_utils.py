@@ -871,12 +871,24 @@ class DuckDBSampledValidator:
                     dedup_hashes_by_job[job_id] = True  # presence marker for log only
                 file_hashes: set = set()
 
+                # Hard iteration cap so a misbehaving cursor cannot loop forever.
+                # Use footer total_rows when available (cheap, already validated);
+                # otherwise fall back to MAX_FILE_SIZE_BYTES / MIN_BYTES_PER_ROW
+                # which is the largest possible row count for any accepted file.
+                BATCH_SIZE = 10_000
+                if metadata and metadata.get('total_rows'):
+                    expected_rows = int(metadata['total_rows'])
+                else:
+                    expected_rows = self.MAX_FILE_SIZE_BYTES // self.MIN_BYTES_PER_ROW
+                max_iterations = (expected_rows // BATCH_SIZE) + 2  # +2 = remainder + EOF probe
+
                 file_decodable = 0
                 cur = conn.execute(
                     f"SELECT url FROM read_parquet('{presigned_url}')"
                 )
-                while True:
-                    batch = cur.fetchmany(10_000)
+                cursor_overran = False
+                for _ in range(max_iterations):
+                    batch = cur.fetchmany(BATCH_SIZE)
                     if not batch:
                         break
                     for (url_val,) in batch:
@@ -890,6 +902,18 @@ class DuckDBSampledValidator:
                         else:
                             file_hashes.add(h)
                     del batch
+                else:
+                    # Loop hit the iteration cap without seeing EOF — cursor is
+                    # returning more rows than the footer claimed. Treat as
+                    # malformed/adversarial and fail the file.
+                    cursor_overran = True
+                if cursor_overran:
+                    bt.logging.warning(
+                        f"URL dedup cursor overran metadata row count "
+                        f"({expected_rows} expected) in {file_key}"
+                    )
+                    schema_failures += 1
+                    break
 
                 # L3: decodable rows vs filename-claimed rows
                 file_claimed = self._parse_row_count_from_filename(file_key)
