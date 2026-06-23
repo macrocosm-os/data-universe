@@ -85,6 +85,71 @@ class RangeRequestFile:
         self._session.close()
 
 
+def read_sampled_row_groups(
+    presigned_url: str,
+    file_size: int,
+    columns: Optional[List[str]] = None,
+    max_rows: int = 50_000,
+) -> Optional[pd.DataFrame]:
+    """Read random row groups until ~max_rows rows are collected, via Range requests.
+
+    Bounded-memory alternative to reading an entire (possibly huge) file. Miners
+    now pack a whole job into a single large file (hundreds of MB / millions of
+    rows); materializing a full column would OOM-crash the validator. This reads
+    random row groups one at a time, stopping once max_rows is reached, so peak
+    memory is capped regardless of file size.
+
+    Args:
+        presigned_url: Presigned GET URL for the parquet file.
+        file_size: Known file size in bytes (from S3 listing, avoids HEAD request).
+        columns: Column names to read. None = all columns.
+        max_rows: Stop after collecting at least this many rows (then truncated).
+
+    Returns:
+        pandas DataFrame with up to max_rows rows, or None on error / empty file.
+    """
+    f = None
+    try:
+        f = RangeRequestFile(presigned_url, file_size)
+        pf = pq.ParquetFile(f)
+
+        num_rg = pf.metadata.num_row_groups
+        if num_rg == 0:
+            return None
+
+        order = list(range(num_rg))
+        random.shuffle(order)
+
+        frames = []
+        collected = 0
+        for rg_idx in order:
+            table = pf.read_row_group(rg_idx, columns=columns)
+            if table.num_rows == 0:
+                continue
+            frames.append(table.to_pandas())
+            collected += table.num_rows
+            if collected >= max_rows:
+                break
+
+        if not frames:
+            return None
+
+        df = pd.concat(frames, ignore_index=True) if len(frames) > 1 else frames[0]
+        if len(df) > max_rows:
+            df = df.iloc[:max_rows]
+        return df
+
+    except Exception as e:
+        bt.logging.debug(f"Failed to read sampled row groups: {e}")
+        return None
+    finally:
+        if f is not None:
+            try:
+                f.close()
+            except Exception:
+                pass
+
+
 def read_random_row_group(
     presigned_url: str,
     file_size: int,

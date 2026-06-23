@@ -3,7 +3,6 @@ S3 validation utilities for enhanced miner data validation.
 Provides comprehensive validation of S3-stored miner data using metadata analysis.
 """
 
-import hashlib
 import random
 import re
 import requests
@@ -24,7 +23,7 @@ from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
 from common.api_client import TaoSigner
-from vali_utils.parquet_reader import read_random_row_group
+from vali_utils.parquet_reader import read_random_row_group, read_sampled_row_groups
 from urllib.parse import urlparse
 
 
@@ -170,6 +169,12 @@ class DuckDBSampledValidator:
 
     # Validation thresholds
     MAX_DUPLICATE_RATE = 5.0    # 5% max duplicates within same job
+
+    # Per-file dedup read cap. Miners pack a whole job into one large file;
+    # reading every url (millions of rows × up to 50 files) OOM-crashed the
+    # validator. Latest-only-per-job means within-job dedup == within-file dedup,
+    # so a bounded per-file sample of urls is sufficient to estimate dup rate.
+    DEDUP_MAX_ROWS_PER_FILE = 50_000
     MAX_EMPTY_RATE = 10.0       # 10% max empty content
     # Missing URLs = instant fail (no rate threshold needed)
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
@@ -663,10 +668,11 @@ class DuckDBSampledValidator:
         samples_per_file: int = 100
     ) -> Dict[str, Any]:
         """
-        Lightweight validation using DuckDB metadata + DuckDB url column read + PyArrow row-group reads.
+        Lightweight validation using DuckDB metadata + bounded PyArrow row-group reads.
 
         Checks: schema, compression, row group size, empty content, missing URLs,
-        per-job duplicates (blake2b hash of ALL urls via DuckDB columnar read).
+        per-job duplicates (estimated from a bounded random-row-group url sample —
+        DEDUP_MAX_ROWS_PER_FILE — to keep memory flat on whole-job snapshot files).
         """
         total_rows = 0
         empty_count = 0
@@ -684,9 +690,9 @@ class DuckDBSampledValidator:
         compression_failures = 0
         row_count_mismatches = 0
 
-        # Per-job dedup: separate hash set per job_id
-        # DuckDB reads only the url column (all row groups, columnar) — ~500KB per file
-        dedup_hashes_by_job: Dict[str, set] = {}
+        # Per-job dedup: bounded sample of urls per file (see DEDUP_MAX_ROWS_PER_FILE).
+        # dedup_jobs_seen tracks which jobs were inspected (for logging only).
+        dedup_jobs_seen: set = set()
         dedup_total = 0
         dedup_duplicates = 0
 
@@ -816,30 +822,37 @@ class DuckDBSampledValidator:
                     schema_failures += 1
                     break
 
-                # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
-                if job_id not in dedup_hashes_by_job:
-                    dedup_hashes_by_job[job_id] = set()
-                job_hashes = dedup_hashes_by_job[job_id]
+                # --- Per-job dedup (bounded): sample up to DEDUP_MAX_ROWS_PER_FILE
+                # urls from random row groups instead of materializing the whole
+                # url column. Reading every url across up to 50 whole-job snapshot
+                # files (millions of rows each) OOM-crashed the validator. With
+                # latest-only-per-job, within-job dedup == within-file dedup, so a
+                # bounded per-file sample yields a sound dup-rate estimate. ---
+                dedup_jobs_seen.add(job_id)  # track distinct jobs checked (for logging)
 
-                url_rows = conn.execute(
-                    f"SELECT url FROM read_parquet('{presigned_url}')"
-                ).fetchall()
+                dedup_df = read_sampled_row_groups(
+                    presigned_url, file_size, columns=['url'],
+                    max_rows=self.DEDUP_MAX_ROWS_PER_FILE,
+                )
+                if dedup_df is not None and len(dedup_df) > 0:
+                    sampled_n = len(dedup_df)
+                    norm_urls = dedup_df['url'].map(normalize_url_for_dedup)
+                    distinct_n = norm_urls.nunique(dropna=False)
+                    dedup_total += sampled_n
+                    dedup_duplicates += sampled_n - distinct_n
 
-                # L3: decodable rows vs filename-claimed rows
-                file_decodable = sum(1 for (u,) in url_rows if u and str(u).strip())
-                file_claimed = self._parse_row_count_from_filename(file_key)
-                if file_claimed is not None and file_claimed > 0:
-                    sum_decodable_rows += file_decodable
-                    sum_sampled_claimed_rows += file_claimed
-
-                for (url_val,) in url_rows:
-                    normalized = normalize_url_for_dedup(url_val)
-                    h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
-                    dedup_total += 1
-                    if h in job_hashes:
-                        dedup_duplicates += 1
-                    else:
-                        job_hashes.add(h)
+                    # L3: decodable-rows ratio. Estimate the file's decodable rows
+                    # from the sample's decodability rate, weighted by the
+                    # filename-claimed row count (preserves decode_ratio semantics
+                    # used as an effective_size multiplier).
+                    file_claimed = self._parse_row_count_from_filename(file_key)
+                    if file_claimed is not None and file_claimed > 0:
+                        decodable_in_sample = int(
+                            (dedup_df['url'].astype(str).str.strip() != '').sum()
+                        )
+                        decodable_rate = decodable_in_sample / sampled_n
+                        sum_decodable_rows += int(round(file_claimed * decodable_rate))
+                        sum_sampled_claimed_rows += file_claimed
 
                 # --- PyArrow row-group read for empty/missing content check ---
                 if platform in ['x', 'twitter']:
@@ -991,7 +1004,7 @@ class DuckDBSampledValidator:
         if duplicate_rate > self.MAX_DUPLICATE_RATE:
             bt.logging.warning(
                 f"Per-job dedup FAILED: {duplicate_rate:.1f}% duplicates "
-                f"({dedup_duplicates}/{dedup_total} urls across {len(dedup_hashes_by_job)} jobs)"
+                f"({dedup_duplicates}/{dedup_total} sampled urls across {len(dedup_jobs_seen)} jobs)"
             )
             return {
                 "success": False,
@@ -1058,7 +1071,7 @@ class DuckDBSampledValidator:
 
         bt.logging.info(
             f"Sampled validation: {total_rows} rows, "
-            f"dup={duplicate_rate:.1f}% (per-job, {len(dedup_hashes_by_job)} jobs), "
+            f"dup={duplicate_rate:.1f}% (per-job, {len(dedup_jobs_seen)} jobs), "
             f"empty={empty_rate:.1f}%, engagement={engagement_rate:.1f}%, "
             f"unique_ids={unique_ratio:.1f}%, compression_fails={compression_failures}, "
             f"decode_ratio={decode_ratio:.3f} "
