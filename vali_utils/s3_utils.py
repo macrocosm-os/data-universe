@@ -718,10 +718,13 @@ class DuckDBSampledValidator:
         unique_content_ids: set = set()
         total_content_id_rows = 0
 
-        # Scale checks with sample size: 20% of sample, min 20, max 50
-        check_count = max(20, len(sampled_files) // 5)
-        check_count = min(check_count, len(sampled_files), 50)
-        files_to_check = random.sample(sampled_files, check_count)
+        # Deep-check every sampled file. The previous 20-50 second subsample
+        # was sized when N=200 made per-file URL fetchall expensive; with N=30
+        # and the streaming URL pass, the bound no longer pays for itself and
+        # silently capped detection probability below what the sample size
+        # supports (P_detect ∝ 1-(1-θ)^k, so dropping k from 30 to 20 at θ=5%
+        # cuts per-cycle detection from 78.5% to 64.2%).
+        files_to_check = sampled_files
 
         for file_info in files_to_check:
             if schema_failures > 0:
