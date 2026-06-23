@@ -357,8 +357,14 @@ class DuckDBSampledValidator:
             if not active_files:
                 return self._create_failed_result("No files in active jobs")
 
+            # Cap at 30 jobs/cycle. Post-snapshot each file == one whole job (up to
+            # 1GB / 3M rows). The economic-detection math is r/N ≤ D: with the
+            # top-5 force-include collapsing per-fab-job reward inflation to r≈10
+            # and a single failed validation costing ≥1 cycle of effective_size,
+            # N=30 makes any fab strategy net-negative EV. Coverage of 381 active
+            # jobs is ~8%/cycle → ~95% within 25 cycles (≈ a day at hourly runs).
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
-            sample_count = min(sample_count, len(active_files), 200)  # Cap at 200 files max
+            sample_count = min(sample_count, len(active_files), 30)
 
             # Byte-weighted sampling: file selection probability proportional to its
             # byte share of the total submitted size. Prior 50:50 big/small split let
@@ -609,23 +615,37 @@ class DuckDBSampledValidator:
 
     def _check_file_metadata(self, presigned_url: str, conn) -> Optional[Dict]:
         """Read parquet metadata footer only (~1-10KB network read).
-        Returns {total_rows, codecs, has_uncompressed, max_rg_rows} or None on error."""
+        Returns metadata dict or None on error.
+
+        Row-group shape: pandas/pyarrow writing with row_group_size=10_000
+        produces groups of exactly 10K rows, with at most a single shorter
+        final group holding the remainder. Anything else (interior short
+        groups, or millions of tiny groups) is non-standard and an attacker
+        could weaponize it to inflate row-group count and slow validator
+        scans.
+        """
         try:
             result = conn.execute(f"""
-                SELECT SUM(row_group_num_rows), LIST(DISTINCT compression), MAX(row_group_num_rows)
+                SELECT
+                    SUM(row_group_num_rows),
+                    LIST(DISTINCT compression),
+                    MAX(row_group_num_rows),
+                    COUNT(*),
+                    SUM(CASE WHEN row_group_num_rows < {self.MAX_ROW_GROUP_SIZE} THEN 1 ELSE 0 END),
+                    MAX(CASE WHEN row_group_num_rows < {self.MAX_ROW_GROUP_SIZE} THEN row_group_id ELSE -1 END)
                 FROM parquet_metadata('{presigned_url}')
                 WHERE column_id = 0
             """).fetchone()
             if result is None or result[0] is None:
                 return None
-            total_rows = int(result[0])
-            codecs = set(result[1]) if result[1] else set()
-            max_rg_rows = int(result[2])
             return {
-                'total_rows': total_rows,
-                'codecs': codecs,
-                'has_uncompressed': 'UNCOMPRESSED' in codecs,
-                'max_rg_rows': max_rg_rows
+                'total_rows': int(result[0]),
+                'codecs': set(result[1]) if result[1] else set(),
+                'has_uncompressed': 'UNCOMPRESSED' in (set(result[1]) if result[1] else set()),
+                'max_rg_rows': int(result[2]),
+                'num_row_groups': int(result[3]),
+                'short_rg_count': int(result[4]),
+                'last_short_rg_id': int(result[5]),
             }
         except Exception as e:
             bt.logging.warning(scrub_log(f"parquet_metadata error: {e}"))
@@ -684,9 +704,11 @@ class DuckDBSampledValidator:
         compression_failures = 0
         row_count_mismatches = 0
 
-        # Per-job dedup: separate hash set per job_id
-        # DuckDB reads only the url column (all row groups, columnar) — ~500KB per file
-        dedup_hashes_by_job: Dict[str, set] = {}
+        # Per-file URL dedup (presence-only — actual hash set lives locally
+        # in the loop iteration so memory is bounded). After
+        # _keep_latest_per_job each job has exactly one file, so within-job
+        # dedup is structurally within-file dedup.
+        dedup_hashes_by_job: Dict[str, bool] = {}
         dedup_total = 0
         dedup_duplicates = 0
 
@@ -696,10 +718,13 @@ class DuckDBSampledValidator:
         unique_content_ids: set = set()
         total_content_id_rows = 0
 
-        # Scale checks with sample size: 20% of sample, min 20, max 50
-        check_count = max(20, len(sampled_files) // 5)
-        check_count = min(check_count, len(sampled_files), 50)
-        files_to_check = random.sample(sampled_files, check_count)
+        # Deep-check every sampled file. The previous 20-50 second subsample
+        # was sized when N=200 made per-file URL fetchall expensive; with N=30
+        # and the streaming URL pass, the bound no longer pays for itself and
+        # silently capped detection probability below what the sample size
+        # supports (P_detect ∝ 1-(1-θ)^k, so dropping k from 30 to 20 at θ=5%
+        # cuts per-cycle detection from 78.5% to 64.2%).
+        files_to_check = sampled_files
 
         for file_info in files_to_check:
             if schema_failures > 0:
@@ -746,6 +771,21 @@ class DuckDBSampledValidator:
                         bt.logging.warning(
                             f"Row group too large: {metadata['max_rg_rows']} rows "
                             f"(max {self.MAX_ROW_GROUP_SIZE}) in {file_key}"
+                        )
+                        break
+
+                    # Row-group shape: only the last group may be shorter than
+                    # MAX_ROW_GROUP_SIZE. Blocks the "2M rows in 2M groups of 1"
+                    # attack that would otherwise pass the MAX check.
+                    short_rg = metadata['short_rg_count']
+                    num_rg = metadata['num_row_groups']
+                    if short_rg > 1 or (
+                        short_rg == 1 and metadata['last_short_rg_id'] != num_rg - 1
+                    ):
+                        schema_failures += 1
+                        bt.logging.warning(
+                            f"Non-uniform row groups: {short_rg} short of {num_rg} "
+                            f"(only the last may be < {self.MAX_ROW_GROUP_SIZE}) in {file_key}"
                         )
                         break
 
@@ -816,30 +856,70 @@ class DuckDBSampledValidator:
                     schema_failures += 1
                     break
 
-                # --- Per-job dedup: read ALL urls via DuckDB (columnar read, ~500KB per file) ---
+                # --- Per-file URL dedup: stream the url column via DuckDB fetchmany.
+                # Post-snapshot files can be 3M rows × ~150 B/URL ≈ 450 MB as a
+                # single Python list; fetchall() OOM-crashed validators. Stream in
+                # 10K-row batches so per-file Python heap stays at ~1.5 MB.
+                #
+                # _keep_latest_per_job collapses each job to one file, so the
+                # hash set is per-FILE in practice (not cross-file per-job).
+                # Building it locally and discarding when the file's loop
+                # iteration ends bounds cumulative dedup state to one set at a
+                # time. dedup_hashes_by_job is retained only for the cross-job
+                # log line in _check_dedup at the end of the pass.
                 if job_id not in dedup_hashes_by_job:
-                    dedup_hashes_by_job[job_id] = set()
-                job_hashes = dedup_hashes_by_job[job_id]
+                    dedup_hashes_by_job[job_id] = True  # presence marker for log only
+                file_hashes: set = set()
 
-                url_rows = conn.execute(
+                # Hard iteration cap so a misbehaving cursor cannot loop forever.
+                # Use footer total_rows when available (cheap, already validated);
+                # otherwise fall back to MAX_FILE_SIZE_BYTES / MIN_BYTES_PER_ROW
+                # which is the largest possible row count for any accepted file.
+                BATCH_SIZE = 10_000
+                if metadata and metadata.get('total_rows'):
+                    expected_rows = int(metadata['total_rows'])
+                else:
+                    expected_rows = self.MAX_FILE_SIZE_BYTES // self.MIN_BYTES_PER_ROW
+                max_iterations = (expected_rows // BATCH_SIZE) + 2  # +2 = remainder + EOF probe
+
+                file_decodable = 0
+                cur = conn.execute(
                     f"SELECT url FROM read_parquet('{presigned_url}')"
-                ).fetchall()
+                )
+                cursor_overran = False
+                for _ in range(max_iterations):
+                    batch = cur.fetchmany(BATCH_SIZE)
+                    if not batch:
+                        break
+                    for (url_val,) in batch:
+                        if url_val and str(url_val).strip():
+                            file_decodable += 1
+                        normalized = normalize_url_for_dedup(url_val)
+                        h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
+                        dedup_total += 1
+                        if h in file_hashes:
+                            dedup_duplicates += 1
+                        else:
+                            file_hashes.add(h)
+                    del batch
+                else:
+                    # Loop hit the iteration cap without seeing EOF — cursor is
+                    # returning more rows than the footer claimed. Treat as
+                    # malformed/adversarial and fail the file.
+                    cursor_overran = True
+                if cursor_overran:
+                    bt.logging.warning(
+                        f"URL dedup cursor overran metadata row count "
+                        f"({expected_rows} expected) in {file_key}"
+                    )
+                    schema_failures += 1
+                    break
 
                 # L3: decodable rows vs filename-claimed rows
-                file_decodable = sum(1 for (u,) in url_rows if u and str(u).strip())
                 file_claimed = self._parse_row_count_from_filename(file_key)
                 if file_claimed is not None and file_claimed > 0:
                     sum_decodable_rows += file_decodable
                     sum_sampled_claimed_rows += file_claimed
-
-                for (url_val,) in url_rows:
-                    normalized = normalize_url_for_dedup(url_val)
-                    h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
-                    dedup_total += 1
-                    if h in job_hashes:
-                        dedup_duplicates += 1
-                    else:
-                        job_hashes.add(h)
 
                 # --- PyArrow row-group read for empty/missing content check ---
                 if platform in ['x', 'twitter']:
