@@ -11,6 +11,8 @@ import pandas as pd
 import pyarrow
 import json
 import os
+import time
+import threading
 import duckdb
 import datetime as dt
 import math
@@ -182,6 +184,21 @@ class DuckDBSampledValidator:
     MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024       # 1GB - single file cap
     MIN_BYTES_PER_ROW = 50                         # Legit: 80-1300 B/row. Exploits: 8-25 B/row.
 
+    # Wall-clock bounds on the DuckDB/S3 phase. A worker thread cannot be killed
+    # in Python, so the eval batch joins to completion (see run_next_eval_batch);
+    # for that to be safe every blocking op inside the thread must be bounded.
+    # These cap the synchronous DuckDB scans + range reads (which asyncio.wait_for
+    # cannot preempt). On timeout we raise duckdb.InterruptException — a
+    # duckdb.Error subclass — so the existing handler fails the file closed and
+    # update_validation_info still fires (no perpetual re-skip / free pass).
+    # Sized from live measurement: an honest large miner's full per-file URL scan
+    # is ~25s (2M-row file ~46s), and the whole per-miner DuckDB phase is ~870s
+    # over a slow link under 5x concurrency. These bound true hangs WITHOUT failing
+    # a legit large miner. (A later sampling change will cut the real phase to ~1min
+    # and let these tighten.)
+    PER_FILE_DUCKDB_TIMEOUT_SECS = 90     # max wall-clock for one file's DuckDB work
+    PER_MINER_DUCKDB_BUDGET_SECS = 1200   # total S3/DuckDB wall-clock per miner (~20 min)
+
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
     SCRAPER_MAX_AGE_HOURS = 96
@@ -238,7 +255,6 @@ class DuckDBSampledValidator:
 
         Returns S3ValidationResult with effective_size for competition scoring.
         """
-        import time
         start_time = time.time()
 
         try:
@@ -357,14 +373,21 @@ class DuckDBSampledValidator:
             if not active_files:
                 return self._create_failed_result("No files in active jobs")
 
-            # Cap at 30 jobs/cycle. Post-snapshot each file == one whole job (up to
+            # Cap jobs/cycle. Post-snapshot each file == one whole job (up to
             # 1GB / 3M rows). The economic-detection math is r/N ≤ D: with the
             # top-5 force-include collapsing per-fab-job reward inflation to r≈10
             # and a single failed validation costing ≥1 cycle of effective_size,
-            # N=30 makes any fab strategy net-negative EV. Coverage of 381 active
-            # jobs is ~8%/cycle → ~95% within 25 cycles (≈ a day at hourly runs).
+            # this makes any fab strategy net-negative EV.
+            #
+            # Cut 30 -> 15 to halve the per-miner DuckDB phase (live-measured ~25s
+            # per whole-job file; 30 files = ~14.5 min, which overran the batch join
+            # and stacked concurrent DuckDB scans -> OOM). The top-5 by claimed rows
+            # are still force-included below, so the big effective_size-driving files
+            # are always inspected; only long-tail coverage slows (~8%/cycle ->
+            # ~4%/cycle, full coverage in ~2 days instead of ~1 at hourly runs).
+            FILE_SAMPLE_CAP = 15
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
-            sample_count = min(sample_count, len(active_files), 30)
+            sample_count = min(sample_count, len(active_files), FILE_SAMPLE_CAP)
 
             # Byte-weighted sampling: file selection probability proportional to its
             # byte share of the total submitted size. Prior 50:50 big/small split let
@@ -726,6 +749,12 @@ class DuckDBSampledValidator:
         # cuts per-cycle detection from 78.5% to 64.2%).
         files_to_check = sampled_files
 
+        # Per-miner wall-clock budget for the whole S3/DuckDB phase (all sampled
+        # files). Bounds the range-read path too — read_random_row_group uses its
+        # own requests.Session and is NOT reachable by conn.interrupt(), so it is
+        # gated by a deadline recheck below.
+        miner_deadline = time.monotonic() + self.PER_MINER_DUCKDB_BUDGET_SECS
+
         for file_info in files_to_check:
             if schema_failures > 0:
                 break
@@ -749,10 +778,40 @@ class DuckDBSampledValidator:
                 platform = 'unknown'
 
             conn = None
+            watchdog = None
             try:
+                # Fail closed if the per-miner budget is already spent. Raising
+                # InterruptException (a duckdb.Error) routes through the same
+                # handler as a mid-scan interrupt -> file fails -> miner is
+                # fail-scored and the validation gate still advances.
+                remaining = miner_deadline - time.monotonic()
+                if remaining <= 0:
+                    raise duckdb.InterruptException(
+                        f"Per-miner DuckDB budget exhausted "
+                        f"({self.PER_MINER_DUCKDB_BUDGET_SECS}s)"
+                    )
+
                 conn = duckdb.connect(':memory:')
-                conn.execute("SET memory_limit='2GB';")
+                conn.execute("SET memory_limit='1GB';")
                 conn.execute("SET threads=1;")
+
+                # Watchdog: bound this file's DuckDB work to min(per-file cap,
+                # remaining budget). conn.interrupt() from a timer thread raises
+                # duckdb.InterruptException in the scanning thread. The shim
+                # swallows exceptions because interrupt() on an already-closed
+                # conn raises ConnectionException (it is not a no-op) — the
+                # finally below cancels the timer, so this only matters for the
+                # fire-after-close race.
+                def _interrupt(c=conn):
+                    try:
+                        c.interrupt()
+                    except Exception:
+                        pass
+
+                file_timeout = min(self.PER_FILE_DUCKDB_TIMEOUT_SECS, remaining)
+                watchdog = threading.Timer(file_timeout, _interrupt)
+                watchdog.daemon = True
+                watchdog.start()
 
                 # --- Metadata check (footer-only read, ~1-10KB) ---
                 metadata = self._check_file_metadata(presigned_url, conn)
@@ -930,8 +989,20 @@ class DuckDBSampledValidator:
                 if 'url' not in read_cols:
                     read_cols.append('url')
 
+                # Per-miner deadline recheck: the row-group read uses its own
+                # requests.Session (not the DuckDB conn), so the watchdog's
+                # conn.interrupt() cannot bound it. Gate it on the budget and cap
+                # each range GET at the remaining time so a slow link cannot blow
+                # past the budget.
+                if time.monotonic() >= miner_deadline:
+                    raise duckdb.InterruptException(
+                        f"Per-miner budget exhausted before row-group read "
+                        f"({self.PER_MINER_DUCKDB_BUDGET_SECS}s)"
+                    )
+                remaining_for_rg = max(1, int(miner_deadline - time.monotonic()))
                 rg_df = read_random_row_group(
-                    presigned_url, file_size, columns=read_cols
+                    presigned_url, file_size, columns=read_cols,
+                    request_timeout=min(30, remaining_for_rg)
                 )
                 if rg_df is not None and len(rg_df) > 0:
                     rg_df.columns = [c.lower() for c in rg_df.columns]
@@ -1034,10 +1105,14 @@ class DuckDBSampledValidator:
                 bt.logging.warning(scrub_log(f"Sampled validation error: {e}"))
                 continue
             finally:
+                # Cancel the timer first (no-op if it already fired); the shim
+                # swallows the ConnectionException from a fire-after-close race.
+                if watchdog is not None:
+                    watchdog.cancel()
                 if conn:
                     try:
                         conn.close()
-                    except:
+                    except Exception:
                         pass
 
         # Zero tolerance for schema failures
@@ -1214,7 +1289,7 @@ class DuckDBSampledValidator:
                 try:
                     # Schema validation — only reads parquet footer
                     conn = duckdb.connect(':memory:')
-                    conn.execute("SET memory_limit='2GB';")
+                    conn.execute("SET memory_limit='1GB';")
                     conn.execute("SET threads=1;")
                     schema_result = conn.execute(
                         f"SELECT name FROM parquet_schema('{presigned_url}')"
@@ -1419,7 +1494,7 @@ class DuckDBSampledValidator:
             try:
                 # Schema validation — only reads parquet footer
                 conn = duckdb.connect(':memory:')
-                conn.execute("SET memory_limit='2GB';")
+                conn.execute("SET memory_limit='1GB';")
                 conn.execute("SET threads=1;")
                 schema_result = conn.execute(
                     f"SELECT name FROM parquet_schema('{presigned_url}')"
