@@ -191,8 +191,13 @@ class DuckDBSampledValidator:
     # cannot preempt). On timeout we raise duckdb.InterruptException — a
     # duckdb.Error subclass — so the existing handler fails the file closed and
     # update_validation_info still fires (no perpetual re-skip / free pass).
-    PER_FILE_DUCKDB_TIMEOUT_SECS = 60    # max wall-clock for one file's DuckDB work
-    PER_MINER_DUCKDB_BUDGET_SECS = 240   # total S3/DuckDB wall-clock per miner
+    # Sized from live measurement: an honest large miner's full per-file URL scan
+    # is ~25s (2M-row file ~46s), and the whole per-miner DuckDB phase is ~870s
+    # over a slow link under 5x concurrency. These bound true hangs WITHOUT failing
+    # a legit large miner. (A later sampling change will cut the real phase to ~1min
+    # and let these tighten.)
+    PER_FILE_DUCKDB_TIMEOUT_SECS = 90     # max wall-clock for one file's DuckDB work
+    PER_MINER_DUCKDB_BUDGET_SECS = 1200   # total S3/DuckDB wall-clock per miner (~20 min)
 
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
@@ -368,14 +373,21 @@ class DuckDBSampledValidator:
             if not active_files:
                 return self._create_failed_result("No files in active jobs")
 
-            # Cap at 30 jobs/cycle. Post-snapshot each file == one whole job (up to
+            # Cap jobs/cycle. Post-snapshot each file == one whole job (up to
             # 1GB / 3M rows). The economic-detection math is r/N ≤ D: with the
             # top-5 force-include collapsing per-fab-job reward inflation to r≈10
             # and a single failed validation costing ≥1 cycle of effective_size,
-            # N=30 makes any fab strategy net-negative EV. Coverage of 381 active
-            # jobs is ~8%/cycle → ~95% within 25 cycles (≈ a day at hourly runs).
+            # this makes any fab strategy net-negative EV.
+            #
+            # Cut 30 -> 15 to halve the per-miner DuckDB phase (live-measured ~25s
+            # per whole-job file; 30 files = ~14.5 min, which overran the batch join
+            # and stacked concurrent DuckDB scans -> OOM). The top-5 by claimed rows
+            # are still force-included below, so the big effective_size-driving files
+            # are always inspected; only long-tail coverage slows (~8%/cycle ->
+            # ~4%/cycle, full coverage in ~2 days instead of ~1 at hourly runs).
+            FILE_SAMPLE_CAP = 15
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
-            sample_count = min(sample_count, len(active_files), 30)
+            sample_count = min(sample_count, len(active_files), FILE_SAMPLE_CAP)
 
             # Byte-weighted sampling: file selection probability proportional to its
             # byte share of the total submitted size. Prior 50:50 big/small split let

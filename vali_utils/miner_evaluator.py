@@ -129,12 +129,14 @@ class MinerEvaluator:
         """Returns the scorer used by the evaluator."""
         return self.scorer
 
-    # Backstop wall-clock for the AWAITABLE phases of eval_miner (OD, index/bucket
-    # dendrite, scraper). asyncio.wait_for can only preempt at await points, so it
-    # does NOT bound the synchronous DuckDB/S3 phase — that is bounded separately by
-    # the watchdog + per-miner budget in s3_utils. This is the safety net that lets
-    # run_next_eval_batch join to completion without a stuck async call hanging it.
-    PER_MINER_EVAL_TIMEOUT_SECS = 270
+    # Outer backstop on the WHOLE eval_miner (async phases + the synchronous DuckDB
+    # phase). asyncio.wait_for only preempts at await points, so it can NOT interrupt
+    # a synchronous DuckDB scan — that is bounded by the watchdog + PER_MINER_DUCKDB
+    # _BUDGET_SECS (1200s) in s3_utils. This constant must therefore sit ABOVE the
+    # honest worst case (async ~320s: OD 60 + index 120 + bucket 140; plus DuckDB
+    # budget 1200s) so it never fires on an honest large miner — it only catches a
+    # genuinely wedged async call. Kept under the 1500s join backstop.
+    PER_MINER_EVAL_TIMEOUT_SECS = 1400
 
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous wrapper with a wall-clock backstop for the awaitable phases."""
@@ -776,10 +778,12 @@ class MinerEvaluator:
         # Every blocking op inside the thread is now individually bounded (OD/index/
         # bucket dendrite timeouts + the asyncio backstop in eval_miner_sync for the
         # awaitable phases; the DuckDB watchdog + per-miner budget in s3_utils for
-        # the synchronous phase), so a worker can't run unbounded. The generous 600s
-        # shared backstop guarantees the main loop still reaches set_weights() even
-        # if some future blocker is left uncapped — a bounded stall, never a OOM.
-        join_deadline = time.monotonic() + 600
+        # the synchronous phase), so a worker can't run unbounded. The shared backstop
+        # is set ABOVE the per-miner DuckDB budget (1200s) so the join waits for an
+        # honest slow/large miner to finish rather than abandoning it (which would
+        # re-leak); it only fires if some future blocker is left uncapped — a bounded
+        # stall, never an OOM.
+        join_deadline = time.monotonic() + 1500
         for t in threads:
             t.join(timeout=max(0.0, join_deadline - time.monotonic()))
 
