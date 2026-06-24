@@ -191,13 +191,14 @@ class DuckDBSampledValidator:
     # cannot preempt). On timeout we raise duckdb.InterruptException — a
     # duckdb.Error subclass — so the existing handler fails the file closed and
     # update_validation_info still fires (no perpetual re-skip / free pass).
-    # Sized from live measurement: an honest large miner's full per-file URL scan
-    # is ~25s (2M-row file ~46s), and the whole per-miner DuckDB phase is ~870s
-    # over a slow link under 5x concurrency. These bound true hangs WITHOUT failing
-    # a legit large miner. (A later sampling change will cut the real phase to ~1min
-    # and let these tighten.)
-    PER_FILE_DUCKDB_TIMEOUT_SECS = 90     # max wall-clock for one file's DuckDB work
-    PER_MINER_DUCKDB_BUDGET_SECS = 1200   # total S3/DuckDB wall-clock per miner (~20 min)
+    # Sized from LIVE measurement: honest large miners (110k-file, ~36GB) take the
+    # full per-miner DuckDB phase ~1200-1280s under 5x concurrency — so a 1200s
+    # budget CLIPPED them, interrupting a legitimate scan and mis-failing them as
+    # "corrupt data pages". Raised to 3600s so an honest large miner finishes; this
+    # only fires on a genuinely stuck scan. (The real fix is sampling, which cuts the
+    # phase to ~1min; until then these must sit ABOVE the observed honest worst case.)
+    PER_FILE_DUCKDB_TIMEOUT_SECS = 180    # max wall-clock for one file's DuckDB work
+    PER_MINER_DUCKDB_BUDGET_SECS = 3600   # total S3/DuckDB wall-clock per miner (~60 min)
 
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
