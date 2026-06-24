@@ -132,11 +132,11 @@ class MinerEvaluator:
     # Outer backstop on the WHOLE eval_miner (async phases + the synchronous DuckDB
     # phase). asyncio.wait_for only preempts at await points, so it can NOT interrupt
     # a synchronous DuckDB scan — that is bounded by the watchdog + PER_MINER_DUCKDB
-    # _BUDGET_SECS (1200s) in s3_utils. This constant must therefore sit ABOVE the
-    # honest worst case (async ~320s: OD 60 + index 120 + bucket 140; plus DuckDB
-    # budget 1200s) so it never fires on an honest large miner — it only catches a
-    # genuinely wedged async call. Kept under the 1500s join backstop.
-    PER_MINER_EVAL_TIMEOUT_SECS = 1400
+    # _BUDGET_SECS (3600s) in s3_utils. This constant must therefore sit ABOVE the
+    # honest worst case (async ~320s: OD 60 + index 120 + bucket 140; plus the DuckDB
+    # budget 3600s) so it never fires on an honest large miner — it only catches a
+    # genuinely wedged async call. Kept under the join backstop.
+    PER_MINER_EVAL_TIMEOUT_SECS = 3900
 
     def eval_miner_sync(self, uid: int) -> None:
         """Synchronous wrapper with a wall-clock backstop for the awaitable phases."""
@@ -779,11 +779,11 @@ class MinerEvaluator:
         # bucket dendrite timeouts + the asyncio backstop in eval_miner_sync for the
         # awaitable phases; the DuckDB watchdog + per-miner budget in s3_utils for
         # the synchronous phase), so a worker can't run unbounded. The shared backstop
-        # is set ABOVE the per-miner DuckDB budget (1200s) so the join waits for an
+        # is set ABOVE the per-miner DuckDB budget (3600s) so the join waits for an
         # honest slow/large miner to finish rather than abandoning it (which would
         # re-leak); it only fires if some future blocker is left uncapped — a bounded
         # stall, never an OOM.
-        join_deadline = time.monotonic() + 1500
+        join_deadline = time.monotonic() + 4200
         for t in threads:
             t.join(timeout=max(0.0, join_deadline - time.monotonic()))
 
