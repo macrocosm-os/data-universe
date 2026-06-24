@@ -2,7 +2,6 @@ import os
 import gc
 import copy
 import asyncio
-import datetime
 import random
 import traceback
 import threading
@@ -130,9 +129,26 @@ class MinerEvaluator:
         """Returns the scorer used by the evaluator."""
         return self.scorer
 
+    # Backstop wall-clock for the AWAITABLE phases of eval_miner (OD, index/bucket
+    # dendrite, scraper). asyncio.wait_for can only preempt at await points, so it
+    # does NOT bound the synchronous DuckDB/S3 phase — that is bounded separately by
+    # the watchdog + per-miner budget in s3_utils. This is the safety net that lets
+    # run_next_eval_batch join to completion without a stuck async call hanging it.
+    PER_MINER_EVAL_TIMEOUT_SECS = 270
+
     def eval_miner_sync(self, uid: int) -> None:
-        """Synchronous version of eval_miner."""
-        asyncio.run(self.eval_miner(uid))
+        """Synchronous wrapper with a wall-clock backstop for the awaitable phases."""
+        async def _run():
+            try:
+                await asyncio.wait_for(
+                    self.eval_miner(uid), timeout=self.PER_MINER_EVAL_TIMEOUT_SECS
+                )
+            except asyncio.TimeoutError:
+                bt.logging.warning(
+                    f"UID:{uid}: eval_miner exceeded "
+                    f"{self.PER_MINER_EVAL_TIMEOUT_SECS}s at an await point; abandoning."
+                )
+        asyncio.run(_run())
 
     # Maximum OD jobs to validate per miner per eval cycle.
     # Each validation downloads ~1MB + 1 scraper API call, so keep this bounded.
@@ -752,11 +768,20 @@ class MinerEvaluator:
             thread.start()
 
         bt.logging.trace(f"Waiting for {len(threads)} miner evals to finish.")
-        end = datetime.datetime.now() + datetime.timedelta(seconds=300)
+        # Join the batch to completion (common case) so concurrency stays at
+        # miners_to_eval. The old shared-300s cap ABANDONED slow threads — but a
+        # Python thread can't be killed, so abandoned eval_miner_sync threads kept
+        # running (holding DuckDB scans) while `return 0` immediately launched the
+        # next batch. Concurrency grew as 5*ceil(eval/300s) -> memory spike -> OOM.
+        # Every blocking op inside the thread is now individually bounded (OD/index/
+        # bucket dendrite timeouts + the asyncio backstop in eval_miner_sync for the
+        # awaitable phases; the DuckDB watchdog + per-miner budget in s3_utils for
+        # the synchronous phase), so a worker can't run unbounded. The generous 600s
+        # shared backstop guarantees the main loop still reaches set_weights() even
+        # if some future blocker is left uncapped — a bounded stall, never a OOM.
+        join_deadline = time.monotonic() + 600
         for t in threads:
-            # Compute the timeout, so that all threads are waited for a total of 5 minutes.
-            timeout = max(0, (end - datetime.datetime.now()).total_seconds())
-            t.join(timeout=timeout)
+            t.join(timeout=max(0.0, join_deadline - time.monotonic()))
 
         duration = time.perf_counter() - t_start
         metrics.MINER_EVALUATOR_EVAL_BATCH_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).observe(duration)
