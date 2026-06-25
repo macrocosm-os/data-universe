@@ -111,8 +111,15 @@ def read_random_row_group(
     """
     f = None
     try:
-        f = RangeRequestFile(presigned_url, file_size, request_timeout=request_timeout)
-        pf = pq.ParquetFile(f)
+        # A local path (download-to-temp validation) is opened directly; only a
+        # remote URL needs the HTTP Range wrapper. Without this branch a local
+        # path would be handed to requests.get() and fail, returning None and
+        # silently skipping the engagement/content checks that consume this read.
+        if presigned_url.startswith(("http://", "https://")):
+            f = RangeRequestFile(presigned_url, file_size, request_timeout=request_timeout)
+            pf = pq.ParquetFile(f)
+        else:
+            pf = pq.ParquetFile(presigned_url)
 
         num_rg = pf.metadata.num_row_groups
         if num_rg == 0:

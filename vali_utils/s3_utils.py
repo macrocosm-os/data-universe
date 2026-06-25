@@ -11,6 +11,8 @@ import pandas as pd
 import pyarrow
 import json
 import os
+import shutil
+import tempfile
 import time
 import threading
 import duckdb
@@ -199,6 +201,15 @@ class DuckDBSampledValidator:
     # phase to ~1min; until then these must sit ABOVE the observed honest worst case.)
     PER_FILE_DUCKDB_TIMEOUT_SECS = 180    # max wall-clock for one file's DuckDB work
     PER_MINER_DUCKDB_BUDGET_SECS = 3600   # total S3/DuckDB wall-clock per miner (~60 min)
+
+    # Each sampled file is bulk-downloaded to a temp file, then parsed locally.
+    # DuckDB read_parquet over R2 httpfs issues many small serial HTTP Range GETs
+    # (latency-bound on Cloudflare's edge) and reads a 522MB file's url column in
+    # ~24s; one bulk GET of the whole file is ~7s, so download-then-parse-local is
+    # ~3x faster per file with identical validation output (same DuckDB queries,
+    # same PyArrow read, just against a local path). Files are cleaned in a finally;
+    # a startup sweep clears anything orphaned by a crash so /tmp can't grow.
+    LOCAL_VALIDATION_TEMP_DIR = "/tmp/sn13_s3_validation"
 
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
@@ -700,6 +711,49 @@ class DuckDBSampledValidator:
         match = self._FILENAME_ROW_COUNT_RE.match(filename)
         return int(match.group(1)) if match else None
 
+    @classmethod
+    def _sweep_local_temp_dir(cls):
+        """Remove any temp files orphaned by a previous crash, then recreate the dir.
+        Called once at the start of the DuckDB phase so a hard kill (the validator
+        restarts every few hours) can never let /tmp grow unbounded."""
+        try:
+            shutil.rmtree(cls.LOCAL_VALIDATION_TEMP_DIR, ignore_errors=True)
+            os.makedirs(cls.LOCAL_VALIDATION_TEMP_DIR, exist_ok=True)
+        except OSError as e:
+            bt.logging.warning(f"Could not reset local validation temp dir: {e}")
+
+    def _download_to_temp(self, presigned_url: str, declared_size: int) -> str:
+        """Bulk-download one file to a temp file and return its local path.
+
+        Replaces DuckDB's slow per-column HTTP Range reads with a single GET. The
+        caller MUST unlink the returned path in a finally. The write is capped at
+        the declared size (+8MB margin) so a miner that under-reports its size in the
+        listing cannot balloon the disk; the size guard at the call site already
+        rejects anything over MAX_FILE_SIZE_BYTES before we get here.
+        """
+        cap = min(declared_size, self.MAX_FILE_SIZE_BYTES) + (8 * 1024 * 1024)
+        fd, path = tempfile.mkstemp(suffix=".parquet", dir=self.LOCAL_VALIDATION_TEMP_DIR)
+        written = 0
+        try:
+            with os.fdopen(fd, "wb") as out, requests.get(
+                presigned_url, stream=True, timeout=300
+            ) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=1 << 20):
+                    written += len(chunk)
+                    if written > cap:
+                        raise IOError(
+                            f"download exceeded size cap ({written} > {cap} bytes)"
+                        )
+                    out.write(chunk)
+        except Exception:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+        return path
+
     async def _sampled_duckdb_validation(
         self,
         sampled_files: List[Dict],
@@ -766,6 +820,9 @@ class DuckDBSampledValidator:
             f"{miner_hotkey}: DuckDB phase START — {len(files_to_check)} files to check"
         )
 
+        # Clear anything a prior crashed run left behind before we start writing.
+        self._sweep_local_temp_dir()
+
         for file_idx, file_info in enumerate(files_to_check):
             if schema_failures > 0:
                 break
@@ -791,6 +848,7 @@ class DuckDBSampledValidator:
 
             conn = None
             watchdog = None
+            local_path = None
             try:
                 # Fail closed if the per-miner budget is already spent. Raising
                 # InterruptException (a duckdb.Error) routes through the same
@@ -802,6 +860,18 @@ class DuckDBSampledValidator:
                         f"Per-miner DuckDB budget exhausted "
                         f"({self.PER_MINER_DUCKDB_BUDGET_SECS}s)"
                     )
+
+                # Bulk-download the file once, then point every stage below at the
+                # local copy. DuckDB read_parquet / parquet_schema / _check_file_metadata
+                # and the PyArrow read_random_row_group all accept a local path
+                # identically to a URL, so validation logic is unchanged — only the
+                # slow per-column httpfs Range reads are replaced by one GET. A
+                # download error raises into the same handlers below (transient ->
+                # skip, else -> fail), and the finally unlinks the temp file.
+                t_dl = time.monotonic()
+                local_path = self._download_to_temp(presigned_url, file_size)
+                presigned_url = local_path
+                dl_secs = time.monotonic() - t_dl
 
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='1GB';")
@@ -1031,7 +1101,7 @@ class DuckDBSampledValidator:
                 bt.logging.info(
                     f"{miner_hotkey}: file {file_idx+1}/{len(files_to_check)} "
                     f"({file_size/1e6:.0f}MB, {file_rows_dbg} rows) timing: "
-                    f"meta={meta_secs:.1f}s schema={schema_secs:.1f}s "
+                    f"dl={dl_secs:.1f}s meta={meta_secs:.1f}s schema={schema_secs:.1f}s "
                     f"dedup={dedup_secs:.1f}s rg={rg_secs:.1f}s "
                     f"total={time.monotonic()-file_start:.1f}s key={file_key.split('/')[-1]}"
                 )
@@ -1153,6 +1223,13 @@ class DuckDBSampledValidator:
                     try:
                         conn.close()
                     except Exception:
+                        pass
+                # Always remove the downloaded temp file — on success, validation
+                # failure, timeout interrupt, or any exception above.
+                if local_path is not None:
+                    try:
+                        os.unlink(local_path)
+                    except OSError:
                         pass
 
         bt.logging.info(
