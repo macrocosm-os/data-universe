@@ -11,7 +11,6 @@ import pandas as pd
 import pyarrow
 import json
 import os
-import shutil
 import tempfile
 import time
 import threading
@@ -718,16 +717,42 @@ class DuckDBSampledValidator:
         match = self._FILENAME_ROW_COUNT_RE.match(filename)
         return int(match.group(1)) if match else None
 
+    # Set once the first time any thread enters the DuckDB phase, so the crash-orphan
+    # sweep runs a single time per process rather than per miner.
+    _temp_dir_swept = False
+    _temp_dir_lock = threading.Lock()
+
+    # A temp file older than this is assumed orphaned by a prior crashed run (no live
+    # validation reads a file for anywhere near this long — the per-file budget is
+    # 180s). Used so the sweep can delete crash-leftovers WITHOUT ever removing a file
+    # another concurrent miner thread is actively reading.
+    TEMP_ORPHAN_AGE_SECS = 3600
+
     @classmethod
     def _sweep_local_temp_dir(cls):
-        """Remove any temp files orphaned by a previous crash, then recreate the dir.
-        Called once at the start of the DuckDB phase so a hard kill (the validator
-        restarts every few hours) can never let /tmp grow unbounded."""
-        try:
-            shutil.rmtree(cls.LOCAL_VALIDATION_TEMP_DIR, ignore_errors=True)
-            os.makedirs(cls.LOCAL_VALIDATION_TEMP_DIR, exist_ok=True)
-        except OSError as e:
-            bt.logging.warning(f"Could not reset local validation temp dir: {e}")
+        """Ensure the temp dir exists and delete only STALE orphans (files older than
+        TEMP_ORPHAN_AGE_SECS) left by a previous crashed run.
+
+        Runs once per process. Crucially it does NOT rmtree the dir: 5 miner threads
+        share this dir concurrently, so a blanket wipe would delete a file another
+        thread is mid-read (observed: 'Failed to open local file ... No such file').
+        Age-gating means only genuine crash-leftovers are removed."""
+        with cls._temp_dir_lock:
+            if cls._temp_dir_swept:
+                return
+            cls._temp_dir_swept = True
+            try:
+                os.makedirs(cls.LOCAL_VALIDATION_TEMP_DIR, exist_ok=True)
+                now = time.time()
+                for name in os.listdir(cls.LOCAL_VALIDATION_TEMP_DIR):
+                    p = os.path.join(cls.LOCAL_VALIDATION_TEMP_DIR, name)
+                    try:
+                        if now - os.path.getmtime(p) > cls.TEMP_ORPHAN_AGE_SECS:
+                            os.unlink(p)
+                    except OSError:
+                        pass
+            except OSError as e:
+                bt.logging.warning(f"Could not prepare local validation temp dir: {e}")
 
     def _download_to_temp(self, presigned_url: str, declared_size: int) -> str:
         """Bulk-download one file to a temp file and return its local path.
