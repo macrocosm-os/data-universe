@@ -433,7 +433,8 @@ class DuckDBSampledValidator:
             # Step 4: Lightweight DuckDB validation (sampled - memory safe)
             bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
             duckdb_result = await self._sampled_duckdb_validation(
-                sampled_files, expected_jobs, presigned_urls, samples_per_file=100
+                sampled_files, expected_jobs, presigned_urls, samples_per_file=100,
+                miner_hotkey=miner_hotkey,
             )
 
             # If schema validation failed, skip remaining checks (fail fast)
@@ -704,7 +705,8 @@ class DuckDBSampledValidator:
         sampled_files: List[Dict],
         expected_jobs: Dict[str, Dict],
         presigned_urls: Dict[str, str],
-        samples_per_file: int = 100
+        samples_per_file: int = 100,
+        miner_hotkey: str = "unknown",
     ) -> Dict[str, Any]:
         """
         Lightweight validation using DuckDB metadata + DuckDB url column read + PyArrow row-group reads.
@@ -756,10 +758,19 @@ class DuckDBSampledValidator:
         # gated by a deadline recheck below.
         miner_deadline = time.monotonic() + self.PER_MINER_DUCKDB_BUDGET_SECS
 
-        for file_info in files_to_check:
+        # Timing instrumentation: this phase has been observed to run up to ~2h
+        # for some miners. Log per-file + per-stage durations (with hotkey) so the
+        # slow segment can be identified.
+        phase_start = time.monotonic()
+        bt.logging.info(
+            f"{miner_hotkey}: DuckDB phase START — {len(files_to_check)} files to check"
+        )
+
+        for file_idx, file_info in enumerate(files_to_check):
             if schema_failures > 0:
                 break
 
+            file_start = time.monotonic()
             file_size = file_info.get('size', 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
                 continue
@@ -815,7 +826,9 @@ class DuckDBSampledValidator:
                 watchdog.start()
 
                 # --- Metadata check (footer-only read, ~1-10KB) ---
+                t_meta = time.monotonic()
                 metadata = self._check_file_metadata(presigned_url, conn)
+                meta_secs = time.monotonic() - t_meta
                 if metadata:
                     file_rows = metadata['total_rows']
 
@@ -858,9 +871,11 @@ class DuckDBSampledValidator:
                         )
 
                 # --- Schema check (footer-only read) ---
+                t_schema = time.monotonic()
                 schema_result = conn.execute(
                     f"SELECT name, type FROM parquet_schema('{presigned_url}')"
                 ).fetchall()
+                schema_secs = time.monotonic() - t_schema
                 excluded_names = {'schema', 'list', 'element', 'model_config'}
                 all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
                 available_columns = set(all_column_names)
@@ -943,6 +958,7 @@ class DuckDBSampledValidator:
                 max_iterations = (expected_rows // BATCH_SIZE) + 2  # +2 = remainder + EOF probe
 
                 file_decodable = 0
+                t_dedup = time.monotonic()
                 cur = conn.execute(
                     f"SELECT url FROM read_parquet('{presigned_url}')"
                 )
@@ -975,6 +991,8 @@ class DuckDBSampledValidator:
                     schema_failures += 1
                     break
 
+                dedup_secs = time.monotonic() - t_dedup
+
                 # L3: decodable rows vs filename-claimed rows
                 file_claimed = self._parse_row_count_from_filename(file_key)
                 if file_claimed is not None and file_claimed > 0:
@@ -1001,9 +1019,21 @@ class DuckDBSampledValidator:
                         f"({self.PER_MINER_DUCKDB_BUDGET_SECS}s)"
                     )
                 remaining_for_rg = max(1, int(miner_deadline - time.monotonic()))
+                t_rg = time.monotonic()
                 rg_df = read_random_row_group(
                     presigned_url, file_size, columns=read_cols,
                     request_timeout=min(30, remaining_for_rg)
+                )
+                rg_secs = time.monotonic() - t_rg
+                # Per-file timing breakdown (hotkey + which stage was slow).
+                # dedup = full SELECT url scan; rg = PyArrow row-group read.
+                file_rows_dbg = (metadata or {}).get('total_rows', '?')
+                bt.logging.info(
+                    f"{miner_hotkey}: file {file_idx+1}/{len(files_to_check)} "
+                    f"({file_size/1e6:.0f}MB, {file_rows_dbg} rows) timing: "
+                    f"meta={meta_secs:.1f}s schema={schema_secs:.1f}s "
+                    f"dedup={dedup_secs:.1f}s rg={rg_secs:.1f}s "
+                    f"total={time.monotonic()-file_start:.1f}s key={file_key.split('/')[-1]}"
                 )
                 if rg_df is not None and len(rg_df) > 0:
                     rg_df.columns = [c.lower() for c in rg_df.columns]
@@ -1094,16 +1124,25 @@ class DuckDBSampledValidator:
             except (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException) as e:
                 # Transient S3/network errors — log and skip, do NOT fail the miner.
                 # scrub_log strips R2 presigned-URL query strings (signature + key id).
-                bt.logging.warning(scrub_log(f"Transient S3/IO error: {type(e).__name__}: {e}"))
+                bt.logging.warning(scrub_log(
+                    f"{miner_hotkey}: Transient S3/IO error after "
+                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
+                    f"{type(e).__name__}: {e}"
+                ))
                 continue
             except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
                 page_decode_failures += 1
-                bt.logging.warning(
-                    scrub_log(f"Page-decode failure: {type(e).__name__}: {e}")
-                )
+                bt.logging.warning(scrub_log(
+                    f"{miner_hotkey}: Page-decode failure after "
+                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
+                    f"{type(e).__name__}: {e}"
+                ))
                 continue
             except Exception as e:
-                bt.logging.warning(scrub_log(f"Sampled validation error: {e}"))
+                bt.logging.warning(scrub_log(
+                    f"{miner_hotkey}: Sampled validation error after "
+                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: {e}"
+                ))
                 continue
             finally:
                 # Cancel the timer first (no-op if it already fired); the shim
@@ -1115,6 +1154,12 @@ class DuckDBSampledValidator:
                         conn.close()
                     except Exception:
                         pass
+
+        bt.logging.info(
+            f"{miner_hotkey}: DuckDB phase DONE in {time.monotonic()-phase_start:.1f}s "
+            f"— {files_checked} files checked, {schema_failures} schema_fail, "
+            f"{page_decode_failures} page_decode_fail, {dedup_total} urls hashed"
+        )
 
         # Zero tolerance for schema failures
         if schema_failures > 0:
