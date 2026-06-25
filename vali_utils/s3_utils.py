@@ -208,8 +208,13 @@ class DuckDBSampledValidator:
     # ~24s; one bulk GET of the whole file is ~7s, so download-then-parse-local is
     # ~3x faster per file with identical validation output (same DuckDB queries,
     # same PyArrow read, just against a local path). Files are cleaned in a finally;
-    # a startup sweep clears anything orphaned by a crash so /tmp can't grow.
-    LOCAL_VALIDATION_TEMP_DIR = "/tmp/sn13_s3_validation"
+    # a startup sweep clears anything orphaned by a crash so it can't grow.
+    #
+    # Deliberately NOT under /tmp: on the validator host /tmp is a tmpfs (RAM-backed),
+    # so writing 520MB files there would consume RAM (~520MB x up-to-5 concurrent
+    # miners) — reintroducing memory pressure. ~/.bittensor lives on the data disk
+    # (the same tree the neuron's full_path / scorer file use), so this hits disk.
+    LOCAL_VALIDATION_TEMP_DIR = os.path.expanduser("~/.bittensor/sn13_s3_validation")
 
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
