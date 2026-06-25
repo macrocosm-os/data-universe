@@ -10,7 +10,6 @@ import random
 import requests
 import pandas as pd
 import pyarrow.parquet as pq
-import bittensor as bt
 from typing import List, Optional
 
 
@@ -134,8 +133,7 @@ def read_random_row_group(
 
         return df
 
-    except Exception as e:
-        bt.logging.debug(f"Failed to read row group: {e}")
+    except Exception:
         return None
     finally:
         if f is not None:
