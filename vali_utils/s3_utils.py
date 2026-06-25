@@ -210,11 +210,13 @@ class DuckDBSampledValidator:
     # same PyArrow read, just against a local path). Files are cleaned in a finally;
     # a startup sweep clears anything orphaned by a crash so it can't grow.
     #
-    # Deliberately NOT under /tmp: on the validator host /tmp is a tmpfs (RAM-backed),
-    # so writing 520MB files there would consume RAM (~520MB x up-to-5 concurrent
-    # miners) — reintroducing memory pressure. ~/.bittensor lives on the data disk
-    # (the same tree the neuron's full_path / scorer file use), so this hits disk.
-    LOCAL_VALIDATION_TEMP_DIR = os.path.expanduser("~/.bittensor/sn13_s3_validation")
+    # Lives inside the repo dir (on the data disk), NOT under /tmp: on the validator
+    # host /tmp is a tmpfs (RAM-backed), so writing 520MB files there would consume
+    # RAM (~520MB x up-to-5 concurrent miners) — reintroducing memory pressure.
+    LOCAL_VALIDATION_TEMP_DIR = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        ".s3_validation_tmp",
+    )
 
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
