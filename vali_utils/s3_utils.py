@@ -1633,7 +1633,11 @@ class DuckDBSampledValidator:
             username = row.get('username', '')
             text = row.get('text', '')
             url = row.get('url', '')
-            if not all([username, text, url]):
+            # Empty text is legitimate for media-only tweets, so it must not
+            # disqualify the row. Missing username (>50% empty-username) and
+            # missing URL are still hard-failed separately, so fabrication
+            # detection is unchanged.
+            if not username or not url:
                 return None
 
             datetime_val = row.get('datetime', row.get('timestamp', ''))
