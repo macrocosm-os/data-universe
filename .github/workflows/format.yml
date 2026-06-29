@@ -1,0 +1,36 @@
+name: Format & Lint
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  ruff:
+    name: Ruff format & lint
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.10"
+
+      - name: Cache pip
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/pip
+          key: ${{ runner.os }}-ruff-0.11.13
+          restore-keys: |
+            ${{ runner.os }}-ruff-
+
+      - name: Install ruff
+        run: pip install ruff==0.11.13
+
+      - name: Check formatting
+        run: ruff format --check .
+
+      - name: Lint
+        run: ruff check .
