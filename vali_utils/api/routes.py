@@ -1,32 +1,32 @@
-from fastapi import APIRouter, HTTPException, Depends
-import bittensor as bt
-import datetime as dt
 import asyncio
-import time
+import datetime as dt
 import sqlite3
-from common.data import DataSource, TimeBucket, DataEntityBucketId, DataLabel
-from common import constants
-from common.protocol import GetDataEntityBucket
-from common import utils
-from vali_utils.api.models import (
-    HealthResponse,
-    LabelSize,
-    AgeSize,
-    LabelBytes,
-    DesirabilityRequest,
-)
-from vali_utils.api.auth.auth import require_master_key, verify_api_key
-from vali_utils.api.utils import endpoint_error_handler
+import time
+from typing import Dict, List, Optional, Tuple
 
-from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
+import bittensor as bt
+from fastapi import APIRouter, Depends, HTTPException
+
+from common import constants, utils
+from common.data import DataEntityBucketId, DataLabel, DataSource, TimeBucket
+from common.protocol import GetDataEntityBucket
 from dynamic_desirability.desirability_retrieval import get_hotkey_json_submission
-from typing import List, Optional, Dict, Tuple
+from dynamic_desirability.desirability_uploader import run_uploader_from_gravity
+from vali_utils.api.auth.auth import require_master_key, verify_api_key
+from vali_utils.api.models import (
+    AgeSize,
+    DesirabilityRequest,
+    HealthResponse,
+    LabelBytes,
+    LabelSize,
+)
+from vali_utils.api.utils import endpoint_error_handler
 
 router = APIRouter()
 
 # Cache for expensive aggregation queries (24-hour TTL)
-_label_size_cache: Dict[str, Tuple[float, List]] = {}  # source -> (timestamp, results)
-_age_size_cache: Dict[str, Tuple[float, List]] = {}  # source -> (timestamp, results)
+_label_size_cache: dict[str, tuple[float, list]] = {}  # source -> (timestamp, results)
+_age_size_cache: dict[str, tuple[float, list]] = {}  # source -> (timestamp, results)
 CACHE_TTL = 86400  # 24 hours in seconds
 
 
@@ -41,9 +41,9 @@ def get_validator():
 @endpoint_error_handler
 async def query_bucket(
     source: str,
-    label: Optional[str] = None,
-    start_bucket: Optional[int] = None,
-    end_bucket: Optional[int] = None,
+    label: str | None = None,
+    start_bucket: int | None = None,
+    end_bucket: int | None = None,
     validator=Depends(get_validator),
     api_key: str = Depends(verify_api_key),
 ):
@@ -63,9 +63,7 @@ async def query_bucket(
         if not end_bucket:
             end_bucket = current_bucket.id - 1
         if not start_bucket:
-            start_bucket = (
-                end_bucket - 24
-            )  # Just look back 24 buckets instead of converting to hours
+            start_bucket = end_bucket - 24  # Just look back 24 buckets instead of converting to hours
 
         bt.logging.info(f"Querying buckets {start_bucket} to {end_bucket}")
 
@@ -89,9 +87,7 @@ async def query_bucket(
 
         if label:
             query += " AND mi.labelId = ?"
-            label_id = validator.evaluator.storage.label_dict.get_or_insert(
-                label.strip().casefold()
-            )
+            label_id = validator.evaluator.storage.label_dict.get_or_insert(label.strip().casefold())
             params.append(label_id)
 
         query += " ORDER BY m.credibility DESC LIMIT 1"
@@ -157,12 +153,8 @@ async def query_bucket(
                 "miner": {"hotkey": target_hotkey, "uid": uid},
                 "bucket": {
                     "id": latest_bucket,
-                    "start": TimeBucket.to_date_range(
-                        TimeBucket(id=latest_bucket)
-                    ).start.isoformat(),
-                    "end": TimeBucket.to_date_range(
-                        TimeBucket(id=latest_bucket)
-                    ).end.isoformat(),
+                    "start": TimeBucket.to_date_range(TimeBucket(id=latest_bucket)).start.isoformat(),
+                    "end": TimeBucket.to_date_range(TimeBucket(id=latest_bucket)).end.isoformat(),
                     "source": source.upper(),
                     "label": label,
                     "expected_size": expected_size,
@@ -177,13 +169,9 @@ async def query_bucket(
 
 @router.get("/health", response_model=HealthResponse)
 @endpoint_error_handler
-async def health_check(
-    validator=Depends(get_validator), api_key: str = Depends(verify_api_key)
-):
+async def health_check(validator=Depends(get_validator), api_key: str = Depends(verify_api_key)):
     """Health check endpoint"""
-    miner_uids = utils.get_miner_uids(
-        validator.metagraph, validator.config.vpermit_rao_limit
-    )
+    miner_uids = utils.get_miner_uids(validator.metagraph, validator.config.vpermit_rao_limit)
     return {
         "status": "healthy" if validator.is_healthy() else "unhealthy",
         "timestamp": dt.datetime.utcnow(),
@@ -194,7 +182,7 @@ async def health_check(
     }
 
 
-def _fetch_label_sizes_sync(source_id: int, storage) -> List[Tuple]:
+def _fetch_label_sizes_sync(source_id: int, storage) -> list[tuple]:
     """Synchronous read-only DB query - runs without holding the main lock.
 
     Uses a separate connection with read-only intent. SQLite shared cache
@@ -231,7 +219,7 @@ def _fetch_label_sizes_sync(source_id: int, storage) -> List[Tuple]:
     return results
 
 
-@router.get("/get_top_labels_by_source/{source}", response_model=List[LabelSize])
+@router.get("/get_top_labels_by_source/{source}", response_model=list[LabelSize])
 @endpoint_error_handler
 async def get_label_sizes(
     source: str,
@@ -257,13 +245,9 @@ async def get_label_sizes(
                 return cached_results
 
         # Cache miss - run expensive query in thread pool to not block event loop
-        bt.logging.info(
-            f"Cache miss for get_top_labels_by_source/{source}, running query..."
-        )
+        bt.logging.info(f"Cache miss for get_top_labels_by_source/{source}, running query...")
         loop = asyncio.get_event_loop()
-        raw_results = await loop.run_in_executor(
-            None, _fetch_label_sizes_sync, source_id, validator.evaluator.storage
-        )
+        raw_results = await loop.run_in_executor(None, _fetch_label_sizes_sync, source_id, validator.evaluator.storage)
 
         # Translate labelIds to label values (fast, no lock needed)
         labels = [
@@ -286,7 +270,7 @@ async def get_label_sizes(
         raise HTTPException(500, str(e))
 
 
-def _fetch_age_sizes_sync(source_id: int, storage) -> List[Tuple]:
+def _fetch_age_sizes_sync(source_id: int, storage) -> list[tuple]:
     """Synchronous read-only DB query - runs without holding the main lock."""
     connection = storage._create_connection()
     try:
@@ -316,7 +300,7 @@ def _fetch_age_sizes_sync(source_id: int, storage) -> List[Tuple]:
     return results
 
 
-@router.get("/ages", response_model=List[AgeSize])
+@router.get("/ages", response_model=list[AgeSize])
 @endpoint_error_handler
 async def get_age_sizes(
     source: str,
@@ -344,9 +328,7 @@ async def get_age_sizes(
         # Cache miss - run expensive query in thread pool
         bt.logging.info(f"Cache miss for ages/{source}, running query...")
         loop = asyncio.get_event_loop()
-        raw_results = await loop.run_in_executor(
-            None, _fetch_age_sizes_sync, source_id, validator.evaluator.storage
-        )
+        raw_results = await loop.run_in_executor(None, _fetch_age_sizes_sync, source_id, validator.evaluator.storage)
 
         ages = [
             AgeSize(
@@ -376,9 +358,7 @@ async def set_desirabilities(
     api_key: str = Depends(require_master_key),
 ):
     try:
-        success, message = run_uploader_from_gravity(
-            validator.config, request.desirabilities
-        )
+        success, message = run_uploader_from_gravity(validator.config, request.desirabilities)
         if not success:
             bt.logging.error(f"Could not set desirabilities error message\n: {message}")
             raise HTTPException(status_code=400, detail=message)
@@ -403,9 +383,7 @@ async def get_desirability_list(
         subtensor = validator.subtensor
         netuid = validator.evaluator.config.netuid
         metagraph = validator.evaluator.metagraph
-        return get_hotkey_json_submission(
-            subtensor=subtensor, netuid=netuid, metagraph=metagraph, hotkey=hotkey
-        )
+        return get_hotkey_json_submission(subtensor=subtensor, netuid=netuid, metagraph=metagraph, hotkey=hotkey)
     except Exception as e:
         bt.logging.error(f"Error getting desirabilities: {str(e)}")
         raise HTTPException(500, f"Error retrieving desirabilities: {str(e)}")
@@ -413,9 +391,7 @@ async def get_desirability_list(
 
 @router.get("/get_bytes_by_label", response_model=LabelBytes)
 @endpoint_error_handler
-async def get_bytes_by_label(
-    label: str, validator=Depends(get_validator), api_key: str = Depends(verify_api_key)
-):
+async def get_bytes_by_label(label: str, validator=Depends(get_validator), api_key: str = Depends(verify_api_key)):
     """
     Returns the total sum of contentSizeBytes and adjusted bytes for the given label.
     """
@@ -430,9 +406,7 @@ async def get_bytes_by_label(
             cursor = connection.cursor()
 
             # Get label ID from label dictionary
-            label_id = validator.evaluator.storage.label_dict.get_or_insert(
-                normalized_label
-            )
+            label_id = validator.evaluator.storage.label_dict.get_or_insert(normalized_label)
 
             # Query both raw bytes and adjusted bytes (weighted by credibility)
             cursor.execute(

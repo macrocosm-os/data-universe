@@ -1,9 +1,8 @@
 import bisect
 import copy
+import random
 import threading
 from typing import List
-
-import random
 
 
 class MinerIterator:
@@ -13,7 +12,7 @@ class MinerIterator:
     each miner is evaluated at least once per epoch.
     """
 
-    def __init__(self, miner_uids: List[int]):
+    def __init__(self, miner_uids: list[int]):
         self.miner_uids = sorted(copy.deepcopy(miner_uids))
         # Start the index at a random position. This helps ensure that miners with high UIDs aren't penalized if
         # the validator restarts frequently.
@@ -44,7 +43,7 @@ class MinerIterator:
 
             return self.miner_uids[self.index]
 
-    def set_miner_uids(self, miner_uids: List[int]):
+    def set_miner_uids(self, miner_uids: list[int]):
         """Updates the miner UIDs to iterate.
 
         The iterator will be updated to the first miner uid that is greater than or equal to UID that would be next

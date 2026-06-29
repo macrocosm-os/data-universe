@@ -1,6 +1,7 @@
 import unittest
+
 from common.data import DataEntityBucketId, DataLabel, DataSource, TimeBucket
-from common.data_v2 import ScorableDataEntityBucket, DataEntityBucket
+from common.data_v2 import DataEntityBucket, ScorableDataEntityBucket
 
 
 class TestDataV2(unittest.TestCase):

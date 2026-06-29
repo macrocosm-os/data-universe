@@ -1,16 +1,17 @@
-from uuid import uuid4
-from fastapi import HTTPException, Security
-from fastapi.security.api_key import APIKeyHeader
 import os
+import secrets
 import sqlite3
-from typing import Dict, Optional, List
-from dotenv import load_dotenv
+import threading
 import time
 from datetime import datetime, timedelta
-import threading
-import secrets
-import bittensor as bt
 from pathlib import Path
+from typing import Dict, List, Optional
+from uuid import uuid4
+
+import bittensor as bt
+from dotenv import load_dotenv
+from fastapi import HTTPException, Security
+from fastapi.security.api_key import APIKeyHeader
 
 load_dotenv()
 
@@ -27,21 +28,14 @@ class APIKeyManager:
         # Master key from environment
         self.master_key = os.getenv("MASTER_KEY")
         if not self.master_key:
-            bt.logging.error(
-                "MASTER_KEY not found in environment. API will be disabled."
-            )
+            bt.logging.error("MASTER_KEY not found in environment. API will be disabled.")
             raise ValueError(
-                "MASTER_KEY environment variable is required to enable API. "
-                "Please set MASTER_KEY in your .env file."
+                "MASTER_KEY environment variable is required to enable API. Please set MASTER_KEY in your .env file."
             )
 
         # Use provided path or construct from config (following miner evaluator pattern)
         if db_path is None:
-            if (
-                config is not None
-                and hasattr(config, "neuron")
-                and hasattr(config.neuron, "full_path")
-            ):
+            if config is not None and hasattr(config, "neuron") and hasattr(config.neuron, "full_path"):
                 # Use validator's standard data directory (same as miner evaluator)
                 if not os.path.exists(config.neuron.full_path):
                     os.makedirs(config.neuron.full_path, exist_ok=True)
@@ -82,9 +76,7 @@ class APIKeyManager:
         """Create a new API key"""
         api_key = f"sk_live_{secrets.token_urlsafe(32)}"
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "INSERT INTO api_keys (key, name) VALUES (?, ?)", (api_key, name)
-            )
+            conn.execute("INSERT INTO api_keys (key, name) VALUES (?, ?)", (api_key, name))
         return api_key
 
     def deactivate_api_key(self, key: str):
@@ -92,13 +84,11 @@ class APIKeyManager:
         with sqlite3.connect(self.db_path) as conn:
             conn.execute("UPDATE api_keys SET is_active = FALSE WHERE key = ?", (key,))
 
-    def list_api_keys(self) -> List[Dict]:
+    def list_api_keys(self) -> list[dict]:
         """List all API keys"""
         with sqlite3.connect(self.db_path) as conn:
             conn.row_factory = sqlite3.Row
-            cursor = conn.execute(
-                "SELECT key, name, created_at, is_active FROM api_keys"
-            )
+            cursor = conn.execute("SELECT key, name, created_at, is_active FROM api_keys")
             return [dict(row) for row in cursor.fetchall()]
 
     def is_valid_key(self, api_key: str) -> bool:
@@ -107,9 +97,7 @@ class APIKeyManager:
             return True
 
         with sqlite3.connect(self.db_path) as conn:
-            cursor = conn.execute(
-                "SELECT is_active FROM api_keys WHERE key = ?", (api_key,)
-            )
+            cursor = conn.execute("SELECT is_active FROM api_keys WHERE key = ?", (api_key,))
             result = cursor.fetchone()
             return bool(result and result[0])
 
@@ -123,11 +111,9 @@ class APIKeyManager:
     def _clean_old_requests(self):
         """Remove requests older than 1 hour"""
         with sqlite3.connect(self.db_path) as conn:
-            conn.execute(
-                "DELETE FROM rate_limits WHERE request_time < datetime('now', '-1 hour')"
-            )
+            conn.execute("DELETE FROM rate_limits WHERE request_time < datetime('now', '-1 hour')")
 
-    def check_rate_limit(self, api_key: str) -> tuple[bool, Dict]:
+    def check_rate_limit(self, api_key: str) -> tuple[bool, dict]:
         """Check if request is within rate limits"""
         with self.lock:
             self._clean_old_requests()
@@ -174,9 +160,7 @@ class APIKeyManager:
                 return True, {
                     "X-RateLimit-Limit": str(rate_limit),
                     "X-RateLimit-Remaining": str(rate_limit - count - 1),
-                    "X-RateLimit-Reset": (
-                        datetime.utcnow() + timedelta(hours=1)
-                    ).isoformat(),
+                    "X-RateLimit-Reset": (datetime.utcnow() + timedelta(hours=1)).isoformat(),
                 }
 
 
@@ -194,9 +178,7 @@ def create_verify_api_key(key_manager: APIKeyManager):
         # Check rate limits
         within_limit, headers = key_manager.check_rate_limit(api_key_header)
         if not within_limit:
-            raise HTTPException(
-                status_code=429, detail="Rate limit exceeded", headers=headers
-            )
+            raise HTTPException(status_code=429, detail="Rate limit exceeded", headers=headers)
 
         return api_key_header
 
@@ -214,9 +196,7 @@ def create_require_master_key(key_manager: APIKeyManager):
         # Check rate limits even for master key
         within_limit, headers = key_manager.check_rate_limit(api_key_header)
         if not within_limit:
-            raise HTTPException(
-                status_code=429, detail="Rate limit exceeded", headers=headers
-            )
+            raise HTTPException(status_code=429, detail="Rate limit exceeded", headers=headers)
 
         return True
 
@@ -239,10 +219,12 @@ def create_require_metrics_api_key(key_manager: APIKeyManager):
 # Backwards compatibility: Create default instances that will be set by ValidatorAPI
 _default_key_manager = None
 
+
 def set_default_key_manager(key_manager: APIKeyManager):
     """Set the default key manager for backwards compatibility with routes"""
     global _default_key_manager
     _default_key_manager = key_manager
+
 
 async def verify_api_key(api_key_header: str = Security(api_key_header)):
     """Backwards compatible verify_api_key function for routes"""
@@ -255,9 +237,7 @@ async def verify_api_key(api_key_header: str = Security(api_key_header)):
     # Check rate limits
     within_limit, headers = _default_key_manager.check_rate_limit(api_key_header)
     if not within_limit:
-        raise HTTPException(
-            status_code=429, detail="Rate limit exceeded", headers=headers
-        )
+        raise HTTPException(status_code=429, detail="Rate limit exceeded", headers=headers)
 
     return api_key_header
 
@@ -273,8 +253,6 @@ async def require_master_key(api_key_header: str = Security(api_key_header)):
     # Check rate limits even for master key
     within_limit, headers = _default_key_manager.check_rate_limit(api_key_header)
     if not within_limit:
-        raise HTTPException(
-            status_code=429, detail="Rate limit exceeded", headers=headers
-        )
+        raise HTTPException(status_code=429, detail="Rate limit exceeded", headers=headers)
 
     return True

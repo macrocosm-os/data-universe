@@ -1,15 +1,17 @@
 import asyncio
+import datetime as dt
 import functools
 import random
 import threading
 import traceback
-import bittensor as bt
-import datetime as dt
 from typing import Dict, List, Optional
+
+import bittensor as bt
 import numpy
-from pydantic import Field, PositiveInt, ConfigDict
-from common.date_range import DateRange
+from pydantic import ConfigDict, Field, PositiveInt
+
 from common.data import DataLabel, DataSource, StrictBaseModel, TimeBucket
+from common.date_range import DateRange
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScrapeConfig, ScraperId
 from storage.miner.miner_storage import MinerStorage
@@ -18,7 +20,7 @@ from storage.miner.miner_storage import MinerStorage
 class LabelScrapingConfig(StrictBaseModel):
     """Describes what labels to scrape."""
 
-    label_choices: Optional[List[DataLabel]] = Field(
+    label_choices: list[DataLabel] | None = Field(
         description="""The collection of labels to choose from when performing a scrape.
         On a given scrape, 1 label will be chosen at random from this list.
 
@@ -35,7 +37,7 @@ class LabelScrapingConfig(StrictBaseModel):
         """,
     )
 
-    max_data_entities: Optional[PositiveInt] = Field(
+    max_data_entities: PositiveInt | None = Field(
         default=None,
         description="The maximum number of items to fetch in a single scrape for this label. If None, the scraper will fetch as many items possible.",
     )
@@ -48,7 +50,7 @@ class ScraperConfig(StrictBaseModel):
         description="Configures how often to scrape with this scraper, measured in seconds."
     )
 
-    labels_to_scrape: List[LabelScrapingConfig] = Field(
+    labels_to_scrape: list[LabelScrapingConfig] = Field(
         description="""Describes the type of data to scrape with this scraper.
 
         The scraper will perform one scrape per entry in this list every 'cadence_seconds'.
@@ -59,18 +61,12 @@ class ScraperConfig(StrictBaseModel):
 class CoordinatorConfig(StrictBaseModel):
     """Informs the Coordinator how to schedule scrapes."""
 
-    scraper_configs: Dict[ScraperId, ScraperConfig] = Field(
-        description="The configs for each scraper."
-    )
+    scraper_configs: dict[ScraperId, ScraperConfig] = Field(description="The configs for each scraper.")
 
 
-def _choose_scrape_configs(
-        scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime
-) -> List[ScrapeConfig]:
+def _choose_scrape_configs(scraper_id: ScraperId, config: CoordinatorConfig, now: dt.datetime) -> list[ScrapeConfig]:
     """For the given scraper, returns a list of scrapes (defined by ScrapeConfig) to be run."""
-    assert (
-            scraper_id in config.scraper_configs
-    ), f"Scraper Id {scraper_id} not in config"
+    assert scraper_id in config.scraper_configs, f"Scraper Id {scraper_id} not in config"
 
     # Ensure now has timezone information
     if now.tzinfo is None:
@@ -90,17 +86,17 @@ def _choose_scrape_configs(
 
         # Use the normal time bucket approach
         current_bucket = TimeBucket.from_datetime(now)
-        oldest_bucket = TimeBucket.from_datetime(
-            now - dt.timedelta(minutes=max_age_minutes)
-        )
+        oldest_bucket = TimeBucket.from_datetime(now - dt.timedelta(minutes=max_age_minutes))
 
         chosen_bucket = current_bucket
         # If we have more than 1 bucket to choose from, choose a bucket in the range
         if oldest_bucket.id < current_bucket.id:
             # Use a triangular distribution for bucket selection
-            chosen_id = int(numpy.random.default_rng().triangular(
-                left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
-            ))
+            chosen_id = int(
+                numpy.random.default_rng().triangular(
+                    left=oldest_bucket.id, mode=current_bucket.id, right=current_bucket.id
+                )
+            )
 
             chosen_bucket = TimeBucket(id=chosen_id)
 
@@ -110,7 +106,7 @@ def _choose_scrape_configs(
         if date_range.start.tzinfo is None:
             date_range = DateRange(
                 start=date_range.start.replace(tzinfo=dt.timezone.utc),
-                end=date_range.end.replace(tzinfo=dt.timezone.utc)
+                end=date_range.end.replace(tzinfo=dt.timezone.utc),
             )
 
         results.append(
@@ -122,6 +118,7 @@ def _choose_scrape_configs(
         )
 
     return results
+
 
 class ScraperCoordinator:
     """Coordinates all the scrapers necessary based on the specified target ScrapingDistribution."""
@@ -136,17 +133,15 @@ class ScraperCoordinator:
             }
 
             # Initialize the last scrape time as now, to protect against frequent scraping during Miner crash loops.
-            self.last_scrape_time_per_scraper_id: Dict[ScraperId, dt.datetime] = {
+            self.last_scrape_time_per_scraper_id: dict[ScraperId, dt.datetime] = {
                 scraper_id: now for scraper_id in config.scraper_configs.keys()
             }
 
-        def get_scraper_ids_ready_to_scrape(self, now: dt.datetime) -> List[ScraperId]:
+        def get_scraper_ids_ready_to_scrape(self, now: dt.datetime) -> list[ScraperId]:
             """Returns a list of ScraperIds which are due to run."""
             results = []
             for scraper_id, cadence in self.cadence_by_scraper_id.items():
-                last_scrape_time = self.last_scrape_time_per_scraper_id.get(
-                    scraper_id, None
-                )
+                last_scrape_time = self.last_scrape_time_per_scraper_id.get(scraper_id, None)
                 if last_scrape_time is None or now - last_scrape_time >= cadence:
                     results.append(scraper_id)
             return results
@@ -201,9 +196,7 @@ class ScraperCoordinator:
 
         while self.is_running:
             now = dt.datetime.utcnow()
-            scraper_ids_to_scrape_now = self.tracker.get_scraper_ids_ready_to_scrape(
-                now
-            )
+            scraper_ids_to_scrape_now = self.tracker.get_scraper_ids_ready_to_scrape(now)
             if not scraper_ids_to_scrape_now:
                 bt.logging.trace("Nothing ready to scrape yet. Trying again in 15s.")
                 # Nothing is due a scrape. Wait a few seconds and try again
@@ -240,5 +233,5 @@ class ScraperCoordinator:
 
                 self.storage.store_data_entities(data_entities)
                 self.queue.task_done()
-            except Exception as e:
+            except Exception:
                 bt.logging.error("Worker " + name + ": " + traceback.format_exc())

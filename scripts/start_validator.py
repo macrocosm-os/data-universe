@@ -15,6 +15,7 @@ validator within virtual environment, run this auto-update script from the virtu
 Pm2 is required for this script. This script will start a pm2 process using the name provided by
 the --pm2_name argument.
 """
+
 import argparse
 import logging
 import subprocess
@@ -43,7 +44,7 @@ def get_version() -> str:
     return commit[:8]
 
 
-def start_validator_process(pm2_name: str, args: List[str]) -> subprocess.Popen:
+def start_validator_process(pm2_name: str, args: list[str]) -> subprocess.Popen:
     """
     Spawn a new python process running neurons.validator.
     `sys.executable` ensures thet the same python interpreter is used as the one
@@ -111,7 +112,7 @@ def upgrade_packages() -> None:
         log.error("Failed to upgrade packages, proceeding anyway. %s", exc)
 
 
-def main(pm2_name: str, args: List[str]) -> None:
+def main(pm2_name: str, args: list[str]) -> None:
     """
     Run the validator process and automatically update it when a new version is released.
     This will check for updates every `UPDATES_CHECK_TIME` and update the validator
@@ -158,9 +159,7 @@ if __name__ == "__main__":
         epilog="Example usage: python start_validator.py --pm2_name 'net13vali' --wallet_name 'wallet1' --wallet_hotkey 'key123' [--no-autoupdate]",
     )
 
-    parser.add_argument(
-        "--pm2_name", default="net13vali", help="Name of the PM2 process."
-    )
+    parser.add_argument("--pm2_name", default="net13vali", help="Name of the PM2 process.")
 
     flags, extra_args = parser.parse_known_args()
 

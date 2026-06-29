@@ -1,10 +1,11 @@
-import json
-import requests
-import bittensor as bt
-from typing import Optional, Any, List
-import xml.etree.ElementTree as ET
-import urllib.parse
 import asyncio
+import json
+import urllib.parse
+import xml.etree.ElementTree as ET
+from typing import Any, List, Optional
+
+import bittensor as bt
+import requests
 
 from common.api_client import TaoSigner
 
@@ -17,9 +18,7 @@ class ValidatorS3Access:
         self.s3_auth_url = s3_auth_url
         self._signer = TaoSigner(keypair=wallet.hotkey)
 
-    async def _request_presigned_list_url(
-        self, miner_hotkey: str, continuation_token: Optional[str] = None
-    ) -> Optional[str]:
+    async def _request_presigned_list_url(self, miner_hotkey: str, continuation_token: str | None = None) -> str | None:
         """Request presigned list URL from /get-miner-list using Tao v2 auth."""
         try:
             payload = {"miner_hotkey": miner_hotkey}
@@ -42,9 +41,7 @@ class ValidatorS3Access:
             )
 
             if response.status_code != 200:
-                bt.logging.warning(
-                    f"get-miner-list failed: {response.status_code}"
-                )
+                bt.logging.warning(f"get-miner-list failed: {response.status_code}")
                 return None
 
             data = response.json()
@@ -54,9 +51,7 @@ class ValidatorS3Access:
             bt.logging.error(f"get-miner-list exception: {e}")
             return None
 
-    async def list_all_files_with_metadata(
-        self, miner_hotkey: str
-    ) -> List[dict[str, Any]]:
+    async def list_all_files_with_metadata(self, miner_hotkey: str) -> list[dict[str, Any]]:
         """
         List ALL parquet files for a miner with metadata (size, last_modified).
         Uses pagination via presigned list URLs.
@@ -74,15 +69,11 @@ class ValidatorS3Access:
             loop = asyncio.get_event_loop()
 
             while page <= max_pages:
-                presigned_url = await self._request_presigned_list_url(
-                    miner_hotkey, continuation_token
-                )
+                presigned_url = await self._request_presigned_list_url(miner_hotkey, continuation_token)
                 if not presigned_url:
                     break
 
-                response = await loop.run_in_executor(
-                    None, lambda: requests.get(presigned_url, timeout=60)
-                )
+                response = await loop.run_in_executor(None, lambda: requests.get(presigned_url, timeout=60))
                 if response.status_code != 200:
                     break
 
@@ -102,18 +93,12 @@ class ValidatorS3Access:
                     if key_elem is not None and key_elem.text:
                         decoded_key = urllib.parse.unquote(key_elem.text)
 
-                        if decoded_key.startswith(
-                            target_prefix
-                        ) and decoded_key.endswith(".parquet"):
+                        if decoded_key.startswith(target_prefix) and decoded_key.endswith(".parquet"):
                             all_files.append(
                                 {
                                     "key": decoded_key,
-                                    "size": int(size_elem.text)
-                                    if size_elem is not None and size_elem.text
-                                    else 0,
-                                    "last_modified": modified_elem.text
-                                    if modified_elem is not None
-                                    else "",
+                                    "size": int(size_elem.text) if size_elem is not None and size_elem.text else 0,
+                                    "last_modified": modified_elem.text if modified_elem is not None else "",
                                 }
                             )
                             page_files += 1
@@ -133,9 +118,7 @@ class ValidatorS3Access:
                 continuation_token = token_elem.text
                 page += 1
 
-            bt.logging.info(
-                f"S3 listing complete: {len(all_files)} files across {page} pages for {miner_hotkey}"
-            )
+            bt.logging.info(f"S3 listing complete: {len(all_files)} files across {page} pages for {miner_hotkey}")
             return all_files
 
         except Exception as e:

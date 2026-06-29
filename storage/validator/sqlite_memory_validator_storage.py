@@ -1,9 +1,11 @@
 import contextlib
 import datetime as dt
-import bittensor as bt
 import sqlite3
 import threading
-from typing import Any, Dict, Optional, Set, Tuple, List
+from typing import Any, Dict, List, Optional, Set, Tuple
+
+import bittensor as bt
+
 from common.data import CompressedMinerIndex, DataLabel
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from storage.validator.validator_storage import ValidatorStorage
@@ -75,7 +77,7 @@ def tz_aware_timestamp_adapter(val):
     hours, minutes, seconds = map(int, timepart_full[0].split(b":"))
 
     if len(timepart_full) == 2:
-        microseconds = int("{:0<6.6}".format(timepart_full[1].decode()))
+        microseconds = int(f"{timepart_full[1].decode():0<6.6}")
     else:
         microseconds = 0
 
@@ -127,9 +129,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
             # Create the Index table (if it does not already exist).
             cursor.execute(SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_CREATE)
-            cursor.execute(
-                SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_BUCKET_SIZE_INDEX
-            )
+            cursor.execute(SqliteMemoryValidatorStorage.MINER_INDEX_TABLE_BUCKET_SIZE_INDEX)
 
             # Lock to avoid concurrency issues on interacting with the database.
             self.lock = threading.RLock()
@@ -171,22 +171,18 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
 
         return miner_id
 
-    def _label_value_parse(self, label: Optional[DataLabel]) -> str:
+    def _label_value_parse(self, label: DataLabel | None) -> str:
         """Parses the value to store in the database out of an Optional DataLabel."""
         return "NULL" if (label is None) else label.value
 
-    def _label_value_parse_str(self, label: Optional[str]) -> str:
+    def _label_value_parse_str(self, label: str | None) -> str:
         """Same as _label_value_parse but with a string as input"""
         return "NULL" if (label is None) else label.casefold()
 
-    def upsert_compressed_miner_index(
-        self, index: CompressedMinerIndex, hotkey: str, credibility: float
-    ):
+    def upsert_compressed_miner_index(self, index: CompressedMinerIndex, hotkey: str, credibility: float):
         """Stores the index for all of the data that a specific miner promises to provide."""
 
-        bt.logging.trace(
-            f"{hotkey}: Upserting miner index with {CompressedMinerIndex.bucket_count(index)} buckets"
-        )
+        bt.logging.trace(f"{hotkey}: Upserting miner index with {CompressedMinerIndex.bucket_count(index)} buckets")
 
         now_str = dt.datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S.%f")
 
@@ -197,17 +193,13 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
         values = []
         for source, compressed_buckets in index.sources.items():
             for compressed_bucket in compressed_buckets:
-                for time_bucket_id, size_bytes in zip(
-                    compressed_bucket.time_bucket_ids, compressed_bucket.sizes_bytes
-                ):
+                for time_bucket_id, size_bytes in zip(compressed_bucket.time_bucket_ids, compressed_bucket.sizes_bytes):
                     try:
                         values.append(
                             [
                                 miner_id,
                                 int(source),
-                                self.label_dict.get_or_insert(
-                                    self._label_value_parse_str(compressed_bucket.label)
-                                ),
+                                self.label_dict.get_or_insert(self._label_value_parse_str(compressed_bucket.label)),
                                 time_bucket_id,
                                 size_bytes,
                             ]
@@ -224,9 +216,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 cursor = connection.cursor()
                 # Insert the new keys. (Ignore into to defend against a miner giving us multiple duplicate rows.)
                 # Batch in groups of 1m if necessary to avoid congestion issues.
-                value_subsets = [
-                    values[x : x + 1_000_000] for x in range(0, len(values), 1_000_000)
-                ]
+                value_subsets = [values[x : x + 1_000_000] for x in range(0, len(values), 1_000_000)]
                 for value_subset in value_subsets:
                     cursor.executemany(
                         """INSERT OR IGNORE INTO MinerIndex (minerId, source, labelId, timeBucketId, contentSizeBytes) VALUES (?, ?, ?, ?, ?)""",
@@ -237,7 +227,7 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
     def read_miner_index(
         self,
         miner_hotkey: str,
-    ) -> Optional[ScorableMinerIndex]:
+    ) -> ScorableMinerIndex | None:
         """Gets a scored index for all of the data that a specific miner promises to provide."""
         with self.lock:
             with contextlib.closing(self._create_connection()) as connection:
@@ -332,14 +322,12 @@ class SqliteMemoryValidatorStorage(ValidatorStorage):
                 cursor = connection.cursor()
                 cursor.execute("DELETE FROM Miner WHERE hotkey = ?", [hotkey])
 
-    def read_miner_last_updated(self, miner_hotkey: str) -> Optional[dt.datetime]:
+    def read_miner_last_updated(self, miner_hotkey: str) -> dt.datetime | None:
         """Gets when a specific miner was last updated."""
         with self.lock:
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
-                cursor.execute(
-                    "SELECT lastUpdated FROM Miner WHERE hotkey = ?", [miner_hotkey]
-                )
+                cursor.execute("SELECT lastUpdated FROM Miner WHERE hotkey = ?", [miner_hotkey])
                 result = cursor.fetchone()
                 if result is not None:
                     return result[0]

@@ -1,7 +1,10 @@
-from typing import Callable, Tuple, List
-import unittest
-import bittensor as bt
 import datetime as dt
+import unittest
+from collections.abc import Callable
+from typing import List, Tuple
+
+import bittensor as bt
+
 from common import old_protocol
 from common.data import (
     CompressedEntityBucket,
@@ -13,25 +16,24 @@ from common.data import (
     DataSource,
     TimeBucket,
 )
-
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 from storage.miner.miner_storage import MinerStorage
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
 )
-from vali_utils import utils as vali_utils
 from tests import utils as test_utils
+from vali_utils import utils as vali_utils
 
 
 class FakeMiner:
     """A simple implementation of a miner that defines the protocol forward functions."""
 
     def __init__(
-            self,
-            index: GetMinerIndex = None,
-            entities: GetDataEntityBucket = None,
-            storage: MinerStorage = None,
+        self,
+        index: GetMinerIndex = None,
+        entities: GetDataEntityBucket = None,
+        storage: MinerStorage = None,
     ):
         self.index = index
         self.entities = entities
@@ -40,15 +42,11 @@ class FakeMiner:
     def get_miner_index(self, request: GetMinerIndex) -> GetMinerIndex:
         # If we have storage, use it. Otherwise fallback to the provided index
         if self.storage:
-            request.compressed_index_serialized = (
-                self.storage.get_compressed_index().json()
-            )
+            request.compressed_index_serialized = self.storage.get_compressed_index().json()
             return request
         return self.index
 
-    def get_data_bucket(
-            self, request: old_protocol.GetDataEntityBucket
-    ) -> old_protocol.GetDataEntityBucket:
+    def get_data_bucket(self, request: old_protocol.GetDataEntityBucket) -> old_protocol.GetDataEntityBucket:
         return self.entities
 
 
@@ -110,9 +108,7 @@ class IntegrationTestProtocol(unittest.TestCase):
         self.ip = bt.utils.networking.get_external_ip()
 
         self.wallet = bt.wallet(name="unit_test2", hotkey="unit_test2")
-        self.wallet.create_if_non_existent(
-            coldkey_use_password=False, hotkey_use_password=False
-        )
+        self.wallet.create_if_non_existent(coldkey_use_password=False, hotkey_use_password=False)
 
         # Make a test database for the test to operate against.
         self.vali_storage = SqliteMemoryValidatorStorage()
@@ -202,28 +198,17 @@ class IntegrationTestProtocol(unittest.TestCase):
         self.assertEqual(got_compressed_index, compressed_index)
 
         # Store in the vali DB.
-        self.vali_storage.upsert_compressed_miner_index(
-            got_compressed_index, self.wallet.hotkey.ss58_address, 1
-        )
+        self.vali_storage.upsert_compressed_miner_index(got_compressed_index, self.wallet.hotkey.ss58_address, 1)
 
         # Finally, read it out and verify it's as expected.
-        scorable_index = self.vali_storage.read_miner_index(
-            self.wallet.hotkey.ss58_address
+        scorable_index = self.vali_storage.read_miner_index(self.wallet.hotkey.ss58_address)
+        expected_scorable_index = test_utils.convert_compressed_index_to_scorable_miner_index(
+            compressed_index, scorable_index.last_updated
         )
-        expected_scorable_index = (
-            test_utils.convert_compressed_index_to_scorable_miner_index(
-                compressed_index, scorable_index.last_updated
-            )
-        )
-        equal, reason = test_utils.are_scorable_indexes_equal(
-            expected_scorable_index, scorable_index
-        )
+        equal, reason = test_utils.are_scorable_indexes_equal(expected_scorable_index, scorable_index)
         if not equal:
             self.fail(reason)
-        self.assertTrue(
-            scorable_index.last_updated - dt.datetime.utcnow()
-            < dt.timedelta(seconds=30)
-        )
+        self.assertTrue(scorable_index.last_updated - dt.datetime.utcnow() < dt.timedelta(seconds=30))
 
     def test_get_compressed_miner_index(self):
         """Tests a round trip using the new compressed miner format."""
@@ -236,35 +221,20 @@ class IntegrationTestProtocol(unittest.TestCase):
 
         # Now that we have the response, write it to the vali DB.
         got_compressed_index = vali_utils.get_miner_index_from_response(response)
-        self.assertTrue(
-            test_utils.are_compressed_indexes_equal(
-                got_compressed_index, expected_index
-            )
-        )
+        self.assertTrue(test_utils.are_compressed_indexes_equal(got_compressed_index, expected_index))
 
         # Store in the vali DB.
-        self.vali_storage.upsert_compressed_miner_index(
-            got_compressed_index, self.wallet.hotkey.ss58_address, 1
-        )
+        self.vali_storage.upsert_compressed_miner_index(got_compressed_index, self.wallet.hotkey.ss58_address, 1)
 
         # Finally, read it out and verify it's as expected.
-        scorable_index = self.vali_storage.read_miner_index(
-            self.wallet.hotkey.ss58_address
+        scorable_index = self.vali_storage.read_miner_index(self.wallet.hotkey.ss58_address)
+        expected_scorable_index = test_utils.convert_compressed_index_to_scorable_miner_index(
+            expected_index, scorable_index.last_updated
         )
-        expected_scorable_index = (
-            test_utils.convert_compressed_index_to_scorable_miner_index(
-                expected_index, scorable_index.last_updated
-            )
-        )
-        equal, reason = test_utils.are_scorable_indexes_equal(
-            expected_scorable_index, scorable_index
-        )
+        equal, reason = test_utils.are_scorable_indexes_equal(expected_scorable_index, scorable_index)
         if not equal:
             self.fail(reason)
-        self.assertTrue(
-            scorable_index.last_updated - dt.datetime.utcnow()
-            < dt.timedelta(seconds=30)
-        )
+        self.assertTrue(scorable_index.last_updated - dt.datetime.utcnow() < dt.timedelta(seconds=30))
 
 
 if __name__ == "__main__":

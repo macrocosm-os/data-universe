@@ -1,0 +1,31 @@
+[tool.ruff]
+line-length = 120
+target-version = "py310"
+exclude = [
+    ".git",
+    ".venv",
+    "__pycache__",
+    "build",
+    "dist",
+    "*.egg-info",
+]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "W"]
+ignore = [
+    "E501",   # line too long (handled by formatter)
+    "E402",   # module level import not at top of file
+    "E711",   # comparison to None using == (prefer `is`)
+    "E722",   # bare except (address incrementally)
+    "E741",   # ambiguous variable name
+    "F401",   # unused imports (too noisy for initial pass)
+    "F811",   # redefinition of unused name
+    "F841",   # local variable assigned but never used
+    "W291",   # trailing whitespace
+    "W293",   # whitespace before comment
+]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+line-ending = "auto"

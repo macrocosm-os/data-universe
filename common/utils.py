@@ -1,17 +1,20 @@
 """General utility functions."""
 
-from collections import OrderedDict
+import concurrent
 import datetime as dt
 import functools
-import concurrent
 import pickle
 import sys
 import time
-from math import floor
-from typing import Any, Callable, List, Optional, Dict
-import torch
-import bittensor as bt
+from collections import OrderedDict
+from collections.abc import Callable
 from functools import lru_cache, update_wrapper
+from math import floor
+from typing import Any, Dict, List, Optional
+
+import bittensor as bt
+import torch
+
 from common.date_range import DateRange
 
 _KB = 1024
@@ -53,23 +56,15 @@ def is_miner(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int) -> bool:
     return not is_validator(uid, metagraph, vpermit_rao_limit)
 
 
-def is_validator(
-    uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int = 10_000
-) -> bool:
+def is_validator(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int = 10_000) -> bool:
     """Checks if a UID on the subnet is a validator."""
-    return (
-        metagraph.validator_permit[uid] and float(metagraph.S[uid]) >= vpermit_rao_limit
-    )
+    return metagraph.validator_permit[uid] and float(metagraph.S[uid]) >= vpermit_rao_limit
 
 
-def get_validator_data(
-    metagraph: bt.metagraph, vpermit_rao_limit: int
-) -> Dict[str, Dict[str, Any]]:
+def get_validator_data(metagraph: bt.metagraph, vpermit_rao_limit: int) -> dict[str, dict[str, Any]]:
     """Retrieve validator data (hotkey, percent stake) from metagraph. For use in Gravity."""
     total_stake = sum(
-        float(stake)
-        for uid, stake in enumerate(metagraph.S)
-        if is_validator(uid, metagraph, vpermit_rao_limit)
+        float(stake) for uid, stake in enumerate(metagraph.S) if is_validator(uid, metagraph, vpermit_rao_limit)
     )
 
     validator_data = {
@@ -85,18 +80,12 @@ def get_validator_data(
     return validator_data
 
 
-def get_miner_uids(metagraph: bt.metagraph, vpermit_rao_limit: int) -> List[int]:
+def get_miner_uids(metagraph: bt.metagraph, vpermit_rao_limit: int) -> list[int]:
     """Gets the uids of all miners in the metagraph."""
-    return sorted(
-        [
-            uid.item()
-            for uid in metagraph.uids
-            if is_miner(uid.item(), metagraph, vpermit_rao_limit)
-        ]
-    )
+    return sorted([uid.item() for uid in metagraph.uids if is_miner(uid.item(), metagraph, vpermit_rao_limit)])
 
 
-def get_uid(wallet: bt.wallet, metagraph: bt.metagraph) -> Optional[int]:
+def get_uid(wallet: bt.wallet, metagraph: bt.metagraph) -> int | None:
     """Gets the uid of the wallet in the metagraph or None if not registered."""
     if wallet.hotkey.ss58_address in metagraph.hotkeys:
         return metagraph.hotkeys.index(wallet.hotkey.ss58_address)
@@ -132,7 +121,7 @@ def time_bucket_id_to_date_range(bucket: int) -> DateRange:
     )
 
 
-def parse_iso_date(date_str: str) -> Optional[dt.datetime]:
+def parse_iso_date(date_str: str) -> dt.datetime | None:
     """
     Parse ISO date string, handling 'Z' suffix for UTC timezone.
     Assumes UTC for timezone-naive objects and always returns a timezone-aware object.
@@ -268,9 +257,7 @@ def ttl_get_block(self) -> int:
     return self.subtensor.get_current_block()
 
 
-async def async_run_with_retry(
-    func, max_retries=3, delay_seconds=1, single_try_timeout=30
-):
+async def async_run_with_retry(func, max_retries=3, delay_seconds=1, single_try_timeout=30):
     """
     Retry a function with constant backoff.
 
@@ -338,7 +325,9 @@ class LRUSet:
 
     def __contains__(self, key: str) -> bool:
         return key in self.data
-def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> Optional[str]:
+
+
+def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> str | None:
     """Query the subnet owner hotkey from the chain.
 
     Args:
@@ -362,11 +351,7 @@ def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> Optional[st
 
 
 def apply_burn_to_weights(
-    raw_weights: torch.Tensor,
-    metagraph: bt.metagraph,
-    subtensor: bt.subtensor,
-    netuid: int,
-    burn_percentage: float
+    raw_weights: torch.Tensor, metagraph: bt.metagraph, subtensor: bt.subtensor, netuid: int, burn_percentage: float
 ) -> torch.Tensor:
     """Apply burn mechanism to weight distribution.
 
@@ -403,8 +388,6 @@ def apply_burn_to_weights(
     other_sum = torch.sum(raw_weights[other_mask])
     new_weights[other_mask] = raw_weights[other_mask] * (1 - burn_percentage) / other_sum
 
-    bt.logging.info(
-        f"Applied {burn_percentage*100:.1f}% burn to UID {owner_uid} ({owner_hotkey[:8]}...)"
-    )
+    bt.logging.info(f"Applied {burn_percentage * 100:.1f}% burn to UID {owner_uid} ({owner_hotkey[:8]}...)")
 
     return new_weights

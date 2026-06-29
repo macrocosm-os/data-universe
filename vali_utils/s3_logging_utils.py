@@ -3,10 +3,11 @@ Rich table logging utilities for S3 validation results.
 Provides formatted, easy-to-read tables for S3 validation metrics.
 """
 
-from rich.table import Table
-from rich.console import Console
 from typing import Optional
+
 import bittensor as bt
+from rich.console import Console
+from rich.table import Table
 
 from vali_utils.s3_utils import S3ValidationResult
 
@@ -18,7 +19,7 @@ def format_size(bytes_value: int) -> str:
     if bytes_value == 0:
         return "0 B"
 
-    units = ['B', 'KB', 'MB', 'GB', 'TB']
+    units = ["B", "KB", "MB", "GB", "TB"]
     unit_index = 0
     size = float(bytes_value)
 
@@ -33,10 +34,7 @@ def format_size(bytes_value: int) -> str:
 
 
 def format_percentage_with_status(
-    value: float,
-    threshold: float,
-    inverse: bool = False,
-    show_threshold: bool = True
+    value: float, threshold: float, inverse: bool = False, show_threshold: bool = True
 ) -> str:
     """
     Format percentage with color-coded status indicator
@@ -64,12 +62,7 @@ def format_percentage_with_status(
         return f"{value:.1f}% {status}"
 
 
-def log_s3_validation_table(
-    result: S3ValidationResult,
-    uid: int,
-    hotkey: str,
-    pagination_stats: Optional[dict] = None
-):
+def log_s3_validation_table(result: S3ValidationResult, uid: int, hotkey: str, pagination_stats: dict | None = None):
     """
     Display S3 validation results in a rich table format
 
@@ -89,7 +82,7 @@ def log_s3_validation_table(
         title_style="bold cyan",
         show_lines=True,
         expand=False,
-        width=90
+        width=90,
     )
 
     table.add_column("Metric", style="cyan", width=22)
@@ -100,19 +93,18 @@ def log_s3_validation_table(
     status_text = "PASSED" if result.is_valid else "FAILED"
     status_color = "green" if result.is_valid else "red"
 
-    table.add_row(
-        "Status",
-        f"[{status_color}]{status_emoji} {status_text}[/{status_color}]"
-    )
+    table.add_row("Status", f"[{status_color}]{status_emoji} {status_text}[/{status_color}]")
 
     # Miner Info
     table.add_row("Hotkey", f"{hotkey[:20]}...")
 
     # Job Statistics
-    job_completion_pct = (result.total_active_jobs / result.expected_jobs_count * 100) if result.expected_jobs_count > 0 else 0
+    job_completion_pct = (
+        (result.total_active_jobs / result.expected_jobs_count * 100) if result.expected_jobs_count > 0 else 0
+    )
     table.add_row(
         "Jobs Coverage",
-        f"{result.total_active_jobs}/{result.expected_jobs_count} active jobs ({job_completion_pct:.1f}% coverage)"
+        f"{result.total_active_jobs}/{result.expected_jobs_count} active jobs ({job_completion_pct:.1f}% coverage)",
     )
 
     # File Statistics
@@ -125,21 +117,15 @@ def log_s3_validation_table(
     table.add_row("", "")
 
     coverage_penalty = (result.job_coverage_rate / 100.0) ** 2
-    table.add_row(
-        "Job Coverage",
-        f"{result.job_coverage_rate:.1f}% (penalty: {coverage_penalty:.2f}x)"
-    )
+    table.add_row("Job Coverage", f"{result.job_coverage_rate:.1f}% (penalty: {coverage_penalty:.2f}x)")
 
     if result.effective_size_bytes > 0:
         table.add_row(
             "Effective Size",
-            f"[green]{format_size(int(result.effective_size_bytes))}[/green] = {format_size(result.total_size_bytes)} × {coverage_penalty:.2f}"
+            f"[green]{format_size(int(result.effective_size_bytes))}[/green] = {format_size(result.total_size_bytes)} × {coverage_penalty:.2f}",
         )
     else:
-        table.add_row(
-            "Effective Size",
-            f"[red]0 B[/red] (validation failed)"
-        )
+        table.add_row("Effective Size", "[red]0 B[/red] (validation failed)")
 
     # Add separator
     table.add_row("", "")
@@ -166,15 +152,17 @@ def log_s3_validation_table(
         passed_color = "green" if result.entities_passed_scraper >= result.entities_validated * 0.7 else "yellow"
         table.add_row(
             "Entities Validated",
-            f"[{passed_color}]{result.entities_passed_scraper}/{result.entities_validated} passed[/{passed_color}]"
+            f"[{passed_color}]{result.entities_passed_scraper}/{result.entities_validated} passed[/{passed_color}]",
         )
 
     # Job match details
     if result.entities_checked_for_job_match > 0:
-        match_color = "green" if result.entities_matched_job >= result.entities_checked_for_job_match * 0.95 else "yellow"
+        match_color = (
+            "green" if result.entities_matched_job >= result.entities_checked_for_job_match * 0.95 else "yellow"
+        )
         table.add_row(
             "Job Content Match",
-            f"[{match_color}]{result.entities_matched_job}/{result.entities_checked_for_job_match} matched[/{match_color}]"
+            f"[{match_color}]{result.entities_matched_job}/{result.entities_checked_for_job_match} matched[/{match_color}]",
         )
 
     # Scraper validation details (why entities passed/failed)
@@ -183,7 +171,7 @@ def log_s3_validation_table(
         table.add_row("[bold]Scraper Details[/bold]", "")
 
         for i, detail in enumerate(result.sample_validation_results):
-            table.add_row(f"  Entity {i+1}", detail)
+            table.add_row(f"  Entity {i + 1}", detail)
 
     # Job mismatch samples if any
     if result.sample_job_mismatches:
@@ -191,7 +179,7 @@ def log_s3_validation_table(
         table.add_row("[bold yellow]Job Mismatches[/bold yellow]", "")
 
         for i, mismatch in enumerate(result.sample_job_mismatches[:3]):
-            table.add_row(f"  Mismatch {i+1}", f"[yellow]{mismatch}[/yellow]")
+            table.add_row(f"  Mismatch {i + 1}", f"[yellow]{mismatch}[/yellow]")
 
     # Pagination stats if provided
     if pagination_stats:
@@ -199,13 +187,13 @@ def log_s3_validation_table(
         table.add_row("[bold]Pagination Stats[/bold]", "")
         table.add_row("", "")
 
-        if 'pages' in pagination_stats:
+        if "pages" in pagination_stats:
             table.add_row("Pages Retrieved", f"{pagination_stats['pages']} pages")
 
-        if 'files_per_page' in pagination_stats:
+        if "files_per_page" in pagination_stats:
             table.add_row("Avg Files/Page", f"~{pagination_stats['files_per_page']:,} files")
 
-        if 'retrieval_time' in pagination_stats:
+        if "retrieval_time" in pagination_stats:
             table.add_row("Retrieval Time", f"{pagination_stats['retrieval_time']:.1f}s")
 
     # Issues (if any)
@@ -215,7 +203,7 @@ def log_s3_validation_table(
         table.add_row("", "")
 
         for i, issue in enumerate(result.validation_issues[:5]):  # Show max 5 issues
-            table.add_row(f"  Issue {i+1}", f"[red]{issue}[/red]")
+            table.add_row(f"  Issue {i + 1}", f"[red]{issue}[/red]")
 
     # Summary
     if result.reason:

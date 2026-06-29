@@ -1,8 +1,10 @@
-from curses import meta
 import threading
-from unittest import mock
 import unittest
+from curses import meta
+from unittest import mock
+
 import bittensor as bt
+
 from common.metagraph_syncer import MetagraphSyncer
 
 

@@ -1,25 +1,25 @@
+import asyncio
+import datetime as dt
 import json
 import math
 import random
 import statistics
-import asyncio
-import datetime as dt
 from dataclasses import dataclass, field
-from typing import Dict, List, Tuple, Optional
+from typing import Dict, List, Optional, Tuple
 
 import bittensor as bt
-from common.data import DataSource, DataLabel, DataEntity
-from common.constants import X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
+
 from common import constants
+from common.constants import X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
+from common.data import DataEntity, DataLabel, DataSource
 from scraping.provider import ScraperProvider
-from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
-from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from scraping.reddit.reddit_json_scraper import RedditJsonScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
+from scraping.x.model import XContent
+from vali_utils.metrics import ORGANIC_MINER_RESULTS
 from vali_utils.on_demand import utils as on_demand_utils
 from vali_utils.on_demand.output_models import validate_metadata_completeness
-from vali_utils.metrics import ORGANIC_MINER_RESULTS
-
 
 # Reward multiplier tuning constants (see docs/od_reward_formula.md)
 SPEED_HALF_LIFE_S = 45.0
@@ -36,7 +36,7 @@ def _speed_multiplier(upload_seconds: float) -> float:
     return min(1.0, 0.5 ** (t / SPEED_HALF_LIFE_S))
 
 
-def _volume_multiplier(returned: int, limit: Optional[int]) -> float:
+def _volume_multiplier(returned: int, limit: int | None) -> float:
     """Sub-linear below target, log-capped over target. Open mode (limit=None)
     grades absolute volume on log scale. See docs/od_reward_formula.md §4."""
     r = max(0, int(returned or 0))
@@ -61,13 +61,13 @@ class ValidationContext:
     """Lightweight replacement for OrganicRequest (bt.Synapse) used only for validation."""
 
     source: str
-    usernames: List[str] = field(default_factory=list)
-    keywords: List[str] = field(default_factory=list)
-    url: Optional[str] = None
+    usernames: list[str] = field(default_factory=list)
+    keywords: list[str] = field(default_factory=list)
+    url: str | None = None
     keyword_mode: str = "all"
-    start_date: Optional[str] = None
-    end_date: Optional[str] = None
-    limit: Optional[int] = 100
+    start_date: str | None = None
+    end_date: str | None = None
+    limit: int | None = 100
 
 
 class OnDemandValidator:
@@ -123,9 +123,7 @@ class OnDemandValidator:
     # Format validation
     # ------------------------------------------------------------------
 
-    def _validate_miner_data_format(
-        self, ctx: ValidationContext, data: List, miner_uid: int
-    ) -> bool:
+    def _validate_miner_data_format(self, ctx: ValidationContext, data: list, miner_uid: int) -> bool:
         if not data:
             return True
 
@@ -158,8 +156,7 @@ class OnDemandValidator:
                     x_content = XContent.from_data_entity(item)
                     if (
                         on_demand_utils.is_nested_format(item)
-                        and dt.datetime.now(tz=dt.timezone.utc)
-                        < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
+                        and dt.datetime.now(tz=dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
                     ):
                         item = XContent.to_data_entity(x_content)
                 elif source == "REDDIT":
@@ -219,9 +216,7 @@ class OnDemandValidator:
                 entity_for_validation = entity
 
             # Phase 3: Scraper validation
-            return await self._validate_with_scraper(
-                ctx, entity_for_validation, post_id
-            )
+            return await self._validate_with_scraper(ctx, entity_for_validation, post_id)
 
         except Exception as e:
             bt.logging.error(
@@ -233,9 +228,7 @@ class OnDemandValidator:
     # Request-field validation
     # ------------------------------------------------------------------
 
-    def _validate_request_fields(
-        self, ctx: ValidationContext, entity: DataEntity, miner_uid: int
-    ) -> bool:
+    def _validate_request_fields(self, ctx: ValidationContext, entity: DataEntity, miner_uid: int) -> bool:
         try:
             if ctx.source.upper() == "X":
                 return self._validate_x_request_fields(ctx, entity, miner_uid)
@@ -245,9 +238,7 @@ class OnDemandValidator:
             bt.logging.error(f"Error in request field validation: {str(e)}")
             return False
 
-    def _validate_x_request_fields(
-        self, ctx: ValidationContext, x_entity: DataEntity, miner_uid: int
-    ) -> bool:
+    def _validate_x_request_fields(self, ctx: ValidationContext, x_entity: DataEntity, miner_uid: int) -> bool:
         hotkey = self.metagraph.hotkeys[miner_uid]
         x_content_dict = json.loads(x_entity.content.decode("utf-8"))
 
@@ -256,14 +247,10 @@ class OnDemandValidator:
 
             post_url = x_content_dict.get("url", "")
             if utils.normalize_url(post_url) != utils.normalize_url(ctx.url):
-                bt.logging.debug(
-                    f"Miner {miner_uid}:{hotkey} URL mismatch: {post_url} != {ctx.url}"
-                )
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} URL mismatch: {post_url} != {ctx.url}")
                 return False
             if not self._validate_time_range(ctx, x_entity.datetime):
-                bt.logging.debug(
-                    f"Miner {miner_uid}:{hotkey} failed time range validation"
-                )
+                bt.logging.debug(f"Miner {miner_uid}:{hotkey} failed time range validation")
                 return False
             return True
 
@@ -307,9 +294,7 @@ class OnDemandValidator:
         self, ctx: ValidationContext, reddit_entity: DataEntity, miner_uid: int
     ) -> bool:
         hotkey = self.metagraph.hotkeys[miner_uid]
-        bt.logging.debug(
-            f"Miner {miner_uid}:{hotkey} - Starting Reddit request field validation"
-        )
+        bt.logging.debug(f"Miner {miner_uid}:{hotkey} - Starting Reddit request field validation")
         reddit_content_dict = json.loads(reddit_entity.content.decode("utf-8"))
 
         if ctx.usernames:
@@ -325,10 +310,7 @@ class OnDemandValidator:
             post_community = reddit_content_dict.get("communityName")
             if post_community:
                 post_community = post_community.lower().removeprefix("r/")
-                subreddit_match = any(
-                    keyword.lower().removeprefix("r/") == post_community
-                    for keyword in ctx.keywords
-                )
+                subreddit_match = any(keyword.lower().removeprefix("r/") == post_community for keyword in ctx.keywords)
             else:
                 subreddit_match = False
 
@@ -339,15 +321,11 @@ class OnDemandValidator:
             keyword_mode = ctx.keyword_mode
             if keyword_mode == "all":
                 keyword_in_content = (
-                    all(keyword.lower() in content_text for keyword in ctx.keywords)
-                    if content_text
-                    else False
+                    all(keyword.lower() in content_text for keyword in ctx.keywords) if content_text else False
                 )
             else:
                 keyword_in_content = (
-                    any(keyword.lower() in content_text for keyword in ctx.keywords)
-                    if content_text
-                    else False
+                    any(keyword.lower() in content_text for keyword in ctx.keywords) if content_text else False
                 )
 
             if not (subreddit_match or keyword_in_content):
@@ -366,25 +344,19 @@ class OnDemandValidator:
     # Time range validation
     # ------------------------------------------------------------------
 
-    def _validate_time_range(
-        self, ctx: ValidationContext, post_timestamp: dt.datetime
-    ) -> bool:
+    def _validate_time_range(self, ctx: ValidationContext, post_timestamp: dt.datetime) -> bool:
         from common import utils
 
         try:
             if ctx.start_date:
                 start_dt = utils.parse_iso_date(ctx.start_date)
                 if post_timestamp < start_dt:
-                    bt.logging.debug(
-                        f"Post timestamp {post_timestamp} is before start date {start_dt}"
-                    )
+                    bt.logging.debug(f"Post timestamp {post_timestamp} is before start date {start_dt}")
                     return False
             if ctx.end_date:
                 end_dt = utils.parse_iso_date(ctx.end_date)
                 if post_timestamp > end_dt:
-                    bt.logging.debug(
-                        f"Post timestamp {post_timestamp} is after end date {end_dt}"
-                    )
+                    bt.logging.debug(f"Post timestamp {post_timestamp} is after end date {end_dt}")
                     return False
             return True
         except Exception as e:
@@ -395,9 +367,7 @@ class OnDemandValidator:
     # Metadata completeness
     # ------------------------------------------------------------------
 
-    def _validate_metadata_completeness(
-        self, entity: DataEntity, post_id: str = None, miner_uid: int = None
-    ) -> bool:
+    def _validate_metadata_completeness(self, entity: DataEntity, post_id: str = None, miner_uid: int = None) -> bool:
         try:
             is_valid, missing_fields = validate_metadata_completeness(entity)
             if not is_valid:
@@ -418,9 +388,7 @@ class OnDemandValidator:
     # Scraper validation
     # ------------------------------------------------------------------
 
-    async def _validate_with_scraper(
-        self, ctx: ValidationContext, data_entity: DataEntity, post_id: str
-    ) -> bool:
+    async def _validate_with_scraper(self, ctx: ValidationContext, data_entity: DataEntity, post_id: str) -> bool:
         try:
             scraper = self._get_scraper(ctx.source)
             if not scraper:
@@ -428,17 +396,13 @@ class OnDemandValidator:
                 return False
 
             if ctx.source.upper() == "X":
-                results = await scraper.validate(
-                    entities=[data_entity], allow_low_engagement=True
-                )
+                results = await scraper.validate(entities=[data_entity], allow_low_engagement=True)
             else:
                 results = await scraper.validate([data_entity])
 
             if results and len(results) > 0:
                 result = results[0]
-                is_valid = (
-                    result.is_valid if hasattr(result, "is_valid") else bool(result)
-                )
+                is_valid = result.is_valid if hasattr(result, "is_valid") else bool(result)
                 if not is_valid:
                     bt.logging.error(
                         f"Post {post_id} failed scraper validation: {getattr(result, 'reason', 'Unknown')}"
@@ -457,9 +421,7 @@ class OnDemandValidator:
             if source.upper() == "X":
                 return ApiDojoTwitterScraper()
             else:
-                scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(
-                    DataSource[source.upper()]
-                )
+                scraper_id = self.evaluator.PREFERRED_SCRAPERS.get(DataSource[source.upper()])
                 if scraper_id:
                     return ScraperProvider().get(scraper_id)
         except Exception as e:
@@ -472,9 +434,9 @@ class OnDemandValidator:
 
     def _apply_validation_penalties(
         self,
-        miner_responses: Dict[int, List],
-        validation_results: Dict[str, bool],
-    ) -> Tuple[Dict[int, int], List[int], List[int]]:
+        miner_responses: dict[int, list],
+        validation_results: dict[str, bool],
+    ) -> tuple[dict[int, int], list[int], list[int]]:
         """Classify sampled miners as successful or failed based on validation.
 
         Returns (miner_scores, failed_miners, successful_miners) — does NOT
@@ -489,9 +451,7 @@ class OnDemandValidator:
             if not miner_responses[uid]:
                 miner_scores[uid] = 0
                 failed_miners.append(uid)
-                ORGANIC_MINER_RESULTS.labels(
-                    miner_uid=uid, result_type="failure_empty_submission"
-                ).inc()
+                ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_empty_submission").inc()
                 continue
 
             miner_failed_validation = False
@@ -509,9 +469,7 @@ class OnDemandValidator:
             if miner_failed_validation:
                 miner_scores[uid] = 0
                 failed_miners.append(uid)
-                ORGANIC_MINER_RESULTS.labels(
-                    miner_uid=uid, result_type="failure_content_validation"
-                ).inc()
+                ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="failure_content_validation").inc()
             else:
                 successful_miners.append(uid)
                 ORGANIC_MINER_RESULTS.labels(miner_uid=uid, result_type="success").inc()
@@ -525,9 +483,7 @@ class OnDemandValidator:
     # Volume consensus
     # ------------------------------------------------------------------
 
-    def _calculate_volume_consensus(
-        self, miner_data_counts: Dict[int, int]
-    ) -> Optional[float]:
+    def _calculate_volume_consensus(self, miner_data_counts: dict[int, int]) -> float | None:
         if not miner_data_counts or len(miner_data_counts) < 2:
             return None
 
@@ -546,27 +502,23 @@ class OnDemandValidator:
 
     def _apply_consensus_volume_penalties(
         self,
-        miner_data_counts: Dict[int, int],
-        requested_limit: Optional[int],
-        consensus_count: Optional[float],
-    ) -> Dict[int, float]:
+        miner_data_counts: dict[int, int],
+        requested_limit: int | None,
+        consensus_count: float | None,
+    ) -> dict[int, float]:
         """Identify miners with volume underperformance relative to consensus.
 
         Returns dict of uid -> penalty_mult_factor for penalized miners.
         Does NOT call the scorer directly — the caller writes to the OD cache.
         """
         if consensus_count is None:
-            bt.logging.info(
-                "Not enough miners with data for consensus - skipping volume penalties"
-            )
+            bt.logging.info("Not enough miners with data for consensus - skipping volume penalties")
             return {}
 
         if requested_limit is not None:
             min_consensus_threshold = requested_limit * self.MIN_CONSENSUS
             if consensus_count < min_consensus_threshold:
-                bt.logging.info(
-                    "Consensus shows limited data available - skipping volume penalties"
-                )
+                bt.logging.info("Consensus shows limited data available - skipping volume penalties")
                 return {}
 
         penalized_miners = {}
@@ -586,9 +538,7 @@ class OnDemandValidator:
                         result_type="failure_volume_underperformance_consensus",
                     ).inc()
 
-        bt.logging.info(
-            f"Applied consensus volume penalties to {len(penalized_miners)} miners"
-        )
+        bt.logging.info(f"Applied consensus volume penalties to {len(penalized_miners)} miners")
         return penalized_miners
 
     # ------------------------------------------------------------------
@@ -613,11 +563,7 @@ class OnDemandValidator:
                 if ctx.start_date
                 else dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)
             )
-            end_dt = (
-                dt.datetime.fromisoformat(ctx.end_date)
-                if ctx.end_date
-                else dt.datetime.now(dt.timezone.utc)
-            )
+            end_dt = dt.datetime.fromisoformat(ctx.end_date) if ctx.end_date else dt.datetime.now(dt.timezone.utc)
 
             if ctx.source.upper() == "X":
                 results = await scraper.on_demand_scrape(
@@ -664,12 +610,10 @@ class OnDemandValidator:
         job_created_at: dt.datetime,
         submission_timestamp: dt.datetime,
         returned_count: int,
-        requested_limit: Optional[int],
-    ) -> Tuple[float, float]:
+        requested_limit: int | None,
+    ) -> tuple[float, float]:
         if job_created_at is None or submission_timestamp is None:
-            bt.logging.warning(
-                "Missing timestamp data for reward calculation, using default (0.5, 0.0)"
-            )
+            bt.logging.warning("Missing timestamp data for reward calculation, using default (0.5, 0.0)")
             return 0.5, 0.0
 
         upload_time_seconds = (submission_timestamp - job_created_at).total_seconds()

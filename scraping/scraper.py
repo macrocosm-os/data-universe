@@ -1,7 +1,8 @@
 import abc
 from enum import Enum
 from typing import Dict, List, Optional
-from pydantic import BaseModel, Field, PositiveInt, ConfigDict
+
+from pydantic import BaseModel, ConfigDict, Field, PositiveInt
 
 from common.data import DataEntity, DataLabel, DataSource, StrictBaseModel
 from common.date_range import DateRange
@@ -40,9 +41,9 @@ class ScrapeConfig(StrictBaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    entity_limit: Optional[PositiveInt]
+    entity_limit: PositiveInt | None
     date_range: DateRange
-    labels: Optional[List[DataLabel]] = Field(
+    labels: list[DataLabel] | None = Field(
         default=None,
         description="Optional labels to filter the scrape by. If none are provided, the data source will issue a scrape for 'all' data, without any label filters applied",
     )
@@ -53,7 +54,7 @@ class LabelScrapingFrequency(StrictBaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    labels: List[DataLabel]
+    labels: list[DataLabel]
     frequency: float
 
 
@@ -64,7 +65,7 @@ class SourceScrapingFrequency(StrictBaseModel):
 
     source: DataSource
     frequency: float
-    label_frequencies: List[LabelScrapingFrequency]
+    label_frequencies: list[LabelScrapingFrequency]
 
 
 class ScrapingDistribution(StrictBaseModel):
@@ -72,18 +73,18 @@ class ScrapingDistribution(StrictBaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    distribution: List[SourceScrapingFrequency]
+    distribution: list[SourceScrapingFrequency]
 
 
 class Scraper(abc.ABC):
     """An abstract base class for scrapers across all data sources."""
 
     @abc.abstractmethod
-    async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
+    async def validate(self, entities: list[DataEntity]) -> list[ValidationResult]:
         """Validate the correctness of a list of DataEntities by URI."""
         pass
 
     @abc.abstractmethod
-    async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
+    async def scrape(self, scrape_config: ScrapeConfig) -> list[DataEntity]:
         """Scrapes a batch of data based on the specified ScrapeConfig."""
         pass

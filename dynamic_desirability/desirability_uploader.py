@@ -1,17 +1,19 @@
-import asyncio
 import argparse
+import asyncio
 import json
 import os
 import shutil
 import subprocess
+from typing import Dict, List, Optional, Tuple
+
 import bittensor as bt
-from typing import List, Optional, Dict, Tuple
+
 from dynamic_desirability.chain_utils import ChainPreferenceStore, add_args
-from dynamic_desirability.constants import REPO_URL, BRANCH_NAME, PREFERENCES_FOLDER
+from dynamic_desirability.constants import BRANCH_NAME, PREFERENCES_FOLDER, REPO_URL
 from dynamic_desirability.data import normalize_preferences
 
 
-def run_command(command: List[str]) -> str:
+def run_command(command: list[str]) -> str:
     """Runs a subprocess command."""
     try:
         result = subprocess.run(command, check=True, text=True, capture_output=True)
@@ -22,14 +24,14 @@ def run_command(command: List[str]) -> str:
         raise
 
 
-def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = None, hotkey: str = None) -> Optional[str]:
+def normalize_preferences_json(file_path: str = None, desirability_dict: dict = None, hotkey: str = None) -> str | None:
     """
     Normalize potentially invalid preferences JSONs using Pydantic models.
     Works with both old and new formats.
     """
     if file_path:
         try:
-            with open(file_path, 'r') as f:
+            with open(file_path) as f:
                 if os.path.getsize(file_path) == 0:
                     bt.logging.info("File is empty. Pushing an empty JSON file to delete preferences.")
                     return json.dumps([])
@@ -43,7 +45,7 @@ def normalize_preferences_json(file_path: str = None, desirability_dict: Dict = 
     elif desirability_dict:
         data = desirability_dict
     else:
-        bt.logging.info(f"Empty desirabilities submitted. Submitting empty vote.")
+        bt.logging.info("Empty desirabilities submitted. Submitting empty vote.")
         return json.dumps([])
 
     return normalize_preferences(data, hotkey)
@@ -72,17 +74,19 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
 
     file_name = f"{PREFERENCES_FOLDER}/{hotkey}.json"
     bt.logging.info(f"Creating preferences file: {file_name}")
-    with open(file_name, 'w') as f:
+    with open(file_name, "w") as f:
         f.write(json_content)
 
     bt.logging.info("Staging, committing, and pushing changes")
 
-    try:    
+    try:
         run_command(["git", "add", file_name])
         run_command(["git", "commit", "-m", f"Add {hotkey} preferences JSON file"])
         run_command(["git", "push", "origin", BRANCH_NAME])
-    except subprocess.CalledProcessError as e:
-        bt.logging.warning("What you're currently trying to commit has no differences to your last commit. Proceeding with last commit...")
+    except subprocess.CalledProcessError:
+        bt.logging.warning(
+            "What you're currently trying to commit has no differences to your last commit. Proceeding with last commit..."
+        )
 
     bt.logging.info("Retrieving commit hash")
     local_commit_hash = run_command(["git", "rev-parse", "HEAD"])
@@ -127,14 +131,13 @@ async def run_uploader(args):
         raise
 
 
-def run_uploader_from_gravity(config, desirability_dict) -> Tuple[bool, str]:
+def run_uploader_from_gravity(config, desirability_dict) -> tuple[bool, str]:
     wallet = bt.wallet(config=config)
     subtensor = bt.subtensor(config=config)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
     try:
         json_content = normalize_preferences_json(
-            desirability_dict=desirability_dict,
-            hotkey=wallet.hotkey.ss58_address
+            desirability_dict=desirability_dict, hotkey=wallet.hotkey.ss58_address
         )
         if not json_content:
             message = "Please see docs for correct format. Not pushing to Github or chain."

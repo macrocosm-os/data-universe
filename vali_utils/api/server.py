@@ -1,32 +1,32 @@
 import time
-from fastapi import FastAPI, Depends, HTTPException, Request
-from fastapi.middleware.cors import CORSMiddleware
-from fastapi.openapi.docs import get_swagger_ui_html, get_redoc_html
-from prometheus_fastapi_instrumentator import Instrumentator
-import uvicorn
 from threading import Thread
-import bittensor as bt
 from typing import Optional
-from .routes import router, get_validator
-from vali_utils.api.auth.key_routes import create_key_routes
+
+import bittensor as bt
+import prometheus_fastapi_instrumentator.metrics as prometheus_metrics
+import uvicorn
+from fastapi import Depends, FastAPI, HTTPException, Request, Response
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.openapi.docs import get_redoc_html, get_swagger_ui_html
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from prometheus_fastapi_instrumentator import Instrumentator
+
 from vali_utils.api.auth.auth import (
     APIKeyManager,
     create_require_master_key,
     create_require_metrics_api_key,
     set_default_key_manager,
 )
+from vali_utils.api.auth.key_routes import create_key_routes
 from vali_utils.api.utils import endpoint_error_handler
 from vali_utils.metrics import (
     COMMON_LIVE_REQUEST_HIST_DURATION_BUCKET,
-    prometheus_collector_registry,
     NAMESPACE,
     SUBSYSTEM,
+    prometheus_collector_registry,
 )
 
-import prometheus_fastapi_instrumentator.metrics as prometheus_metrics
-
-from fastapi import Depends, HTTPException, Request, Response
-from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
+from .routes import get_validator, router
 
 
 class ValidatorAPI:
@@ -44,9 +44,7 @@ class ValidatorAPI:
         self.port = port
 
         # Create APIKeyManager with validator's config (following miner evaluator pattern)
-        self.key_manager = APIKeyManager(
-            config=validator.config if hasattr(validator, "config") else None
-        )
+        self.key_manager = APIKeyManager(config=validator.config if hasattr(validator, "config") else None)
 
         # Set the default key manager for backwards compatibility with routes
         set_default_key_manager(self.key_manager)
@@ -59,7 +57,7 @@ class ValidatorAPI:
         self.key_router = create_key_routes(self.key_manager, self.require_master_key)
 
         self.app = self._create_app()
-        self.server_thread: Optional[Thread] = None
+        self.server_thread: Thread | None = None
 
     def _create_app(self) -> FastAPI:
         """Create and configure FastAPI application"""
@@ -81,18 +79,14 @@ class ValidatorAPI:
             ],
         )
 
-        instrumentator.add(
-            prometheus_metrics.latency(buckets=COMMON_LIVE_REQUEST_HIST_DURATION_BUCKET)
-        )
+        instrumentator.add(prometheus_metrics.latency(buckets=COMMON_LIVE_REQUEST_HIST_DURATION_BUCKET))
 
         instrumentator.add(prometheus_metrics.requests())
         instrumentator.add(prometheus_metrics.response_size())
         instrumentator.add(prometheus_metrics.request_size())
         instrumentator.add(prometheus_metrics.combined_size())
 
-        instrumentator.instrument(
-            app, metric_namespace=NAMESPACE, metric_subsystem=SUBSYSTEM
-        )
+        instrumentator.instrument(app, metric_namespace=NAMESPACE, metric_subsystem=SUBSYSTEM)
 
         @app.get("/metrics", include_in_schema=False)
         def metrics(_: None = Depends(self.require_metrics_api_key)):
@@ -113,16 +107,12 @@ class ValidatorAPI:
         # Protected Swagger UI docs endpoint
         @app.get("/docs", include_in_schema=False)
         async def get_docs(_: bool = Depends(self.require_master_key)):
-            return get_swagger_ui_html(
-                openapi_url="/openapi.json", title="API Documentation"
-            )
+            return get_swagger_ui_html(openapi_url="/openapi.json", title="API Documentation")
 
         # Protected ReDoc docs endpoint using default styling
         @app.get("/redoc", include_in_schema=False)
         async def get_redoc(_: bool = Depends(self.require_master_key)):
-            return get_redoc_html(
-                openapi_url="/openapi.json", title="API Documentation"
-            )
+            return get_redoc_html(openapi_url="/openapi.json", title="API Documentation")
 
         # Protected OpenAPI JSON schema endpoint
         @app.get("/openapi.json", include_in_schema=False)
@@ -146,9 +136,7 @@ class ValidatorAPI:
                 return app.openapi_schema
             except Exception as e:
                 bt.logging.error(f"Failed to generate OpenAPI schema: {str(e)}")
-                raise HTTPException(
-                    status_code=500, detail="Could not generate API documentation"
-                )
+                raise HTTPException(status_code=500, detail="Could not generate API documentation")
 
         # Rate limit headers middleware
         @app.middleware("http")

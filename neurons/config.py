@@ -16,17 +16,18 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
-from enum import auto
-import enum
-from math import e
-import os
 import argparse
+import enum
+import os
+from enum import auto
+from math import e
 from pathlib import Path
-import bittensor as bt
-from loguru import logger
-from common import utils
 
+import bittensor as bt
 from dotenv import load_dotenv
+from loguru import logger
+
+from common import utils
 
 load_dotenv()
 
@@ -142,9 +143,7 @@ def add_args(neuron_type: NeuronType, parser):
             "--s3_results_path",
             action="store_true",
             help="Set this flag to select the location where you want to store your S3 validation data",
-            default=os.path.join(
-                Path(os.path.dirname(__file__)).parent, "s3_validation.parquet"
-            ),
+            default=os.path.join(Path(os.path.dirname(__file__)).parent, "s3_validation.parquet"),
         )
 
         parser.add_argument(

@@ -1,15 +1,17 @@
+import datetime as dt
 import unittest
+
 from attr import dataclass
+
 from common import constants, utils
-from common.data_v2 import ScorableDataEntityBucket
-from rewards.data import DataDesirabilityLookup, Job, JobMatcher, DataSourceDesirability
-from rewards.data_value_calculator import DataValueCalculator
 from common.data import (
     DataLabel,
     DataSource,
     TimeBucket,
 )
-import datetime as dt
+from common.data_v2 import ScorableDataEntityBucket
+from rewards.data import DataDesirabilityLookup, DataSourceDesirability, Job, JobMatcher
+from rewards.data_value_calculator import DataValueCalculator
 
 
 class TestDataValueCalculator(unittest.TestCase):
@@ -19,64 +21,68 @@ class TestDataValueCalculator(unittest.TestCase):
         dated_label_end = dt.datetime.fromisoformat("2023-12-15T00:00:00+00:00")
         dated_label_start_timebucket = utils.time_bucket_id_from_datetime(dated_label_start)
         dated_label_end_timebucket = utils.time_bucket_id_from_datetime(dated_label_end)
-        
+
         # Create a job matcher for Reddit with different jobs, all with keyword=None
-        reddit_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,  # Currently only accepting jobs with keyword=None
-                label="testlabel", 
-                job_weight=1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,
-                label="unscoredlabel",
-                job_weight=0.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,
-                label="penalizedlabel",
-                job_weight=-1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            # Add a job with date constraints
-            Job(
-                keyword=None,
-                label="dated-label",
-                job_weight=2.0,
-                start_timebucket=dated_label_start_timebucket,  # Converted from start_datetime
-                end_timebucket=dated_label_end_timebucket,  # Converted from end_datetime
-            ),
-        ])
+        reddit_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,  # Currently only accepting jobs with keyword=None
+                    label="testlabel",
+                    job_weight=1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="unscoredlabel",
+                    job_weight=0.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="penalizedlabel",
+                    job_weight=-1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                # Add a job with date constraints
+                Job(
+                    keyword=None,
+                    label="dated-label",
+                    job_weight=2.0,
+                    start_timebucket=dated_label_start_timebucket,  # Converted from start_datetime
+                    end_timebucket=dated_label_end_timebucket,  # Converted from end_datetime
+                ),
+            ]
+        )
 
         # Create a job matcher for X with different jobs, all with keyword=None
-        x_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,
-                label="#testlabel",
-                job_weight=1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,
-                label="#unscoredlabel",
-                job_weight=0.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,
-                label="#penalizedlabel",
-                job_weight=-1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-        ])
+        x_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,
+                    label="#testlabel",
+                    job_weight=1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="#unscoredlabel",
+                    job_weight=0.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="#penalizedlabel",
+                    job_weight=-1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+            ]
+        )
 
         model = DataDesirabilityLookup(
             distribution={
@@ -129,9 +135,7 @@ class TestDataValueCalculator(unittest.TestCase):
                 # scorable_bytes is different from size_bytes to ensure the score is based on scorable_bytes.
                 scorable_bytes=100,
             )
-            score = self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            )
+            score = self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket)
             self.assertAlmostEqual(score, tc[1], places=5)
 
     def test_get_score_for_data_entity_bucket_with_date_constraints(self):
@@ -140,7 +144,7 @@ class TestDataValueCalculator(unittest.TestCase):
         test_date = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
         current_time_bucket = TimeBucket.from_datetime(test_date)
         time_bucket_id = utils.time_bucket_id_from_datetime(test_date)
-        
+
         # This should match the "dated-label" job which has weight 2.0
         bucket = ScorableDataEntityBucket(
             time_bucket_id=time_bucket_id,
@@ -149,16 +153,14 @@ class TestDataValueCalculator(unittest.TestCase):
             size_bytes=200,
             scorable_bytes=100,
         )
-        score = self.value_calculator.get_score_for_data_entity_bucket(
-            bucket, current_time_bucket
-        )
+        score = self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket)
         # Expected score: data_source_weight(0.75) * job_weight(2.0) * time_scalar(1.0) * scorable_bytes(100) = 150.0
         self.assertAlmostEqual(score, 150.0, places=5)
-        
+
         # Test with a date outside the job's date range
         outside_date = dt.datetime(2023, 12, 16, 12, 30, 0, tzinfo=dt.timezone.utc)
         time_bucket_id = utils.time_bucket_id_from_datetime(outside_date)
-        
+
         bucket = ScorableDataEntityBucket(
             time_bucket_id=time_bucket_id,
             source=DataSource.REDDIT,
@@ -166,9 +168,7 @@ class TestDataValueCalculator(unittest.TestCase):
             size_bytes=200,
             scorable_bytes=100,
         )
-        score = self.value_calculator.get_score_for_data_entity_bucket(
-            bucket, current_time_bucket
-        )
+        score = self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket)
         # Should fall back to default scale factor: data_source_weight(0.75) * default_scale_factor(0.5) * time_scalar * scorable_bytes(100)
         # The time_scalar will be computed based on the age difference between outside_date and current_time_bucket
         # Since outside_date is in the future relative to test_date, the age should be 0 and time_scalar should be 1.0
@@ -189,9 +189,7 @@ class TestDataValueCalculator(unittest.TestCase):
             scorable_bytes=100,
         )
         self.assertAlmostEqual(
-            self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            ),
+            self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket),
             75.0,
             places=5,
         )
@@ -207,9 +205,7 @@ class TestDataValueCalculator(unittest.TestCase):
             scorable_bytes=100,
         )
         self.assertAlmostEqual(
-            self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            ),
+            self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket),
             37.5,  # 75.0 * 0.5 because of max age
             places=5,
         )
@@ -217,9 +213,7 @@ class TestDataValueCalculator(unittest.TestCase):
         # Verify the score past the max age is 0.
         bucket = ScorableDataEntityBucket(
             time_bucket_id=utils.time_bucket_id_from_datetime(
-                now - dt.timedelta(
-                    hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24 + 1
-                )
+                now - dt.timedelta(hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24 + 1)
             ),
             source=DataSource.REDDIT,
             label="testlabel",
@@ -227,9 +221,7 @@ class TestDataValueCalculator(unittest.TestCase):
             scorable_bytes=100,
         )
         self.assertAlmostEqual(
-            self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            ),
+            self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket),
             0,
             places=5,
         )
@@ -238,17 +230,13 @@ class TestDataValueCalculator(unittest.TestCase):
         previous_score = 75.0
         for hours_back in range(1, constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24):
             bucket = ScorableDataEntityBucket(
-                time_bucket_id=utils.time_bucket_id_from_datetime(
-                    now - dt.timedelta(hours=hours_back)
-                ),
+                time_bucket_id=utils.time_bucket_id_from_datetime(now - dt.timedelta(hours=hours_back)),
                 source=DataSource.REDDIT,
                 label="testlabel",
                 size_bytes=200,
                 scorable_bytes=100,
             )
-            score = self.value_calculator.get_score_for_data_entity_bucket(
-                bucket, current_time_bucket
-            )
+            score = self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket)
             self.assertLess(score, previous_score)
             previous_score = score
 
@@ -257,31 +245,33 @@ class TestDataValueCalculator(unittest.TestCase):
         # Add a test with multiple jobs matching the same data
         now = dt.datetime(2023, 12, 12, 12, 30, 0, tzinfo=dt.timezone.utc)
         current_time_bucket = TimeBucket.from_datetime(now)
-        
+
         # Convert datetime strings to time buckets
         multi_match_start = dt.datetime.fromisoformat("2023-12-10T00:00:00+00:00")
         multi_match_end = dt.datetime.fromisoformat("2023-12-15T00:00:00+00:00")
         multi_match_start_timebucket = utils.time_bucket_id_from_datetime(multi_match_start)
         multi_match_end_timebucket = utils.time_bucket_id_from_datetime(multi_match_end)
-        
+
         # Create a custom model with multiple overlapping jobs, all with keyword=None
-        reddit_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,
-                label="multi-match",  
-                job_weight=1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,
-                label="multi-match",
-                job_weight=2.0,
-                start_timebucket=multi_match_start_timebucket,  # Converted from start_datetime
-                end_timebucket=multi_match_end_timebucket,  # Converted from end_datetime
-            ),
-        ])
-        
+        reddit_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,
+                    label="multi-match",
+                    job_weight=1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="multi-match",
+                    job_weight=2.0,
+                    start_timebucket=multi_match_start_timebucket,  # Converted from start_datetime
+                    end_timebucket=multi_match_end_timebucket,  # Converted from end_datetime
+                ),
+            ]
+        )
+
         custom_model = DataDesirabilityLookup(
             distribution={
                 DataSource.REDDIT: DataSourceDesirability(
@@ -298,7 +288,7 @@ class TestDataValueCalculator(unittest.TestCase):
             max_age_in_hours=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS * 24,
         )
         custom_calculator = DataValueCalculator(model=custom_model)
-        
+
         # Create a bucket that should match both jobs
         time_bucket_id = utils.time_bucket_id_from_datetime(now)
         bucket = ScorableDataEntityBucket(
@@ -308,11 +298,9 @@ class TestDataValueCalculator(unittest.TestCase):
             size_bytes=200,
             scorable_bytes=100,
         )
-        
-        score = custom_calculator.get_score_for_data_entity_bucket(
-            bucket, current_time_bucket
-        )
-        
+
+        score = custom_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket)
+
         # Expected score is the sum of both job contributions:
         # Job 1: data_source_weight(0.75) * job_weight(1.0) * time_scalar(1.0) * scorable_bytes(100) = 75.0
         # Job 2: data_source_weight(0.75) * job_weight(2.0) * time_scalar(1.0) * scorable_bytes(100) = 150.0

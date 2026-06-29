@@ -1,8 +1,8 @@
 import unittest
 
 from scraping.config.model import (
-    ScraperConfig,
     LabelScrapingConfig,
+    ScraperConfig,
     ScrapingConfig,
 )
 from scraping.scraper import ScraperId

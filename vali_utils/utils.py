@@ -1,9 +1,12 @@
-import bittensor as bt
+import datetime as dt
 import hashlib
 import random
 import time
+from random import Random
 from typing import List, Optional, Tuple, Type, Union
-import datetime as dt
+
+import bittensor as bt
+
 from common import constants
 from common.data import (
     CompressedMinerIndex,
@@ -16,32 +19,27 @@ from common.date_range import DateRange
 from common.protocol import GetMinerIndex
 from scraping.x import utils as x_utils
 
-from random import Random
 
 def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityBucket:
     """Securely pick one DataEntityBucket to validate.
     Uses a seed based on system time.
     """
-    total_size = sum(
-        scorable_bucket.scorable_bytes 
-        for scorable_bucket in index.scorable_data_entity_buckets
-    )
-    
+    total_size = sum(scorable_bucket.scorable_bytes for scorable_bucket in index.scorable_data_entity_buckets)
+
     # Use nanosecond precision timestamp as seed
     seed = time.time_ns()
     rng = Random(seed)
     chosen_byte = rng.uniform(0, total_size)
-    
+
     iterated_bytes = 0
     for scorable_bucket in index.scorable_data_entity_buckets:
         if iterated_bytes + scorable_bucket.scorable_bytes >= chosen_byte:
             return scorable_bucket.to_data_entity_bucket()
         iterated_bytes += scorable_bucket.scorable_bytes
-    assert (
-        False
-    ), "Failed to choose a DataEntityBucket to query... which should never happen"
+    assert False, "Failed to choose a DataEntityBucket to query... which should never happen"
 
-def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
+
+def choose_entities_to_verify(entities: list[DataEntity]) -> list[DataEntity]:
     """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""
 
     # Randomly choose between 1 or 2 entities with 50% probability each.
@@ -72,9 +70,7 @@ def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     return chosen_entities
 
 
-def are_entities_valid(
-    entities: List[DataEntity], data_entity_bucket: DataEntityBucket
-) -> Tuple[bool, str]:
+def are_entities_valid(entities: list[DataEntity], data_entity_bucket: DataEntityBucket) -> tuple[bool, str]:
     """Performs basic validation on all entities in a DataEntityBucket.
 
     Returns a tuple of (is_valid, reason) where is_valid is True if the entities are valid,
@@ -84,9 +80,7 @@ def are_entities_valid(
     # Check the entity size, labels, source, and timestamp.
     actual_size = 0
     claimed_size = 0
-    expected_datetime_range: DateRange = TimeBucket.to_date_range(
-        data_entity_bucket.id.time_bucket
-    )
+    expected_datetime_range: DateRange = TimeBucket.to_date_range(data_entity_bucket.id.time_bucket)
 
     for entity in entities:
         actual_size += len(entity.content or b"")
@@ -129,7 +123,7 @@ def _normalize_uri(uri: str) -> str:
     return x_utils.normalize_url(uri)
 
 
-def are_entities_unique(entities: List[DataEntity]) -> bool:
+def are_entities_unique(entities: list[DataEntity]) -> bool:
     """Checks that all entities in a DataEntityBucket are unique.
 
     This is currently done by comparing hashes of only the content as the entire scrape response is serialized into
@@ -156,9 +150,7 @@ def are_entities_unique(entities: List[DataEntity]) -> bool:
     return True
 
 
-def get_single_successful_response(
-    responses: List[bt.Synapse], expected_class: Type
-) -> Optional[bt.Synapse]:
+def get_single_successful_response(responses: list[bt.Synapse], expected_class: type) -> bt.Synapse | None:
     """Helper function to extract the single response from a list of responses, if the response is valid.
 
     return: (response, is_valid): The response if it's valid, else None.

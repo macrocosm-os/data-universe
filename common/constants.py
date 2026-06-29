@@ -1,4 +1,5 @@
 import datetime as dt
+
 from . import utils
 
 # Collection of constants for use throughout the codebase.
@@ -40,7 +41,9 @@ NO_TWITTER_URLS_DATE = dt.datetime(2024, 12, 28, tzinfo=dt.timezone.utc)  # Dece
 REDDIT_MEDIA_REQUIRED_DATE = dt.datetime(2025, 8, 7, tzinfo=dt.timezone.utc)  # August 7, 2025 UTC (one month from now)
 
 # Date after which backwards compatibility for nested X content format will be removed
-X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinfo=dt.timezone.utc) # September 30, 2025 UTC
+X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(
+    2025, 9, 30, tzinfo=dt.timezone.utc
+)  # September 30, 2025 UTC
 
 EVALUATION_ON_STARTUP = 10
 

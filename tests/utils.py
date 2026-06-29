@@ -1,7 +1,8 @@
-import random
-from typing import Any, Callable, Iterable, Tuple
-import time
 import datetime as dt
+import random
+import time
+from collections.abc import Callable, Iterable
+from typing import Any, Tuple
 
 from common.data import (
     CompressedMinerIndex,
@@ -10,15 +11,11 @@ from common.data import (
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 
 
-def get_only_element_matching_filter(
-    iterable: Iterable[Any], filter: Callable[[Any], bool]
-) -> Any:
+def get_only_element_matching_filter(iterable: Iterable[Any], filter: Callable[[Any], bool]) -> Any:
     """Returns the only element in the iterable that matches the filter, or raises an exception if there are zero or more than one elements."""
     results = [x for x in iterable if filter(x)]
     if len(results) != 1:
-        raise Exception(
-            f"Expected exactly one element matching filter, but found {len(results)}"
-        )
+        raise Exception(f"Expected exactly one element matching filter, but found {len(results)}")
     return results[0]
 
 
@@ -47,17 +44,13 @@ def convert_compressed_index_to_scorable_miner_index(
             )
             for source in index.sources
             for bucket in index.sources[source]
-            for time_bucket_id, size_bytes in zip(
-                bucket.time_bucket_ids, bucket.sizes_bytes
-            )
+            for time_bucket_id, size_bytes in zip(bucket.time_bucket_ids, bucket.sizes_bytes)
         ],
         last_updated=last_updated,
     )
 
 
-def are_scorable_indexes_equal(
-    index1: ScorableMinerIndex, index2: ScorableMinerIndex
-) -> Tuple[bool, str]:
+def are_scorable_indexes_equal(index1: ScorableMinerIndex, index2: ScorableMinerIndex) -> tuple[bool, str]:
     """Compares two ScorableMinerIndex instances for equality."""
 
     # Compare the last_updated fields.
@@ -86,9 +79,7 @@ def are_scorable_indexes_equal(
     return True, None
 
 
-def are_compressed_indexes_equal(
-    index1: CompressedMinerIndex, index2: CompressedMinerIndex
-) -> bool:
+def are_compressed_indexes_equal(index1: CompressedMinerIndex, index2: CompressedMinerIndex) -> bool:
     """Compares two CompressedMinerIndex instances for equality."""
 
     # Iterate both indexes, in order of sources.
@@ -98,12 +89,8 @@ def are_compressed_indexes_equal(
             return False
 
         # For a given source, compare the buckets.
-        buckets1 = sorted(
-            index1.sources[source1], key=lambda b: b.label if b.label else "NULL"
-        )
-        buckets2 = sorted(
-            index2.sources[source2], key=lambda b: b.label if b.label else "NULL"
-        )
+        buckets1 = sorted(index1.sources[source1], key=lambda b: b.label if b.label else "NULL")
+        buckets2 = sorted(index2.sources[source2], key=lambda b: b.label if b.label else "NULL")
         if buckets1 != buckets2:
             print(f"Buckets do not match. {buckets1} != {buckets2}")
             return False
@@ -134,6 +121,4 @@ def create_scorable_index(num_buckets: int) -> ScorableMinerIndex:
                         scorable_bytes=scorable_bytes,
                     )
                 )
-    return ScorableMinerIndex(
-        scorable_data_entity_buckets=buckets, last_updated=dt.datetime.now()
-    )
+    return ScorableMinerIndex(scorable_data_entity_buckets=buckets, last_updated=dt.datetime.now())

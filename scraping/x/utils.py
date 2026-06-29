@@ -1,12 +1,14 @@
-import re
-import math
-import traceback
 import datetime as dt
-import bittensor as bt
+import math
+import re
+import traceback
 from typing import Dict, List, Optional
 from urllib.parse import urlparse
-from common.data import DataEntity
+
+import bittensor as bt
+
 from common.constants import NO_TWITTER_URLS_DATE
+from common.data import DataEntity
 from scraping import utils
 from scraping.scraper import ValidationResult
 from scraping.x.model import XContent
@@ -57,7 +59,7 @@ BI_DIRECTIONAL_FIELDS = [
 ]
 
 
-def _validate_model_config(model_config: Dict[str, str]) -> bool:
+def _validate_model_config(model_config: dict[str, str]) -> bool:
     """Validates that extra content isn't stowed away in the 'model_config'
 
     Args:
@@ -67,9 +69,7 @@ def _validate_model_config(model_config: Dict[str, str]) -> bool:
         bool: True if the model configuration is valid.
     """
     # The model_config must either be empty, or contain only the 'extra' key with the value 'ignore'.
-    return model_config is None or (
-        len(model_config) == 1 and model_config.get("extra") == "ignore"
-    )
+    return model_config is None or (len(model_config) == 1 and model_config.get("extra") == "ignore")
 
 
 def normalize_url(url: str) -> str:
@@ -92,9 +92,7 @@ def is_valid_twitter_url(url: str) -> bool:
         if dt.datetime.now(dt.timezone.utc) >= NO_TWITTER_URLS_DATE:
             return all([result.scheme, result.netloc]) and "x.com" in result.netloc
         # Before deadline, accept both
-        return all([result.scheme, result.netloc]) and (
-            "twitter.com" in result.netloc or "x.com" in result.netloc
-        )
+        return all([result.scheme, result.netloc]) and ("twitter.com" in result.netloc or "x.com" in result.netloc)
     except ValueError:
         return False
 
@@ -113,7 +111,7 @@ def extract_user(url: str) -> str:
     raise ValueError(f"Unable to extract user from {url}")
 
 
-def extract_hashtags(text: str) -> List[str]:
+def extract_hashtags(text: str) -> list[str]:
     """Given a tweet, extracts the hashtags in the order they appear in the tweet."""
     hashtags = []
     for word in text.split():
@@ -138,9 +136,7 @@ def sanitize_scraped_tweet(text: str) -> str:
     return re.sub(pattern, "", text)
 
 
-def are_hashtags_valid(
-    tweet_to_verify_hashtags: List, actual_tweet_hashtags: List
-) -> bool:
+def are_hashtags_valid(tweet_to_verify_hashtags: list, actual_tweet_hashtags: list) -> bool:
     """
     Check if hashtags from tweet_to_verify are valid compared to actual_tweet.
     :param tweet_to_verify_hashtags: List of hashtags from the tweet submitted by the miner
@@ -154,7 +150,7 @@ def are_hashtags_valid(
 
 def validate_tweet_fields(
     tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity
-) -> Optional[ValidationResult]:
+) -> ValidationResult | None:
     """Validate all tweet fields between submitted and actual tweet data.
 
     Returns:
@@ -167,9 +163,7 @@ def validate_tweet_fields(
 
         # REQUIRED fields cannot be None
         if submitted_value is None:
-            bt.logging.info(
-                f"Required field {field_name} is missing from submitted tweet"
-            )
+            bt.logging.info(f"Required field {field_name} is missing from submitted tweet")
             return ValidationResult(
                 is_valid=False,
                 reason=f"Required field '{field_name}' is missing",
@@ -177,9 +171,7 @@ def validate_tweet_fields(
             )
 
         if actual_value is None:
-            bt.logging.info(
-                f"Required field {field_name} is missing from actual tweet - this shouldn't happen"
-            )
+            bt.logging.info(f"Required field {field_name} is missing from actual tweet - this shouldn't happen")
             return ValidationResult(
                 is_valid=False,
                 reason=f"Required field '{field_name}' missing from actual tweet",
@@ -188,9 +180,7 @@ def validate_tweet_fields(
 
         # Apply field-specific validation logic for required fields
         if field_name == "username":
-            is_valid = remove_at_sign_from_username(
-                submitted_value
-            ) == remove_at_sign_from_username(actual_value)
+            is_valid = remove_at_sign_from_username(submitted_value) == remove_at_sign_from_username(actual_value)
         elif field_name == "url":
             is_valid = normalize_url(submitted_value) == normalize_url(actual_value)
         elif field_name == "tweet_hashtags":
@@ -199,9 +189,7 @@ def validate_tweet_fields(
             is_valid = submitted_value == actual_value
 
         if not is_valid:
-            bt.logging.info(
-                f"Required field {field_name} do not match: {submitted_value} != {actual_value}"
-            )
+            bt.logging.info(f"Required field {field_name} do not match: {submitted_value} != {actual_value}")
             return ValidationResult(
                 is_valid=False,
                 reason=f"Field: {field_name} do not match",
@@ -221,9 +209,7 @@ def validate_tweet_fields(
         is_valid = submitted_value == actual_value
 
         if not is_valid:
-            bt.logging.info(
-                f"Optional field {field_name} do not match: {submitted_value} != {actual_value}"
-            )
+            bt.logging.info(f"Optional field {field_name} do not match: {submitted_value} != {actual_value}")
             return ValidationResult(
                 is_valid=False,
                 reason=f"Field: {field_name} do not match",
@@ -235,11 +221,9 @@ def validate_tweet_fields(
 
 def validate_timestamp(
     tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity
-) -> Optional[ValidationResult]:
+) -> ValidationResult | None:
     """Validate tweet timestamp with obfuscation logic."""
-    actual_tweet_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(
-        actual_tweet.timestamp
-    )
+    actual_tweet_obfuscated_timestamp = utils.obfuscate_datetime_to_minute(actual_tweet.timestamp)
 
     if tweet_to_verify.timestamp != actual_tweet_obfuscated_timestamp:
         # Check if this is specifically because the entity was not obfuscated.
@@ -253,9 +237,7 @@ def validate_timestamp(
                 content_size_bytes_validated=entity.content_size_bytes,
             )
         else:
-            bt.logging.info(
-                f"Tweet timestamps do not match to the minute: {tweet_to_verify} != {actual_tweet}."
-            )
+            bt.logging.info(f"Tweet timestamps do not match to the minute: {tweet_to_verify} != {actual_tweet}.")
             return ValidationResult(
                 is_valid=False,
                 reason="Tweet timestamps do not match to the minute",
@@ -266,7 +248,7 @@ def validate_timestamp(
 
 def validate_twitter_url_deadline(
     tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity
-) -> Optional[ValidationResult]:
+) -> ValidationResult | None:
     """Validate twitter.com URL deadline restriction."""
     if dt.datetime.now(dt.timezone.utc) >= NO_TWITTER_URLS_DATE:
         if "twitter.com" in tweet_to_verify.url or "twitter.com" in actual_tweet.url:
@@ -279,9 +261,7 @@ def validate_twitter_url_deadline(
     return None
 
 
-def validate_scraped_at(
-    tweet_to_verify: XContent, entity: DataEntity
-) -> Optional[ValidationResult]:
+def validate_scraped_at(tweet_to_verify: XContent, entity: DataEntity) -> ValidationResult | None:
     """Validate the scraped_at field on tweet content.
 
     Returns ValidationResult if validation fails, None if validation passes or is skipped.
@@ -324,7 +304,7 @@ def validate_scraped_at(
 
 def validate_media_content(
     tweet_to_verify: XContent, actual_tweet: XContent, entity: DataEntity
-) -> Optional[ValidationResult]:
+) -> ValidationResult | None:
     """Validate media content requirements and matching."""
 
     # After deadline: Check if media is required but missing
@@ -362,9 +342,7 @@ def validate_media_content(
     return None
 
 
-def validate_data_entity_fields(
-    actual_tweet: XContent, entity: DataEntity
-) -> ValidationResult:
+def validate_data_entity_fields(actual_tweet: XContent, entity: DataEntity) -> ValidationResult:
     """Validate DataEntity fields against the actual tweet."""
     # Create DataEntity instances with normalization for comparison
     tweet_entity = XContent.to_data_entity(content=actual_tweet)
@@ -390,18 +368,14 @@ def validate_data_entity_fields(
 
     byte_difference_allowed = 0
 
-    if (
-        entity.content_size_bytes - tweet_entity.content_size_bytes
-    ) > byte_difference_allowed:
+    if (entity.content_size_bytes - tweet_entity.content_size_bytes) > byte_difference_allowed:
         return ValidationResult(
             is_valid=False,
             reason="The claimed bytes must not exceed the actual tweet size.",
             content_size_bytes_validated=entity.content_size_bytes,  # Only validate actual bytes
         )
 
-    if not DataEntity.are_non_content_fields_equal(
-        normalized_tweet_entity, normalized_entity
-    ):
+    if not DataEntity.are_non_content_fields_equal(normalized_tweet_entity, normalized_entity):
         return ValidationResult(
             is_valid=False,
             reason="The DataEntity fields are incorrect based on the tweet.",
@@ -484,9 +458,7 @@ def validate_tweet_content(
     try:
         tweet_to_verify = XContent.from_data_entity(entity)
     except Exception:
-        bt.logging.error(
-            f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}."
-        )
+        bt.logging.error(f"Failed to decode XContent from data entity bytes: {traceback.format_exc()}.")
         return ValidationResult(
             is_valid=False,
             reason="Failed to decode data entity",
@@ -502,16 +474,12 @@ def validate_tweet_content(
         )
 
     # Validate all basic fields using the unified function
-    field_validation_result = validate_tweet_fields(
-        tweet_to_verify, actual_tweet, entity
-    )
+    field_validation_result = validate_tweet_fields(tweet_to_verify, actual_tweet, entity)
     if field_validation_result is not None:
         return field_validation_result
 
     # Validate timestamp with special obfuscation logic
-    timestamp_validation_result = validate_timestamp(
-        tweet_to_verify, actual_tweet, entity
-    )
+    timestamp_validation_result = validate_timestamp(tweet_to_verify, actual_tweet, entity)
     if timestamp_validation_result is not None:
         return timestamp_validation_result
 
@@ -521,24 +489,18 @@ def validate_tweet_content(
         return scraped_at_result
 
     # Validate twitter.com URL deadline
-    url_deadline_result = validate_twitter_url_deadline(
-        tweet_to_verify, actual_tweet, entity
-    )
+    url_deadline_result = validate_twitter_url_deadline(tweet_to_verify, actual_tweet, entity)
     if url_deadline_result is not None:
         return url_deadline_result
 
     # Validate media content
-    media_validation_result = validate_media_content(
-        tweet_to_verify, actual_tweet, entity
-    )
+    media_validation_result = validate_media_content(tweet_to_verify, actual_tweet, entity)
     if media_validation_result is not None:
         return media_validation_result
 
     # Validate the model_config
     if not _validate_model_config(tweet_to_verify.model_config):
-        bt.logging.info(
-            f"Tweet content contains an invalid model_config: {tweet_to_verify.model_config}"
-        )
+        bt.logging.info(f"Tweet content contains an invalid model_config: {tweet_to_verify.model_config}")
         return ValidationResult(
             is_valid=False,
             reason="Tweet content contains an invalid model_config",
@@ -546,9 +508,7 @@ def validate_tweet_content(
         )
 
     # Validate dynamic engagement metrics (following Reddit pattern)
-    engagement_validation_result = validate_engagement_metrics(
-        tweet_to_verify, actual_tweet, entity
-    )
+    engagement_validation_result = validate_engagement_metrics(tweet_to_verify, actual_tweet, entity)
     if engagement_validation_result is not None:
         return engagement_validation_result
 
@@ -558,7 +518,7 @@ def validate_tweet_content(
 
 def validate_engagement_metrics(
     submitted_tweet: XContent, actual_tweet: XContent, entity: DataEntity
-) -> Optional[ValidationResult]:
+) -> ValidationResult | None:
     """
     Validate dynamic engagement metrics with time-based tolerance and anti-cheating mechanisms.
     Backward compatible - only validates fields that miners provide.
@@ -602,7 +562,7 @@ def _validate_engagement_field(
     actual_value: int,
     tweet_age: dt.timedelta,
     entity: DataEntity,
-) -> Optional[ValidationResult]:
+) -> ValidationResult | None:
     """
     Validate a single engagement field with tolerance and anti-cheating.
 
@@ -628,9 +588,7 @@ def _validate_engagement_field(
 
     # Use percentage-based validation for follower counts since we have exact current values
     if field_name in BI_DIRECTIONAL_FIELDS:
-        return _validate_follower_count_percentage(
-            field_name, submitted_value, actual_value, tweet_age, entity
-        )
+        return _validate_follower_count_percentage(field_name, submitted_value, actual_value, tweet_age, entity)
 
     # For increasing-only engagement metrics (likes, views, etc.)
     # The comparison with actual_value is the real validation - if miner data matches
@@ -683,7 +641,7 @@ def _validate_follower_count_percentage(
     actual_value: int,
     tweet_age: dt.timedelta,
     entity: DataEntity,
-) -> Optional[ValidationResult]:
+) -> ValidationResult | None:
     """
     Validate follower counts using smart percentage-based tolerance with age scaling.
     Uses logarithmic scaling - smaller accounts have higher percentage tolerance.
@@ -729,9 +687,7 @@ def _validate_follower_count_percentage(
         age_multiplier = 4.0
 
     # Apply age multiplier to percentage tolerance
-    max_percentage = min(
-        max_percentage * age_multiplier, 500.0
-    )  # Cap at 500% (5x growth)
+    max_percentage = min(max_percentage * age_multiplier, 500.0)  # Cap at 500% (5x growth)
 
     # Minimum absolute tolerance scales with account size (square root for gentle scaling)
     min_absolute = max(int(math.sqrt(actual_value) * 10), 50)
@@ -761,9 +717,7 @@ def _validate_follower_count_percentage(
     return None
 
 
-def _calculate_engagement_tolerance(
-    field_name: str, base_value: int, tweet_age: dt.timedelta
-) -> int:
+def _calculate_engagement_tolerance(field_name: str, base_value: int, tweet_age: dt.timedelta) -> int:
     """
     Calculate sophisticated tolerance for engagement metric changes based on Twitter research data.
     Research shows: median engagement is 0, but viral tweets can get 1K-100K+ engagement.
@@ -820,9 +774,7 @@ def _calculate_engagement_tolerance(
     return final_tolerance
 
 
-def _calculate_max_reasonable_engagement(
-    field_name: str, tweet_age: dt.timedelta
-) -> int:
+def _calculate_max_reasonable_engagement(field_name: str, tweet_age: dt.timedelta) -> int:
     """
     Calculate maximum reasonable engagement values based on Twitter research data.
     Research shows: viral threshold ~1K-2K likes, mega-viral can reach 100K-3M+ likes.

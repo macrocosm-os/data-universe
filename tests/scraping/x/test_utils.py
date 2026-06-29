@@ -1,6 +1,5 @@
-import unittest
-
 import datetime as dt
+import unittest
 
 from common.data import DataEntity, DataLabel, DataSource
 from scraping.x import utils
@@ -17,21 +16,11 @@ class TestUtils(unittest.TestCase):
         self.assertFalse(utils.is_valid_twitter_url(""))
         self.assertFalse(utils.is_valid_twitter_url("https://www.google.com"))
 
+        self.assertTrue(utils.is_valid_twitter_url("https://twitter.com/bittensor_alert/status/1733247372950397060"))
         self.assertTrue(
-            utils.is_valid_twitter_url(
-                "https://twitter.com/bittensor_alert/status/1733247372950397060"
-            )
+            utils.is_valid_twitter_url("https://www.twitter.com/bittensor_alert/status/1733247372950397060")
         )
-        self.assertTrue(
-            utils.is_valid_twitter_url(
-                "https://www.twitter.com/bittensor_alert/status/1733247372950397060"
-            )
-        )
-        self.assertTrue(
-            utils.is_valid_twitter_url(
-                "https://www.x.com/bittensor_alert/status/1733247372950397060"
-            )
-        )
+        self.assertTrue(utils.is_valid_twitter_url("https://www.x.com/bittensor_alert/status/1733247372950397060"))
 
     def test_sanitize_text(self):
         """Tests sanitize_text with various tweets."""
@@ -81,9 +70,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=291,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertTrue(validation_result.is_valid)
 
     def test_validate_tweet_content_prevents_extra_fields(self):
@@ -105,9 +92,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=331,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
 
     def test_validate_tweet_content_validates_model_config(self):
@@ -129,9 +114,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=296,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
 
     def test_validate_tweet_content_requires_obfuscated_date(self):
@@ -153,9 +136,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=291,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
         self.assertIn("was not obfuscated", validation_result.reason)
 
@@ -179,9 +160,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=326,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertTrue(validation_result.is_valid)
 
     def test_validate_tweet_content_extra_bytes_above_limit(self):
@@ -204,9 +183,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=327,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
 
     def test_validate_tweet_content_extra_bytes_above_limit_no_config(self):
@@ -229,9 +206,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=292,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
 
     def test_validate_tweet_content_url_normalized(self):
@@ -253,27 +228,21 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=291,
         )
 
-        validation_result = utils.validate_tweet_content(
-            actual_tweet, entity_to_validate
-        )
+        validation_result = utils.validate_tweet_content(actual_tweet, entity_to_validate)
         self.assertTrue(validation_result.is_valid)
 
     def test_normalize_url_https(self):
         """Validates twitter URLs are normalized to the x.com domain."""
         self.assertEqual(
             "https://twitter.com/bittensor_alert/status/1748585332935622672",
-            utils.normalize_url(
-                "https://x.com/bittensor_alert/status/1748585332935622672"
-            ),
+            utils.normalize_url("https://x.com/bittensor_alert/status/1748585332935622672"),
         )
 
     def test_normalize_url_http(self):
         """Validates twitter URLs are normalized to the x.com domain."""
         self.assertEqual(
             "http://twitter.com/bittensor_alert/status/1748585332935622672",
-            utils.normalize_url(
-                "http://x.com/bittensor_alert/status/1748585332935622672"
-            ),
+            utils.normalize_url("http://x.com/bittensor_alert/status/1748585332935622672"),
         )
 
     def test_normalize_url_non_twitter_url(self):
@@ -304,9 +273,7 @@ class TestValidateScrapedAt(unittest.TestCase):
         """scraped_at that is obfuscated, >= timestamp, and <= now passes."""
         scraped = dt.datetime(2025, 1, 10, 12, 5, 0, tzinfo=dt.timezone.utc)
         tweet, entity = self._make_tweet_and_entity(scraped_at=scraped)
-        result = utils.validate_scraped_at(
-            XContent.from_data_entity(entity), entity
-        )
+        result = utils.validate_scraped_at(XContent.from_data_entity(entity), entity)
         self.assertIsNone(result)
 
     def test_scraped_at_not_obfuscated(self):

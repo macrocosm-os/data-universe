@@ -3,6 +3,7 @@
 UID 89 publishes per-miner S3 validation scores; all other validators fetch
 those scores and apply them locally instead of running S3 validation themselves.
 """
+
 import asyncio
 import json
 from dataclasses import dataclass
@@ -12,7 +13,6 @@ import bittensor as bt
 import requests
 
 from common.api_client import TaoSigner
-
 
 MACROCOSMOS_VALIDATOR_UID = 89
 
@@ -34,7 +34,7 @@ class S3ValidationResultsClient:
         self._signer = TaoSigner(keypair=wallet.hotkey)
         self._timeout = timeout
 
-    async def publish(self, scores: Dict[str, Dict]) -> int:
+    async def publish(self, scores: dict[str, dict]) -> int:
         """POST per-miner scores. Returns number of rows upserted.
 
         scores: {miner_hotkey: {"effective_size_bytes": float, "validation_passed": bool, ...}}
@@ -42,12 +42,7 @@ class S3ValidationResultsClient:
         if not scores:
             return 0
 
-        payload = {
-            "results": [
-                {"miner_hotkey": hk, "score": score}
-                for hk, score in scores.items()
-            ]
-        }
+        payload = {"results": [{"miner_hotkey": hk, "score": score} for hk, score in scores.items()]}
         body = json.dumps(payload).encode()
         headers = self._signer.headers(body)
         headers["Content-Type"] = "application/json"
@@ -68,9 +63,7 @@ class S3ValidationResultsClient:
             return 0
 
         if response.status_code != 200:
-            bt.logging.warning(
-                f"publish S3 validation results failed: {response.status_code} {response.text[:200]}"
-            )
+            bt.logging.warning(f"publish S3 validation results failed: {response.status_code} {response.text[:200]}")
             return 0
 
         try:
@@ -78,7 +71,7 @@ class S3ValidationResultsClient:
         except Exception:
             return 0
 
-    async def fetch_all(self) -> Dict[str, PublishedScore]:
+    async def fetch_all(self) -> dict[str, PublishedScore]:
         """GET all published scores. Returns {miner_hotkey: PublishedScore}."""
         body = b""
         headers = self._signer.headers(body)
@@ -98,9 +91,7 @@ class S3ValidationResultsClient:
             return {}
 
         if response.status_code != 200:
-            bt.logging.warning(
-                f"fetch S3 validation results failed: {response.status_code} {response.text[:200]}"
-            )
+            bt.logging.warning(f"fetch S3 validation results failed: {response.status_code} {response.text[:200]}")
             return {}
 
         try:
@@ -109,7 +100,7 @@ class S3ValidationResultsClient:
             bt.logging.error(f"fetch S3 validation results: bad JSON {e}")
             return {}
 
-        out: Dict[str, PublishedScore] = {}
+        out: dict[str, PublishedScore] = {}
         for entry in data.get("results", []) or []:
             score = entry.get("score") or {}
             out[entry["miner_hotkey"]] = PublishedScore(

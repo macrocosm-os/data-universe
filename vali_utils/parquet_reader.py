@@ -7,11 +7,12 @@ empty checks, content matching, and scraper validation.
 """
 
 import random
-import requests
+from typing import List, Optional
+
+import bittensor as bt
 import pandas as pd
 import pyarrow.parquet as pq
-import bittensor as bt
-from typing import List, Optional
+import requests
 
 
 class RangeRequestFile:
@@ -55,11 +56,9 @@ class RangeRequestFile:
         if n <= 0:
             return b""
         end = min(self.pos + n - 1, self.size - 1)
-        resp = self._session.get(
-            self.url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=30
-        )
+        resp = self._session.get(self.url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=30)
         if resp.status_code not in (200, 206):
-            raise IOError(f"Range request failed: {resp.status_code}")
+            raise OSError(f"Range request failed: {resp.status_code}")
         data = resp.content
         self.pos += len(data)
         return data
@@ -88,9 +87,9 @@ class RangeRequestFile:
 def read_random_row_group(
     presigned_url: str,
     file_size: int,
-    columns: Optional[List[str]] = None,
-    max_rows: Optional[int] = None,
-) -> Optional[pd.DataFrame]:
+    columns: list[str] | None = None,
+    max_rows: int | None = None,
+) -> pd.DataFrame | None:
     """Read a random row group from a remote parquet file via Range requests.
 
     Downloads only the selected row group's column chunks — not the entire file.
@@ -119,7 +118,9 @@ def read_random_row_group(
         df = table.to_pandas()
 
         if max_rows and len(df) > max_rows:
-            df = df.drop_duplicates(subset=['url']).sample(n=min(max_rows, len(df)), random_state=random.randint(0, 2**31))
+            df = df.drop_duplicates(subset=["url"]).sample(
+                n=min(max_rows, len(df)), random_state=random.randint(0, 2**31)
+            )
 
         return df
 

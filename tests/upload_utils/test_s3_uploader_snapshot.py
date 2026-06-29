@@ -6,19 +6,19 @@ Covers:
 - max_rows is honored: query LIMIT, no row leakage.
 - processed_state records snapshot stats per job.
 """
+
 import asyncio
+import datetime as dt
 import json
 import os
 import sqlite3
 import tempfile
-import datetime as dt
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from common.data import DataSource
 from upload_utils.s3_uploader import S3PartitionedUploader
-
 
 # ---------------------------------------------------------------------------
 # Fixtures
@@ -71,13 +71,25 @@ def _make_uploader(db_path: str, state_path: str) -> S3PartitionedUploader:
 
 
 def _reddit_content(body: str) -> bytes:
-    return json.dumps({
-        "id": "abc", "username": "u", "communityName": "r/x",
-        "body": body, "title": "t", "createdAt": "2026-06-18T00:00:00Z",
-        "dataType": "comment", "parentId": None, "url": "https://reddit.com/r/x/post/1",
-        "media": None, "is_nsfw": False, "score": 1, "upvote_ratio": 1.0,
-        "num_comments": 0, "scrapedAt": "2026-06-18T00:00:00Z",
-    }).encode()
+    return json.dumps(
+        {
+            "id": "abc",
+            "username": "u",
+            "communityName": "r/x",
+            "body": body,
+            "title": "t",
+            "createdAt": "2026-06-18T00:00:00Z",
+            "dataType": "comment",
+            "parentId": None,
+            "url": "https://reddit.com/r/x/post/1",
+            "media": None,
+            "is_nsfw": False,
+            "score": 1,
+            "upvote_ratio": 1.0,
+            "num_comments": 0,
+            "scrapedAt": "2026-06-18T00:00:00Z",
+        }
+    ).encode()
 
 
 def test_snapshot_uploads_single_file_for_job(tmp_path):
@@ -85,8 +97,7 @@ def test_snapshot_uploads_single_file_for_job(tmp_path):
     db = str(tmp_path / "miner.db")
     state = str(tmp_path / "state.json")
     rows = [
-        (f"u{i}", f"2026-06-1{i}T00:00:00Z", DataSource.REDDIT.value, "r/python",
-         _reddit_content(f"body {i}"))
+        (f"u{i}", f"2026-06-1{i}T00:00:00Z", DataSource.REDDIT.value, "r/python", _reddit_content(f"body {i}"))
         for i in range(5)
     ]
     _seed_db(db, rows)
@@ -136,8 +147,7 @@ def test_snapshot_respects_max_rows(tmp_path):
     db = str(tmp_path / "miner.db")
     state = str(tmp_path / "state.json")
     rows = [
-        (f"u{i}", f"2026-06-{i:02d}T00:00:00Z", DataSource.REDDIT.value, "r/python",
-         _reddit_content(f"body {i}"))
+        (f"u{i}", f"2026-06-{i:02d}T00:00:00Z", DataSource.REDDIT.value, "r/python", _reddit_content(f"body {i}"))
         for i in range(1, 21)
     ]
     _seed_db(db, rows)
@@ -169,9 +179,11 @@ def test_snapshot_uses_default_when_max_rows_missing(tmp_path, monkeypatch):
 
     seen_limits = []
     original = up._get_label_data
+
     def spy(source, value, limit):
         seen_limits.append(limit)
         return original(source, value, limit)
+
     up._get_label_data = spy
 
     job_config = {
@@ -188,8 +200,7 @@ def test_snapshot_propagates_upload_failure(tmp_path):
     db = str(tmp_path / "miner.db")
     state = str(tmp_path / "state.json")
     rows = [
-        ("u1", "2026-06-18T00:00:00Z", DataSource.REDDIT.value, "r/python",
-         _reddit_content("body")),
+        ("u1", "2026-06-18T00:00:00Z", DataSource.REDDIT.value, "r/python", _reddit_content("body")),
     ]
     _seed_db(db, rows)
     up = _make_uploader(db, state)

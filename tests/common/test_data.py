@@ -2,9 +2,11 @@ import datetime as dt
 import random
 import string
 import time
+import unittest
+
+from pydantic import ValidationError
 
 from common import constants, utils
-
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
@@ -12,10 +14,7 @@ from common.data import (
     DataSource,
     TimeBucket,
 )
-import unittest
-
 from common.protocol import GetMinerIndex
-from pydantic import ValidationError
 
 
 class TestData(unittest.TestCase):
@@ -79,9 +78,7 @@ class TestData(unittest.TestCase):
     def test_compressed_index_supports_max_index(self):
         """Tests that the compressed version of the maximal Miner index is under our response size limit."""
 
-        target_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
-        )
+        target_buckets = constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
 
         # Figure out how many time buckets and labels we need to fill the index.
         buckets_per_source = target_buckets // 2  # Twitter/Reddit
@@ -111,10 +108,7 @@ class TestData(unittest.TestCase):
                 compressed_buckets[label_i] = CompressedEntityBucket(
                     label=label,
                     time_bucket_ids=[i for i in range(1, num_time_buckets + 1)],
-                    sizes_bytes=[
-                        random.randint(1, 112345678)
-                        for i in range(1, num_time_buckets + 1)
-                    ],
+                    sizes_bytes=[random.randint(1, 112345678) for i in range(1, num_time_buckets + 1)],
                 )
             sources[int(source)] = compressed_buckets
 
@@ -128,9 +122,7 @@ class TestData(unittest.TestCase):
         print(f"Time to serialize index: {time.time() - start}")
 
         start = time.time()
-        get_miner_index = GetMinerIndex(
-            compressed_index_serialized=serialized_compressed_index
-        )
+        get_miner_index = GetMinerIndex(compressed_index_serialized=serialized_compressed_index)
         print(f"Time to create synapse: {time.time() - start}")
 
         start = time.time()
@@ -141,9 +133,7 @@ class TestData(unittest.TestCase):
 
         start = time.time()
         deserialized_index = GetMinerIndex.parse_raw(compressed_json)
-        deserialized_compressed_index = CompressedMinerIndex.parse_raw(
-            deserialized_index.compressed_index_serialized
-        )
+        deserialized_compressed_index = CompressedMinerIndex.parse_raw(deserialized_index.compressed_index_serialized)
         print(f"Time to deserialize synapse: {time.time() - start}")
 
         # Verify the deserialized form is as expected.

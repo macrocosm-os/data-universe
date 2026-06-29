@@ -1,23 +1,24 @@
-from collections import defaultdict
 import datetime as dt
-from typing import Any, Callable, Iterable
 import unittest
+from collections import defaultdict
+from collections.abc import Callable, Iterable
+from typing import Any
 from unittest.mock import Mock
-from common import constants
 
+import tests.utils as test_utils
+from common import constants
 from common.data import DataEntity, DataLabel, TimeBucket
 from scraping.coordinator import (
     CoordinatorConfig,
     DataSource,
-    ScraperConfig,
     LabelScrapingConfig,
+    ScraperConfig,
     ScraperCoordinator,
     _choose_scrape_configs,
 )
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScrapeConfig, Scraper, ScraperId
 from storage.miner.miner_storage import MinerStorage
-import tests.utils as test_utils
 
 
 class TestScraperCoordinator(unittest.TestCase):
@@ -49,9 +50,7 @@ class TestScraperCoordinator(unittest.TestCase):
 
         # Advance the clock by 60 seconds, and make sure only the first source is returned.
         now += dt.timedelta(seconds=60)
-        self.assertEqual(
-            [ScraperId.REDDIT_JSON], tracker.get_scraper_ids_ready_to_scrape(now)
-        )
+        self.assertEqual([ScraperId.REDDIT_JSON], tracker.get_scraper_ids_ready_to_scrape(now))
 
         tracker.on_scrape_scheduled(ScraperId.REDDIT_JSON, now)
 
@@ -114,9 +113,7 @@ class TestScraperCoordinator(unittest.TestCase):
             # Make sure only 1 label was picked.
             self.assertEqual(1, len(labeled_config.labels))
             label = labeled_config.labels[0]
-            self.assertTrue(
-                label in [DataLabel(value="label1"), DataLabel(value="label2")]
-            )
+            self.assertTrue(label in [DataLabel(value="label1"), DataLabel(value="label2")])
             self.assertEqual(10, labeled_config.entity_limit)
 
             # Verify the time range is within the expected bounds.
@@ -133,9 +130,7 @@ class TestScraperCoordinator(unittest.TestCase):
             time_counts[labeled_config.date_range.end] += 1
 
             # Verify there's a scraping config without a label, and that the config is as expected.
-            labelless_config = test_utils.get_only_element_matching_filter(
-                scrape_configs, lambda x: x.labels is None
-            )
+            labelless_config = test_utils.get_only_element_matching_filter(scrape_configs, lambda x: x.labels is None)
             self.assertEqual(20, labelless_config.entity_limit)
             self.assertEqual(
                 TimeBucket.to_date_range(latest_time_bucket),
@@ -143,12 +138,8 @@ class TestScraperCoordinator(unittest.TestCase):
             )
 
         # Check each label was chosen roughly half the time
-        self.assertAlmostEqual(
-            0.5, label_counts[DataLabel(value="label1")] / runs, delta=0.05
-        )
-        self.assertAlmostEqual(
-            0.5, label_counts[DataLabel(value="label2")] / runs, delta=0.05
-        )
+        self.assertAlmostEqual(0.5, label_counts[DataLabel(value="label1")] / runs, delta=0.05)
+        self.assertAlmostEqual(0.5, label_counts[DataLabel(value="label2")] / runs, delta=0.05)
 
         # Check that the time buckets are skewed toward newer buckets.
         # Group the time buckets into the day they belong to. Then iterate the days in order and make sure each
@@ -183,9 +174,7 @@ class TestScraperCoordinator(unittest.TestCase):
         mock_storage = Mock(spec=MinerStorage)
 
         # Create a ScraperProvider that uses the Mock Scraper
-        provider = ScraperProvider(
-            factories={ScraperId.REDDIT_JSON: lambda: mock_scraper}
-        )
+        provider = ScraperProvider(factories={ScraperId.REDDIT_JSON: lambda: mock_scraper})
 
         config = CoordinatorConfig(
             scraper_configs={
@@ -197,9 +186,7 @@ class TestScraperCoordinator(unittest.TestCase):
                         LabelScrapingConfig(
                             label_choices=[DataLabel(value="label1")],
                             max_data_entities=10,
-                            max_age_hint_minutes=60
-                            * 24
-                            * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
+                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                         ),
                     ],
                 ),
@@ -207,9 +194,7 @@ class TestScraperCoordinator(unittest.TestCase):
         )
 
         # Create the ScraperCoordinator with the ScraperProvider
-        coordinator = ScraperCoordinator(
-            scraper_provider=provider, miner_storage=mock_storage, config=config
-        )
+        coordinator = ScraperCoordinator(scraper_provider=provider, miner_storage=mock_storage, config=config)
 
         # Start the ScraperCoordinator in the background.
         coordinator.run_in_background_thread()

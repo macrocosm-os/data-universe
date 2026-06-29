@@ -1,34 +1,36 @@
 import asyncio
 import base64
-from datetime import datetime, timedelta, timezone
 import json
-import uuid
 import time
+import uuid
 from dataclasses import dataclass
+from datetime import datetime, timedelta, timezone
 from hashlib import sha256
 from typing import Any, Dict, List, Literal, Optional, Set, Union
 
-from pydantic import BaseModel, ConfigDict, Field
-from common.data import DataEntity, DataSource
-from substrateinterface.keypair import Keypair
-import httpx
-
 import bittensor as bt
+import httpx
+from pydantic import BaseModel, ConfigDict, Field
+from substrateinterface.keypair import Keypair
+
+from common.data import DataEntity, DataSource
 
 FIFTEEN_MB_BYTES = 15 * 1_000_000
 
 
 class MinerFileUploadRequest(BaseModel):
     """Request body for POST /get-file-upload-url."""
+
     job_id: str
     filename: str
 
 
 class MinerFileUploadResponse(BaseModel):
     """Response from POST /get-file-upload-url."""
+
     s3_key: str
     url: str
-    fields: Dict[str, str] = {}
+    fields: dict[str, str] = {}
     expires_in_seconds: int
     method: str = "POST"  # "POST" (DO Spaces) or "PUT" (R2)
 
@@ -38,13 +40,13 @@ class DynamicDesirabilityListEntry(BaseModel):
 
     id: str
     platform: str
-    weight: Optional[float] = 1.0
-    label: Optional[str] = None
-    keyword: Optional[str] = None
-    post_start_datetime: Optional[datetime] = None
-    post_end_datetime: Optional[datetime] = None
-    expires_at: Optional[datetime] = None
-    max_rows: Optional[int] = None
+    weight: float | None = 1.0
+    label: str | None = None
+    keyword: str | None = None
+    post_start_datetime: datetime | None = None
+    post_end_datetime: datetime | None = None
+    expires_at: datetime | None = None
+    max_rows: int | None = None
 
 
 class DynamicDesirabilityList(BaseModel):
@@ -52,11 +54,11 @@ class DynamicDesirabilityList(BaseModel):
 
     version: str
     generated_at: datetime
-    entries: List[DynamicDesirabilityListEntry]
+    entries: list[DynamicDesirabilityListEntry]
 
 
 class OnDemandMinerUpload(BaseModel):
-    data_entities: List[DataEntity]
+    data_entities: list[DataEntity]
 
     def model_dump(self, **kwargs):
         """
@@ -66,9 +68,7 @@ class OnDemandMinerUpload(BaseModel):
 
         base_dump = {}  # super().model_dump(**kwargs)
 
-        base_dump["data_entities"] = [
-            entity.to_json_dict() for entity in self.data_entities
-        ]
+        base_dump["data_entities"] = [entity.to_json_dict() for entity in self.data_entities]
         return base_dump
 
     def model_dump_json(self, **kwargs):
@@ -86,8 +86,7 @@ class OnDemandMinerUpload(BaseModel):
 
         return OnDemandMinerUpload(
             data_entities=[
-                DataEntity.from_json_dict(_normalize_entity_dict(entity_dict))
-                for entity_dict in obj["data_entities"]
+                DataEntity.from_json_dict(_normalize_entity_dict(entity_dict)) for entity_dict in obj["data_entities"]
             ]
         )
 
@@ -97,9 +96,9 @@ class OnDemandJobPayloadX(BaseModel):
 
     platform: Literal["x"] = "x"
 
-    usernames: Optional[List[str]] = None
-    keywords: Optional[List[str]] = None
-    url: Optional[str] = None
+    usernames: list[str] | None = None
+    keywords: list[str] | None = None
+    url: str | None = None
 
 
 class OnDemandJobPayloadReddit(BaseModel):
@@ -107,10 +106,10 @@ class OnDemandJobPayloadReddit(BaseModel):
 
     platform: Literal["reddit"] = "reddit"
 
-    subreddit: Optional[str] = None
+    subreddit: str | None = None
 
-    usernames: Optional[List[str]] = None
-    keywords: Optional[List[str]] = None
+    usernames: list[str] | None = None
+    keywords: list[str] | None = None
 
 
 class OnDemandJob(BaseModel):
@@ -118,17 +117,15 @@ class OnDemandJob(BaseModel):
 
     id: str = ""
 
-    created_at: Optional[datetime] = None
-    expire_at: Optional[datetime] = None
+    created_at: datetime | None = None
+    expire_at: datetime | None = None
 
-    job: Union[
-        OnDemandJobPayloadX, OnDemandJobPayloadReddit
-    ] = Field(discriminator="platform")
+    job: OnDemandJobPayloadX | OnDemandJobPayloadReddit = Field(discriminator="platform")
 
-    start_date: Optional[datetime] = None
-    end_date: Optional[datetime] = None
+    start_date: datetime | None = None
+    end_date: datetime | None = None
 
-    limit: Optional[int] = Field(default=100, ge=1, le=1000)
+    limit: int | None = Field(default=100, ge=1, le=1000)
     keyword_mode: Literal["any"] | Literal["all"] = "any"
 
 
@@ -139,23 +136,21 @@ class OnDemandJobSubmission(BaseModel):
     miner_hotkey: str = ""
     miner_incentive: float = 0.0
 
-    s3_path: Optional[str] = None
-    s3_presigned_url: Optional[str] = None
+    s3_path: str | None = None
+    s3_presigned_url: str | None = None
 
-    s3_etag: Optional[str] = None
-    s3_content_length: Optional[int] = None
-    s3_last_modified: Optional[datetime] = None
-    submitted_at: Optional[datetime] = None
+    s3_etag: str | None = None
+    s3_content_length: int | None = None
+    s3_last_modified: datetime | None = None
+    submitted_at: datetime | None = None
 
 
 class ListActiveJobsRequest(BaseModel):
-    since: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc) - timedelta(minutes=2)
-    )
+    since: datetime = Field(default_factory=lambda: datetime.now(timezone.utc) - timedelta(minutes=2))
 
 
 class ListActiveJobsResponse(BaseModel):
-    jobs: List[OnDemandJob]
+    jobs: list[OnDemandJob]
 
 
 class SubmitJobRequest(BaseModel):
@@ -167,13 +162,11 @@ class SubmitOnDemandJobResponse(BaseModel):
 
 
 class GetJobSubmissionsResponse(BaseModel):
-    submissions: List[OnDemandJobSubmission]
+    submissions: list[OnDemandJobSubmission]
 
 
 class ListJobsWithSubmissionsForValidationRequest(BaseModel):
-    expired_since: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc) - timedelta(minutes=1)
-    )
+    expired_since: datetime = Field(default_factory=lambda: datetime.now(timezone.utc) - timedelta(minutes=1))
     expired_until: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
     limit: int = Field(default=10, ge=1, le=10)
@@ -181,33 +174,31 @@ class ListJobsWithSubmissionsForValidationRequest(BaseModel):
 
 class JobWithSubmissions(BaseModel):
     job: OnDemandJob
-    submissions: List[OnDemandJobSubmission]
+    submissions: list[OnDemandJobSubmission]
 
 
 class ListJobsWithSubmissionForValidationResponse(BaseModel):
-    jobs_with_submissions: List[JobWithSubmissions]
+    jobs_with_submissions: list[JobWithSubmissions]
 
 
 class ListMinerJobsForValidationRequest(BaseModel):
     """Request to list OD jobs that a specific miner submitted to."""
+
     miner_hotkey: str
-    expired_since: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc) - timedelta(hours=2)
-    )
-    expired_until: datetime = Field(
-        default_factory=lambda: datetime.now(timezone.utc)
-    )
+    expired_since: datetime = Field(default_factory=lambda: datetime.now(timezone.utc) - timedelta(hours=2))
+    expired_until: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
     limit: int = Field(default=500, ge=1, le=1000)
 
 
 class MinerJobForValidation(BaseModel):
     """A single job + this miner's submission."""
+
     job: OnDemandJob
     submission: OnDemandJobSubmission
 
 
 class ListMinerJobsForValidationResponse(BaseModel):
-    jobs: List[MinerJobForValidation]
+    jobs: list[MinerJobForValidation]
 
 
 def _sha256_hex(data: bytes) -> str:
@@ -226,7 +217,7 @@ class TaoSigner:
 
     keypair: Keypair
 
-    def headers(self, body: bytes) -> Dict[str, str]:
+    def headers(self, body: bytes) -> dict[str, str]:
         ts = str(int(round(time.time() * 1000)))
         nonce = str(uuid.uuid4())
         message = f"{_sha256_hex(body)}.{nonce}.{ts}"
@@ -267,7 +258,7 @@ class DataUniverseApiClient:
         self,
         base_url: str,
         *,
-        keypair: Optional[Keypair] = None,
+        keypair: Keypair | None = None,
         timeout: float = 30.0,
         verify_ssl: bool = True,
     ) -> None:
@@ -276,7 +267,7 @@ class DataUniverseApiClient:
 
         self._timeout = timeout
         self._verify_ssl = verify_ssl
-        self._client: Optional[httpx.AsyncClient] = None
+        self._client: httpx.AsyncClient | None = None
 
     async def __aenter__(self) -> "DataUniverseApiClient":
         self._client = httpx.AsyncClient(
@@ -293,14 +284,10 @@ class DataUniverseApiClient:
 
     def _ensure_client(self) -> httpx.AsyncClient:
         if not self._client:
-            raise RuntimeError(
-                "Use 'async with OnDemandClient(...)' or call __aenter__ manually."
-            )
+            raise RuntimeError("Use 'async with OnDemandClient(...)' or call __aenter__ manually.")
         return self._client
 
-    async def _post_signed_json(
-        self, path: str, signer: TaoSigner, payload_json: str
-    ) -> httpx.Response:
+    async def _post_signed_json(self, path: str, signer: TaoSigner, payload_json: str) -> httpx.Response:
         """
         Sends POST with a pre-serialized JSON string (so the exact bytes are used for the signature).
         """
@@ -309,9 +296,7 @@ class DataUniverseApiClient:
         headers = signer.headers(body=body_bytes)
         return await client.post(path, content=body_bytes, headers=headers)
 
-    async def miner_list_active_jobs(
-        self, req: ListActiveJobsRequest
-    ) -> ListActiveJobsResponse:
+    async def miner_list_active_jobs(self, req: ListActiveJobsRequest) -> ListActiveJobsResponse:
         """
         POST /on-demand/miner/jobs/active
         """
@@ -319,16 +304,12 @@ class DataUniverseApiClient:
             raise RuntimeError("miner_keypair was not provided.")
         # Use Pydantic to serialize exactly as your server expects
         payload_json = req.model_dump_json()
-        resp = await self._post_signed_json(
-            "/on-demand/miner/jobs/active", self._signer, payload_json
-        )
+        resp = await self._post_signed_json("/on-demand/miner/jobs/active", self._signer, payload_json)
         _raise_for_status(resp)
         # Parse back into your response model
         return ListActiveJobsResponse.model_validate_json(resp.text)
 
-    async def miner_submit_job(
-        self, req: SubmitJobRequest
-    ) -> SubmitOnDemandJobResponse:
+    async def miner_submit_job(self, req: SubmitJobRequest) -> SubmitOnDemandJobResponse:
         """
         POST /on-demand/miner/jobs/submit
         Returns the presigned_upload_url (and related fields) in SubmitOnDemandJobResponse.
@@ -337,15 +318,11 @@ class DataUniverseApiClient:
         if not self._signer:
             raise RuntimeError("miner_keypair was not provided.")
         payload_json = req.model_dump_json()
-        resp = await self._post_signed_json(
-            "/on-demand/miner/jobs/submit", self._signer, payload_json
-        )
+        resp = await self._post_signed_json("/on-demand/miner/jobs/submit", self._signer, payload_json)
         _raise_for_status(resp)
         return SubmitOnDemandJobResponse.model_validate_json(resp.text)
 
-    async def miner_submit_and_upload(
-        self, *, job_id: str, data: OnDemandMinerUpload
-    ) -> SubmitOnDemandJobResponse:
+    async def miner_submit_and_upload(self, *, job_id: str, data: OnDemandMinerUpload) -> SubmitOnDemandJobResponse:
         """
         Convenience:
           1) POST /on-demand/miner/jobs/submit to get a presigned_upload_url
@@ -360,9 +337,7 @@ class DataUniverseApiClient:
         submit_resp = await self.miner_submit_job(submit_req)
         presigned = submit_resp.presigned_post_upload_data
         if not presigned or "url" not in presigned or "fields" not in presigned:
-            raise RuntimeError(
-                "Server did not return a valid presigned_post_upload_data (missing url/fields)."
-            )
+            raise RuntimeError("Server did not return a valid presigned_post_upload_data (missing url/fields).")
 
         # Build the multipart request:
         # - All fields from the signer must be included as regular form fields
@@ -380,15 +355,11 @@ class DataUniverseApiClient:
 
         # S3 presigned POST usually returns 204; some setups return 201/200
         if post_resp.status_code not in (204, 201, 200):
-            raise RuntimeError(
-                f"Upload failed: {post_resp.status_code} {post_resp.text}"
-            )
+            raise RuntimeError(f"Upload failed: {post_resp.status_code} {post_resp.text}")
 
         return submit_resp
 
-    async def miner_request_file_upload_url(
-        self, job_id: str, filename: str
-    ) -> MinerFileUploadResponse:
+    async def miner_request_file_upload_url(self, job_id: str, filename: str) -> MinerFileUploadResponse:
         """
         POST /get-file-upload-url
 
@@ -399,15 +370,11 @@ class DataUniverseApiClient:
             raise RuntimeError("miner_keypair was not provided.")
         req = MinerFileUploadRequest(job_id=job_id, filename=filename)
         payload_json = req.model_dump_json()
-        resp = await self._post_signed_json(
-            "/get-file-upload-url", self._signer, payload_json
-        )
+        resp = await self._post_signed_json("/get-file-upload-url", self._signer, payload_json)
         _raise_for_status(resp)
         return MinerFileUploadResponse.model_validate_json(resp.text)
 
-    async def miner_upload_parquet_file(
-        self, *, job_id: str, filename: str, file_path: str
-    ) -> MinerFileUploadResponse:
+    async def miner_upload_parquet_file(self, *, job_id: str, filename: str, file_path: str) -> MinerFileUploadResponse:
         """
         1) POST /get-file-upload-url to get a presigned URL
         2) Upload the parquet file to S3 using POST (DO Spaces) or PUT (R2)
@@ -420,7 +387,8 @@ class DataUniverseApiClient:
         with open(file_path, "rb") as f:
             if upload_info.method == "PUT":
                 resp = await client.put(
-                    upload_info.url, content=f.read(),
+                    upload_info.url,
+                    content=f.read(),
                     headers={"Content-Type": "application/octet-stream"},
                 )
             else:
@@ -428,9 +396,7 @@ class DataUniverseApiClient:
                 resp = await client.post(upload_info.url, data=dict(upload_info.fields), files=files)
 
         if not resp.is_success:
-            raise RuntimeError(
-                f"S3 upload failed: {resp.status_code} {resp.text}"
-            )
+            raise RuntimeError(f"S3 upload failed: {resp.status_code} {resp.text}")
 
         return upload_info
 
@@ -441,13 +407,9 @@ class DataUniverseApiClient:
             raise RuntimeError("validator_keypair was not provided.")
 
         payload_json = req.model_dump_json()
-        resp = await self._post_signed_json(
-            "/on-demand/validator/jobs", self._signer, payload_json
-        )
+        resp = await self._post_signed_json("/on-demand/validator/jobs", self._signer, payload_json)
         _raise_for_status(resp)
-        return ListJobsWithSubmissionForValidationResponse.model_validate_json(
-            resp.text
-        )
+        return ListJobsWithSubmissionForValidationResponse.model_validate_json(resp.text)
 
     async def validator_list_miner_jobs(
         self, req: ListMinerJobsForValidationRequest
@@ -457,9 +419,7 @@ class DataUniverseApiClient:
             raise RuntimeError("validator_keypair was not provided.")
 
         payload_json = req.model_dump_json()
-        resp = await self._post_signed_json(
-            "/on-demand/validator/miner-jobs", self._signer, payload_json
-        )
+        resp = await self._post_signed_json("/on-demand/validator/miner-jobs", self._signer, payload_json)
         _raise_for_status(resp)
         return ListMinerJobsForValidationResponse.model_validate_json(resp.text)
 
@@ -468,7 +428,7 @@ class DataUniverseApiClient:
         req: ListJobsWithSubmissionsForValidationRequest,
         *,
         max_parallelism: int = 8,
-        job_ids_to_skip_downloading: Optional[Set[str]] = None,
+        job_ids_to_skip_downloading: set[str] | None = None,
         file_size_limit_bytes: int = FIFTEEN_MB_BYTES,
     ) -> tuple[ListJobsWithSubmissionForValidationResponse, list[dict]]:
         job_ids_to_skip_downloading = job_ids_to_skip_downloading or set()

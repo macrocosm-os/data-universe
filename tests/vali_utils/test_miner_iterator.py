@@ -1,5 +1,6 @@
-from vali_utils.miner_iterator import MinerIterator
 import unittest
+
+from vali_utils.miner_iterator import MinerIterator
 
 
 class TestMinerIterator(unittest.TestCase):

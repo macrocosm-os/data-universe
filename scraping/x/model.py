@@ -1,6 +1,6 @@
 import datetime as dt
-from typing import Dict, List, Optional, Any
 import json
+from typing import Any, Dict, List, Optional
 
 # Use v1 for these models to keep serialization consistent.
 # Pydantic v2 doesn't include spaces in its serialization.
@@ -24,60 +24,60 @@ class XContent(BaseModel):
 
     # model_config should NOT be set by Miners.
     # In the near future, Validators will penalized Miners who set this field.
-    model_config: Dict[str, str] = Field(default=None)
+    model_config: dict[str, str] = Field(default=None)
 
     username: str
     text: str
     url: str
     timestamp: dt.datetime
-    tweet_hashtags: List[str] = Field(
+    tweet_hashtags: list[str] = Field(
         default_factory=list,
         description="A list of hashtags associated with the tweet, in order they appear in the tweet. Note: it's critical this ordering is respected as the first tag is used as the DataLabel for the index.",
     )
-    media: Optional[List[str]] = Field(
+    media: list[str] | None = Field(
         default=None,
         description="A list of media URLs associated with the tweet. Can be None if no media is present.",
     )
 
     # Enhanced fields
-    user_id: Optional[str] = None
-    user_display_name: Optional[str] = None
-    user_verified: Optional[bool] = None
+    user_id: str | None = None
+    user_display_name: str | None = None
+    user_verified: bool | None = None
 
     # Non-dynamic tweet metadata
-    tweet_id: Optional[str] = None
-    is_reply: Optional[bool] = None
-    is_quote: Optional[bool] = None
+    tweet_id: str | None = None
+    is_reply: bool | None = None
+    is_quote: bool | None = None
 
     # Additional metadata
-    conversation_id: Optional[str] = None
-    in_reply_to_user_id: Optional[str] = None
+    conversation_id: str | None = None
+    in_reply_to_user_id: str | None = None
 
     # ===== NEW FIELDS =====
     # Static tweet metadata
-    language: Optional[str] = None
-    in_reply_to_username: Optional[str] = None
-    quoted_tweet_id: Optional[str] = None
+    language: str | None = None
+    in_reply_to_username: str | None = None
+    quoted_tweet_id: str | None = None
 
     # Dynamic engagement metrics
-    like_count: Optional[int] = None
-    retweet_count: Optional[int] = None
-    reply_count: Optional[int] = None
-    quote_count: Optional[int] = None
-    view_count: Optional[int] = None
-    bookmark_count: Optional[int] = None
+    like_count: int | None = None
+    retweet_count: int | None = None
+    reply_count: int | None = None
+    quote_count: int | None = None
+    view_count: int | None = None
+    bookmark_count: int | None = None
 
     # User profile data
-    user_blue_verified: Optional[bool] = None
-    user_description: Optional[str] = None
-    user_location: Optional[str] = None
-    profile_image_url: Optional[str] = None
-    cover_picture_url: Optional[str] = None
-    user_followers_count: Optional[int] = None
-    user_following_count: Optional[int] = None
+    user_blue_verified: bool | None = None
+    user_description: str | None = None
+    user_location: str | None = None
+    profile_image_url: str | None = None
+    cover_picture_url: str | None = None
+    user_followers_count: int | None = None
+    user_following_count: int | None = None
 
     # Scrape tracking
-    scraped_at: Optional[dt.datetime] = None
+    scraped_at: dt.datetime | None = None
 
     @classmethod
     def to_data_entity(cls, content: "XContent") -> DataEntity:
@@ -95,11 +95,7 @@ class XContent(BaseModel):
             datetime=entity_timestamp,
             source=DataSource.X,
             label=(
-                DataLabel(
-                    value=content.tweet_hashtags[0].lower()[
-                        : constants.MAX_LABEL_LENGTH
-                    ]
-                )
+                DataLabel(value=content.tweet_hashtags[0].lower()[: constants.MAX_LABEL_LENGTH])
                 if content.tweet_hashtags
                 else None
             ),
@@ -111,12 +107,14 @@ class XContent(BaseModel):
     def from_data_entity(cls, data_entity: DataEntity) -> "XContent":
         """Converts a DataEntity to an XContent with backward compatibility for nested format."""
         content_str = data_entity.content.decode("utf-8")
-        
+
         # Check if this is the legacy nested format and we're still in compatibility period
-        if on_demand_utils.is_nested_format(data_entity) and dt.datetime.now(dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE:
+        if (
+            on_demand_utils.is_nested_format(data_entity)
+            and dt.datetime.now(dt.timezone.utc) < X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE
+        ):
             # Handle legacy nested format
             base_fields = on_demand_utils.from_enhanced_nested_format(data_entity)
             return cls(**base_fields)
         else:
             return XContent.parse_raw(content_str)
-    

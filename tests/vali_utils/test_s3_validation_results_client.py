@@ -1,4 +1,5 @@
 """Tests for S3ValidationResultsClient against a local in-process HTTP server."""
+
 import asyncio
 import json
 import threading
@@ -28,9 +29,7 @@ class _Handler(BaseHTTPRequestHandler):
         if self.path == "/s3-validation/results":
             body = self._read_body()
             _Handler.received_post = json.loads(body.decode())
-            payload = json.dumps(
-                {"upserted": len(_Handler.received_post.get("results", []))}
-            ).encode()
+            payload = json.dumps({"upserted": len(_Handler.received_post.get("results", []))}).encode()
             self.send_response(200)
             self.send_header("Content-Type", "application/json")
             self.send_header("Content-Length", str(len(payload)))

@@ -1,22 +1,23 @@
-import bittensor as bt
 import datetime as dt
 import unittest
-from common import constants
+
+import bittensor as bt
+import pytz
+
+import vali_utils.utils as vali_utils
+from common import constants, utils
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
-    DataEntityBucket,
     DataEntity,
+    DataEntityBucket,
     DataEntityBucketId,
     DataLabel,
-    TimeBucket,
     DataSource,
+    TimeBucket,
 )
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from common.protocol import GetMinerIndex
-import vali_utils.utils as vali_utils
-import pytz
-from common import utils
 
 
 class TestValiUtils(unittest.TestCase):
@@ -27,27 +28,21 @@ class TestValiUtils(unittest.TestCase):
             hotkey="abc123",
             scorable_data_entity_buckets=[
                 ScorableDataEntityBucket(
-                    time_bucket_id=utils.time_bucket_id_from_datetime(
-                        dt.datetime.now(tz=dt.timezone.utc)
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(dt.datetime.now(tz=dt.timezone.utc)),
                     source=DataSource.REDDIT,
                     label="0",
                     size_bytes=300,
                     scorable_bytes=100,
                 ),
                 ScorableDataEntityBucket(
-                    time_bucket_id=utils.time_bucket_id_from_datetime(
-                        dt.datetime.now(tz=dt.timezone.utc)
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(dt.datetime.now(tz=dt.timezone.utc)),
                     source=DataSource.REDDIT,
                     label="1",
                     size_bytes=300,
                     scorable_bytes=200,
                 ),
                 ScorableDataEntityBucket(
-                    time_bucket_id=utils.time_bucket_id_from_datetime(
-                        dt.datetime.now(tz=dt.timezone.utc)
-                    ),
+                    time_bucket_id=utils.time_bucket_id_from_datetime(dt.datetime.now(tz=dt.timezone.utc)),
                     source=DataSource.REDDIT,
                     label="2",
                     size_bytes=300,
@@ -68,8 +63,7 @@ class TestValiUtils(unittest.TestCase):
         ratios = [count / total for count in counts]
         self.assertAlmostEqual(ratios[0], 1 / 6, delta=0.05)
         self.assertAlmostEqual(ratios[1], 1 / 3, delta=0.05)
-        self.assertAlmostEqual(ratios[2], 0.5,   delta=0.05)
-
+        self.assertAlmostEqual(ratios[2], 0.5, delta=0.05)
 
     def test_choose_entities_to_verify(self):
         """Calls choose_entity_to_verify 10000 times and verifies the distribution of entities chosen is as expected."""
@@ -293,9 +287,7 @@ class TestValiUtils(unittest.TestCase):
 
         for test_case in test_cases:
             with self.subTest(test_case["name"], test_case=test_case):
-                valid, reason = vali_utils.are_entities_valid(
-                    test_case["entities"], test_case["data_entity_bucket"]
-                )
+                valid, reason = vali_utils.are_entities_valid(test_case["entities"], test_case["data_entity_bucket"])
                 self.assertFalse(valid)
                 self.assertRegex(reason, test_case["expected_error"])
 
@@ -334,9 +326,7 @@ class TestValiUtils(unittest.TestCase):
 
     def test_are_entities_valid_non_utc_timezones(self):
         """Tests are_entities_valid with different timezones."""
-        datetime = dt.datetime(
-            2023, 12, 10, 12, 1, 0, tzinfo=pytz.timezone("America/Los_Angeles")
-        )
+        datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=pytz.timezone("America/Los_Angeles"))
         label = DataLabel(value="label")
         data_entity_bucket = DataEntityBucket(
             id=DataEntityBucketId(
@@ -555,9 +545,7 @@ class TestValiUtils(unittest.TestCase):
             }
         )
 
-        response = GetMinerIndex(
-            compressed_index=compressed_index, dendrite=bt.TerminalInfo(status_code=200)
-        )
+        response = GetMinerIndex(compressed_index=compressed_index, dendrite=bt.TerminalInfo(status_code=200))
 
         with self.assertRaises(ValueError):
             vali_utils.get_miner_index_from_response(response)

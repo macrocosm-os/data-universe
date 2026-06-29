@@ -1,6 +1,5 @@
-import unittest
-
 import datetime as dt
+import unittest
 
 from common.data import DataEntity, DataLabel, DataSource
 from scraping.reddit import utils
@@ -17,9 +16,7 @@ class TestUtils(unittest.TestCase):
         self.assertFalse(is_valid_reddit_url("https://www.google.com"))
 
         self.assertTrue(
-            is_valid_reddit_url(
-                "https://www.reddit.com/r/bittensor_/comments/18e1fl6/wrappedtao_is_it_safe/"
-            )
+            is_valid_reddit_url("https://www.reddit.com/r/bittensor_/comments/18e1fl6/wrappedtao_is_it_safe/")
         )
 
     def test_normalize_permalink(self):
@@ -54,9 +51,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=392,
         )
 
-        validation_result = utils.validate_reddit_content(
-            actual_content, entity_to_validate
-        )
+        validation_result = utils.validate_reddit_content(actual_content, entity_to_validate)
         self.assertTrue(validation_result.is_valid)
 
     def test_validate_reddit_content_obfuscated_date_required(self):
@@ -83,9 +78,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=392,
         )
 
-        validation_result = utils.validate_reddit_content(
-            actual_content, entity_to_validate
-        )
+        validation_result = utils.validate_reddit_content(actual_content, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
         self.assertIn(
             "was not obfuscated",
@@ -115,9 +108,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=418,
         )
 
-        validation_result = utils.validate_reddit_content(
-            actual_content, entity_to_validate
-        )
+        validation_result = utils.validate_reddit_content(actual_content, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
         self.assertIn("Failed to decode data entity", validation_result.reason)
 
@@ -145,9 +136,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=410,
         )
 
-        validation_result = utils.validate_reddit_content(
-            actual_content, entity_to_validate
-        )
+        validation_result = utils.validate_reddit_content(actual_content, entity_to_validate)
         self.assertTrue(validation_result.is_valid)
 
     def test_validate_reddit_content_extra_bytes_above_limit(self):
@@ -174,9 +163,7 @@ class TestUtils(unittest.TestCase):
             content_size_bytes=411,
         )
 
-        validation_result = utils.validate_reddit_content(
-            actual_content, entity_to_validate
-        )
+        validation_result = utils.validate_reddit_content(actual_content, entity_to_validate)
         self.assertFalse(validation_result.is_valid)
 
 

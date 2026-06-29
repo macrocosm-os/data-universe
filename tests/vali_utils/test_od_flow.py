@@ -7,14 +7,15 @@ Covers:
 """
 
 import asyncio
+import datetime as dt
 import unittest
 from unittest.mock import AsyncMock, MagicMock, patch
-import datetime as dt
+
 import torch
 
-from vali_utils.on_demand.od_job_cache import ODJobCache, CachedMinerODResult
-from rewards.miner_scorer import MinerScorer
 from rewards.data_value_calculator import DataValueCalculator
+from rewards.miner_scorer import MinerScorer
+from vali_utils.on_demand.od_job_cache import CachedMinerODResult, ODJobCache
 
 
 class TestODJobCache(unittest.TestCase):
@@ -34,10 +35,13 @@ class TestODJobCache(unittest.TestCase):
 
     def test_add_and_drain(self):
         """Results are returned once then gone."""
-        self.cache.add_results("job1", {
-            "hk_a": self._make_result(),
-            "hk_b": self._make_result(passed=False),
-        })
+        self.cache.add_results(
+            "job1",
+            {
+                "hk_a": self._make_result(),
+                "hk_b": self._make_result(passed=False),
+            },
+        )
 
         results_a = self.cache.get_and_drain("hk_a")
         self.assertEqual(len(results_a), 1)
@@ -70,10 +74,13 @@ class TestODJobCache(unittest.TestCase):
 
     def test_pending_miner_count(self):
         self.assertEqual(self.cache.get_pending_miner_count(), 0)
-        self.cache.add_results("job1", {
-            "hk_a": self._make_result(),
-            "hk_b": self._make_result(),
-        })
+        self.cache.add_results(
+            "job1",
+            {
+                "hk_a": self._make_result(),
+                "hk_b": self._make_result(),
+            },
+        )
         self.assertEqual(self.cache.get_pending_miner_count(), 2)
         self.cache.get_and_drain("hk_a")
         self.assertEqual(self.cache.get_pending_miner_count(), 1)
@@ -141,7 +148,7 @@ class TestMinerScorerOD(unittest.TestCase):
         # With ^2.5: boost * 0.51^2.5 ≈ boost * 0.186
         # The raw version should give ~2.7x more OD contribution
         expected_raw = boost * cred
-        expected_exp = boost * (cred ** 2.5)
+        expected_exp = boost * (cred**2.5)
         self.assertGreater(expected_raw, expected_exp * 2)
 
     def test_get_scores_for_weights_od_no_exponent(self):
@@ -180,22 +187,26 @@ class TestEvaluateOD(unittest.TestCase):
 
     def test_empty_submissions_penalized_immediately(self):
         """Empty (0-byte) submissions are penalized without needing API/download."""
-        self.cache.add_results("job1", {
-            "hk_miner": CachedMinerODResult(
-                job_id="job1",
-                submitted_at=dt.datetime.now(dt.timezone.utc),
-                returned_count=0,
-                requested_limit=100,
-                passed_validation=False,
-                speed_multiplier=0.0,
-                volume_multiplier=0.0,
-                failure_reason="empty_submission",
-            ),
-        })
+        self.cache.add_results(
+            "job1",
+            {
+                "hk_miner": CachedMinerODResult(
+                    job_id="job1",
+                    submitted_at=dt.datetime.now(dt.timezone.utc),
+                    returned_count=0,
+                    requested_limit=100,
+                    passed_validation=False,
+                    speed_multiplier=0.0,
+                    volume_multiplier=0.0,
+                    failure_reason="empty_submission",
+                ),
+            },
+        )
 
         old_cred = float(self.scorer.ondemand_credibility[0])
 
         from vali_utils.miner_evaluator import MinerEvaluator
+
         evaluator = self._make_evaluator_mock()
 
         async def run():
@@ -209,19 +220,23 @@ class TestEvaluateOD(unittest.TestCase):
         """Pending results (passed_validation=None) should not be blindly rewarded.
         When API fetch fails, they get benefit-of-doubt reward."""
         for i in range(3):
-            self.cache.add_results(f"job{i}", {
-                "hk_miner": CachedMinerODResult(
-                    job_id=f"job{i}",
-                    submitted_at=dt.datetime.now(dt.timezone.utc),
-                    returned_count=100,
-                    requested_limit=100,
-                    passed_validation=None,  # pending — not pre-approved
-                    speed_multiplier=0.9,
-                    volume_multiplier=0.8,
-                ),
-            })
+            self.cache.add_results(
+                f"job{i}",
+                {
+                    "hk_miner": CachedMinerODResult(
+                        job_id=f"job{i}",
+                        submitted_at=dt.datetime.now(dt.timezone.utc),
+                        returned_count=100,
+                        requested_limit=100,
+                        passed_validation=None,  # pending — not pre-approved
+                        speed_multiplier=0.9,
+                        volume_multiplier=0.8,
+                    ),
+                },
+            )
 
         from vali_utils.miner_evaluator import MinerEvaluator
+
         evaluator = self._make_evaluator_mock()
 
         # Mock the API client to raise (simulating API failure)
@@ -239,6 +254,7 @@ class TestEvaluateOD(unittest.TestCase):
     def test_no_cache_is_noop(self):
         """If od_cache is None, _evaluate_od does nothing."""
         from vali_utils.miner_evaluator import MinerEvaluator
+
         evaluator = self._make_evaluator_mock()
         evaluator.od_cache = None
 
@@ -254,6 +270,7 @@ class TestEvaluateOD(unittest.TestCase):
     def test_empty_drain_is_noop(self):
         """If no results for this miner, nothing changes."""
         from vali_utils.miner_evaluator import MinerEvaluator
+
         evaluator = self._make_evaluator_mock()
 
         old_boost = float(self.scorer.ondemand_boosts[0])
@@ -267,23 +284,38 @@ class TestEvaluateOD(unittest.TestCase):
 
     def test_mixed_empty_and_pending(self):
         """Mix of empty (failed) and pending (need validation) results."""
-        self.cache.add_results("job1", {
-            "hk_miner": CachedMinerODResult(
-                job_id="job1", submitted_at=dt.datetime.now(dt.timezone.utc),
-                returned_count=100, requested_limit=100,
-                passed_validation=None, speed_multiplier=1.0, volume_multiplier=1.0,
-            ),
-        })
-        self.cache.add_results("job2", {
-            "hk_miner": CachedMinerODResult(
-                job_id="job2", submitted_at=dt.datetime.now(dt.timezone.utc),
-                returned_count=0, requested_limit=100,
-                passed_validation=False, speed_multiplier=0.0, volume_multiplier=0.0,
-                failure_reason="empty",
-            ),
-        })
+        self.cache.add_results(
+            "job1",
+            {
+                "hk_miner": CachedMinerODResult(
+                    job_id="job1",
+                    submitted_at=dt.datetime.now(dt.timezone.utc),
+                    returned_count=100,
+                    requested_limit=100,
+                    passed_validation=None,
+                    speed_multiplier=1.0,
+                    volume_multiplier=1.0,
+                ),
+            },
+        )
+        self.cache.add_results(
+            "job2",
+            {
+                "hk_miner": CachedMinerODResult(
+                    job_id="job2",
+                    submitted_at=dt.datetime.now(dt.timezone.utc),
+                    returned_count=0,
+                    requested_limit=100,
+                    passed_validation=False,
+                    speed_multiplier=0.0,
+                    volume_multiplier=0.0,
+                    failure_reason="empty",
+                ),
+            },
+        )
 
         from vali_utils.miner_evaluator import MinerEvaluator
+
         evaluator = self._make_evaluator_mock()
 
         # Mock the API client to raise (so pending results get benefit of doubt)

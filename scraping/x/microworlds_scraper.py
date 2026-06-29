@@ -1,16 +1,18 @@
 import asyncio
+import datetime as dt
 import threading
 import traceback
-import bittensor as bt
 from typing import List, Tuple
+
+import bittensor as bt
+
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
-from scraping.x.model import XContent
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.x import utils
-import datetime as dt
+from scraping.x.model import XContent
 
 
 class MicroworldsTwitterScraper(Scraper):
@@ -33,7 +35,7 @@ class MicroworldsTwitterScraper(Scraper):
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
 
-    async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
+    async def validate(self, entities: list[DataEntity]) -> list[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
 
         async def validate_entity(entity) -> ValidationResult:
@@ -65,19 +67,15 @@ class MicroworldsTwitterScraper(Scraper):
                 )
 
                 # Retrieve the tweets from Apify.
-                dataset: List[dict] = None
+                dataset: list[dict] = None
                 try:
-                    dataset: List[dict] = await self.runner.run(run_config, run_input)
-                except (
-                    Exception
-                ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
+                    dataset: list[dict] = await self.runner.run(run_config, run_input)
+                except Exception:  # Catch all exceptions here to ensure we do not exit validation early.
                     if attempt != max_attempts:
                         # Retrying.
                         continue
                     else:
-                        bt.logging.error(
-                            f"Failed to run actor: {traceback.format_exc()}."
-                        )
+                        bt.logging.error(f"Failed to run actor: {traceback.format_exc()}.")
                         # This is an unfortunate situation. We have no way to distinguish a genuine failure from
                         # one caused by malicious input. In my own testing I was able to make the Actor timeout by
                         # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
@@ -118,16 +116,12 @@ class MicroworldsTwitterScraper(Scraper):
         # Since we are using the threading.semaphore we need to use it in a context outside of asyncio.
         bt.logging.trace("Acquiring semaphore for concurrent microworlds validations.")
         with MicroworldsTwitterScraper.concurrent_validates_semaphore:
-            bt.logging.trace(
-                "Acquired semaphore for concurrent microworlds validations."
-            )
-            results = await asyncio.gather(
-                *[validate_entity(entity) for entity in entities]
-            )
+            bt.logging.trace("Acquired semaphore for concurrent microworlds validations.")
+            results = await asyncio.gather(*[validate_entity(entity) for entity in entities])
 
         return results
 
-    async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
+    async def scrape(self, scrape_config: ScrapeConfig) -> list[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
         # Construct the query string.
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
@@ -160,21 +154,17 @@ class MicroworldsTwitterScraper(Scraper):
         bt.logging.trace(f"Performing Twitter scrape for search terms: {query}.")
 
         # Run the Actor and retrieve the scraped data.
-        dataset: List[dict] = None
+        dataset: list[dict] = None
         try:
-            dataset: List[dict] = await self.runner.run(run_config, run_input)
+            dataset: list[dict] = await self.runner.run(run_config, run_input)
         except Exception:
-            bt.logging.error(
-                f"Failed to scrape tweets using search terms {query}: {traceback.format_exc()}."
-            )
+            bt.logging.error(f"Failed to scrape tweets using search terms {query}: {traceback.format_exc()}.")
             # TODO: Raise a specific exception, in case the scheduler wants to have some logic for retries.
             return []
 
         # Return the parsed results, ignoring data that can't be parsed.
         x_contents = self._best_effort_parse_dataset(dataset)
-        bt.logging.success(
-            f"Completed scrape for {query}. Scraped {len(x_contents)} items."
-        )
+        bt.logging.success(f"Completed scrape for {query}. Scraped {len(x_contents)} items.")
 
         data_entities = []
 
@@ -183,14 +173,14 @@ class MicroworldsTwitterScraper(Scraper):
 
         return data_entities
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> Tuple[List[XContent], List[bool]]:
+    def _best_effort_parse_dataset(self, dataset: list[dict]) -> tuple[list[XContent], list[bool]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
         Any errors are logged and ignored."""
         if not dataset or dataset == [{"zero_result": True}]:
             return [], []
 
-        results: List[XContent] = []
-        is_retweets: List[bool] = []
+        results: list[XContent] = []
+        is_retweets: list[bool] = []
 
         for data in dataset:
             try:
@@ -199,48 +189,48 @@ class MicroworldsTwitterScraper(Scraper):
                     bt.logging.warning("Missing required fields in data")
                     continue
 
-                text = data['full_text']
+                text = data["full_text"]
 
                 # Extract hashtags from text or user entities if available
                 tags = []
-                user_data = data.get('user', {})
-                user_entities = user_data.get('entities', {})
-                if 'hashtags' in user_entities:
-                    tags = ["#" + item['text'] for item in user_entities['hashtags']]
-                
+                user_data = data.get("user", {})
+                user_entities = user_data.get("entities", {})
+                if "hashtags" in user_entities:
+                    tags = ["#" + item["text"] for item in user_entities["hashtags"]]
+
                 # Extract media URLs - check multiple possible locations
                 media_urls = []
-                
-                # check entities.media (deprecated in microworlds scraper)
-                if 'entities' in data and 'media' in data['entities']:
-                    for media_item in data['entities']['media']:
-                        if 'media_url_https' in media_item:
-                            media_urls.append(media_item['media_url_https'])
 
-                is_retweet = data.get('retweeted', False)
+                # check entities.media (deprecated in microworlds scraper)
+                if "entities" in data and "media" in data["entities"]:
+                    for media_item in data["entities"]["media"]:
+                        if "media_url_https" in media_item:
+                            media_urls.append(media_item["media_url_https"])
+
+                is_retweet = data.get("retweeted", False)
                 is_retweets.append(is_retweet)
-                
+
                 # Extract user information - user_id_str if available, or id_str
-                user_id = data.get('user_id_str') or user_data.get('id_str')
-                user_display_name = user_data.get('name', '')
-                user_verified = user_data.get('verified', False)
-                username = user_data.get('screen_name', '')
-                
+                user_id = data.get("user_id_str") or user_data.get("id_str")
+                user_display_name = user_data.get("name", "")
+                user_verified = user_data.get("verified", False)
+                username = user_data.get("screen_name", "")
+
                 # Extract tweet metadata
-                tweet_id = data.get('id_str')
-                
+                tweet_id = data.get("id_str")
+
                 # Extract reply information
-                is_reply = data.get('in_reply_to_status_id_str', None)
-                is_quote = data.get('is_quote_status', None)
-                
+                is_reply = data.get("in_reply_to_status_id_str", None)
+                is_quote = data.get("is_quote_status", None)
+
                 # Get conversation ID
-                conversation_id = data.get('conversation_id_str')
-                
+                conversation_id = data.get("conversation_id_str")
+
                 # Get in-reply-to information
-                in_reply_to_user_id = data.get('in_reply_to_user_id_str')
+                in_reply_to_user_id = data.get("in_reply_to_user_id_str")
 
                 # Create URL if not present (construct from tweet ID)
-                url = data.get('url')
+                url = data.get("url")
                 if not url and tweet_id and username:
                     url = f"https://twitter.com/{username}/status/{tweet_id}"
 
@@ -249,9 +239,7 @@ class MicroworldsTwitterScraper(Scraper):
                         username=username,
                         text=utils.sanitize_scraped_tweet(text),
                         url=url,
-                        timestamp=dt.datetime.strptime(
-                            data["created_at"], "%a %b %d %H:%M:%S %z %Y"
-                        ),
+                        timestamp=dt.datetime.strptime(data["created_at"], "%a %b %d %H:%M:%S %z %Y"),
                         tweet_hashtags=tags,
                         media=media_urls if media_urls else None,
                         # Enhanced fields
@@ -268,9 +256,7 @@ class MicroworldsTwitterScraper(Scraper):
                     )
                 )
             except Exception:
-                bt.logging.warning(
-                    f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
-                )
+                bt.logging.warning(f"Failed to decode XContent from Apify response: {traceback.format_exc()}.")
 
         return results, is_retweets
 
@@ -312,7 +298,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#catcoin"),
             content='{"username": "@100Xpotential", "text": "As i said green candles incoming 🚀🫡👇👇\\n\\nAround 15% price surge in #CatCoin 📊💸🚀🚀\\n\\n𝐂𝐨𝐦𝐦𝐞𝐧𝐭 |  𝐋𝐢𝐤𝐞 |  𝐑𝐞𝐭𝐰𝐞𝐞𝐭 |  𝐅𝐨𝐥𝐥𝐨𝐰\\n\\n#Binance #Bitcoin #PiNetwork #Blockchain #NFT #BabyDoge #Solana #PEPE #Crypto #1000x #cryptocurrency #Catcoin #100x", "url": "https://twitter.com/100Xpotential/status/1790785842967101530", "timestamp": "2024-05-15T16:46:00+00:00", "tweet_hashtags": ["#CatCoin", "#Binance", "#Bitcoin", "#PiNetwork", "#Blockchain", "#NFT", "#BabyDoge", "#Solana", "#PEPE", "#Crypto", "#1000x", "#cryptocurrency", "#Catcoin", "#100x"]}',
-            content_size_bytes=933
+            content_size_bytes=933,
         ),
         DataEntity(
             uri="https://x.com/20nineCapitaL/status/1789488160688541878",
@@ -320,7 +306,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@20nineCapitaL", "text": "Yup! We agreed to. \\n\\n@MetaMaskSupport #Bitcoin #Investors #DigitalAssets #EthereumETF #Airdrops", "url": "https://twitter.com/20nineCapitaL/status/1789488160688541878", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin", "#Investors", "#DigitalAssets", "#EthereumETF", "#Airdrops"]}',
-            content_size_bytes=345
+            content_size_bytes=345,
         ),
         DataEntity(
             uri="https://x.com/AAAlviarez/status/1790787185047658838",
@@ -328,7 +314,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#web3‌‌"),
             content='{"username": "@AAAlviarez", "text": "1/3🧵\\n\\nOnce a month dozens of #web3‌‌  users show our support to one of the projects that is doing an excellent job in services and #cryptocurrency adoption.\\n\\nDo you know what Leo Power Up Day is all about?", "url": "https://twitter.com/AAAlviarez/status/1790787185047658838", "timestamp": "2024-05-15T16:51:00+00:00", "tweet_hashtags": ["#web3‌‌", "#cryptocurrency"]}',
-            content_size_bytes=439
+            content_size_bytes=439,
         ),
         DataEntity(
             uri="https://x.com/AGariaparra/status/1789488091453091936",
@@ -336,7 +322,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AGariaparra", "text": "J.P Morgan, Wells Fargo hold #Bitcoin now: Why are they interested in BTC? - AMBCrypto", "url": "https://twitter.com/AGariaparra/status/1789488091453091936", "timestamp": "2024-05-12T02:49:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
-            content_size_bytes=269
+            content_size_bytes=269,
         ),
         DataEntity(
             uri="https://x.com/AGariaparra/status/1789488427546939525",
@@ -344,7 +330,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AGariaparra", "text": "We Asked ChatGPT if #Bitcoin Will Enter a Massive Bull Run in 2024", "url": "https://twitter.com/AGariaparra/status/1789488427546939525", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
-            content_size_bytes=249
+            content_size_bytes=249,
         ),
         DataEntity(
             uri="https://x.com/AMikulanecs/status/1784324497895522673",
@@ -352,7 +338,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#felix"),
             content='{"username": "@AMikulanecs", "text": "$FELIX The new Dog with OG Vibes... \\nWe have a clear vision for success.\\nNew Dog $FELIX \\n➡️Follow @FelixInuETH \\n➡️Join➡️Visit#memecoins #BTC #MemeCoinSeason #Bullrun2024 #Ethereum #altcoin #Crypto #meme #SOL #BaseChain #Binance", "url": "https://twitter.com/AMikulanecs/status/1784324497895522673", "timestamp": "2024-04-27T20:51:00+00:00", "tweet_hashtags": ["#FELIX", "#FELIX", "#memecoins", "#BTC", "#MemeCoinSeason", "#Bullrun2024", "#Ethereum", "#altcoin", "#Crypto", "#meme", "#SOL", "#BaseChain", "#Binance"]}',
-            content_size_bytes=588
+            content_size_bytes=588,
         ),
         DataEntity(
             uri="https://x.com/AdamEShelton/status/1789490040751411475",
@@ -360,7 +346,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AdamEShelton", "text": "#bitcoin  love", "url": "https://twitter.com/AdamEShelton/status/1789490040751411475", "timestamp": "2024-05-12T02:57:00+00:00", "tweet_hashtags": ["#bitcoin"]}',
-            content_size_bytes=199
+            content_size_bytes=199,
         ),
         DataEntity(
             uri="https://x.com/AfroWestor/status/1789488798406975580",
@@ -368,7 +354,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AfroWestor", "text": "Given is for Prince and princess form inheritances  to kingdom. \\n\\nWe the #BITCOIN family we Gain profits for ever. \\n\\nSo if you embrace #BTC that means you have a Kingdom to pass on for ever.", "url": "https://twitter.com/AfroWestor/status/1789488798406975580", "timestamp": "2024-05-12T02:52:00+00:00", "tweet_hashtags": ["#BITCOIN", "#BTC"]}',
-            content_size_bytes=383
+            content_size_bytes=383,
         ),
         DataEntity(
             uri="https://x.com/AlexEmidio7/status/1789488453979189327",
@@ -376,7 +362,7 @@ async def test_validate():
             source=DataSource.X,
             label=DataLabel(value="#bitcoin"),
             content='{"username": "@AlexEmidio7", "text": "Bip47 V3 V4 #Bitcoin", "url": "https://twitter.com/AlexEmidio7/status/1789488453979189327", "timestamp": "2024-05-12T02:51:00+00:00", "tweet_hashtags": ["#Bitcoin"]}',
-            content_size_bytes=203
+            content_size_bytes=203,
         ),
     ]
 
@@ -410,9 +396,7 @@ async def test_multi_thread_validate():
         """Synchronous version of eval_miner."""
         asyncio.run(scraper.validate(entities))
 
-    threads = [
-        threading.Thread(target=sync_validate, args=(true_entities,)) for _ in range(5)
-    ]
+    threads = [threading.Thread(target=sync_validate, args=(true_entities,)) for _ in range(5)]
 
     for thread in threads:
         thread.start()

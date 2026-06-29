@@ -9,7 +9,7 @@ From the original data structures we learned:
 Hence, with the V2 models, we make trade-off the nicer coding symantics in exchange for better performance.
 
 If a class needs to be included as a Field in a pydantic BaseModel, it should be a dataclass (which adds a small overhead),
-because pydantic know how to serialize dataclasses, as long as all fields are themselves JSON serializable. 
+because pydantic know how to serialize dataclasses, as long as all fields are themselves JSON serializable.
 
 As a rule of thumb:
 1. If the class needs to perform validation on fields, use a class with a custom __init__, __eq__, and __hash__.
@@ -17,8 +17,9 @@ As a rule of thumb:
 """
 
 import datetime as dt
-from pydantic import BaseModel, Field, ConfigDict
 from typing import List, Optional
+
+from pydantic import BaseModel, ConfigDict, Field
 
 from common import constants
 from common.data import (
@@ -48,20 +49,16 @@ class ScorableDataEntityBucket:
         self,
         time_bucket_id: int,
         source: DataSource,
-        label: Optional[str],
+        label: str | None,
         size_bytes: int,
         scorable_bytes: int,
     ):
         if label and len(label) > constants.MAX_LABEL_LENGTH:
             raise ValueError("Label value cannot be longer than 140 characters.")
         if not 0 <= size_bytes <= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
-            raise ValueError(
-                f"Size must be between 0 and {constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES}."
-            )
+            raise ValueError(f"Size must be between 0 and {constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES}.")
         if not 0 <= scorable_bytes <= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES:
-            raise ValueError(
-                f"Scorable bytes must be between 0 and {constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES}."
-            )
+            raise ValueError(f"Scorable bytes must be between 0 and {constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES}.")
         if scorable_bytes > size_bytes:
             raise ValueError(
                 f"Scorable bytes cannot be greater than size bytes. Scorable bytes: {scorable_bytes}, size bytes: {size_bytes}."
@@ -114,12 +111,9 @@ class ScorableMinerIndex(BaseModel):
     so the additional overhead is acceptable.
     """
 
-    model_config = ConfigDict(
-        arbitrary_types_allowed=True,
-        frozen=True
-    )
+    model_config = ConfigDict(arbitrary_types_allowed=True, frozen=True)
 
-    scorable_data_entity_buckets: List[ScorableDataEntityBucket] = Field(
+    scorable_data_entity_buckets: list[ScorableDataEntityBucket] = Field(
         description="DataEntityBuckets the miner is serving, scored on uniqueness.",
         max_length=constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4,
     )

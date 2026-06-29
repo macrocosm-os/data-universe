@@ -1,15 +1,16 @@
-import random
 import cProfile
+import datetime as dt
 import pstats
+import random
 import time
 import unittest
-from unittest.mock import MagicMock, Mock, patch
 from typing import List
+from unittest.mock import MagicMock, Mock, patch
+
 import torch
-from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup, Job, JobMatcher
-from scraping.scraper import ValidationResult
-from common import constants
+
+import rewards.data_value_calculator
+from common import constants, utils
 from common.data import (
     DataEntityBucket,
     DataEntityBucketId,
@@ -17,10 +18,10 @@ from common.data import (
     DataSource,
     TimeBucket,
 )
+from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
+from rewards.data import DataDesirabilityLookup, DataSourceDesirability, Job, JobMatcher
 from rewards.miner_scorer import MinerScorer
-import datetime as dt
-import rewards.data_value_calculator
-from common import utils
+from scraping.scraper import ValidationResult
 from tests import utils as test_utils
 
 
@@ -28,44 +29,47 @@ from tests import utils as test_utils
 class TestMinerScorer(unittest.TestCase):
     def setUp(self):
         self.num_neurons = 10
-        
+
         # Create a job matcher for Reddit with test jobs
-        reddit_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,  # currently only accepting label-only jobs
-                label="testlabel",  
-                job_weight=1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,  
-                label="otherlabel",  
-                job_weight=0.75,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-        ])
+        reddit_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,  # currently only accepting label-only jobs
+                    label="testlabel",
+                    job_weight=1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="otherlabel",
+                    job_weight=0.75,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+            ]
+        )
 
         # Create a job matcher for X with test jobs
-        x_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,  
-                label="#testlabel",  
-                job_weight=1.0,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
-            Job(
-                keyword=None,  
-                label="#otherlabel",  
-                job_weight=0.75,
-                start_timebucket=None,
-                end_timebucket=None,
-            ),
+        x_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,
+                    label="#testlabel",
+                    job_weight=1.0,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+                Job(
+                    keyword=None,
+                    label="#otherlabel",
+                    job_weight=0.75,
+                    start_timebucket=None,
+                    end_timebucket=None,
+                ),
+            ]
+        )
 
-        ])
-        
         self.value_calculator = rewards.data_value_calculator.DataValueCalculator(
             DataDesirabilityLookup(
                 distribution={
@@ -115,9 +119,7 @@ class TestMinerScorer(unittest.TestCase):
         )
 
     def _add_score_to_uid(self, uid: int):
-        validation_results = [
-            ValidationResult(is_valid=True, content_size_bytes_validated=100)
-        ]
+        validation_results = [ValidationResult(is_valid=True, content_size_bytes_validated=100)]
         self.scorer.on_miner_evaluated(uid, self.scorable_index, validation_results)
 
     def test_reset_score(self):
@@ -166,9 +168,7 @@ class TestMinerScorer(unittest.TestCase):
             self._add_score_to_uid(uid)
 
         # Now run an eval with no index.
-        validation_results = [
-            ValidationResult(is_valid=True, content_size_bytes_validated=100)
-        ]
+        validation_results = [ValidationResult(is_valid=True, content_size_bytes_validated=100)]
         self.scorer.on_miner_evaluated(uid, None, validation_results)
 
         self.assertEqual(self.scorer.get_scores()[uid], 0)
@@ -204,18 +204,10 @@ class TestMinerScorer(unittest.TestCase):
             ValidationResult(is_valid=False, content_size_bytes_validated=0),
         ]
         for _ in range(20):
-            self.scorer.on_miner_evaluated(
-                honest_miner, self.scorable_index, honest_validation
-            )
-            self.scorer.on_miner_evaluated(
-                shady_miner, self.scorable_index, shady_validation
-            )
-            self.scorer.on_miner_evaluated(
-                dishonest_miner, self.scorable_index, dishonest_validation
-            )
-            self.scorer.on_miner_evaluated(
-                empty_miner, self.scorable_index, empty_validation
-            )
+            self.scorer.on_miner_evaluated(honest_miner, self.scorable_index, honest_validation)
+            self.scorer.on_miner_evaluated(shady_miner, self.scorable_index, shady_validation)
+            self.scorer.on_miner_evaluated(dishonest_miner, self.scorable_index, dishonest_validation)
+            self.scorer.on_miner_evaluated(empty_miner, self.scorable_index, empty_validation)
 
         scores = self.scorer.get_scores()
         # Expect the honest miner to have scored more than 10x the shady miner.
@@ -251,15 +243,9 @@ class TestMinerScorer(unittest.TestCase):
             ValidationResult(is_valid=False, content_size_bytes_validated=100),
         ]
         for _ in range(20):
-            self.scorer.on_miner_evaluated(
-                honest_miner, self.scorable_index, honest_validation
-            )
-            self.scorer.on_miner_evaluated(
-                shady_miner, self.scorable_index, shady_validation
-            )
-            self.scorer.on_miner_evaluated(
-                dishonest_miner, self.scorable_index, dishonest_validation
-            )
+            self.scorer.on_miner_evaluated(honest_miner, self.scorable_index, honest_validation)
+            self.scorer.on_miner_evaluated(shady_miner, self.scorable_index, shady_validation)
+            self.scorer.on_miner_evaluated(dishonest_miner, self.scorable_index, dishonest_validation)
 
         scores = self.scorer.get_scores()
         # Expect the honest miner to have scored more than twice the shady miner.
@@ -325,22 +311,15 @@ class TestMinerScorer(unittest.TestCase):
             last_updated=self.now,
         )
 
-        honest_validation = [
-            ValidationResult(is_valid=True, content_size_bytes_validated=200)
-        ]
+        honest_validation = [ValidationResult(is_valid=True, content_size_bytes_validated=200)]
         # Since half the shady_miner's data is fake, it should fail validation half the time.
         # To make the test deterministic, we'll make it fail every other time.
         shady_validations = [
-            [ValidationResult(is_valid=i % 2 == 1, content_size_bytes_validated=400)]
-            for i in range(10)
+            [ValidationResult(is_valid=i % 2 == 1, content_size_bytes_validated=400)] for i in range(10)
         ]
         for i in range(10):
-            self.scorer.on_miner_evaluated(
-                honest_miner, honest_index, honest_validation
-            )
-            self.scorer.on_miner_evaluated(
-                shady_miner, shady_index, shady_validations[i]
-            )
+            self.scorer.on_miner_evaluated(honest_miner, honest_index, honest_validation)
+            self.scorer.on_miner_evaluated(shady_miner, shady_index, shady_validations[i])
 
             scores = self.scorer.get_scores()
             # Verify the honest miner scores consistently better than the shady miner, after a few steps.
@@ -448,11 +427,7 @@ class TestMinerScorer(unittest.TestCase):
             self.scorer.on_miner_evaluated(
                 uid,
                 index,
-                [
-                    ValidationResult(
-                        is_valid=True, content_size_bytes_validated=index_size
-                    )
-                ],
+                [ValidationResult(is_valid=True, content_size_bytes_validated=index_size)],
             )
             score = self.scorer.get_scores()[uid].item()
             self.assertGreater(score, previous_score)
@@ -462,9 +437,7 @@ class TestMinerScorer(unittest.TestCase):
         """Verifies that a fresh miner can reach 95% credibility within immunity period."""
         uid = 0
 
-        honest_validation = [
-            ValidationResult(is_valid=True, content_size_bytes_validated=100)
-        ]
+        honest_validation = [ValidationResult(is_valid=True, content_size_bytes_validated=100)]
 
         # Starting credibility defaults to 0.
         # With current 40 hours of immunity we will assume ~25 cycles of validation.
@@ -479,9 +452,7 @@ class TestMinerScorer(unittest.TestCase):
         """Verifies that a fresh miner can reach 92% score within immunity period."""
         uid = 0
 
-        honest_validation = [
-            ValidationResult(is_valid=True, content_size_bytes_validated=100)
-        ]
+        honest_validation = [ValidationResult(is_valid=True, content_size_bytes_validated=100)]
 
         # Starting credibility defaults to 0.
         # With current 40 hours of immunity we will assume ~25 cycles of validation.
@@ -531,26 +502,26 @@ class TestMinerScorer(unittest.TestCase):
             ],
             last_updated=self.now,
         )
-        
+
         # Set perfect credibility for this test
         self.scorer.miner_credibility[uid] = 1.0
-        
+
         # Get the score
         self.scorer.on_miner_evaluated(
             uid,
             index,
             [ValidationResult(is_valid=True, content_size_bytes_validated=600)],
         )
-        
+
         score = self.scorer.get_scores()[uid].item()
-        
+
         # Calculate expected score:
         # 1. REDDIT testlabel: 0.4 (weight) * 1.0 (job_weight) * 100 (bytes) = 40
         # 2. X #testlabel: 0.6 (weight) * 1.0 (job_weight) * 100 (bytes) = 60
         # 3. REDDIT unknown-label: 0.4 (weight) * 0.5 (default_scale) * 100 (bytes) = 20
         # Total expected: 120 (assuming perfect credibility and no time depreciation)
         expected_score = 120
-        
+
         # Allow some tolerance for EMA and other factors
         self.assertAlmostEqual(score, expected_score, delta=expected_score * 0.1)
 
@@ -559,17 +530,19 @@ class TestMinerScorer(unittest.TestCase):
         # Create a custom model with date-constrained jobs
         now_timebucket = utils.time_bucket_id_from_datetime(self.now)
         future_timebucket = utils.time_bucket_id_from_datetime(self.now + dt.timedelta(days=5))
-        
-        reddit_job_matcher = JobMatcher(jobs=[
-            Job(
-                keyword=None,  
-                label="dated-label",  
-                job_weight=2.0,
-                start_timebucket=now_timebucket,  # Convert datetime string to time bucket ID
-                end_timebucket=future_timebucket,  # Convert datetime string to time bucket ID
-            ),
-        ])
-        
+
+        reddit_job_matcher = JobMatcher(
+            jobs=[
+                Job(
+                    keyword=None,
+                    label="dated-label",
+                    job_weight=2.0,
+                    start_timebucket=now_timebucket,  # Convert datetime string to time bucket ID
+                    end_timebucket=future_timebucket,  # Convert datetime string to time bucket ID
+                ),
+            ]
+        )
+
         custom_model = DataDesirabilityLookup(
             distribution={
                 DataSource.REDDIT: DataSourceDesirability(
@@ -582,7 +555,7 @@ class TestMinerScorer(unittest.TestCase):
         )
         custom_calculator = rewards.data_value_calculator.DataValueCalculator(model=custom_model)
         custom_scorer = MinerScorer(self.num_neurons, custom_calculator)
-        
+
         uid = 0
         # Create an index with a label that matches our date-constrained job
         index = ScorableMinerIndex(
@@ -598,26 +571,26 @@ class TestMinerScorer(unittest.TestCase):
             ],
             last_updated=self.now,
         )
-        
+
         # Set perfect credibility for this test
         custom_scorer.miner_credibility[uid] = 1.0
-        
+
         # Get the score
         custom_scorer.on_miner_evaluated(
             uid,
             index,
             [ValidationResult(is_valid=True, content_size_bytes_validated=200)],
         )
-        
+
         score = custom_scorer.get_scores()[uid].item()
-        
+
         # Calculate expected score:
         # REDDIT dated-label: 1.0 (weight) * 2.0 (job_weight) * 100 (bytes) = 200
         expected_score = 200
-        
+
         # Allow some tolerance for EMA and other factors
         self.assertAlmostEqual(score, expected_score, delta=expected_score * 0.1)
-        
+
         # Now test with a date outside the job's range
         past_index = ScorableMinerIndex(
             hotkey="past_date_test",
@@ -632,34 +605,32 @@ class TestMinerScorer(unittest.TestCase):
             ],
             last_updated=self.now,
         )
-        
+
         # Reset and set perfect credibility again
         custom_scorer.reset(uid)
         custom_scorer.miner_credibility[uid] = 1.0
-        
+
         # Get the score
         custom_scorer.on_miner_evaluated(
             uid,
             past_index,
             [ValidationResult(is_valid=True, content_size_bytes_validated=200)],
         )
-        
+
         score = custom_scorer.get_scores()[uid].item()
-        
+
         # Calculate expected score (should use default scale factor since date is outside job range):
         # REDDIT dated-label: 1.0 (weight) * 0.5 (default_scale) * 100 (bytes) = 50
         # Note: There might also be time depreciation applied
         expected_score = 50
-        
+
         # Allow some tolerance for time depreciation, EMA and other factors
         self.assertLess(score, expected_score)
 
     def test_score_miner_perf(self):
         """A perf test to check how long it takes to score an index."""
 
-        num_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
-        )
+        num_buckets = constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
         index = test_utils.create_scorable_index(num_buckets=num_buckets)
 
         start = time.time()
