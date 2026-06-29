@@ -5,11 +5,13 @@ These Pydantic models define the structured output format for each data source
 in organic query responses, matching the Go struct definitions exactly.
 """
 
-from pydantic import BaseModel, Field
-from typing import Optional, List, Union, Dict
-import json
 import datetime as dt
+import json
+from typing import Dict, List, Optional, Union
+
 import bittensor as bt
+from pydantic import BaseModel, Field
+
 from common.data import DataEntity, DataSource
 
 
@@ -25,10 +27,10 @@ class UserInfo(BaseModel):
     username: str
     user_blue_verified: bool
     # Conditional fields
-    user_description: Optional[str] = None
-    profile_image_url: Optional[str] = None
-    cover_picture_url: Optional[str] = None
-    user_location: Optional[str] = None
+    user_description: str | None = None
+    profile_image_url: str | None = None
+    cover_picture_url: str | None = None
+    user_location: str | None = None
 
 
 class TweetInfo(BaseModel):
@@ -40,7 +42,7 @@ class TweetInfo(BaseModel):
     retweet_count: int
     like_count: int
     is_reply: bool
-    hashtags: List[str]
+    hashtags: list[str]
     conversation_id: str
     is_quote: bool
     reply_count: int
@@ -49,9 +51,9 @@ class TweetInfo(BaseModel):
     view_count: int
     bookmark_count: int
     language: str
-    in_reply_to_username: Optional[str] = None  # conditional field
-    quoted_tweet_id: Optional[str] = None  # conditional field
-    in_reply_to_user_id: Optional[str] = None  # conditional field
+    in_reply_to_username: str | None = None  # conditional field
+    quoted_tweet_id: str | None = None  # conditional field
+    in_reply_to_user_id: str | None = None  # conditional field
 
 
 class MediaItem(BaseModel):
@@ -71,8 +73,8 @@ class XOrganicOutput(BaseModel):
     tweet: TweetInfo
     content_size_bytes: int
     user: UserInfo
-    media: Optional[List[str]] = None
-    label: Optional[str] = None
+    media: list[str] | None = None
+    label: str | None = None
 
     @classmethod
     def from_data_entity(cls, data_entity: DataEntity) -> "XOrganicOutput":
@@ -133,7 +135,7 @@ class RedditOrganicOutput(BaseModel):
     uri: str
     datetime: str
     source: str
-    label: Optional[str] = None
+    label: str | None = None
     content_size_bytes: int
     id: str
     url: str
@@ -142,9 +144,9 @@ class RedditOrganicOutput(BaseModel):
     body: str
     createdAt: str
     dataType: str
-    title: Optional[str] = None
-    parentId: Optional[str] = None
-    media: Optional[List[str]] = None
+    title: str | None = None
+    parentId: str | None = None
+    media: list[str] | None = None
     is_nsfw: bool
     score: int
     upvote_ratio: float
@@ -184,7 +186,7 @@ class RedditOrganicOutput(BaseModel):
 OrganicOutput = Union[XOrganicOutput, RedditOrganicOutput]
 
 
-def create_organic_output_dict(data_entity: DataEntity) -> Dict:
+def create_organic_output_dict(data_entity: DataEntity) -> dict:
     """
     Create output dictionary using source-specific Pydantic models.
 
@@ -203,12 +205,10 @@ def create_organic_output_dict(data_entity: DataEntity) -> Dict:
         else:
             raise ValueError(f"Unknown source: {source}")
     except:
-        bt.logging.exception(
-            f"Failed to parse data entity into organic output, data_entity:\n\n{data_entity}"
-        )
+        bt.logging.exception(f"Failed to parse data entity into organic output, data_entity:\n\n{data_entity}")
 
 
-def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[str]]:
+def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, list[str]]:
     """
     Validate that a DataEntity has all required metadata fields for its output model.
     Uses the Pydantic output models to determine required fields automatically.
@@ -239,7 +239,7 @@ def validate_metadata_completeness(data_entity: DataEntity) -> tuple[bool, List[
 
 def _validate_x_metadata_completeness(
     data_entity: DataEntity,
-) -> tuple[bool, List[str]]:
+) -> tuple[bool, list[str]]:
     """Validate X content metadata completeness using XOrganicOutput model."""
     try:
         from scraping.x.model import XContent
@@ -296,9 +296,7 @@ def _validate_x_metadata_completeness(
                 missing_fields.append(f"tweet.{field_name}")
 
         if missing_fields:
-            bt.logging.debug(
-                f"X metadata validation failed. Missing fields: {missing_fields}"
-            )
+            bt.logging.debug(f"X metadata validation failed. Missing fields: {missing_fields}")
             return False, missing_fields
 
         return True, []
@@ -310,7 +308,7 @@ def _validate_x_metadata_completeness(
 
 def _validate_reddit_metadata_completeness(
     data_entity: DataEntity,
-) -> tuple[bool, List[str]]:
+) -> tuple[bool, list[str]]:
     """Validate Reddit content metadata completeness using RedditOrganicOutput model."""
     try:
         from scraping.reddit.model import RedditContent
@@ -339,9 +337,7 @@ def _validate_reddit_metadata_completeness(
                 missing_fields.append(field_name)
 
         if missing_fields:
-            bt.logging.debug(
-                f"Reddit metadata validation failed. Missing fields: {missing_fields}"
-            )
+            bt.logging.debug(f"Reddit metadata validation failed. Missing fields: {missing_fields}")
             return False, missing_fields
 
         return True, []

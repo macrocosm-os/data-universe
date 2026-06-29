@@ -1,49 +1,20 @@
-import os
-import gc
-import copy
 import asyncio
+import copy
 import datetime
+import datetime as dt
+import gc
+import os
 import random
-import traceback
 import threading
 import time
-
-from common import constants
-from common.data_v2 import ScorableMinerIndex
-from common.metagraph_syncer import MetagraphSyncer
-import common.utils as utils
-import datetime as dt
-import bittensor as bt
-from common.data import (
-    CompressedMinerIndex,
-    DataEntityBucket,
-    DataEntity,
-    DataSource,
-)
-from common.protocol import GetDataEntityBucket, GetMinerIndex
-from rewards.data_value_calculator import DataValueCalculator
-from scraping.provider import ScraperProvider
-from scraping.scraper import ScraperId, ValidationResult
-from storage.validator.sqlite_memory_validator_storage import (
-    SqliteMemoryValidatorStorage,
-)
-from storage.validator.s3_validator_storage import S3ValidationStorage
-
-from vali_utils.miner_iterator import MinerIterator
-from vali_utils import metrics, utils as vali_utils
-
+import traceback
 from typing import Dict, List, Optional, Tuple
-from vali_utils.validator_s3_access import ValidatorS3Access
-from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
-from vali_utils.s3_logging_utils import log_s3_validation_table
-from vali_utils.s3_validation_results_client import (
-    MACROCOSMOS_VALIDATOR_UID,
-    PublishedScore,
-    S3ValidationResultsClient,
-)
 
+import bittensor as bt
 import httpx
 
+import common.utils as utils
+from common import constants
 from common.api_client import (
     DataUniverseApiClient,
     ListMinerJobsForValidationRequest,
@@ -51,8 +22,35 @@ from common.api_client import (
     OnDemandJobSubmission,
     OnDemandMinerUpload,
 )
+from common.data import (
+    CompressedMinerIndex,
+    DataEntity,
+    DataEntityBucket,
+    DataSource,
+)
+from common.data_v2 import ScorableMinerIndex
+from common.metagraph_syncer import MetagraphSyncer
+from common.protocol import GetDataEntityBucket, GetMinerIndex
+from rewards.data_value_calculator import DataValueCalculator
 from rewards.miner_scorer import MinerScorer
+from scraping.provider import ScraperProvider
+from scraping.scraper import ScraperId, ValidationResult
+from storage.validator.s3_validator_storage import S3ValidationStorage
+from storage.validator.sqlite_memory_validator_storage import (
+    SqliteMemoryValidatorStorage,
+)
+from vali_utils import metrics
+from vali_utils import utils as vali_utils
+from vali_utils.miner_iterator import MinerIterator
 from vali_utils.on_demand.on_demand_validation import OnDemandValidator
+from vali_utils.s3_logging_utils import log_s3_validation_table
+from vali_utils.s3_utils import S3ValidationResult, get_s3_validation_summary, validate_s3_miner_data
+from vali_utils.s3_validation_results_client import (
+    MACROCOSMOS_VALIDATOR_UID,
+    PublishedScore,
+    S3ValidationResultsClient,
+)
+from vali_utils.validator_s3_access import ValidatorS3Access
 
 
 class MinerEvaluator:
@@ -72,22 +70,20 @@ class MinerEvaluator:
         uid: int,
         metagraph_syncer: MetagraphSyncer,
         s3_reader: ValidatorS3Access,
-        s3_results_client: Optional[S3ValidationResultsClient] = None,
+        s3_results_client: S3ValidationResultsClient | None = None,
     ):
         self.config = config
         self.uid = uid
         self.metagraph_syncer = metagraph_syncer
         self.metagraph = self.metagraph_syncer.get_metagraph(config.netuid)
-        self.metagraph_syncer.register_listener(
-            self._on_metagraph_updated, netuids=[config.netuid]
-        )
+        self.metagraph_syncer.register_listener(self._on_metagraph_updated, netuids=[config.netuid])
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
         self.wallet = bt.wallet(config=self.config)
 
         # API-backed S3 validation results. Used by non-macrocosmos validators
         # to fetch what UID 89 published; UID 89 uses it to publish results.
         self.s3_results_client = s3_results_client
-        self._published_scores_cache: Dict[str, PublishedScore] = {}
+        self._published_scores_cache: dict[str, PublishedScore] = {}
         self._published_scores_cache_ts: float = 0.0
         self._published_scores_cache_ttl_s: float = 300.0
 
@@ -95,19 +91,17 @@ class MinerEvaluator:
         self.scorer = MinerScorer(self.metagraph.n, DataValueCalculator())
 
         # Setup dependencies.
-        self.miner_iterator = MinerIterator(
-            utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit)
-        )
+        self.miner_iterator = MinerIterator(utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit))
         self.scraper_provider = ScraperProvider()
         self.storage = SqliteMemoryValidatorStorage()
         self.s3_storage = S3ValidationStorage(self.config.s3_results_path)
         self.s3_reader = s3_reader
         # OD validator — set by validator.py after construction.
         # Used for inline OD evaluation during eval_miner().
-        self.on_demand_validator: Optional[OnDemandValidator] = None
+        self.on_demand_validator: OnDemandValidator | None = None
         # Track last OD eval time per miner to query only new jobs each cycle.
         # Not persisted — on restart defaults to a 2h lookback window.
-        self._last_od_eval_at: Dict[str, dt.datetime] = {}
+        self._last_od_eval_at: dict[str, dt.datetime] = {}
         # Cache API client construction params (derived once, reused every eval).
         self._api_base_url = self.config.s3_auth_url
         self._api_verify_ssl = "localhost" not in self._api_base_url
@@ -152,9 +146,7 @@ class MinerEvaluator:
 
         # Determine time window: since last eval, or 2h on first run
         now = dt.datetime.now(dt.timezone.utc)
-        expired_since = self._last_od_eval_at.get(
-            hotkey, now - dt.timedelta(hours=2)
-        )
+        expired_since = self._last_od_eval_at.get(hotkey, now - dt.timedelta(hours=2))
 
         try:
             async with self._on_demand_client() as client:
@@ -190,24 +182,18 @@ class MinerEvaluator:
         if not non_empty:
             if empty:
                 bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(empty)} empty submissions penalized, "
-                    f"0 non-empty"
+                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(empty)} empty submissions penalized, 0 non-empty"
                 )
             return
 
         # Sample up to OD_MAX_JOBS_TO_VALIDATE for deep validation
-        to_validate = random.sample(
-            non_empty, min(self.OD_MAX_JOBS_TO_VALIDATE, len(non_empty))
-        )
+        to_validate = random.sample(non_empty, min(self.OD_MAX_JOBS_TO_VALIDATE, len(non_empty)))
         not_sampled_count = len(non_empty) - len(to_validate)
 
         # Validate sampled jobs concurrently
-        validation_results: List[Tuple[Optional[bool], int]] = await asyncio.gather(*[
-            self._validate_od_submission(
-                uid, hotkey, j.job, j.submission, j.submission.job_id
-            )
-            for j in to_validate
-        ])
+        validation_results: list[tuple[bool | None, int]] = await asyncio.gather(
+            *[self._validate_od_submission(uid, hotkey, j.job, j.submission, j.submission.job_id) for j in to_validate]
+        )
 
         # Apply per-job rewards/penalties based on validation results
         validated_pass = 0
@@ -225,13 +211,11 @@ class MinerEvaluator:
                 )
                 continue
 
-            speed_mult, vol_mult = (
-                self.on_demand_validator.calculate_ondemand_reward_multipliers(
-                    job_created_at=j.job.created_at,
-                    submission_timestamp=j.submission.submitted_at,
-                    returned_count=entity_count,
-                    requested_limit=j.job.limit,
-                )
+            speed_mult, vol_mult = self.on_demand_validator.calculate_ondemand_reward_multipliers(
+                job_created_at=j.job.created_at,
+                submission_timestamp=j.submission.submitted_at,
+                returned_count=entity_count,
+                requested_limit=j.job.limit,
             )
 
             if passed:
@@ -258,7 +242,7 @@ class MinerEvaluator:
         job: OnDemandJob,
         submission: OnDemandJobSubmission,
         job_id: str,
-    ) -> Tuple[Optional[bool], int]:
+    ) -> tuple[bool | None, int]:
         """Download and validate a single OD submission.
 
         Returns (passed, entity_count) — entity_count is the number of
@@ -271,8 +255,7 @@ class MinerEvaluator:
                 dl_resp = await http.get(submission.s3_presigned_url, follow_redirects=True)
                 if dl_resp.status_code != 200:
                     bt.logging.warning(
-                        f"UID:{uid} - OD validate: download failed ({dl_resp.status_code}) "
-                        f"for job {job_id}"
+                        f"UID:{uid} - OD validate: download failed ({dl_resp.status_code}) for job {job_id}"
                     )
                     if dl_resp.status_code >= 500:
                         # Validator/AWS server-side error — not the miner's fault.
@@ -287,15 +270,11 @@ class MinerEvaluator:
                 ctx = OnDemandValidator.build_validation_context(job)
                 data_exists = await self.on_demand_validator.check_data_exists(ctx)
                 if data_exists:
-                    bt.logging.info(
-                        f"UID:{uid} - OD validate: empty submission but data exists "
-                        f"for job {job_id}"
-                    )
+                    bt.logging.info(f"UID:{uid} - OD validate: empty submission but data exists for job {job_id}")
                     return False, 0
                 else:
                     bt.logging.info(
-                        f"UID:{uid} - OD validate: empty submission, data doesn't exist "
-                        f"for job {job_id} — acceptable"
+                        f"UID:{uid} - OD validate: empty submission, data doesn't exist for job {job_id} — acceptable"
                     )
                     return True, 0
 
@@ -303,20 +282,15 @@ class MinerEvaluator:
 
             # Cap to job limit
             if job.limit and entity_count > job.limit:
-                entities = entities[:job.limit]
+                entities = entities[: job.limit]
 
             # Phase 1: Schema validation on a sample
             sample_size = min(self.OD_SCHEMA_SAMPLE_SIZE, len(entities))
             schema_sample = random.sample(entities, sample_size)
 
             ctx = OnDemandValidator.build_validation_context(job)
-            if not self.on_demand_validator._validate_miner_data_format(
-                ctx, schema_sample, uid
-            ):
-                bt.logging.warning(
-                    f"UID:{uid} - OD validate: SCHEMA FAILED for job {job_id} "
-                    f"(wrong XContent format)"
-                )
+            if not self.on_demand_validator._validate_miner_data_format(ctx, schema_sample, uid):
+                bt.logging.warning(f"UID:{uid} - OD validate: SCHEMA FAILED for job {job_id} (wrong XContent format)")
                 return False, entity_count
 
             # Phase 2: Job match — check request fields on a sample
@@ -332,14 +306,9 @@ class MinerEvaluator:
             # Phase 3: Scraper validation on 1 entity from the schema-validated sample
             entity = random.choice(schema_sample)
             post_id = self.on_demand_validator._get_post_id(entity)
-            is_valid = await self.on_demand_validator._validate_entity(
-                ctx, entity, post_id, uid
-            )
+            is_valid = await self.on_demand_validator._validate_entity(ctx, entity, post_id, uid)
             if not is_valid:
-                bt.logging.warning(
-                    f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
-                    f"post {post_id}"
-                )
+                bt.logging.warning(f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, post {post_id}")
                 return False, entity_count
 
             bt.logging.info(
@@ -350,14 +319,10 @@ class MinerEvaluator:
 
         except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
             # Validator-side network failure downloading the submission — neutral, not miner's fault (#805)
-            bt.logging.warning(
-                f"UID:{uid} - OD validate: network error for job {job_id}: {e}"
-            )
+            bt.logging.warning(f"UID:{uid} - OD validate: network error for job {job_id}: {e}")
             return None, 0
         except Exception as e:
-            bt.logging.warning(
-                f"UID:{uid} - OD validate: error for job {job_id}: {e}"
-            )
+            bt.logging.warning(f"UID:{uid} - OD validate: error for job {job_id}: {e}")
             return False, 0
 
     async def eval_miner(self, uid: int) -> None:
@@ -399,26 +364,24 @@ class MinerEvaluator:
                         reason="No available miner index.",
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ]
+                ],
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='unavailable miner index').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(
+                hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status="unavailable miner index"
+            ).observe(time.perf_counter() - t_start)
             return
 
         current_block = int(self.metagraph.block)
         s3_validation_info = self.s3_storage.get_validation_info(hotkey)
         s3_validation_result = None
 
-        if not s3_validation_info or (current_block - s3_validation_info['block']) > 600:  # ~2 hrs
+        if not s3_validation_info or (current_block - s3_validation_info["block"]) > 600:  # ~2 hrs
             s3_validation_result = await self._perform_s3_validation(uid, hotkey, current_block)
 
         # From that index, find a data entity bucket to sample and get it from the miner.
-        chosen_data_entity_bucket: DataEntityBucket = (
-            vali_utils.choose_data_entity_bucket_to_query(index)
-        )
-        bt.logging.info(
-            f"UID:{uid} - HOTKEY:{hotkey}: Querying miner for Bucket ID: {chosen_data_entity_bucket.id}."
-        )
+        chosen_data_entity_bucket: DataEntityBucket = vali_utils.choose_data_entity_bucket_to_query(index)
+        bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Querying miner for Bucket ID: {chosen_data_entity_bucket.id}.")
 
         responses = None
         async with bt.dendrite(wallet=self.wallet) as dendrite:
@@ -430,10 +393,8 @@ class MinerEvaluator:
                 ),
                 timeout=140,
             )
-        
-        data_entity_bucket = vali_utils.get_single_successful_response(
-            responses, GetDataEntityBucket
-        )
+
+        data_entity_bucket = vali_utils.get_single_successful_response(responses, GetDataEntityBucket)
 
         # Treat a failed response the same way we treat a failed validation.
         # If we didn't, the miner could just not respond to queries for data entity buckets it doesn't have.
@@ -450,10 +411,12 @@ class MinerEvaluator:
                         reason="Response failed or is invalid.",
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ]
+                ],
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='invalid response').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(
+                hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status="invalid response"
+            ).observe(time.perf_counter() - t_start)
             return
 
         # Perform basic validation on the entities.
@@ -462,10 +425,8 @@ class MinerEvaluator:
             f"{chosen_data_entity_bucket.size_bytes} bytes across {len(data_entity_bucket.data_entities)} entities."
         )
 
-        data_entities: List[DataEntity] = data_entity_bucket.data_entities
-        (valid, reason) = vali_utils.are_entities_valid(
-            data_entities, chosen_data_entity_bucket
-        )
+        data_entities: list[DataEntity] = data_entity_bucket.data_entities
+        (valid, reason) = vali_utils.are_entities_valid(data_entities, chosen_data_entity_bucket)
         if not valid:
             bt.logging.info(
                 f"UID:{uid} - HOTKEY:{hotkey}: Failed basic entity validation on Bucket ID: {chosen_data_entity_bucket.id} with reason: {reason}"
@@ -479,10 +440,12 @@ class MinerEvaluator:
                         reason=reason,
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ]
+                ],
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='invalid data entity bucket').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(
+                hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status="invalid data entity bucket"
+            ).observe(time.perf_counter() - t_start)
             return
 
         # Perform uniqueness validation on the entity contents.
@@ -501,16 +464,16 @@ class MinerEvaluator:
                         reason="Duplicate entities found.",
                         content_size_bytes_validated=0,  # Since there is just one failed result size doesn't matter.
                     )
-                ]
+                ],
             )
 
-            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='duplicate entities').observe(time.perf_counter() - t_start)
+            metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(
+                hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status="duplicate entities"
+            ).observe(time.perf_counter() - t_start)
             return
 
         # Basic validation and uniqueness passed. Now sample some entities for data correctness.
-        entities_to_validate: List[DataEntity] = vali_utils.choose_entities_to_verify(
-            data_entities
-        )
+        entities_to_validate: list[DataEntity] = vali_utils.choose_entities_to_verify(data_entities)
 
         entity_uris = [entity.uri for entity in entities_to_validate]
 
@@ -518,9 +481,7 @@ class MinerEvaluator:
             f"UID:{uid} - HOTKEY:{hotkey}: Basic validation on Bucket ID: {chosen_data_entity_bucket.id} passed. Validating uris: {entity_uris}."
         )
 
-        scraper = self.scraper_provider.get(
-            MinerEvaluator.PREFERRED_SCRAPERS[chosen_data_entity_bucket.id.source]
-        )
+        scraper = self.scraper_provider.get(MinerEvaluator.PREFERRED_SCRAPERS[chosen_data_entity_bucket.id.source])
         validation_results = await scraper.validate(entities_to_validate)
 
         bt.logging.success(
@@ -533,7 +494,9 @@ class MinerEvaluator:
         del index
         gc.collect()
 
-        metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
+        metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(
+            hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status="ok"
+        ).observe(time.perf_counter() - t_start)
 
         if s3_validation_result:
             # Log validation result
@@ -543,7 +506,7 @@ class MinerEvaluator:
                     f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
                     f"Jobs: {s3_validation_result.total_active_jobs}, Files: {s3_validation_result.recent_files_count}, "
                     f"Coverage: {s3_validation_result.job_coverage_rate:.1f}%, "
-                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB, "
+                    f"Effective size: {s3_validation_result.effective_size_bytes / (1024 * 1024):.1f}MB, "
                     f"Job match: {s3_validation_result.job_match_rate:.1f}%"
                 )
             else:
@@ -559,9 +522,7 @@ class MinerEvaluator:
                 validation_passed=s3_validation_result.is_valid,
             )
 
-    async def _perform_s3_validation(
-        self, uid: int, hotkey: str, current_block: int
-    ) -> Optional[S3ValidationResult]:
+    async def _perform_s3_validation(self, uid: int, hotkey: str, current_block: int) -> S3ValidationResult | None:
         """
         Performs S3 validation using DuckDB-based sampled validation.
 
@@ -581,10 +542,9 @@ class MinerEvaluator:
             s3_auth_url = self.config.s3_auth_url
 
             s3_validation_result = await validate_s3_miner_data(
-                self.wallet, s3_auth_url, hotkey,
-                config=self.config, s3_reader=self.s3_reader
+                self.wallet, s3_auth_url, hotkey, config=self.config, s3_reader=self.s3_reader
             )
-            
+
             # Log results with rich table
             summary = get_s3_validation_summary(s3_validation_result)
             bt.logging.info(f"{hotkey}: {summary}")
@@ -595,13 +555,15 @@ class MinerEvaluator:
                     result=s3_validation_result,
                     uid=uid,
                     hotkey=hotkey,
-                    pagination_stats=None  # Could add pagination stats if available
+                    pagination_stats=None,  # Could add pagination stats if available
                 )
             except Exception as e:
                 bt.logging.debug(f"Error displaying S3 validation table: {e}")
 
             if not s3_validation_result.is_valid and s3_validation_result.validation_issues:
-                bt.logging.debug(f"{hotkey}: S3 validation issues: {', '.join(s3_validation_result.validation_issues[:3])}")
+                bt.logging.debug(
+                    f"{hotkey}: S3 validation issues: {', '.join(s3_validation_result.validation_issues[:3])}"
+                )
 
         except Exception as e:
             bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
@@ -624,7 +586,7 @@ class MinerEvaluator:
                 validation_issues=[f"Validation error: {str(e)}"],
                 reason=f"S3 validation failed: {str(e)}",
                 sample_validation_results=[],
-                sample_job_mismatches=[]
+                sample_job_mismatches=[],
             )
 
         # Update S3 validation storage
@@ -637,9 +599,7 @@ class MinerEvaluator:
                 await self.s3_results_client.publish(
                     {
                         hotkey: {
-                            "effective_size_bytes": float(
-                                s3_validation_result.effective_size_bytes
-                            ),
+                            "effective_size_bytes": float(s3_validation_result.effective_size_bytes),
                             "validation_passed": bool(s3_validation_result.is_valid),
                         }
                     }
@@ -649,9 +609,7 @@ class MinerEvaluator:
 
         return s3_validation_result
 
-    async def _fetch_published_s3_result(
-        self, uid: int, hotkey: str, current_block: int
-    ) -> Optional[S3ValidationResult]:
+    async def _fetch_published_s3_result(self, uid: int, hotkey: str, current_block: int) -> S3ValidationResult | None:
         """Fetch the score published by UID 89 and synthesize an S3ValidationResult.
 
         Non-macrocosmos validators call this instead of running local S3 validation.
@@ -721,17 +679,12 @@ class MinerEvaluator:
         hotkey = metagraph.hotkeys[next_uid]
         last_evaluated = self.storage.read_miner_last_updated(hotkey)
         now = dt.datetime.utcnow()
-        due_update = (
-            last_evaluated is None
-            or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
-        )
+        due_update = last_evaluated is None or (now - last_evaluated) >= constants.MIN_EVALUATION_PERIOD
 
         # If the next miner is not due an update, then all subsequent miners are also not due an update.
         # So we wait until this miner is due an update.
         if not due_update:
-            return (
-                last_evaluated + constants.MIN_EVALUATION_PERIOD - now
-            ).total_seconds()
+            return (last_evaluated + constants.MIN_EVALUATION_PERIOD - now).total_seconds()
 
         t_start = time.perf_counter()
         # Run in batches of 5 (reduced from 15 to lower memory usage).
@@ -741,13 +694,8 @@ class MinerEvaluator:
         # Use a set in case the network has fewer than 5 miners.
         uids_to_eval = {next(self.miner_iterator) for _ in range(miners_to_eval)}
 
-        bt.logging.info(
-            f"Running validation on the following batch of uids: {uids_to_eval}."
-        )
-        threads = [
-            threading.Thread(target=self.eval_miner_sync, args=(uid,))
-            for uid in uids_to_eval
-        ]
+        bt.logging.info(f"Running validation on the following batch of uids: {uids_to_eval}.")
+        threads = [threading.Thread(target=self.eval_miner_sync, args=(uid,)) for uid in uids_to_eval]
         for thread in threads:
             thread.start()
 
@@ -774,9 +722,7 @@ class MinerEvaluator:
             os.makedirs(self.config.neuron.full_path)
 
         # Save the state of the validator to file.
-        self.scorer.save_state(
-            os.path.join(self.config.neuron.full_path, MinerEvaluator.SCORER_FILENAME)
-        )
+        self.scorer.save_state(os.path.join(self.config.neuron.full_path, MinerEvaluator.SCORER_FILENAME))
 
     def load_state(self):
         """Loads the state of the validator from a file."""
@@ -784,9 +730,7 @@ class MinerEvaluator:
 
         with self.lock:
             # Load the state of the validator from file.
-            filepath = os.path.join(
-                self.config.neuron.full_path, MinerEvaluator.SCORER_FILENAME
-            )
+            filepath = os.path.join(self.config.neuron.full_path, MinerEvaluator.SCORER_FILENAME)
             if not os.path.exists(filepath):
                 bt.logging.warning("No scorer state file found. Starting from scratch.")
                 return
@@ -795,22 +739,20 @@ class MinerEvaluator:
                 self.scorer.load_state(filepath)
                 bt.logging.success(f"Loaded scorer state from: {filepath}.")
             except Exception as e:
-                bt.logging.warning(
-                    f"Failed to load scorer state. Reason: {e}. Starting from scratch."
-                )
+                bt.logging.warning(f"Failed to load scorer state. Reason: {e}. Starting from scratch.")
 
             # Resize the scorer in case the loaded state is old and missing newly added neurons.
             self.scorer.resize(len(self.metagraph.hotkeys))
 
     async def _update_and_get_miner_index(
         self, hotkey: str, uid: int, miner_axon: bt.AxonInfo
-    ) -> Optional[ScorableMinerIndex]:
+    ) -> ScorableMinerIndex | None:
         """Updates the index for the specified miner, and returns the latest known index or None if the miner hasn't yet provided an index."""
 
         bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Getting MinerIndex from miner.")
 
         try:
-            responses: List[GetMinerIndex] = None
+            responses: list[GetMinerIndex] = None
             async with bt.dendrite(wallet=self.wallet) as dendrite:
                 responses = await dendrite.forward(
                     axons=[miner_axon],
@@ -818,9 +760,7 @@ class MinerEvaluator:
                     timeout=120,
                 )
 
-            response = vali_utils.get_single_successful_response(
-                responses, GetMinerIndex
-            )
+            response = vali_utils.get_single_successful_response(responses, GetMinerIndex)
             if not response:
                 bt.logging.info(
                     f"UID:{uid} - HOTKEY:{hotkey}: Miner failed to respond with an index. Using last known index if present."
@@ -847,9 +787,7 @@ class MinerEvaluator:
                 f"UID:{uid} - HOTKEY:{hotkey}: Got new compressed miner index of {CompressedMinerIndex.size_bytes(miner_index)} bytes "
                 f"across {CompressedMinerIndex.bucket_count(miner_index)} buckets."
             )
-            self.storage.upsert_compressed_miner_index(
-                miner_index, hotkey, miner_credibility
-            )
+            self.storage.upsert_compressed_miner_index(miner_index, hotkey, miner_credibility)
 
             return self.storage.read_miner_index(hotkey)
         except Exception:
@@ -860,14 +798,10 @@ class MinerEvaluator:
 
     def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
         """Handles an update to a metagraph."""
-        bt.logging.info(
-            f"Evaluator processing an update to metagraph on subnet {netuid}."
-        )
+        bt.logging.info(f"Evaluator processing an update to metagraph on subnet {netuid}.")
 
         with self.lock:
-            bt.logging.info(
-                "Evaluator: Metagraph updated, re-syncing hotkeys, and moving averages."
-            )
+            bt.logging.info("Evaluator: Metagraph updated, re-syncing hotkeys, and moving averages.")
             # Zero out all hotkeys that have been replaced.
             old_hotkeys = self.metagraph.hotkeys
             for uid, hotkey in enumerate(old_hotkeys):
@@ -889,8 +823,10 @@ class MinerEvaluator:
                         )
             # Update the iterator. It will keep its current position if possible.
             self.miner_iterator.set_miner_uids(
-                #utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit) # uses cached/stale self.metagraph --> iterator may miss new miners and keep removed ones.
-                utils.get_miner_uids(metagraph, self.vpermit_rao_limit) # use fresh metagraph --> iterator gets latest eligible UIDs immediately
+                # utils.get_miner_uids(self.metagraph, self.vpermit_rao_limit) # uses cached/stale self.metagraph --> iterator may miss new miners and keep removed ones.
+                utils.get_miner_uids(
+                    metagraph, self.vpermit_rao_limit
+                )  # use fresh metagraph --> iterator gets latest eligible UIDs immediately
             )
 
             # Check to see if the metagraph has changed size.

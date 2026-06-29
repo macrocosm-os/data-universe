@@ -1,8 +1,11 @@
-import json
-from typing import Type
-import unittest
 import datetime as dt
+import json
+import unittest
+from typing import Type
+
 import bittensor as bt
+
+from common import old_protocol
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
@@ -13,8 +16,6 @@ from common.data import (
     DataSource,
     TimeBucket,
 )
-from common import old_protocol
-
 from common.protocol import GetDataEntityBucket, GetMinerIndex
 
 
@@ -29,7 +30,7 @@ def serialize_like_axon(synapse: bt.Synapse) -> str:
     return serialize_like_dendrite(synapse)
 
 
-def deserialize(json_str: str, cls: Type) -> bt.Synapse:
+def deserialize(json_str: str, cls: type) -> bt.Synapse:
     """Deserializes the same way a dendrite/axon does."""
     d = json.loads(json_str)
     return cls(**d)
@@ -96,12 +97,8 @@ class TestGetMinerIndex(unittest.TestCase):
                         )
                     ],
                     DataSource.X.value: [
-                        CompressedEntityBucket(
-                            time_bucket_ids=[10, 11, 12], sizes_bytes=[300, 400, 500]
-                        ),
-                        CompressedEntityBucket(
-                            label="#bittensor", time_bucket_ids=[5], sizes_bytes=[100]
-                        ),
+                        CompressedEntityBucket(time_bucket_ids=[10, 11, 12], sizes_bytes=[300, 400, 500]),
+                        CompressedEntityBucket(label="#bittensor", time_bucket_ids=[5], sizes_bytes=[100]),
                     ],
                 }
             ).json()

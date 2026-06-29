@@ -1,5 +1,5 @@
-import threading
 import datetime as dt
+import threading
 from dataclasses import dataclass, field
 from typing import Dict, List, Optional
 
@@ -9,14 +9,15 @@ import bittensor as bt
 @dataclass
 class CachedMinerODResult:
     """A single OD job result for one miner, stored in the cache."""
+
     job_id: str
-    submitted_at: Optional[dt.datetime]
+    submitted_at: dt.datetime | None
     returned_count: int
-    requested_limit: Optional[int]
-    passed_validation: Optional[bool]  # True=passed, False=failed, None=not sampled
+    requested_limit: int | None
+    passed_validation: bool | None  # True=passed, False=failed, None=not sampled
     speed_multiplier: float
     volume_multiplier: float
-    failure_reason: Optional[str] = None
+    failure_reason: str | None = None
 
 
 class ODJobCache:
@@ -33,13 +34,13 @@ class ODJobCache:
     def __init__(self):
         self._lock = threading.Lock()
         # hotkey -> list of pending results
-        self._results: Dict[str, List[CachedMinerODResult]] = {}
+        self._results: dict[str, list[CachedMinerODResult]] = {}
         # Set of job IDs already processed (replaces processed_job_ids_cache in validator)
         self._processed_jobs: set = set()
         # Max processed jobs to keep (LRU-style cap)
         self._max_processed_jobs = 10_000
 
-    def add_results(self, job_id: str, results: Dict[str, CachedMinerODResult]) -> None:
+    def add_results(self, job_id: str, results: dict[str, CachedMinerODResult]) -> None:
         """Add OD results for multiple miners from a single job.
 
         Args:
@@ -62,11 +63,9 @@ class ODJobCache:
                 for jid in to_remove:
                     self._processed_jobs.discard(jid)
 
-            bt.logging.debug(
-                f"ODJobCache: cached {len(results)} miner results for job {job_id}"
-            )
+            bt.logging.debug(f"ODJobCache: cached {len(results)} miner results for job {job_id}")
 
-    def get_and_drain(self, hotkey: str) -> List[CachedMinerODResult]:
+    def get_and_drain(self, hotkey: str) -> list[CachedMinerODResult]:
         """Return all pending results for a miner and remove them from the cache.
 
         Drain semantics prevent double-counting: once eval_miner() processes
@@ -81,9 +80,7 @@ class ODJobCache:
         with self._lock:
             results = self._results.pop(hotkey, [])
             if results:
-                bt.logging.debug(
-                    f"ODJobCache: drained {len(results)} results for {hotkey[:16]}..."
-                )
+                bt.logging.debug(f"ODJobCache: drained {len(results)} results for {hotkey[:16]}...")
             return results
 
     def is_job_processed(self, job_id: str) -> bool:

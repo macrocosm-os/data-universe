@@ -1,5 +1,12 @@
-from collections import defaultdict
+import contextlib
+import datetime as dt
+import sqlite3
 import threading
+from collections import defaultdict
+from typing import Dict, List
+
+import bittensor as bt
+
 from common import constants, utils
 from common.data import (
     CompressedEntityBucket,
@@ -12,11 +19,6 @@ from common.data import (
     TimeBucket,
 )
 from storage.miner.miner_storage import MinerStorage
-from typing import Dict, List
-import datetime as dt
-import sqlite3
-import contextlib
-import bittensor as bt
 
 
 # Use a timezone aware adapter for timestamp columns.
@@ -45,7 +47,7 @@ def tz_aware_timestamp_adapter(val):
     hours, minutes, seconds = map(int, timepart_full[0].split(b":"))
 
     if len(timepart_full) == 2:
-        microseconds = int("{:0<6.6}".format(timepart_full[1].decode()))
+        microseconds = int(f"{timepart_full[1].decode():0<6.6}")
     else:
         microseconds = 0
 
@@ -83,9 +85,7 @@ class SqliteMinerStorage(MinerStorage):
         self.database = database
 
         # TODO Account for non-content columns when restricting total database size.
-        self.database_max_content_size_bytes = utils.gb_to_bytes(
-            max_database_size_gb_hint
-        )
+        self.database_max_content_size_bytes = utils.gb_to_bytes(max_database_size_gb_hint)
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
@@ -116,15 +116,13 @@ class SqliteMinerStorage(MinerStorage):
     def _create_connection(self):
         # Create the database if it doesn't exist, defaulting to the local directory.
         # Use PARSE_DECLTYPES to convert accessed values into the appropriate type.
-        connection = sqlite3.connect(
-            self.database, detect_types=sqlite3.PARSE_DECLTYPES, timeout=60.0
-        )
+        connection = sqlite3.connect(self.database, detect_types=sqlite3.PARSE_DECLTYPES, timeout=60.0)
         # Allow this connection to parse results from returned rows by column name.
         connection.row_factory = sqlite3.Row
 
         return connection
 
-    def store_data_entities(self, data_entities: List[DataEntity]):
+    def store_data_entities(self, data_entities: list[DataEntity]):
         """Stores any number of DataEntities, making space if necessary."""
 
         added_content_size = 0
@@ -151,14 +149,10 @@ class SqliteMinerStorage(MinerStorage):
                 result = cursor.fetchone()
                 current_content_size = result[0] if result[0] else 0
 
-                if (
-                    current_content_size + added_content_size
-                    > self.database_max_content_size_bytes
-                ):
+                if current_content_size + added_content_size > self.database_max_content_size_bytes:
                     content_bytes_to_clear = (
                         self.database_max_content_size_bytes // 10
-                        if self.database_max_content_size_bytes // 10
-                        > added_content_size
+                        if self.database_max_content_size_bytes // 10 > added_content_size
                         else added_content_size
                     )
                     self.clear_content_from_oldest(content_bytes_to_clear)
@@ -167,9 +161,7 @@ class SqliteMinerStorage(MinerStorage):
             values = []
 
             for data_entity in data_entities:
-                label = (
-                    "NULL" if (data_entity.label is None) else data_entity.label.value
-                )
+                label = "NULL" if (data_entity.label is None) else data_entity.label.value
                 time_bucket_id = TimeBucket.from_datetime(data_entity.datetime).id
                 values.append(
                     [
@@ -195,18 +187,12 @@ class SqliteMinerStorage(MinerStorage):
             cursor = connection.cursor()
             cursor.execute(query, (source,))
             result = cursor.fetchone()
-            return result['earliest_date'] if result and result['earliest_date'] else None
+            return result["earliest_date"] if result and result["earliest_date"] else None
 
-    def list_data_entities_in_data_entity_bucket(
-        self, data_entity_bucket_id: DataEntityBucketId
-    ) -> List[DataEntity]:
+    def list_data_entities_in_data_entity_bucket(self, data_entity_bucket_id: DataEntityBucketId) -> list[DataEntity]:
         """Lists from storage all DataEntities matching the provided DataEntityBucketId."""
         # Get rows that match the DataEntityBucketId.
-        label = (
-            "NULL"
-            if (data_entity_bucket_id.label is None)
-            else data_entity_bucket_id.label.value
-        )
+        label = "NULL" if (data_entity_bucket_id.label is None) else data_entity_bucket_id.label.value
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
@@ -237,16 +223,14 @@ class SqliteMinerStorage(MinerStorage):
                         source=DataSource(row["source"]),
                         content=row["content"],
                         content_size_bytes=row["contentSizeBytes"],
-                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None
+                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None,
                     )
 
                     data_entities.append(data_entity)
                     running_size += row["contentSizeBytes"]
 
             # If we reach the end of the cursor then return all of the data entities for this DataEntityBucket.
-            bt.logging.trace(
-                f"Returning {len(data_entities)} data entities for bucket {data_entity_bucket_id}"
-            )
+            bt.logging.trace(f"Returning {len(data_entities)} data entities for bucket {data_entity_bucket_id}")
             return data_entities
 
     def refresh_compressed_index(self, time_delta: dt.timedelta):
@@ -256,31 +240,24 @@ class SqliteMinerStorage(MinerStorage):
         # Refresh thread using a 20 minute freshness period and calling this method every 21 minutes.
         with self.cached_index_lock:
             if dt.datetime.now() - self.cached_index_updated <= time_delta:
-                bt.logging.trace(
-                    f"Skipping updating cached index. It is already fresher than {time_delta}."
-                )
+                bt.logging.trace(f"Skipping updating cached index. It is already fresher than {time_delta}.")
                 return
             else:
-                bt.logging.info(
-                    f"Cached index out of {time_delta} freshness period. Refreshing cached index."
-                )
+                bt.logging.info(f"Cached index out of {time_delta} freshness period. Refreshing cached index.")
 
         # Else we take the refresh lock and check again within the lock.
         # This handles cases where multiple threads are waiting on refresh at the same time.
         with self.cached_index_refresh_lock:
             with self.cached_index_lock:
                 if dt.datetime.now() - self.cached_index_updated <= time_delta:
-                    bt.logging.trace(
-                        "After waiting on refresh lock the index was already refreshed."
-                    )
+                    bt.logging.trace("After waiting on refresh lock the index was already refreshed.")
                     return
 
             with contextlib.closing(self._create_connection()) as connection:
                 cursor = connection.cursor()
 
                 oldest_time_bucket_id = TimeBucket.from_datetime(
-                    dt.datetime.now()
-                    - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
+                    dt.datetime.now() - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
                 ).id
 
                 # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
@@ -303,8 +280,7 @@ class SqliteMinerStorage(MinerStorage):
                     # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
                     size = (
                         constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                        if row["bucketSize"]
-                        >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                        if row["bucketSize"] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
                         else row["bucketSize"]
                     )
 
@@ -315,9 +291,7 @@ class SqliteMinerStorage(MinerStorage):
                     )
                     bucket.sizes_bytes.append(size)
                     bucket.time_bucket_ids.append(row["timeBucketId"])
-                    buckets_by_source_by_label[DataSource(row["source"])][
-                        label
-                    ] = bucket
+                    buckets_by_source_by_label[DataSource(row["source"])][label] = bucket
 
                 # Convert the buckets_by_source_by_label into a list of lists of CompressedEntityBucket and return
                 bt.logging.trace("Creating protocol 4 cached index.")
@@ -335,8 +309,8 @@ class SqliteMinerStorage(MinerStorage):
                     )
 
     def list_contents_in_data_entity_buckets(
-        self, data_entity_bucket_ids: List[DataEntityBucketId]
-    ) -> Dict[DataEntityBucketId, List[bytes]]:
+        self, data_entity_bucket_ids: list[DataEntityBucketId]
+    ) -> dict[DataEntityBucketId, list[bytes]]:
         """Lists contents for each requested DataEntityBucketId.
         Args:
             data_entity_bucket_ids (List[DataEntityBucketId]): Which buckets to get contents for.
@@ -344,10 +318,7 @@ class SqliteMinerStorage(MinerStorage):
             Dict[DataEntityBucketId, List[bytes]]: Map of each bucket id to contained contents.
         """
         # If no bucket ids or too many bucket ids are provided return an empty dict.
-        if (
-            len(data_entity_bucket_ids) == 0
-            or len(data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT
-        ):
+        if len(data_entity_bucket_ids) == 0 or len(data_entity_bucket_ids) > constants.BULK_BUCKETS_COUNT_LIMIT:
             return defaultdict(list)
 
         # Get rows that match the DataEntityBucketIds.
@@ -368,8 +339,7 @@ class SqliteMinerStorage(MinerStorage):
                     {"OR timeBucketId = ? AND label = ?" * (len(data_entity_bucket_ids) - 1)}
                     LIMIT ?
                  """,
-                list(time_bucket_ids_and_labels)
-                + [constants.BULK_CONTENTS_COUNT_LIMIT],
+                list(time_bucket_ids_and_labels) + [constants.BULK_CONTENTS_COUNT_LIMIT],
             )
 
             # Get the contents from each row and return them up to the configured max size.
@@ -381,11 +351,9 @@ class SqliteMinerStorage(MinerStorage):
                     data_entity_bucket_id = DataEntityBucketId(
                         time_bucket=TimeBucket(id=row["timeBucketId"]),
                         source=DataSource(row["source"]),
-                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None
+                        label=DataLabel(value=row["label"]) if row["label"] != "NULL" else None,
                     )
-                    buckets_ids_to_contents[data_entity_bucket_id].append(
-                        row["content"]
-                    )
+                    buckets_ids_to_contents[data_entity_bucket_id].append(row["content"])
                     running_size += row["contentSizeBytes"]
                 else:
                     # Return early since we hit the size limit.
@@ -400,9 +368,7 @@ class SqliteMinerStorage(MinerStorage):
         """Gets the compressed MinerIndex, which is a summary of all of the DataEntities that this MinerStorage is currently serving."""
 
         # Force refresh index if 10 minutes beyond refersh period. Expected to be refreshed earlier by refresh loop.
-        self.refresh_compressed_index(
-            time_delta=(constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=10))
-        )
+        self.refresh_compressed_index(time_delta=(constants.MINER_CACHE_FRESHNESS + dt.timedelta(minutes=10)))
 
         with self.cached_index_lock:
             # Only protocol 4 is supported at this time.
@@ -418,9 +384,7 @@ class SqliteMinerStorage(MinerStorage):
 
             # TODO Investigate way to select last X bytes worth of entries in a single query.
             # Get the contentSizeBytes of each row by timestamp desc.
-            cursor.execute(
-                "SELECT contentSizeBytes, datetime FROM DataEntity ORDER BY datetime ASC"
-            )
+            cursor.execute("SELECT contentSizeBytes, datetime FROM DataEntity ORDER BY datetime ASC")
 
             running_bytes = 0
             earliest_datetime_to_clear = dt.datetime.min
@@ -436,14 +400,13 @@ class SqliteMinerStorage(MinerStorage):
                     )
                     connection.commit()
 
-    def list_data_entity_buckets(self) -> List[DataEntityBucket]:
+    def list_data_entity_buckets(self) -> list[DataEntityBucket]:
         """Lists all DataEntityBuckets for all the DataEntities that this MinerStorage is currently serving."""
 
         with contextlib.closing(self._create_connection()) as connection:
             cursor = connection.cursor()
             oldest_time_bucket_id = TimeBucket.from_datetime(
-                dt.datetime.now()
-                - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
+                dt.datetime.now() - dt.timedelta(constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS)
             ).id
             # Get sum of content_size_bytes for all rows grouped by DataEntityBucket.
             cursor.execute(
@@ -465,8 +428,7 @@ class SqliteMinerStorage(MinerStorage):
                 # Ensure the miner does not attempt to report more than the max DataEntityBucket size.
                 size = (
                     constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
-                    if row["bucketSize"]
-                    >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
+                    if row["bucketSize"] >= constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES
                     else row["bucketSize"]
                 )
 
@@ -474,16 +436,10 @@ class SqliteMinerStorage(MinerStorage):
                 data_entity_bucket_id = DataEntityBucketId(
                     time_bucket=TimeBucket(id=row["timeBucketId"]),
                     source=DataSource(row["source"]),
-                    label=(
-                        DataLabel(value=row["label"])
-                        if row["label"] != "NULL"
-                        else None
-                    ),
+                    label=(DataLabel(value=row["label"]) if row["label"] != "NULL" else None),
                 )
 
-                data_entity_bucket = DataEntityBucket(
-                    id=data_entity_bucket_id, size_bytes=size
-                )
+                data_entity_bucket = DataEntityBucket(id=data_entity_bucket_id, size_bytes=size)
 
                 data_entity_buckets.append(data_entity_bucket)
 

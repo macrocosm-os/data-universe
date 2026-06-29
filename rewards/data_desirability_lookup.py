@@ -1,7 +1,7 @@
 from common import constants
 from common.data import DataLabel, DataSource
-from rewards.data import DataSourceDesirability, DataDesirabilityLookup
 from dynamic_desirability.constants import DEFAULT_SCALE_FACTOR
+from rewards.data import DataDesirabilityLookup, DataSourceDesirability
 
 #################################################################
 

@@ -17,36 +17,38 @@
 
 # Suppress deprecation warnings BEFORE any imports
 import warnings
+
 warnings.filterwarnings("ignore", category=DeprecationWarning)
 
-import copy
-import sys
-import torch
-import numpy as np
 import asyncio
+import copy
+import os
+import subprocess
+import sys
 import threading
 import time
-import os
+
+import bittensor as bt
+import numpy as np
+import requests
+import torch
 import wandb
-import subprocess
+from dotenv import load_dotenv
+from rich.console import Console
+from rich.table import Table
+
+from common import constants, utils
+from common.api_client import DataUniverseApiClient
 from common.metagraph_syncer import MetagraphSyncer
-from neurons.config import NeuronType, check_config, create_config
 from dynamic_desirability.desirability_retrieval import run_retrieval_from_api
 from neurons import __spec_version__ as spec_version
-from common.api_client import DataUniverseApiClient
-from vali_utils.validator_s3_access import ValidatorS3Access
-from vali_utils.s3_validation_results_client import S3ValidationResultsClient
+from neurons.config import NeuronType, check_config, create_config
 from rewards.data_value_calculator import DataValueCalculator
-from rich.table import Table
-from rich.console import Console
-import requests
-from dotenv import load_dotenv
-import bittensor as bt
-from common import constants
-from common import utils
+from vali_utils import metrics
 from vali_utils.miner_evaluator import MinerEvaluator
 from vali_utils.on_demand.on_demand_validation import OnDemandValidator
-from vali_utils import metrics
+from vali_utils.s3_validation_results_client import S3ValidationResultsClient
+from vali_utils.validator_s3_access import ValidatorS3Access
 
 load_dotenv()
 # Temporary solution to getting rid of annoying bittensor trace logs
@@ -102,9 +104,7 @@ class Validator:
 
         # The metagraph holds the state of the network, letting us know about other validators and miners.
         self.metagraph = self.metagraph_syncer.get_metagraph(self.config.netuid)
-        self.metagraph_syncer.register_listener(
-            self._on_metagraph_updated, netuids=[self.config.netuid]
-        )
+        self.metagraph_syncer.register_listener(self._on_metagraph_updated, netuids=[self.config.netuid])
         bt.logging.info(f"Metagraph: {self.metagraph}.")
 
         # Event loop is thread-affine; will be created inside the validator run thread.
@@ -134,7 +134,7 @@ class Validator:
         if not self.config.wandb.off:
             try:
                 self.new_wandb_run()
-            except Exception as e:
+            except Exception:
                 bt.logging.exception("W&B init failed; will retry later.")
                 # Do NOT flip wandb.off here; just remember there is no active run.
                 self.wandb_run = None
@@ -154,9 +154,7 @@ class Validator:
 
         self.data_universe_api_base_url = self.config.s3_auth_url
         self.verify_ssl = "localhost" not in self.data_universe_api_base_url
-        bt.logging.info(
-            f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}"
-        )
+        bt.logging.info(f"Using Data Universe API URL: {self.data_universe_api_base_url}, {self.verify_ssl=}")
 
         # Getting latest dynamic lookup
         self.get_updated_lookup()
@@ -202,9 +200,9 @@ class Validator:
 
             duration = time.perf_counter() - t_start
 
-            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION.labels(
-                hotkey=self.wallet.hotkey.ss58_address
-            ).set(duration)
+            metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_PROCESS_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(
+                duration
+            )
             metrics.DYNAMIC_DESIRABILITY_RETRIEVAL_LAST_SUCCESSFUL_TS.labels(
                 hotkey=self.wallet.hotkey.ss58_address
             ).set(int(time.time()))
@@ -216,11 +214,7 @@ class Validator:
         """Fetches version tag"""
         try:
             subprocess.run(["git", "fetch", "--tags"], check=True)
-            version_tag = (
-                subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"])
-                .strip()
-                .decode("utf-8")
-            )
+            version_tag = subprocess.check_output(["git", "describe", "--tags", "--abbrev=0"]).strip().decode("utf-8")
             return version_tag
 
         except subprocess.CalledProcessError as e:
@@ -294,17 +288,13 @@ class Validator:
             try:
                 t_start = time.perf_counter()
 
-                bt.logging.debug(
-                    f"Validator running on step({self.step}) block({self.block})."
-                )
+                bt.logging.debug(f"Validator running on step({self.step}) block({self.block}).")
 
                 # Ensure validator hotkey is still registered on the network.
                 utils.assert_registered(self.wallet, self.metagraph)
 
                 # Evaluate the next batch of miners.
-                next_batch_delay_secs = self.loop.run_until_complete(
-                    self.evaluator.run_next_eval_batch()
-                )
+                next_batch_delay_secs = self.loop.run_until_complete(self.evaluator.run_next_eval_batch())
                 self._on_eval_batch_complete()
 
                 # Maybe set weights.
@@ -319,15 +309,11 @@ class Validator:
 
                 self.step += 1
 
-                metrics.MAIN_LOOP_ITERATIONS_TOTAL.labels(
-                    hotkey=self.wallet.hotkey.ss58_address
-                ).inc()
-                metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(
-                    hotkey=self.wallet.hotkey.ss58_address
-                ).set(int(time.time()))
-                metrics.MAIN_LOOP_DURATION.labels(
-                    hotkey=self.wallet.hotkey.ss58_address
-                ).set(time.perf_counter() - t_start)
+                metrics.MAIN_LOOP_ITERATIONS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
+                metrics.MAIN_LOOP_LAST_SUCCESS_TS.labels(hotkey=self.wallet.hotkey.ss58_address).set(int(time.time()))
+                metrics.MAIN_LOOP_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).set(
+                    time.perf_counter() - t_start
+                )
 
                 wait_time = max(0.0, float(next_batch_delay_secs))
                 if wait_time > 0:
@@ -347,27 +333,20 @@ class Validator:
                 if (
                     (not self.config.wandb.off)
                     and (self.wandb_run_start is not None)
-                    and (
-                        (dt.datetime.now() - self.wandb_run_start)
-                        >= dt.timedelta(hours=3)
-                    )
+                    and ((dt.datetime.now() - self.wandb_run_start) >= dt.timedelta(hours=3))
                 ):
                     try:
                         self.new_wandb_run()
                         bt.logging.info("W&B: rotated run successfully")
                     except Exception as e:
-                        bt.logging.error(
-                            f"W&B rotation failed; keeping current run active: {e}"
-                        )
+                        bt.logging.error(f"W&B rotation failed; keeping current run active: {e}")
 
             except KeyboardInterrupt:
                 self.axon.stop()
                 if self.wandb_run:
                     self.wandb_run.finish()
             except Exception as err:
-                metrics.MAIN_LOOP_ERRORS_TOTAL.labels(
-                    hotkey=self.wallet.hotkey.ss58_address
-                ).inc()
+                metrics.MAIN_LOOP_ERRORS_TOTAL.labels(hotkey=self.wallet.hotkey.ss58_address).inc()
                 bt.logging.error("Error during validation", str(err))
 
     def run_in_background_thread(self):
@@ -484,11 +463,7 @@ class Validator:
             try:
                 head_block = int(getattr(metagraph, "block", 0))
                 last_update = int(metagraph.last_update[uid])
-                block_diff = (
-                    max(0, head_block - last_update)
-                    if head_block and last_update
-                    else 0
-                )
+                block_diff = max(0, head_block - last_update) if head_block and last_update else 0
             except Exception:
                 block_diff = 0
         else:
@@ -496,9 +471,7 @@ class Validator:
             block_diff = 0
 
         metrics.BITTENSOR_VALIDATOR_VTRUST.labels(hotkey=hotkey).set(vtrust)
-        metrics.BITTENSOR_VALIDATOR_BLOCK_DIFFERENCE.labels(hotkey=hotkey).set(
-            block_diff
-        )
+        metrics.BITTENSOR_VALIDATOR_BLOCK_DIFFERENCE.labels(hotkey=hotkey).set(block_diff)
         metrics.METAGRAPH_LAST_UPDATE_TS.labels(hotkey=hotkey).set(int(time.time()))
 
     def _on_eval_batch_complete(self):
@@ -521,9 +494,7 @@ class Validator:
             # Check if we've completed at least two evaluation cycles since startup
             if not self.evaluation_cycles_since_startup:
                 self.evaluation_cycles_since_startup = 0
-                bt.logging.info(
-                    "Initializing evaluation cycles counter for delayed weight setting"
-                )
+                bt.logging.info("Initializing evaluation cycles counter for delayed weight setting")
 
             #  if we've completed fewer than the allotted number of evaluation cycles, don't set weights
             if self.evaluation_cycles_since_startup < constants.EVALUATION_ON_STARTUP:
@@ -533,9 +504,7 @@ class Validator:
                 return False
 
             # Normal 20-minute interval check for subsequent weight settings
-            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(
-                minutes=20
-            )
+            return dt.datetime.utcnow() - self.last_weights_set_time > dt.timedelta(minutes=20)
 
     def _start_api_monitoring(self):
         """Start a lightweight monitor to auto-restart API if it becomes unreachable"""
@@ -565,21 +534,15 @@ class Validator:
                     else:
                         # HTTP error
                         consecutive_failures += 1
-                        bt.logging.warning(
-                            f"API health check returned status {response.status_code}"
-                        )
+                        bt.logging.warning(f"API health check returned status {response.status_code}")
                 except requests.RequestException:
                     # Connection error (most likely API is down)
                     consecutive_failures += 1
-                    bt.logging.warning(
-                        f"API server not responding ({consecutive_failures}/{max_failures})"
-                    )
+                    bt.logging.warning(f"API server not responding ({consecutive_failures}/{max_failures})")
 
                 # If too many consecutive failures, restart API
                 if consecutive_failures >= max_failures:
-                    bt.logging.warning(
-                        f"API server unresponsive for {consecutive_failures} checks, restarting..."
-                    )
+                    bt.logging.warning(f"API server unresponsive for {consecutive_failures} checks, restarting...")
 
                     try:
                         # Stop API if it's running
@@ -622,7 +585,7 @@ class Validator:
         # Check if scores contains any NaN values and log a warning if it does.
         if torch.isnan(scores).any():
             bt.logging.warning(
-                f"Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
+                "Scores contain NaN values. This may be due to a lack of responses from miners, or a bug in your reward functions."
             )
 
         # Calculate the average reward for each uid across non-zero values.
@@ -659,13 +622,9 @@ class Validator:
         table.add_column("s3_cred", style="green")
         table.add_column("od_boost", style="yellow")
         table.add_column("od_cred", style="yellow")
-        uids_and_weights = list(
-            zip(processed_weight_uids.tolist(), processed_weights.tolist())
-        )
+        uids_and_weights = list(zip(processed_weight_uids.tolist(), processed_weights.tolist()))
         # Sort by weights descending.
-        sorted_uids_and_weights = sorted(
-            uids_and_weights, key=lambda x: x[1], reverse=True
-        )
+        sorted_uids_and_weights = sorted(uids_and_weights, key=lambda x: x[1], reverse=True)
         for uid, weight in sorted_uids_and_weights:
             table.add_row(
                 str(uid),
@@ -700,9 +659,9 @@ class Validator:
         metrics.SET_WEIGHTS_SUBTENSOR_DURATION.labels(
             hotkey=self.wallet.hotkey.ss58_address, status=metric_status
         ).observe(time.perf_counter() - t0)
-        metrics.SET_WEIGHTS_LAST_TS.labels(
-            hotkey=self.wallet.hotkey.ss58_address, status=metric_status
-        ).set(int(time.time()))
+        metrics.SET_WEIGHTS_LAST_TS.labels(hotkey=self.wallet.hotkey.ss58_address, status=metric_status).set(
+            int(time.time())
+        )
 
     @property
     def block(self):
@@ -744,9 +703,7 @@ def main():
     metagraph_syncer.start()
 
     s3_reader = ValidatorS3Access(wallet=wallet, s3_auth_url=config.s3_auth_url)
-    s3_results_client = S3ValidationResultsClient(
-        wallet=wallet, api_base_url=config.s3_auth_url
-    )
+    s3_results_client = S3ValidationResultsClient(wallet=wallet, api_base_url=config.s3_auth_url)
     evaluator = MinerEvaluator(
         config=config,
         uid=uid,

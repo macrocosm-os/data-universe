@@ -1,11 +1,9 @@
 import dataclasses
-import time
-from common import constants
-from common.date_range import DateRange
-from . import utils
 import datetime as dt
+import time
 from enum import IntEnum
-from typing import Any, Dict, List, Type, Optional
+from typing import Any, Dict, List, Optional, Type
+
 from pydantic import (
     BaseModel,
     ConfigDict,
@@ -14,13 +12,16 @@ from pydantic import (
     field_validator,  # Changed from validator
 )
 
+from common import constants
+from common.date_range import DateRange
+
+from . import utils
+
 
 class StrictBaseModel(BaseModel):
     """A BaseModel that enforces stricter validation constraints"""
 
-    model_config = ConfigDict(
-        use_enum_values=True
-    )
+    model_config = ConfigDict(use_enum_values=True)
 
 
 class TimeBucket(StrictBaseModel):
@@ -28,26 +29,20 @@ class TimeBucket(StrictBaseModel):
 
     model_config = ConfigDict(frozen=True)
 
-    id: PositiveInt = Field(
-        description="Monotonically increasing value idenitifying the given time bucket"
-    )
+    id: PositiveInt = Field(description="Monotonically increasing value idenitifying the given time bucket")
 
     def __hash__(self) -> int:
         return hash(int(self.id))
 
     @classmethod
-    def from_datetime(cls, datetime: dt.datetime) -> Type["TimeBucket"]:
+    def from_datetime(cls, datetime: dt.datetime) -> type["TimeBucket"]:
         """Creates a TimeBucket from the provided datetime.
 
         Args:
             datetime (datetime.datetime): A datetime object, assumed to be in UTC.
         """
         datetime.astimezone(dt.timezone.utc)
-        return TimeBucket(
-            id=utils.seconds_to_hours(
-                datetime.astimezone(tz=dt.timezone.utc).timestamp()
-            )
-        )
+        return TimeBucket(id=utils.seconds_to_hours(datetime.astimezone(tz=dt.timezone.utc).timestamp()))
 
     @classmethod
     def to_date_range(cls, bucket: "TimeBucket") -> DateRange:
@@ -78,7 +73,7 @@ class DataSource(IntEnum):
             DataSource.UNKNOWN_4: 0,
             DataSource.UNKNOWN_5: 0,
             DataSource.UNKNOWN_6: 0,
-            DataSource.UNKNOWN_7: 0
+            DataSource.UNKNOWN_7: 0,
         }
         return weights[self]
 
@@ -93,7 +88,6 @@ class DataLabel(StrictBaseModel):
         description="The label. E.g. a subreddit for Reddit data.",
     )
 
-
     @field_validator("value")  # Changed from validator
     @classmethod
     def lower_case_value(cls, value: str) -> str:
@@ -105,9 +99,7 @@ class DataLabel(StrictBaseModel):
 
         # For all other labels, convert to lowercase as before
         if len(value.lower()) > 140:
-            raise ValueError(
-                f"Label: {value} is over 140 characters when .lower() is applied: {value.lower()}."
-            )
+            raise ValueError(f"Label: {value} is over 140 characters when .lower() is applied: {value.lower()}.")
         return value.lower()
 
 
@@ -119,42 +111,40 @@ class DataEntity(StrictBaseModel):
     uri: str
     datetime: dt.datetime
     source: DataSource
-    label: Optional[DataLabel] = Field(default=None)
+    label: DataLabel | None = Field(default=None)
     content: bytes
     content_size_bytes: int = Field(ge=0)
 
     @classmethod
-    def are_non_content_fields_equal(
-            cls, this: "DataEntity", other: "DataEntity"
-    ) -> bool:
+    def are_non_content_fields_equal(cls, this: "DataEntity", other: "DataEntity") -> bool:
         return (
-                this.uri == other.uri
-                and this.datetime == other.datetime
-                and this.source == other.source
-                and this.label == other.label
+            this.uri == other.uri
+            and this.datetime == other.datetime
+            and this.source == other.source
+            and this.label == other.label
         )
 
-    def to_json_dict(self) -> Dict[str, Any]:
+    def to_json_dict(self) -> dict[str, Any]:
         """Convert DataEntity to JSON-serializable dictionary."""
         return {
             "uri": self.uri,
             "datetime": self.datetime.isoformat(),
             "source": self.source,
             "label": self.label.value if self.label else None,
-            "content": self.content.decode('utf-8'),
-            "content_size_bytes": self.content_size_bytes
+            "content": self.content.decode("utf-8"),
+            "content_size_bytes": self.content_size_bytes,
         }
 
     @classmethod
-    def from_json_dict(cls, data: Dict[str, Any]) -> "DataEntity":
+    def from_json_dict(cls, data: dict[str, Any]) -> "DataEntity":
         """Reconstruct DataEntity from JSON dictionary."""
         return cls(
             uri=data["uri"],
             datetime=dt.datetime.fromisoformat(data["datetime"]),
             source=DataSource(data["source"]),
             label=DataLabel(value=data["label"]) if data["label"] else None,
-            content=data["content"].encode('utf-8'),
-            content_size_bytes=data["content_size_bytes"]
+            content=data["content"].encode("utf-8"),
+            content_size_bytes=data["content_size_bytes"],
         )
 
 
@@ -165,7 +155,7 @@ class DataEntityBucketId(StrictBaseModel):
 
     time_bucket: TimeBucket
     source: DataSource = Field()
-    label: Optional[DataLabel] = Field(default=None)
+    label: DataLabel | None = Field(default=None)
 
     def __hash__(self) -> int:
         return hash(hash(self.time_bucket) + hash(self.source) + hash(self.label))
@@ -174,9 +164,7 @@ class DataEntityBucketId(StrictBaseModel):
 class DataEntityBucket(StrictBaseModel):
     """Summarizes a group of data entities stored by a miner."""
 
-    id: DataEntityBucketId = Field(
-        description="Identifies the qualities by which this bucket is grouped."
-    )
+    id: DataEntityBucketId = Field(description="Identifies the qualities by which this bucket is grouped.")
     size_bytes: int = Field(ge=0, le=constants.DATA_ENTITY_BUCKET_SIZE_LIMIT_BYTES)
 
 
@@ -184,21 +172,21 @@ class DataEntityBucket(StrictBaseModel):
 class CompressedEntityBucket:
     """A compressed version of the DataEntityBucket to reduce bytes sent on the wire."""
 
-    label: Optional[str] = None
-    time_bucket_ids: List[int] = dataclasses.field(default_factory=list)
-    sizes_bytes: List[int] = dataclasses.field(default_factory=list)
+    label: str | None = None
+    time_bucket_ids: list[int] = dataclasses.field(default_factory=list)
+    sizes_bytes: list[int] = dataclasses.field(default_factory=list)
 
 
 class CompressedMinerIndex(BaseModel):
     """A compressed version of the MinerIndex to reduce bytes sent on the wire."""
 
-    sources: Dict[int, List[CompressedEntityBucket]]
+    sources: dict[int, list[CompressedEntityBucket]]
 
     @field_validator("sources")  # Changed from validator
     @classmethod
     def validate_index_size(
-            cls, sources: Dict[int, List[CompressedEntityBucket]]
-    ) -> Dict[int, List[CompressedEntityBucket]]:
+        cls, sources: dict[int, list[CompressedEntityBucket]]
+    ) -> dict[int, list[CompressedEntityBucket]]:
         size = sum(
             len(compressed_bucket.time_bucket_ids)
             for compressed_buckets in sources.values()

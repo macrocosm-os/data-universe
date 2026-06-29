@@ -1,7 +1,10 @@
 import contextlib
+import datetime as dt
+import os
 import time
 import unittest
-import os
+
+import pytz
 
 from common import constants
 from common.data import (
@@ -14,20 +17,14 @@ from common.data import (
     DataSource,
     TimeBucket,
 )
-import datetime as dt
-import pytz
-
-from tests import utils
-
 from storage.miner.sqlite_miner_storage import SqliteMinerStorage
+from tests import utils
 
 
 class TestSqliteMinerStorage(unittest.TestCase):
     def setUp(self):
         # Make a test database for the test to operate against.
-        self.test_storage = SqliteMinerStorage(
-            "TestDb.sqlite", max_database_size_gb_hint=1
-        )
+        self.test_storage = SqliteMinerStorage("TestDb.sqlite", max_database_size_gb_hint=1)
 
     def tearDown(self):
         # Clean up the test database.
@@ -202,9 +199,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
         index = self.test_storage.get_compressed_index()
@@ -263,9 +258,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
         index = self.test_storage.get_compressed_index()
@@ -335,9 +328,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
                     CompressedEntityBucket(
                         label="label_1",
                         time_bucket_ids=[
-                            TimeBucket.from_datetime(
-                                datetime + dt.timedelta(hours=i)
-                            ).id
+                            TimeBucket.from_datetime(datetime + dt.timedelta(hours=i)).id
                             # Expect the buckets in size order descending.
                             for i in range(2, -1, -1)
                         ],
@@ -365,9 +356,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Create two entities for bucket 2.
-        bucket2_datetime = now - dt.timedelta(
-            days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS + 1
-        )
+        bucket2_datetime = now - dt.timedelta(days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS + 1)
         bucket2_entity1 = DataEntity(
             uri="test_entity_2",
             datetime=bucket2_datetime,
@@ -387,9 +376,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
         index = self.test_storage.get_compressed_index()
@@ -417,9 +404,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
     def test_list_entities_in_data_entity_bucket(self):
         """Tests that we can get all the enities in a data entity bucket"""
         # Create an entity for bucket 1.
-        bucket1_datetime = dt.datetime(
-            2023, 12, 12, 1, 30, 0, 1000, tzinfo=dt.timezone.utc
-        )
+        bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, 1000, tzinfo=dt.timezone.utc)
         bucket1_entity1 = DataEntity(
             uri="test_entity_1",
             datetime=bucket1_datetime,
@@ -459,9 +444,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Create the DataEntityBucketId to query by.
         bucket2_id = DataEntityBucketId(
@@ -471,9 +454,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(
-            bucket2_id
-        )
+        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(bucket2_id)
 
         # Confirm we get back the expected data entities.
         self.assertEqual(data_entities, [bucket2_entity1, bucket2_entity2])
@@ -529,9 +510,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(
-            bucket_id
-        )
+        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(bucket_id)
 
         # Confirm we get back exactly two of the entities.
         self.assertEqual(len(data_entities), 2)
@@ -578,9 +557,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(
-            bucket_id
-        )
+        data_entities = self.test_storage.list_data_entities_in_data_entity_bucket(bucket_id)
 
         # Confirm we get back exactly one of the entities.
         self.assertEqual(len(data_entities), 1)
@@ -617,9 +594,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             content_size_bytes=30,
         )
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
         data_entity_buckets = self.test_storage.list_data_entity_buckets()
@@ -674,9 +649,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             content_size_bytes=30,
         )
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
         data_entity_buckets = self.test_storage.list_data_entity_buckets()
@@ -714,9 +687,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             content_size_bytes=10,
         )
         # Create two entities for bucket 2.
-        bucket2_datetime = now - dt.timedelta(
-            days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS + 1
-        )
+        bucket2_datetime = now - dt.timedelta(days=constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS + 1)
         bucket2_entity1 = DataEntity(
             uri="test_entity_2",
             datetime=bucket2_datetime,
@@ -734,9 +705,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
             content_size_bytes=30,
         )
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Get the index.
         data_entity_buckets = self.test_storage.list_data_entity_buckets()
@@ -788,9 +757,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Check that there is no cache yet.
         self.assertIsNone(self.test_storage.cached_index_4)
@@ -822,9 +789,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.assertTrue(utils.are_compressed_indexes_equal(index, expected_index))
         # Confirm that the index is cached and that we it still matches on another get.
         self.assertIsNotNone(self.test_storage.cached_index_4)
-        self.assertTrue(
-            utils.are_compressed_indexes_equal(cached_index, expected_index)
-        )
+        self.assertTrue(utils.are_compressed_indexes_equal(cached_index, expected_index))
 
     def test_list_contents_in_data_entity_buckets_empty_bucket(self):
         """Tests getting back no contents from an empty bucket."""
@@ -836,9 +801,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the contents by the bucket
-        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets(
-            [empty_bucket_id]
-        )
+        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets([empty_bucket_id])
 
         # Confirm we get back an empty map.
         self.assertEqual(len(buckets_to_contents), 0)
@@ -878,9 +841,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         self.test_storage.store_data_entities([bucket1_entity1])
 
         # Get the contents by the buckets.
-        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets(
-            bucket_ids
-        )
+        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets(bucket_ids)
 
         # Confirm we get back an empty map.
         self.assertEqual(len(buckets_to_contents), 0)
@@ -910,9 +871,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the contents by the bucket
-        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id]
-        )
+        buckets_to_contents = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id])
 
         # Confirm we get back the expected content.
         self.assertEqual(
@@ -965,9 +924,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Create the DataEntityBucketId to query by.
         bucket1_id = DataEntityBucketId(
@@ -983,9 +940,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id, bucket2_id]
-        )
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id, bucket2_id])
 
         # Confirm we get back the expected contents.
         self.assertEqual(
@@ -1035,9 +990,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Create the DataEntityBucketId to query by.
         bucket1_id = DataEntityBucketId(
@@ -1053,9 +1006,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id, bucket2_id]
-        )
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id, bucket2_id])
 
         # Confirm we get back the expected contents.
         self.assertEqual(
@@ -1112,9 +1063,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket2_entity2]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket2_entity2])
 
         # Create the DataEntityBucketId to query by.
         bucket1_id = DataEntityBucketId(
@@ -1130,9 +1079,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id, bucket2_id]
-        )
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id, bucket2_id])
 
         # Confirm we get back the expected contents.
         self.assertEqual(
@@ -1185,9 +1132,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket2_entity1, bucket3_entity1]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket2_entity1, bucket3_entity1])
 
         # Create the DataEntityBucketId to query by.
         bucket1_id = DataEntityBucketId(
@@ -1203,9 +1148,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id, bucket2_id]
-        )
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id, bucket2_id])
 
         # Confirm we get back the expected contents.
         self.assertEqual(
@@ -1250,9 +1193,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Store the entities.
-        self.test_storage.store_data_entities(
-            [bucket1_entity1, bucket1_entity2, bucket1_entity3]
-        )
+        self.test_storage.store_data_entities([bucket1_entity1, bucket1_entity2, bucket1_entity3])
 
         # Create the DataEntityBucketId to query by.
         bucket1_id = DataEntityBucketId(
@@ -1262,9 +1203,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id]
-        )
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id])
 
         # Confirm we get back only the two contents.
         self.assertEqual(
@@ -1306,9 +1245,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         )
 
         # Get the entities by the bucket
-        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id]
-        )
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id])
 
         # Confirm we get back only one contents.
         self.assertEqual(
@@ -1319,10 +1256,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
     @unittest.skip("Skip the max list contents test by default.")
     def test_list_contents_in_data_entity_buckets_max_size(self):
         """Tests getting back a maximum size list of contents."""
-        bytes_per_content = (
-            constants.BULK_CONTENTS_SIZE_LIMIT_BYTES
-            // constants.BULK_CONTENTS_COUNT_LIMIT
-        )
+        bytes_per_content = constants.BULK_CONTENTS_SIZE_LIMIT_BYTES // constants.BULK_CONTENTS_COUNT_LIMIT
 
         # Use just two buckets for easy of querying.
         bucket1_datetime = dt.datetime(2023, 12, 12, 1, 30, 0, tzinfo=dt.timezone.utc)
@@ -1351,9 +1285,7 @@ class TestSqliteMinerStorage(unittest.TestCase):
         # Store the entities.
         store_start = time.time()
         self.test_storage.store_data_entities(entities)
-        print(
-            f"Finished storing {constants.BULK_CONTENTS_COUNT_LIMIT} entities in {time.time() - store_start}"
-        )
+        print(f"Finished storing {constants.BULK_CONTENTS_COUNT_LIMIT} entities in {time.time() - store_start}")
 
         # Create the DataEntityBucketIds to query by.
         bucket1_id = DataEntityBucketId(
@@ -1370,12 +1302,8 @@ class TestSqliteMinerStorage(unittest.TestCase):
 
         # Get the entities by the bucket
         list_start = time.time()
-        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets(
-            [bucket1_id, bucket2_id]
-        )
-        print(
-            f"Finished listing {constants.BULK_CONTENTS_COUNT_LIMIT} entities in {time.time() - list_start}"
-        )
+        buckets_to_entities = self.test_storage.list_contents_in_data_entity_buckets([bucket1_id, bucket2_id])
+        print(f"Finished listing {constants.BULK_CONTENTS_COUNT_LIMIT} entities in {time.time() - list_start}")
 
         # Confirm we get the right number of entites
         self.assertEqual(

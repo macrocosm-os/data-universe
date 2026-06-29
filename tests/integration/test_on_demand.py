@@ -1,12 +1,14 @@
-import unittest
 import asyncio
-import bittensor as bt
 import datetime as dt
 import random
-from common.data import DataSource, DataEntity
+import unittest
+
+import bittensor as bt
+
+from common.data import DataEntity, DataSource
 from common.protocol import OnDemandRequest
-from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 from scraping.reddit.reddit_json_scraper import RedditJsonScraper
+from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
 
 
 class TestOnDemandProtocol(unittest.TestCase):
@@ -20,7 +22,7 @@ class TestOnDemandProtocol(unittest.TestCase):
                 keywords=["tao"],
                 start_date=(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=1)).isoformat(),
                 end_date=dt.datetime.now(dt.timezone.utc).isoformat(),
-                limit=3
+                limit=3,
             )
 
             # Set up scraper
@@ -34,9 +36,9 @@ class TestOnDemandProtocol(unittest.TestCase):
                     keyword_mode=test_request.keyword_mode or "any",
                     start_datetime=dt.datetime.fromisoformat(test_request.start_date),
                     end_datetime=dt.datetime.fromisoformat(test_request.end_date),
-                    limit=test_request.limit
+                    limit=test_request.limit,
                 )
-                
+
                 # Verify data was retrieved
                 self.assertTrue(len(data) >= 0, "Error occurred during X scraping")
 
@@ -49,12 +51,11 @@ class TestOnDemandProtocol(unittest.TestCase):
                     print(f"X data: {data}")
                     # Check if any validation passed
                     self.assertTrue(
-                        any(result.is_valid for result in validation_results),
-                        "All validation failed for X sample data"
+                        any(result.is_valid for result in validation_results), "All validation failed for X sample data"
                     )
                 else:
                     print("No X data found for the given criteria")
-                    
+
             except Exception as e:
                 print(f"X test skipped due to error: {str(e)}")
 
@@ -72,7 +73,7 @@ class TestOnDemandProtocol(unittest.TestCase):
                 keywords=["cryptocurrency", "bitcoin"],  # First: subreddit, rest: search terms
                 start_date=(dt.datetime.now(dt.timezone.utc) - dt.timedelta(days=7)).isoformat(),
                 end_date=dt.datetime.now(dt.timezone.utc).isoformat(),
-                limit=3
+                limit=3,
             )
 
             # Set up Reddit scraper
@@ -83,7 +84,7 @@ class TestOnDemandProtocol(unittest.TestCase):
                 # First keyword is subreddit, remaining are search keywords
                 subreddit = test_request.keywords[0]
                 search_keywords = test_request.keywords[1:] if len(test_request.keywords) > 1 else None
-                
+
                 data = await scraper.on_demand_scrape(
                     usernames=None,  # No username filtering
                     subreddit=subreddit,
@@ -91,12 +92,12 @@ class TestOnDemandProtocol(unittest.TestCase):
                     keyword_mode="any",
                     start_datetime=dt.datetime.fromisoformat(test_request.start_date),
                     end_datetime=dt.datetime.fromisoformat(test_request.end_date),
-                    limit=test_request.limit
+                    limit=test_request.limit,
                 )
 
                 # Verify data was retrieved
                 self.assertTrue(len(data) >= 0, "Error occurred during Reddit scraping")
-                
+
                 if data:
                     print(f"Retrieved {len(data)} Reddit posts from r/{subreddit}")
                     # Select 1 random sample for validation
@@ -106,11 +107,11 @@ class TestOnDemandProtocol(unittest.TestCase):
                     # Check if any validation passed
                     self.assertTrue(
                         any(result.is_valid for result in validation_results),
-                        "All validation failed for Reddit sample data"
+                        "All validation failed for Reddit sample data",
                     )
                 else:
                     print(f"No Reddit data found in r/{subreddit} for the given criteria")
-                    
+
             except Exception as e:
                 print(f"Reddit test skipped due to error: {str(e)}")
                 # Don't fail the test if Reddit API is unavailable

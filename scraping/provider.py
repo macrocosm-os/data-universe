@@ -1,14 +1,15 @@
 import threading
-from typing import Callable, Dict
+from collections.abc import Callable
+from typing import Dict
+
 from common.data import DataSource
 from scraping.reddit.reddit_custom_scraper import RedditCustomScraper
 from scraping.reddit.reddit_json_scraper import RedditJsonScraper
 from scraping.reddit.reddit_mc_scraper import RedditMCScraper
 from scraping.scraper import Scraper, ScraperId
-from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
 from scraping.x.apidojo_scraper import ApiDojoTwitterScraper
+from scraping.x.microworlds_scraper import MicroworldsTwitterScraper
 from scraping.x.quacker_url_scraper import QuackerUrlScraper
-
 
 DEFAULT_FACTORIES = {
     ScraperId.X_FLASH: MicroworldsTwitterScraper,
@@ -24,9 +25,7 @@ DEFAULT_FACTORIES = {
 class ScraperProvider:
     """A scraper provider will provide the correct scraper based on the source to be scraped."""
 
-    def __init__(
-        self, factories: Dict[DataSource, Callable[[], Scraper]] = DEFAULT_FACTORIES
-    ):
+    def __init__(self, factories: dict[DataSource, Callable[[], Scraper]] = DEFAULT_FACTORIES):
         self.factories = factories
 
     def get(self, scraper_id: ScraperId) -> Scraper:

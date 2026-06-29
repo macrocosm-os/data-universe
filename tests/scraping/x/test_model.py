@@ -1,8 +1,9 @@
 import datetime as dt
 import unittest
-from common import constants
 
 from sympy import timed
+
+from common import constants
 from scraping.x.model import XContent
 
 

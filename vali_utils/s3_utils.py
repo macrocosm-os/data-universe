@@ -3,29 +3,30 @@ S3 validation utilities for enhanced miner data validation.
 Provides comprehensive validation of S3-stored miner data using metadata analysis.
 """
 
+import datetime as dt
 import hashlib
+import json
+import math
+import os
 import random
 import re
-import requests
+from dataclasses import dataclass
+from typing import Any, Dict, List, Optional, Set
+from urllib.parse import urlparse
+
+import bittensor as bt
+import duckdb
 import pandas as pd
 import pyarrow
-import json
-import os
-import duckdb
-import datetime as dt
-import math
-import bittensor as bt
-from typing import Dict, List, Optional, Any, Set
-from dataclasses import dataclass
+import requests
 
+from common.api_client import TaoSigner
+from common.data import DataEntity, DataSource
 from scraping.provider import ScraperProvider
+from scraping.reddit.model import RedditContent
 from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
-from scraping.reddit.model import RedditContent
-from common.data import DataEntity, DataSource
-from common.api_client import TaoSigner
 from vali_utils.parquet_reader import read_random_row_group
-from urllib.parse import urlparse
 
 
 def normalize_url_for_dedup(url_str: str) -> str:
@@ -78,9 +79,7 @@ def normalize_url_for_dedup(url_str: str) -> str:
     return f"{parsed.scheme}://{netloc}{path.rstrip('/')}"
 
 
-_PRESIGNED_URL_RE = re.compile(
-    r"https?://[^\s'\"]+?\?[^\s'\"]*X-Amz-Signature=[A-Fa-f0-9]+[^\s'\"]*"
-)
+_PRESIGNED_URL_RE = re.compile(r"https?://[^\s'\"]+?\?[^\s'\"]*X-Amz-Signature=[A-Fa-f0-9]+[^\s'\"]*")
 
 
 def scrub_log(text: object) -> str:
@@ -113,6 +112,7 @@ def _weighted_sample_without_replacement(items, weights, k):
 @dataclass
 class S3ValidationResult:
     """S3 validation result structure"""
+
     is_valid: bool
     validation_percentage: float
 
@@ -138,12 +138,12 @@ class S3ValidationResult:
     job_match_rate: float
 
     # Issues and reasoning
-    validation_issues: List[str]
+    validation_issues: list[str]
     reason: str
 
     # Sample data for transparency
-    sample_validation_results: List[str]
-    sample_job_mismatches: List[str]
+    sample_validation_results: list[str]
+    sample_job_mismatches: list[str]
 
     # Competition-based scoring: effective_size = total_size_bytes × coverage²
     effective_size_bytes: float = 0.0
@@ -155,6 +155,7 @@ PREFERRED_SCRAPERS = {
     DataSource.X: ScraperId.X_APIDOJO,
     DataSource.REDDIT: ScraperId.REDDIT_MC,
 }
+
 
 class DuckDBSampledValidator:
     """
@@ -169,18 +170,18 @@ class DuckDBSampledValidator:
     """
 
     # Validation thresholds
-    MAX_DUPLICATE_RATE = 5.0    # 5% max duplicates within same job
-    MAX_EMPTY_RATE = 10.0       # 10% max empty content
+    MAX_DUPLICATE_RATE = 5.0  # 5% max duplicates within same job
+    MAX_EMPTY_RATE = 10.0  # 10% max empty content
     # Missing URLs = instant fail (no rate threshold needed)
-    MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
+    MIN_JOB_MATCH_RATE = 95.0  # 95% min job content match rate
     MIN_SCRAPER_SUCCESS = 80.0  # 80% min scraper success rate
     MIN_ENGAGEMENT_RATE = 95.0  # 95% of X rows must have non-null view_count
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
 
     # File size limits - prevent empty file exploit and oversized file OOM
-    MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
-    MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024        # 512MB - single file cap
-    MIN_BYTES_PER_ROW = 50                         # Legit: 80-1300 B/row. Exploits: 8-25 B/row.
+    MIN_FILE_SIZE_BYTES = 15_000  # 15KB - empty parquet header ≈ 8KB
+    MAX_FILE_SIZE_BYTES = 512 * 1024 * 1024  # 512MB - single file cap
+    MIN_BYTES_PER_ROW = 50  # Legit: 80-1300 B/row. Exploits: 8-25 B/row.
 
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
@@ -193,34 +194,67 @@ class DuckDBSampledValidator:
     # Filename pattern: data_YYYYMMDD_HHMMSS_{rowcount}_{hex16}.parquet
     _FILENAME_ROW_COUNT_RE = re.compile(r"^data_\d{8}_\d{6}_(\d+)_[a-f0-9]{16}\.parquet$")
 
-
     # No optional columns — files must match expected schema exactly
-    OPTIONAL_COLUMNS: Set[str] = set()
+    OPTIONAL_COLUMNS: set[str] = set()
 
     # Schema validation - expected columns per platform (from s3_uploader.py)
     EXPECTED_COLUMNS_X = {
-        'datetime', 'label', 'username', 'text', 'tweet_hashtags', 'timestamp',
-        'url', 'media', 'user_id', 'user_display_name', 'user_verified', 'tweet_id',
-        'is_reply', 'is_quote', 'conversation_id', 'in_reply_to_user_id', 'language',
-        'in_reply_to_username', 'quoted_tweet_id', 'like_count', 'retweet_count',
-        'reply_count', 'quote_count', 'view_count', 'bookmark_count', 'user_blue_verified',
-        'user_description', 'user_location', 'profile_image_url', 'cover_picture_url',
-        'user_followers_count', 'user_following_count', 'scraped_at'
+        "datetime",
+        "label",
+        "username",
+        "text",
+        "tweet_hashtags",
+        "timestamp",
+        "url",
+        "media",
+        "user_id",
+        "user_display_name",
+        "user_verified",
+        "tweet_id",
+        "is_reply",
+        "is_quote",
+        "conversation_id",
+        "in_reply_to_user_id",
+        "language",
+        "in_reply_to_username",
+        "quoted_tweet_id",
+        "like_count",
+        "retweet_count",
+        "reply_count",
+        "quote_count",
+        "view_count",
+        "bookmark_count",
+        "user_blue_verified",
+        "user_description",
+        "user_location",
+        "profile_image_url",
+        "cover_picture_url",
+        "user_followers_count",
+        "user_following_count",
+        "scraped_at",
     }  # 33 columns
 
     EXPECTED_COLUMNS_REDDIT = {
-        'datetime', 'label', 'id', 'username', 'communityName', 'body', 'title',
-        'createdAt', 'dataType', 'parentId', 'url', 'media', 'is_nsfw', 'score',
-        'upvote_ratio', 'num_comments', 'scrapedAt'
+        "datetime",
+        "label",
+        "id",
+        "username",
+        "communityName",
+        "body",
+        "title",
+        "createdAt",
+        "dataType",
+        "parentId",
+        "url",
+        "media",
+        "is_nsfw",
+        "score",
+        "upvote_ratio",
+        "num_comments",
+        "scrapedAt",
     }  # 17 columns
 
-    def __init__(
-        self,
-        wallet,
-        s3_auth_url: str,
-        s3_reader=None,
-        sample_percent: float = 10.0
-    ):
+    def __init__(self, wallet, s3_auth_url: str, s3_reader=None, sample_percent: float = 10.0):
         self.wallet = wallet
         self.s3_auth_url = s3_auth_url
         self.s3_reader = s3_reader
@@ -228,17 +262,14 @@ class DuckDBSampledValidator:
         self.scraper_provider = ScraperProvider()
         self._signer = TaoSigner(keypair=wallet.hotkey)
 
-    async def validate_miner_s3_data(
-        self,
-        miner_hotkey: str,
-        expected_jobs: Dict
-    ) -> S3ValidationResult:
+    async def validate_miner_s3_data(self, miner_hotkey: str, expected_jobs: dict) -> S3ValidationResult:
         """
         Validate miner using DuckDB with random sampling.
 
         Returns S3ValidationResult with effective_size for competition scoring.
         """
         import time
+
         start_time = time.time()
 
         try:
@@ -259,9 +290,9 @@ class DuckDBSampledValidator:
             oversized_files_skipped = 0
             low_bpr_files_skipped = 0
             for f in all_files:
-                key = f.get('key', '')
-                if '/job_id=' in key:
-                    file_size = f.get('size', 0)
+                key = f.get("key", "")
+                if "/job_id=" in key:
+                    file_size = f.get("size", 0)
                     if file_size < self.MIN_FILE_SIZE_BYTES:
                         empty_files_skipped += 1
                         continue
@@ -279,7 +310,7 @@ class DuckDBSampledValidator:
                         if bpr < self.MIN_BYTES_PER_ROW:
                             low_bpr_files_skipped += 1
                             continue
-                    job_id = key.split('/job_id=')[1].split('/')[0]
+                    job_id = key.split("/job_id=")[1].split("/")[0]
                     if job_id not in files_by_job:
                         files_by_job[job_id] = []
                     files_by_job[job_id].append(f)
@@ -306,11 +337,11 @@ class DuckDBSampledValidator:
             total_rows_from_filenames = 0
             for job_id in active_job_ids:
                 job_config = expected_jobs.get(job_id, {})
-                max_rows = job_config.get('max_rows') if isinstance(job_config, dict) else None
+                max_rows = job_config.get("max_rows") if isinstance(job_config, dict) else None
                 job_rows = 0
                 for f in files_by_job[job_id]:
-                    total_size_bytes += f.get('size', 0)
-                    fname_rows = self._parse_row_count_from_filename(f.get('key', ''))
+                    total_size_bytes += f.get("size", 0)
+                    fname_rows = self._parse_row_count_from_filename(f.get("key", ""))
                     if fname_rows is not None:
                         job_rows += fname_rows
                 # Clamp to max_rows if set
@@ -323,13 +354,12 @@ class DuckDBSampledValidator:
 
             if empty_files_skipped > 0:
                 bt.logging.warning(
-                    f"{miner_hotkey}: {empty_files_skipped} empty files skipped "
-                    f"(< {self.MIN_FILE_SIZE_BYTES} bytes)"
+                    f"{miner_hotkey}: {empty_files_skipped} empty files skipped (< {self.MIN_FILE_SIZE_BYTES} bytes)"
                 )
             if oversized_files_skipped > 0:
                 bt.logging.warning(
                     f"{miner_hotkey}: {oversized_files_skipped} oversized files skipped "
-                    f"(> {self.MAX_FILE_SIZE_BYTES/(1024*1024):.0f}MB)"
+                    f"(> {self.MAX_FILE_SIZE_BYTES / (1024 * 1024):.0f}MB)"
                 )
             if low_bpr_files_skipped > 0:
                 bt.logging.warning(
@@ -344,7 +374,7 @@ class DuckDBSampledValidator:
             bt.logging.info(
                 f"{miner_hotkey}: {len(all_files)} total files, "
                 f"{len(active_job_ids)} active jobs, "
-                f"{total_size_bytes/(1024*1024):.1f}MB, "
+                f"{total_size_bytes / (1024 * 1024):.1f}MB, "
                 f"{job_coverage_rate:.1f}% coverage"
             )
 
@@ -366,35 +396,33 @@ class DuckDBSampledValidator:
             # uniform sampling across thousands of fab small files gave each fab file
             # a ~0% chance of inspection. Byte-weighted weights tie validation effort
             # to where the bytes (and the effective_size claim) actually live.
-            weights = [max(1, f.get('size', 0)) for f, _ in active_files]
-            sampled_files_with_job = _weighted_sample_without_replacement(
-                active_files, weights, sample_count
-            )
+            weights = [max(1, f.get("size", 0)) for f, _ in active_files]
+            sampled_files_with_job = _weighted_sample_without_replacement(active_files, weights, sample_count)
 
             # Force-include top-N by claimed rows (these drive effective_size and must
             # always be inspected even if byte-weights would have skipped them).
             def _claimed_rows(item):
                 f, _ = item
-                r = self._parse_row_count_from_filename(f.get('key', ''))
+                r = self._parse_row_count_from_filename(f.get("key", ""))
                 return r if r and r > 0 else 1
 
             top_n = sorted(active_files, key=lambda item: -_claimed_rows(item))[:5]
-            already_keys = {f.get('key') for f, _ in sampled_files_with_job}
-            forced = [item for item in top_n if item[0].get('key') not in already_keys]
+            already_keys = {f.get("key") for f, _ in sampled_files_with_job}
+            forced = [item for item in top_n if item[0].get("key") not in already_keys]
 
             sampled_files_with_job = sampled_files_with_job + forced
             random.shuffle(sampled_files_with_job)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
-            sampled_bytes = sum(f.get('size', 0) for f, _ in sampled_files_with_job)
+            sampled_bytes = sum(f.get("size", 0) for f, _ in sampled_files_with_job)
             bt.logging.info(
                 f"{miner_hotkey}: Sampled {len(sampled_files)} files "
-                f"({sampled_bytes/(1024*1024):.1f}MB / {total_size_bytes/(1024*1024):.1f}MB, "
-                f"{sampled_bytes/max(total_size_bytes,1)*100:.1f}% of bytes)"
+                f"({sampled_bytes / (1024 * 1024):.1f}MB / {total_size_bytes / (1024 * 1024):.1f}MB, "
+                f"{sampled_bytes / max(total_size_bytes, 1) * 100:.1f}% of bytes)"
             )
 
             # Step 3: Get presigned URLs for sample
-            file_keys = [f['key'] for f in sampled_files]
+            file_keys = [f["key"] for f in sampled_files]
             presigned_urls = await self._get_presigned_urls_batch(miner_hotkey, file_keys)
 
             if not presigned_urls:
@@ -409,8 +437,8 @@ class DuckDBSampledValidator:
             # If schema validation failed, skip remaining checks (fail fast)
             if duckdb_result.get("reason"):
                 bt.logging.warning(f"{miner_hotkey}: Schema validation failed - skipping remaining checks")
-                job_match_result = {'total_checked': 0, 'total_matched': 0, 'match_rate': 0.0}
-                scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0.0}
+                job_match_result = {"total_checked": 0, "total_matched": 0, "match_rate": 0.0}
+                scraper_result = {"entities_validated": 0, "entities_passed": 0, "success_rate": 0.0}
             else:
                 # Step 5: Job content matching
                 bt.logging.info(f"{miner_hotkey}: Checking job content matching...")
@@ -424,24 +452,25 @@ class DuckDBSampledValidator:
                 random.shuffle(scraper_files)
 
                 if scraper_files:
-                    bt.logging.info(
-                        f"{miner_hotkey}: Running scraper validation on {len(scraper_files)} files..."
-                    )
+                    bt.logging.info(f"{miner_hotkey}: Running scraper validation on {len(scraper_files)} files...")
                     scraper_result = await self._perform_scraper_validation(
                         miner_hotkey, scraper_files, expected_jobs, presigned_urls, num_entities=20
                     )
                 else:
-                    bt.logging.info(
-                        f"{miner_hotkey}: No files available for scraper validation"
-                    )
-                    scraper_result = {'entities_validated': 0, 'entities_passed': 0, 'success_rate': None, 'sample_results': []}
+                    bt.logging.info(f"{miner_hotkey}: No files available for scraper validation")
+                    scraper_result = {
+                        "entities_validated": 0,
+                        "entities_passed": 0,
+                        "success_rate": None,
+                        "sample_results": [],
+                    }
 
             # Step 7: Validation decision
             issues = []
             duplicate_rate = duckdb_result["duplicate_rate_within_job"]
             empty_rate = duckdb_result["empty_rate"]
-            job_match_rate = job_match_result['match_rate']
-            scraper_success_rate = scraper_result['success_rate']  # None when no recent files
+            job_match_rate = job_match_result["match_rate"]
+            scraper_success_rate = scraper_result["success_rate"]  # None when no recent files
             scraper_success_rate_display = scraper_success_rate if scraper_success_rate is not None else -1.0
             compression_failures = duckdb_result.get("compression_failures", 0)
             row_count_mismatches = duckdb_result.get("row_count_mismatches", 0)
@@ -477,18 +506,16 @@ class DuckDBSampledValidator:
             if is_valid:
                 if total_rows_from_filenames > 0:
                     row_based_size = total_rows_from_filenames * self.STANDARD_BYTES_PER_ROW
-                    effective_size_bytes = row_based_size * (coverage_ratio ** 2) * decode_ratio
+                    effective_size_bytes = row_based_size * (coverage_ratio**2) * decode_ratio
                     bt.logging.info(
                         f"{miner_hotkey}: effective_size: "
                         f"{total_rows_from_filenames} rows × {self.STANDARD_BYTES_PER_ROW} B/row "
-                        f"= {row_based_size/(1024*1024):.1f}MB × coverage²({coverage_ratio:.2f}) "
+                        f"= {row_based_size / (1024 * 1024):.1f}MB × coverage²({coverage_ratio:.2f}) "
                         f"× decode_ratio({decode_ratio:.2f}) "
-                        f"= {effective_size_bytes/(1024*1024):.1f}MB"
+                        f"= {effective_size_bytes / (1024 * 1024):.1f}MB"
                     )
                 else:
-                    bt.logging.warning(
-                        f"{miner_hotkey}: No row counts from filenames — effective_size set to 0"
-                    )
+                    bt.logging.warning(f"{miner_hotkey}: No row counts from filenames — effective_size set to 0")
                     effective_size_bytes = 0.0
             else:
                 effective_size_bytes = 0.0
@@ -507,13 +534,12 @@ class DuckDBSampledValidator:
             if is_valid:
                 bt.logging.success(
                     f"{miner_hotkey}: S3 validation PASSED in {elapsed:.1f}s - "
-                    f"effective_size={effective_size_bytes/(1024*1024):.1f}MB, "
+                    f"effective_size={effective_size_bytes / (1024 * 1024):.1f}MB, "
                     f"dup={duplicate_rate:.1f}%, job_match={job_match_rate:.1f}%, scraper={scraper_success_rate_display:.1f}%"
                 )
             else:
                 bt.logging.warning(
-                    f"{miner_hotkey}: S3 validation FAILED in {elapsed:.1f}s - "
-                    f"Issues: {', '.join(issues)}"
+                    f"{miner_hotkey}: S3 validation FAILED in {elapsed:.1f}s - Issues: {', '.join(issues)}"
                 )
                 bt.logging.info(
                     f"{miner_hotkey}: S3 validation details - "
@@ -534,19 +560,18 @@ class DuckDBSampledValidator:
                 total_size_bytes=total_size_bytes,
                 has_duplicates=(duplicate_rate > self.MAX_DUPLICATE_RATE),
                 duplicate_percentage=duplicate_rate,
-                entities_validated=scraper_result['entities_validated'],
-                entities_passed_scraper=scraper_result['entities_passed'],
+                entities_validated=scraper_result["entities_validated"],
+                entities_passed_scraper=scraper_result["entities_passed"],
                 scraper_success_rate=scraper_success_rate if scraper_success_rate is not None else 0.0,
-                entities_checked_for_job_match=job_match_result['total_checked'],
-                entities_matched_job=job_match_result['total_matched'],
+                entities_checked_for_job_match=job_match_result["total_checked"],
+                entities_matched_job=job_match_result["total_matched"],
                 job_match_rate=job_match_rate,
                 validation_issues=issues,
                 reason=f"DuckDB validation: {'PASSED' if is_valid else 'FAILED'} - {', '.join(issues) if issues else 'All checks passed'}",
-
-                sample_validation_results=scraper_result.get('sample_results', []),
-                sample_job_mismatches=job_match_result.get('mismatch_samples', []),
+                sample_validation_results=scraper_result.get("sample_results", []),
+                sample_job_mismatches=job_match_result.get("mismatch_samples", []),
                 effective_size_bytes=effective_size_bytes,
-                job_coverage_rate=job_coverage_rate
+                job_coverage_rate=job_coverage_rate,
             )
 
         except Exception as e:
@@ -554,50 +579,38 @@ class DuckDBSampledValidator:
             return self._create_failed_result(f"Validation error: {str(e)}")
 
     async def _get_presigned_urls_batch(
-        self,
-        miner_hotkey: str,
-        file_keys: List[str],
-        batch_size: int = 500
-    ) -> Dict[str, str]:
+        self, miner_hotkey: str, file_keys: list[str], batch_size: int = 500
+    ) -> dict[str, str]:
         """Get presigned download URLs in batches using Tao v2 auth."""
 
         all_urls = {}
 
         for i in range(0, len(file_keys), batch_size):
-            batch = file_keys[i:i + batch_size]
+            batch = file_keys[i : i + batch_size]
 
             try:
                 # TODO: decrease back to 1h once validation runtimes stabilise. Bumped to 3h
                 # because long validation passes (large miners + retries) were hitting 403s
                 # on presigned URLs minted at the start of the run.
-                payload = {
-                    "miner_hotkey": miner_hotkey,
-                    "file_keys": batch,
-                    "expiry_hours": 3
-                }
+                payload = {"miner_hotkey": miner_hotkey, "file_keys": batch, "expiry_hours": 3}
 
                 body = json.dumps(payload).encode()
                 headers = self._signer.headers(body)
                 headers["Content-Type"] = "application/json"
 
                 response = requests.post(
-                    f"{self.s3_auth_url}/get-file-presigned-urls",
-                    data=body,
-                    headers=headers,
-                    timeout=120
+                    f"{self.s3_auth_url}/get-file-presigned-urls", data=body, headers=headers, timeout=120
                 )
 
                 if response.status_code == 200:
-                    file_urls = response.json().get('file_urls', {})
+                    file_urls = response.json().get("file_urls", {})
                     for key, data in file_urls.items():
-                        if isinstance(data, dict) and 'presigned_url' in data:
-                            all_urls[key] = data['presigned_url']
+                        if isinstance(data, dict) and "presigned_url" in data:
+                            all_urls[key] = data["presigned_url"]
                         elif isinstance(data, str):
                             all_urls[key] = data
                 else:
-                    bt.logging.warning(
-                        f"get-file-presigned-urls failed: {response.status_code}"
-                    )
+                    bt.logging.warning(f"get-file-presigned-urls failed: {response.status_code}")
 
             except Exception as e:
                 bt.logging.warning(scrub_log(f"Presigned URL batch error: {e}"))
@@ -607,7 +620,7 @@ class DuckDBSampledValidator:
     # Max allowed rows per row group (must match uploader's row_group_size)
     MAX_ROW_GROUP_SIZE = 10_000
 
-    def _check_file_metadata(self, presigned_url: str, conn) -> Optional[Dict]:
+    def _check_file_metadata(self, presigned_url: str, conn) -> dict | None:
         """Read parquet metadata footer only (~1-10KB network read).
         Returns {total_rows, codecs, has_uncompressed, max_rg_rows} or None on error."""
         try:
@@ -622,25 +635,27 @@ class DuckDBSampledValidator:
             codecs = set(result[1]) if result[1] else set()
             max_rg_rows = int(result[2])
             return {
-                'total_rows': total_rows,
-                'codecs': codecs,
-                'has_uncompressed': 'UNCOMPRESSED' in codecs,
-                'max_rg_rows': max_rg_rows
+                "total_rows": total_rows,
+                "codecs": codecs,
+                "has_uncompressed": "UNCOMPRESSED" in codecs,
+                "max_rg_rows": max_rg_rows,
             }
         except Exception as e:
             bt.logging.warning(scrub_log(f"parquet_metadata error: {e}"))
             return None
 
     @staticmethod
-    def _keep_latest_per_job(files_by_job: Dict[str, List[dict]]) -> tuple:
+    def _keep_latest_per_job(files_by_job: dict[str, list[dict]]) -> tuple:
         """Keep only the newest file per job_id (by last_modified desc).
 
         Returns (filtered_files_by_job, stale_files_dropped).
         """
+
         def _newest_key(f):
-            return f.get('last_modified', '')
+            return f.get("last_modified", "")
+
         stale_dropped = 0
-        out: Dict[str, List[dict]] = {}
+        out: dict[str, list[dict]] = {}
         for job_id, files in files_by_job.items():
             if len(files) > 1:
                 out[job_id] = [max(files, key=_newest_key)]
@@ -649,19 +664,19 @@ class DuckDBSampledValidator:
                 out[job_id] = files
         return out, stale_dropped
 
-    def _parse_row_count_from_filename(self, key: str) -> Optional[int]:
+    def _parse_row_count_from_filename(self, key: str) -> int | None:
         """Extract row count from new filename format: data_YYYYMMDD_HHMMSS_{count}_{hex16}.parquet"""
-        filename = key.rsplit('/', 1)[-1]
+        filename = key.rsplit("/", 1)[-1]
         match = self._FILENAME_ROW_COUNT_RE.match(filename)
         return int(match.group(1)) if match else None
 
     async def _sampled_duckdb_validation(
         self,
-        sampled_files: List[Dict],
-        expected_jobs: Dict[str, Dict],
-        presigned_urls: Dict[str, str],
-        samples_per_file: int = 100
-    ) -> Dict[str, Any]:
+        sampled_files: list[dict],
+        expected_jobs: dict[str, dict],
+        presigned_urls: dict[str, str],
+        samples_per_file: int = 100,
+    ) -> dict[str, Any]:
         """
         Lightweight validation using DuckDB metadata + DuckDB url column read + PyArrow row-group reads.
 
@@ -686,7 +701,7 @@ class DuckDBSampledValidator:
 
         # Per-job dedup: separate hash set per job_id
         # DuckDB reads only the url column (all row groups, columnar) — ~500KB per file
-        dedup_hashes_by_job: Dict[str, set] = {}
+        dedup_hashes_by_job: dict[str, set] = {}
         dedup_total = 0
         dedup_duplicates = 0
 
@@ -705,43 +720,42 @@ class DuckDBSampledValidator:
             if schema_failures > 0:
                 break
 
-            file_size = file_info.get('size', 0)
+            file_size = file_info.get("size", 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
                 continue
 
-            presigned_url = presigned_urls.get(file_info['key'])
+            presigned_url = presigned_urls.get(file_info["key"])
             if not presigned_url:
                 continue
 
-            file_key = file_info['key']
-            if '/job_id=' in file_key:
-                job_id = file_key.split('/job_id=')[1].split('/')[0]
+            file_key = file_info["key"]
+            if "/job_id=" in file_key:
+                job_id = file_key.split("/job_id=")[1].split("/")[0]
                 job_config = expected_jobs.get(job_id, {})
-                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', '').lower()
+                params = job_config.get("params", {}) if isinstance(job_config, dict) else {}
+                platform = params.get("platform", "").lower()
             else:
-                job_id = 'unknown'
-                platform = 'unknown'
+                job_id = "unknown"
+                platform = "unknown"
 
             conn = None
             try:
-                conn = duckdb.connect(':memory:')
+                conn = duckdb.connect(":memory:")
                 conn.execute("SET memory_limit='2GB';")
                 conn.execute("SET threads=1;")
 
                 # --- Metadata check (footer-only read, ~1-10KB) ---
                 metadata = self._check_file_metadata(presigned_url, conn)
                 if metadata:
-                    file_rows = metadata['total_rows']
+                    file_rows = metadata["total_rows"]
 
-                    if metadata['has_uncompressed']:
+                    if metadata["has_uncompressed"]:
                         compression_failures += 1
                         bt.logging.warning(
-                            f"UNCOMPRESSED file detected: {file_key} "
-                            f"({file_rows} rows, codecs={metadata['codecs']})"
+                            f"UNCOMPRESSED file detected: {file_key} ({file_rows} rows, codecs={metadata['codecs']})"
                         )
 
-                    if metadata['max_rg_rows'] > self.MAX_ROW_GROUP_SIZE:
+                    if metadata["max_rg_rows"] > self.MAX_ROW_GROUP_SIZE:
                         schema_failures += 1
                         bt.logging.warning(
                             f"Row group too large: {metadata['max_rg_rows']} rows "
@@ -758,15 +772,13 @@ class DuckDBSampledValidator:
                         )
 
                 # --- Schema check (footer-only read) ---
-                schema_result = conn.execute(
-                    f"SELECT name, type FROM parquet_schema('{presigned_url}')"
-                ).fetchall()
-                excluded_names = {'schema', 'list', 'element', 'model_config'}
+                schema_result = conn.execute(f"SELECT name, type FROM parquet_schema('{presigned_url}')").fetchall()
+                excluded_names = {"schema", "list", "element", "model_config"}
                 all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
                 available_columns = set(all_column_names)
 
                 optional_lower = {col.lower() for col in self.OPTIONAL_COLUMNS}
-                if platform in ['x', 'twitter']:
+                if platform in ["x", "twitter"]:
                     expected_columns = {col.lower() for col in self.EXPECTED_COLUMNS_X}
                     max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                 else:
@@ -786,9 +798,7 @@ class DuckDBSampledValidator:
 
                 unexpected_columns = available_columns - allowed_columns
                 if unexpected_columns:
-                    bt.logging.warning(
-                        f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}"
-                    )
+                    bt.logging.warning(f"Invalid schema: unexpected columns {list(unexpected_columns)[:5]}")
                     schema_failures += 1
                     break
 
@@ -804,15 +814,12 @@ class DuckDBSampledValidator:
 
                 # scraped_at / scrapedAt must be stored as a string (BYTE_ARRAY),
                 # not a parquet timestamp dtype.
-                target_col = 'scraped_at' if platform in ['x', 'twitter'] else 'scrapedat'
+                target_col = "scraped_at" if platform in ["x", "twitter"] else "scrapedat"
                 bad_dtype = any(
-                    name.lower() == target_col and str(ptype).upper() != 'BYTE_ARRAY'
-                    for name, ptype in schema_result
+                    name.lower() == target_col and str(ptype).upper() != "BYTE_ARRAY" for name, ptype in schema_result
                 )
                 if bad_dtype:
-                    bt.logging.warning(
-                        f"scraped_at must be string: {file_key}"
-                    )
+                    bt.logging.warning(f"scraped_at must be string: {file_key}")
                     schema_failures += 1
                     break
 
@@ -821,9 +828,7 @@ class DuckDBSampledValidator:
                     dedup_hashes_by_job[job_id] = set()
                 job_hashes = dedup_hashes_by_job[job_id]
 
-                url_rows = conn.execute(
-                    f"SELECT url FROM read_parquet('{presigned_url}')"
-                ).fetchall()
+                url_rows = conn.execute(f"SELECT url FROM read_parquet('{presigned_url}')").fetchall()
 
                 # L3: decodable rows vs filename-claimed rows
                 file_decodable = sum(1 for (u,) in url_rows if u and str(u).strip())
@@ -842,23 +847,21 @@ class DuckDBSampledValidator:
                         job_hashes.add(h)
 
                 # --- PyArrow row-group read for empty/missing content check ---
-                if platform in ['x', 'twitter']:
-                    read_cols = ['url', 'text', 'view_count', 'tweet_id', 'username']
+                if platform in ["x", "twitter"]:
+                    read_cols = ["url", "text", "view_count", "tweet_id", "username"]
                 else:
-                    read_cols = ['url', 'body', 'title', 'id']
+                    read_cols = ["url", "body", "title", "id"]
                 read_cols = [c for c in read_cols if c in available_columns]
-                if 'url' not in read_cols:
-                    read_cols.append('url')
+                if "url" not in read_cols:
+                    read_cols.append("url")
 
-                rg_df = read_random_row_group(
-                    presigned_url, file_size, columns=read_cols
-                )
+                rg_df = read_random_row_group(presigned_url, file_size, columns=read_cols)
                 if rg_df is not None and len(rg_df) > 0:
                     rg_df.columns = [c.lower() for c in rg_df.columns]
                     total_rows += len(rg_df)
 
                     # Missing URL check — instant fail
-                    url_missing = rg_df['url'].isna() | (rg_df['url'].astype(str).str.strip() == '')
+                    url_missing = rg_df["url"].isna() | (rg_df["url"].astype(str).str.strip() == "")
                     missing_urls = int(url_missing.sum())
                     if missing_urls > 0:
                         bt.logging.warning(f"File has {missing_urls} rows with missing URL")
@@ -867,21 +870,21 @@ class DuckDBSampledValidator:
                             "duplicate_rate_within_job": 100.0,
                             "empty_rate": 100.0,
                             "total_rows": 0,
-                            "reason": f"File contains {missing_urls} rows with missing URL"
+                            "reason": f"File contains {missing_urls} rows with missing URL",
                         }
 
                     # Empty content check
-                    if platform in ['x', 'twitter']:
-                        empty_mask = rg_df.get('text', pd.Series(dtype=str)).fillna('').str.strip() == ''
+                    if platform in ["x", "twitter"]:
+                        empty_mask = rg_df.get("text", pd.Series(dtype=str)).fillna("").str.strip() == ""
                     else:
-                        body_empty = rg_df.get('body', pd.Series(dtype=str)).fillna('').str.strip() == ''
-                        title_empty = rg_df.get('title', pd.Series(dtype=str)).fillna('').str.strip() == ''
+                        body_empty = rg_df.get("body", pd.Series(dtype=str)).fillna("").str.strip() == ""
+                        title_empty = rg_df.get("title", pd.Series(dtype=str)).fillna("").str.strip() == ""
                         empty_mask = body_empty & title_empty
                     empty_count += int(empty_mask.sum())
 
                     # X-only: empty username = instant fail (fabricated data)
-                    if platform in ['x', 'twitter'] and 'username' in rg_df.columns:
-                        empty_user = rg_df['username'].fillna('').astype(str).str.strip() == ''
+                    if platform in ["x", "twitter"] and "username" in rg_df.columns:
+                        empty_user = rg_df["username"].fillna("").astype(str).str.strip() == ""
                         empty_user_pct = empty_user.sum() / len(rg_df) * 100
                         if empty_user_pct > 50:
                             bt.logging.warning(f"Empty username: {empty_user_pct:.0f}% rows have no username")
@@ -890,32 +893,32 @@ class DuckDBSampledValidator:
                                 "duplicate_rate_within_job": 100.0,
                                 "empty_rate": 100.0,
                                 "total_rows": 0,
-                                "reason": f"Empty username in {empty_user_pct:.0f}% of X rows"
+                                "reason": f"Empty username in {empty_user_pct:.0f}% of X rows",
                             }
 
                     # X-only: engagement, uniqueness, and URL↔tweet_id consistency
-                    if platform in ['x', 'twitter']:
+                    if platform in ["x", "twitter"]:
                         # Engagement: view_count must be non-null
-                        if 'view_count' in rg_df.columns:
-                            views = pd.to_numeric(rg_df['view_count'], errors='coerce')
+                        if "view_count" in rg_df.columns:
+                            views = pd.to_numeric(rg_df["view_count"], errors="coerce")
                             engagement_total_rows += len(views)
                             engagement_missing_rows += int(views.isna().sum())
 
                         # Unique tweet_id ratio
-                        if 'tweet_id' in rg_df.columns:
-                            ids = rg_df['tweet_id'].dropna().astype(str)
+                        if "tweet_id" in rg_df.columns:
+                            ids = rg_df["tweet_id"].dropna().astype(str)
                             total_content_id_rows += len(ids)
                             unique_content_ids.update(ids.tolist())
 
                             # URL↔tweet_id consistency: status ID in URL must match tweet_id
-                            if 'url' in rg_df.columns:
+                            if "url" in rg_df.columns:
                                 url_id_mismatches = 0
-                                check_df = rg_df[['url', 'tweet_id']].dropna()
+                                check_df = rg_df[["url", "tweet_id"]].dropna()
                                 for _, r in check_df.head(500).iterrows():
-                                    url_str = str(r['url'])
-                                    tid = str(r['tweet_id'])
-                                    if '/status/' in url_str:
-                                        url_status_id = url_str.split('/status/')[-1].split('?')[0].split('/')[0]
+                                    url_str = str(r["url"])
+                                    tid = str(r["tweet_id"])
+                                    if "/status/" in url_str:
+                                        url_status_id = url_str.split("/status/")[-1].split("?")[0].split("/")[0]
                                         if url_status_id != tid:
                                             url_id_mismatches += 1
                                 if url_id_mismatches > 0:
@@ -929,13 +932,13 @@ class DuckDBSampledValidator:
                                         "duplicate_rate_within_job": 100.0,
                                         "empty_rate": 100.0,
                                         "total_rows": 0,
-                                        "reason": f"URL↔tweet_id mismatch in {url_id_mismatches} rows ({mismatch_rate:.1f}%)"
+                                        "reason": f"URL↔tweet_id mismatch in {url_id_mismatches} rows ({mismatch_rate:.1f}%)",
                                     }
 
                     # Reddit: unique id ratio
-                    elif platform == 'reddit':
-                        if 'id' in rg_df.columns:
-                            ids = rg_df['id'].dropna().astype(str)
+                    elif platform == "reddit":
+                        if "id" in rg_df.columns:
+                            ids = rg_df["id"].dropna().astype(str)
                             total_content_id_rows += len(ids)
                             unique_content_ids.update(ids.tolist())
 
@@ -946,9 +949,7 @@ class DuckDBSampledValidator:
                 continue
             except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
                 page_decode_failures += 1
-                bt.logging.warning(
-                    scrub_log(f"Page-decode failure: {type(e).__name__}: {e}")
-                )
+                bt.logging.warning(scrub_log(f"Page-decode failure: {type(e).__name__}: {e}"))
                 continue
             except Exception as e:
                 bt.logging.warning(scrub_log(f"Sampled validation error: {e}"))
@@ -962,28 +963,24 @@ class DuckDBSampledValidator:
 
         # Zero tolerance for schema failures
         if schema_failures > 0:
-            bt.logging.warning(
-                f"Schema validation FAILED: {schema_failures}/{files_checked} files have invalid schema"
-            )
+            bt.logging.warning(f"Schema validation FAILED: {schema_failures}/{files_checked} files have invalid schema")
             return {
                 "success": False,
                 "duplicate_rate_within_job": 100.0,
                 "empty_rate": 100.0,
                 "total_rows": 0,
-                "reason": f"Invalid schema in {schema_failures} files"
+                "reason": f"Invalid schema in {schema_failures} files",
             }
 
         # Zero tolerance for v3 page-decode failures (valid footer, corrupt data pages)
         if page_decode_failures > 0:
-            bt.logging.warning(
-                f"Page-decode FAILED: {page_decode_failures} files have unreadable data pages"
-            )
+            bt.logging.warning(f"Page-decode FAILED: {page_decode_failures} files have unreadable data pages")
             return {
                 "success": False,
                 "duplicate_rate_within_job": 100.0,
                 "empty_rate": 100.0,
                 "total_rows": 0,
-                "reason": f"Corrupt data pages in {page_decode_failures} files"
+                "reason": f"Corrupt data pages in {page_decode_failures} files",
             }
 
         # Per-job duplicate rate
@@ -998,30 +995,29 @@ class DuckDBSampledValidator:
                 "duplicate_rate_within_job": duplicate_rate,
                 "empty_rate": 100.0,
                 "total_rows": 0,
-                "reason": f"High duplicate rate: {duplicate_rate:.1f}% (max {self.MAX_DUPLICATE_RATE}%)"
+                "reason": f"High duplicate rate: {duplicate_rate:.1f}% (max {self.MAX_DUPLICATE_RATE}%)",
             }
 
         # Engagement check (X only): legit scrapers always return view_count
         engagement_rate = 0.0
         if engagement_total_rows > 0:
-            engagement_rate = ((engagement_total_rows - engagement_missing_rows) / engagement_total_rows * 100)
+            engagement_rate = (engagement_total_rows - engagement_missing_rows) / engagement_total_rows * 100
             if engagement_rate < self.MIN_ENGAGEMENT_RATE:
                 bt.logging.warning(
-                    f"Engagement FAILED: {engagement_rate:.1f}% rows have view_count "
-                    f"(min {self.MIN_ENGAGEMENT_RATE}%)"
+                    f"Engagement FAILED: {engagement_rate:.1f}% rows have view_count (min {self.MIN_ENGAGEMENT_RATE}%)"
                 )
                 return {
                     "success": False,
                     "duplicate_rate_within_job": duplicate_rate,
                     "empty_rate": 100.0,
                     "total_rows": 0,
-                    "reason": f"Missing engagement: only {engagement_rate:.1f}% rows have view_count"
+                    "reason": f"Missing engagement: only {engagement_rate:.1f}% rows have view_count",
                 }
 
         # Unique content ratio: catches bulk-duplicated content (X: tweet_id, Reddit: id)
         unique_ratio = 0.0
         if total_content_id_rows > 0:
-            unique_ratio = (len(unique_content_ids) / total_content_id_rows * 100)
+            unique_ratio = len(unique_content_ids) / total_content_id_rows * 100
             if unique_ratio < self.MIN_UNIQUE_CONTENT_RATIO:
                 bt.logging.warning(
                     f"Unique content FAILED: {unique_ratio:.1f}% unique content IDs "
@@ -1032,14 +1028,11 @@ class DuckDBSampledValidator:
                     "duplicate_rate_within_job": duplicate_rate,
                     "empty_rate": 100.0,
                     "total_rows": 0,
-                    "reason": f"Low content uniqueness: {unique_ratio:.1f}% unique content IDs"
+                    "reason": f"Low content uniqueness: {unique_ratio:.1f}% unique content IDs",
                 }
 
         # L3: decodable-rows ratio across sampled files
-        decode_ratio = (
-            min(1.0, sum_decodable_rows / sum_sampled_claimed_rows)
-            if sum_sampled_claimed_rows > 0 else 1.0
-        )
+        decode_ratio = min(1.0, sum_decodable_rows / sum_sampled_claimed_rows) if sum_sampled_claimed_rows > 0 else 1.0
 
         if total_rows == 0:
             return {
@@ -1079,11 +1072,11 @@ class DuckDBSampledValidator:
 
     async def _perform_job_content_matching(
         self,
-        sampled_files: List[Dict],
-        expected_jobs: Dict[str, Dict],
-        presigned_urls: Dict[str, str],
-        samples_per_file: int = 10
-    ) -> Dict[str, Any]:
+        sampled_files: list[dict],
+        expected_jobs: dict[str, dict],
+        presigned_urls: dict[str, str],
+        samples_per_file: int = 10,
+    ) -> dict[str, Any]:
         """Check if data matches job requirements (label/keyword/time)."""
         total_checked = 0
         total_matched = 0
@@ -1091,9 +1084,9 @@ class DuckDBSampledValidator:
 
         files_by_job = {}
         for file_info in sampled_files:
-            file_key = file_info['key']
-            if '/job_id=' in file_key:
-                job_id = file_key.split('/job_id=')[1].split('/')[0]
+            file_key = file_info["key"]
+            if "/job_id=" in file_key:
+                job_id = file_key.split("/job_id=")[1].split("/")[0]
                 if job_id not in files_by_job:
                     files_by_job[job_id] = []
                 files_by_job[job_id].append(file_info)
@@ -1104,12 +1097,12 @@ class DuckDBSampledValidator:
                 continue
 
             # Access params nested structure (Gravity schema)
-            params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-            platform = params.get('platform', '').lower()
-            job_label = params.get('label')
-            job_keyword = params.get('keyword')
-            job_start_date = params.get('post_start_datetime')
-            job_end_date = params.get('post_end_datetime')
+            params = job_config.get("params", {}) if isinstance(job_config, dict) else {}
+            platform = params.get("platform", "").lower()
+            job_label = params.get("label")
+            job_keyword = params.get("keyword")
+            job_start_date = params.get("post_start_datetime")
+            job_end_date = params.get("post_end_datetime")
 
             job_start_dt = self._parse_datetime(job_start_date)
             job_end_dt = self._parse_datetime(job_end_date)
@@ -1122,38 +1115,38 @@ class DuckDBSampledValidator:
 
             for file_info in sample_files:
                 # Skip oversized files to prevent OOM
-                file_size = file_info.get('size', 0)
+                file_size = file_info.get("size", 0)
                 if file_size > self.MAX_FILE_SIZE_BYTES:
                     continue
 
-                presigned_url = presigned_urls.get(file_info['key'])
+                presigned_url = presigned_urls.get(file_info["key"])
                 if not presigned_url:
                     continue
 
                 conn = None
                 try:
                     # Schema validation — only reads parquet footer
-                    conn = duckdb.connect(':memory:')
+                    conn = duckdb.connect(":memory:")
                     conn.execute("SET memory_limit='2GB';")
                     conn.execute("SET threads=1;")
-                    schema_result = conn.execute(
-                        f"SELECT name FROM parquet_schema('{presigned_url}')"
-                    ).fetchall()
-                    excluded_names = {'schema', 'list', 'element', 'model_config'}
+                    schema_result = conn.execute(f"SELECT name FROM parquet_schema('{presigned_url}')").fetchall()
+                    excluded_names = {"schema", "list", "element", "model_config"}
                     all_column_names = [r[0].lower() for r in schema_result if r[0].lower() not in excluded_names]
 
-                    if platform in ['x', 'twitter']:
+                    if platform in ["x", "twitter"]:
                         max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                     else:
                         max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
 
                     if len(all_column_names) > max_columns:
-                        bt.logging.debug(f"Skipping file with {len(all_column_names)} columns (expected max {max_columns})")
+                        bt.logging.debug(
+                            f"Skipping file with {len(all_column_names)} columns (expected max {max_columns})"
+                        )
                         continue
 
                     # Skip files missing required columns (fabricated data)
                     available_cols = set(all_column_names)
-                    if platform in ['x', 'twitter']:
+                    if platform in ["x", "twitter"]:
                         required = {c.lower() for c in self.EXPECTED_COLUMNS_X}
                     else:
                         required = {c.lower() for c in self.EXPECTED_COLUMNS_REDDIT}
@@ -1161,10 +1154,7 @@ class DuckDBSampledValidator:
                         continue
 
                     # Read 1 random row group via Range requests (~3MB vs full scan)
-                    sample_df = read_random_row_group(
-                        presigned_url, file_size,
-                        columns=None, max_rows=samples_per_file
-                    )
+                    sample_df = read_random_row_group(presigned_url, file_size, columns=None, max_rows=samples_per_file)
 
                     if sample_df is None or len(sample_df) == 0:
                         continue
@@ -1172,18 +1162,25 @@ class DuckDBSampledValidator:
                     for _, row in sample_df.iterrows():
                         total_checked += 1
                         matches = self._check_row_matches_job(
-                            row, platform, job_label, job_keyword,
-                            job_start_dt, job_end_dt, has_label, has_keyword, has_time
+                            row,
+                            platform,
+                            job_label,
+                            job_keyword,
+                            job_start_dt,
+                            job_end_dt,
+                            has_label,
+                            has_keyword,
+                            has_time,
                         )
                         if matches:
                             total_matched += 1
                         elif len(mismatch_samples) < 5:
-                            uri = row.get('url', 'unknown')
+                            uri = row.get("url", "unknown")
                             mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
 
                     del sample_df
 
-                except Exception as e:
+                except Exception:
                     continue
                 finally:
                     if conn:
@@ -1193,15 +1190,14 @@ class DuckDBSampledValidator:
                             pass
 
         return {
-            'total_checked': total_checked,
-            'total_matched': total_matched,
-            'match_rate': (total_matched / total_checked * 100) if total_checked > 0 else 0.0,
-            'mismatch_samples': mismatch_samples
+            "total_checked": total_checked,
+            "total_matched": total_matched,
+            "match_rate": (total_matched / total_checked * 100) if total_checked > 0 else 0.0,
+            "mismatch_samples": mismatch_samples,
         }
 
     def _check_row_matches_job(
-        self, row, platform, job_label, job_keyword,
-        job_start_dt, job_end_dt, has_label, has_keyword, has_time
+        self, row, platform, job_label, job_keyword, job_start_dt, job_end_dt, has_label, has_keyword, has_time
     ) -> bool:
         """Check if a single row matches job requirements."""
         label_matches = True
@@ -1210,11 +1206,11 @@ class DuckDBSampledValidator:
 
         if has_label:
             job_label_norm = str(job_label).lower().strip()
-            if platform in ['x', 'twitter']:
-                raw_hashtags = row.get('tweet_hashtags', [])
+            if platform in ["x", "twitter"]:
+                raw_hashtags = row.get("tweet_hashtags", [])
                 hashtags_list = []
                 if raw_hashtags is not None:
-                    if hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
+                    if hasattr(raw_hashtags, "__iter__") and not isinstance(raw_hashtags, str):
                         try:
                             hashtags_list = list(raw_hashtags)
                         except:
@@ -1222,30 +1218,26 @@ class DuckDBSampledValidator:
                     elif not pd.isna(raw_hashtags):
                         hashtags_list = [raw_hashtags]
                 hashtags_lower = [str(h).lower().strip() for h in hashtags_list if h]
-                label_without_hash = job_label_norm.lstrip('#')
-                label_matches = (
-                    f"#{label_without_hash}" in hashtags_lower or
-                    label_without_hash in hashtags_lower
-                )
-            elif platform == 'reddit':
-                entity_label = str(row.get('communityName', '')).lower().strip()
-                label_matches = (
-                    entity_label == job_label_norm or
-                    entity_label.removeprefix('r/') == job_label_norm.removeprefix('r/')
-                )
+                label_without_hash = job_label_norm.lstrip("#")
+                label_matches = f"#{label_without_hash}" in hashtags_lower or label_without_hash in hashtags_lower
+            elif platform == "reddit":
+                entity_label = str(row.get("communityName", "")).lower().strip()
+                label_matches = entity_label == job_label_norm or entity_label.removeprefix(
+                    "r/"
+                ) == job_label_norm.removeprefix("r/")
 
         if has_keyword:
             job_kw_norm = str(job_keyword).lower().strip()
-            if platform == 'reddit':
-                body = str(row.get('body', '')).lower()
-                title = str(row.get('title', '')).lower()
-                keyword_matches = (job_kw_norm in body or job_kw_norm in title)
+            if platform == "reddit":
+                body = str(row.get("body", "")).lower()
+                title = str(row.get("title", "")).lower()
+                keyword_matches = job_kw_norm in body or job_kw_norm in title
             else:
-                text = str(row.get('text', '')).lower()
+                text = str(row.get("text", "")).lower()
                 keyword_matches = job_kw_norm in text
 
         if has_time:
-            entity_dt = row.get('datetime')
+            entity_dt = row.get("datetime")
             if entity_dt is not None and not pd.isna(entity_dt):
                 try:
                     entity_dt = pd.to_datetime(entity_dt, utc=True)
@@ -1259,19 +1251,17 @@ class DuckDBSampledValidator:
                 time_matches = False
 
         return (
-            (not has_label or label_matches) and
-            (not has_keyword or keyword_matches) and
-            (not has_time or time_matches)
+            (not has_label or label_matches) and (not has_keyword or keyword_matches) and (not has_time or time_matches)
         )
 
     async def _perform_scraper_validation(
         self,
         miner_hotkey: str,
-        sampled_files: List[Dict],
-        expected_jobs: Dict[str, Dict],
-        presigned_urls: Dict[str, str],
-        num_entities: int = 10
-    ) -> Dict[str, Any]:
+        sampled_files: list[dict],
+        expected_jobs: dict[str, dict],
+        presigned_urls: dict[str, str],
+        num_entities: int = 10,
+    ) -> dict[str, Any]:
         """Validate random entities using real scrapers.
 
         Invariant: a row sampled from a parquet file must either become a
@@ -1292,10 +1282,8 @@ class DuckDBSampledValidator:
         # the same trick used for file sampling. Larger files come first on average
         # without deterministic ordering — and tiny fab files retain a real probability
         # of being inspected, preventing bait-saturation of the entity pool.
-        file_weights = [max(f.get('size', 0), 1) for f in sampled_files]
-        ranked = _weighted_sample_without_replacement(
-            sampled_files, file_weights, len(sampled_files)
-        )
+        file_weights = [max(f.get("size", 0), 1) for f in sampled_files]
+        ranked = _weighted_sample_without_replacement(sampled_files, file_weights, len(sampled_files))
         sampled_files = ranked
 
         # Size-proportional per-file row budget: a file holding 50% of the bytes
@@ -1307,47 +1295,44 @@ class DuckDBSampledValidator:
         MAX_ROWS_PER_FILE = 20
 
         def _rows_for_file(f):
-            share = f.get('size', 0) / sample_total_bytes
+            share = f.get("size", 0) / sample_total_bytes
             target = int(round(share * entity_budget))
             return max(MIN_ROWS_PER_FILE, min(MAX_ROWS_PER_FILE, target))
 
         for file_info in sampled_files:
-
             if len(all_entities) >= num_entities * 2:
                 break
 
             # Skip oversized files to prevent OOM
-            file_size = file_info.get('size', 0)
+            file_size = file_info.get("size", 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
                 continue
 
-            file_key = file_info['key']
+            file_key = file_info["key"]
             presigned_url = presigned_urls.get(file_key)
             if not presigned_url:
                 continue
 
-            if '/job_id=' in file_key:
-                job_id = file_key.split('/job_id=')[1].split('/')[0]
+            if "/job_id=" in file_key:
+                job_id = file_key.split("/job_id=")[1].split("/")[0]
                 job_config = expected_jobs.get(job_id, {})
                 # Access params nested structure (Gravity schema)
-                params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
-                platform = params.get('platform', 'unknown').lower()
+                params = job_config.get("params", {}) if isinstance(job_config, dict) else {}
+                platform = params.get("platform", "unknown").lower()
             else:
                 continue
 
             conn = None
             try:
                 # Schema validation — only reads parquet footer
-                conn = duckdb.connect(':memory:')
+                conn = duckdb.connect(":memory:")
                 conn.execute("SET memory_limit='2GB';")
                 conn.execute("SET threads=1;")
-                schema_result = conn.execute(
-                    f"SELECT name FROM parquet_schema('{presigned_url}')"
-                ).fetchall()
-                excluded_names = {'schema', 'list', 'element', 'model_config'}
+                schema_result = conn.execute(f"SELECT name FROM parquet_schema('{presigned_url}')").fetchall()
+                excluded_names = {"schema", "list", "element", "model_config"}
                 all_column_names = [r[0].lower() for r in schema_result if r[0].lower() not in excluded_names]
 
-                if platform in ['x', 'twitter']:
+                if platform in ["x", "twitter"]:
                     max_columns = len(self.EXPECTED_COLUMNS_X) + len(self.OPTIONAL_COLUMNS)
                 else:
                     max_columns = len(self.EXPECTED_COLUMNS_REDDIT) + len(self.OPTIONAL_COLUMNS)
@@ -1358,7 +1343,7 @@ class DuckDBSampledValidator:
 
                 # Skip files missing required columns (fabricated data)
                 available_cols = set(all_column_names)
-                if platform in ['x', 'twitter']:
+                if platform in ["x", "twitter"]:
                     required = {c.lower() for c in self.EXPECTED_COLUMNS_X}
                 else:
                     required = {c.lower() for c in self.EXPECTED_COLUMNS_REDDIT}
@@ -1366,10 +1351,7 @@ class DuckDBSampledValidator:
                     continue
 
                 # Read 1 random row group; sample size scales with file's byte share.
-                df = read_random_row_group(
-                    presigned_url, file_size,
-                    columns=None, max_rows=_rows_for_file(file_info)
-                )
+                df = read_random_row_group(presigned_url, file_size, columns=None, max_rows=_rows_for_file(file_info))
 
                 if df is None or len(df) == 0:
                     continue
@@ -1391,12 +1373,11 @@ class DuckDBSampledValidator:
                             f"validation immediately."
                         )
                         return {
-                            'entities_validated': 1,
-                            'entities_passed': 0,
-                            'success_rate': 0.0,
-                            'sample_results': [
-                                f"❌ {platform} ({job_id[:16]}): "
-                                f"Failed to create DataEntity for sampled row"
+                            "entities_validated": 1,
+                            "entities_passed": 0,
+                            "success_rate": 0.0,
+                            "sample_results": [
+                                f"❌ {platform} ({job_id[:16]}): Failed to create DataEntity for sampled row"
                             ],
                         }
                     all_entities.append((entity, platform, job_id))
@@ -1412,7 +1393,7 @@ class DuckDBSampledValidator:
                         pass
 
         if not all_entities:
-            return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
+            return {"entities_validated": 0, "entities_passed": 0, "success_rate": 0, "sample_results": []}
 
         entities_to_validate = random.sample(all_entities, min(num_entities, len(all_entities)))
 
@@ -1432,7 +1413,7 @@ class DuckDBSampledValidator:
             try:
                 results = await self._validate_with_scraper(entities, platform)
                 for i, result in enumerate(results):
-                    job_id = job_ids[i] if i < len(job_ids) else 'unknown'
+                    job_id = job_ids[i] if i < len(job_ids) else "unknown"
                     total_validated += 1
                     if result.is_valid:
                         total_passed += 1
@@ -1449,38 +1430,36 @@ class DuckDBSampledValidator:
         bt.logging.success(
             f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
         )
-        bt.logging.info(
-            f"{miner_hotkey}: S3 scraper validation details: {sample_results}"
-        )
+        bt.logging.info(f"{miner_hotkey}: S3 scraper validation details: {sample_results}")
 
         return {
-            'entities_validated': total_validated,
-            'entities_passed': total_passed,
-            'success_rate': success_rate,
-            'sample_results': sample_results
+            "entities_validated": total_validated,
+            "entities_passed": total_passed,
+            "success_rate": success_rate,
+            "sample_results": sample_results,
         }
 
-    def _create_data_entity(self, row, platform: str) -> Optional[DataEntity]:
+    def _create_data_entity(self, row, platform: str) -> DataEntity | None:
         """Create DataEntity from parquet row."""
         try:
-            if platform in ['x', 'twitter']:
+            if platform in ["x", "twitter"]:
                 return self._create_twitter_entity(row)
-            elif platform == 'reddit':
+            elif platform == "reddit":
                 return self._create_reddit_entity(row)
             return None
         except:
             return None
 
-    def _create_twitter_entity(self, row) -> Optional[DataEntity]:
+    def _create_twitter_entity(self, row) -> DataEntity | None:
         """Create Twitter DataEntity with ALL fields for scraper validation."""
         try:
-            username = row.get('username', '')
-            text = row.get('text', '')
-            url = row.get('url', '')
+            username = row.get("username", "")
+            text = row.get("text", "")
+            url = row.get("url", "")
             if not all([username, text, url]):
                 return None
 
-            datetime_val = row.get('datetime', row.get('timestamp', ''))
+            datetime_val = row.get("datetime", row.get("timestamp", ""))
             if datetime_val and pd.notna(datetime_val):
                 try:
                     timestamp = pd.to_datetime(datetime_val)
@@ -1492,10 +1471,10 @@ class DuckDBSampledValidator:
                 timestamp = dt.datetime.now(dt.timezone.utc)
 
             # Handle tweet_hashtags array field
-            raw_hashtags = row.get('tweet_hashtags', None)
+            raw_hashtags = row.get("tweet_hashtags", None)
             if raw_hashtags is None:
                 tweet_hashtags = []
-            elif hasattr(raw_hashtags, '__iter__') and not isinstance(raw_hashtags, str):
+            elif hasattr(raw_hashtags, "__iter__") and not isinstance(raw_hashtags, str):
                 try:
                     tweet_hashtags = list(raw_hashtags)
                 except TypeError:
@@ -1507,10 +1486,10 @@ class DuckDBSampledValidator:
                     tweet_hashtags = [raw_hashtags]
 
             # Handle media array field (same as tweet_hashtags)
-            raw_media = row.get('media', None)
+            raw_media = row.get("media", None)
             if raw_media is None:
                 media_value = None
-            elif hasattr(raw_media, '__iter__') and not isinstance(raw_media, str):
+            elif hasattr(raw_media, "__iter__") and not isinstance(raw_media, str):
                 try:
                     media_value = list(raw_media)
                 except TypeError:
@@ -1529,46 +1508,70 @@ class DuckDBSampledValidator:
                 timestamp=timestamp,
                 tweet_hashtags=tweet_hashtags,
                 media=media_value,
-                user_id=str(row.get('user_id', '')),
-                user_display_name=str(row.get('user_display_name', '')) if pd.notna(row.get('user_display_name', None)) else None,
-                user_verified=bool(row.get('user_verified', False)) if pd.notna(row.get('user_verified', None)) else None,
-                tweet_id=str(row.get('tweet_id', '')),
-                is_reply=bool(row.get('is_reply', False)),
-                is_quote=bool(row.get('is_quote', False)),
-                conversation_id=str(row.get('conversation_id', '')),
-                in_reply_to_user_id=str(row.get('in_reply_to_user_id', '')) if pd.notna(row.get('in_reply_to_user_id', None)) else None,
-                language=str(row.get('language', '')) if pd.notna(row.get('language', None)) else None,
-                in_reply_to_username=str(row.get('in_reply_to_username', '')) if pd.notna(row.get('in_reply_to_username', None)) else None,
-                quoted_tweet_id=str(row.get('quoted_tweet_id', '')) if pd.notna(row.get('quoted_tweet_id', None)) else None,
-                like_count=int(row.get('like_count', 0)) if pd.notna(row.get('like_count', None)) else None,
-                retweet_count=int(row.get('retweet_count', 0)) if pd.notna(row.get('retweet_count', None)) else None,
-                reply_count=int(row.get('reply_count', 0)) if pd.notna(row.get('reply_count', None)) else None,
-                quote_count=int(row.get('quote_count', 0)) if pd.notna(row.get('quote_count', None)) else None,
-                view_count=int(row.get('view_count', 0)) if pd.notna(row.get('view_count', None)) else None,
-                bookmark_count=int(row.get('bookmark_count', 0)) if pd.notna(row.get('bookmark_count', None)) else None,
-                user_blue_verified=bool(row.get('user_blue_verified', False)) if pd.notna(row.get('user_blue_verified', None)) else None,
-                user_description=str(row.get('user_description', '')) if pd.notna(row.get('user_description', None)) else None,
-                user_location=str(row.get('user_location', '')) if pd.notna(row.get('user_location', None)) else None,
-                profile_image_url=str(row.get('profile_image_url', '')) if pd.notna(row.get('profile_image_url', None)) else None,
-                cover_picture_url=str(row.get('cover_picture_url', '')) if pd.notna(row.get('cover_picture_url', None)) else None,
-                user_followers_count=int(row.get('user_followers_count', 0)) if pd.notna(row.get('user_followers_count', None)) else None,
-                user_following_count=int(row.get('user_following_count', 0)) if pd.notna(row.get('user_following_count', None)) else None,
-                scraped_at=pd.to_datetime(row.get('scraped_at')).to_pydatetime() if row.get('scraped_at') is not None and pd.notna(row.get('scraped_at')) else None,
+                user_id=str(row.get("user_id", "")),
+                user_display_name=str(row.get("user_display_name", ""))
+                if pd.notna(row.get("user_display_name", None))
+                else None,
+                user_verified=bool(row.get("user_verified", False))
+                if pd.notna(row.get("user_verified", None))
+                else None,
+                tweet_id=str(row.get("tweet_id", "")),
+                is_reply=bool(row.get("is_reply", False)),
+                is_quote=bool(row.get("is_quote", False)),
+                conversation_id=str(row.get("conversation_id", "")),
+                in_reply_to_user_id=str(row.get("in_reply_to_user_id", ""))
+                if pd.notna(row.get("in_reply_to_user_id", None))
+                else None,
+                language=str(row.get("language", "")) if pd.notna(row.get("language", None)) else None,
+                in_reply_to_username=str(row.get("in_reply_to_username", ""))
+                if pd.notna(row.get("in_reply_to_username", None))
+                else None,
+                quoted_tweet_id=str(row.get("quoted_tweet_id", ""))
+                if pd.notna(row.get("quoted_tweet_id", None))
+                else None,
+                like_count=int(row.get("like_count", 0)) if pd.notna(row.get("like_count", None)) else None,
+                retweet_count=int(row.get("retweet_count", 0)) if pd.notna(row.get("retweet_count", None)) else None,
+                reply_count=int(row.get("reply_count", 0)) if pd.notna(row.get("reply_count", None)) else None,
+                quote_count=int(row.get("quote_count", 0)) if pd.notna(row.get("quote_count", None)) else None,
+                view_count=int(row.get("view_count", 0)) if pd.notna(row.get("view_count", None)) else None,
+                bookmark_count=int(row.get("bookmark_count", 0)) if pd.notna(row.get("bookmark_count", None)) else None,
+                user_blue_verified=bool(row.get("user_blue_verified", False))
+                if pd.notna(row.get("user_blue_verified", None))
+                else None,
+                user_description=str(row.get("user_description", ""))
+                if pd.notna(row.get("user_description", None))
+                else None,
+                user_location=str(row.get("user_location", "")) if pd.notna(row.get("user_location", None)) else None,
+                profile_image_url=str(row.get("profile_image_url", ""))
+                if pd.notna(row.get("profile_image_url", None))
+                else None,
+                cover_picture_url=str(row.get("cover_picture_url", ""))
+                if pd.notna(row.get("cover_picture_url", None))
+                else None,
+                user_followers_count=int(row.get("user_followers_count", 0))
+                if pd.notna(row.get("user_followers_count", None))
+                else None,
+                user_following_count=int(row.get("user_following_count", 0))
+                if pd.notna(row.get("user_following_count", None))
+                else None,
+                scraped_at=pd.to_datetime(row.get("scraped_at")).to_pydatetime()
+                if row.get("scraped_at") is not None and pd.notna(row.get("scraped_at"))
+                else None,
             )
             return XContent.to_data_entity(x_content)
         except Exception as e:
             bt.logging.warning(f"_create_twitter_entity failed: {type(e).__name__}: {e}")
             return None
 
-    def _create_reddit_entity(self, row) -> Optional[DataEntity]:
+    def _create_reddit_entity(self, row) -> DataEntity | None:
         """Create Reddit DataEntity. Accept if title OR body is present."""
         try:
-            username = row.get('username', '')
-            url = row.get('url', '')
-            reddit_id = row.get('id', '')
+            username = row.get("username", "")
+            url = row.get("url", "")
+            reddit_id = row.get("id", "")
 
-            body = row.get('body', row.get('text', ''))
-            title = row.get('title', '')
+            body = row.get("body", row.get("text", ""))
+            title = row.get("title", "")
 
             username_str = str(username).strip() if username is not None else ""
             url_str = str(url).strip() if url is not None else ""
@@ -1590,7 +1593,7 @@ class DuckDBSampledValidator:
             # Title-only posts (empty body) are valid — title is passed separately.
             content_str = body_str
 
-            datetime_val = row.get('datetime', row.get('createdAt', ''))
+            datetime_val = row.get("datetime", row.get("createdAt", ""))
             if datetime_val is not None and pd.notna(datetime_val):
                 try:
                     created_at = pd.to_datetime(datetime_val)
@@ -1602,10 +1605,10 @@ class DuckDBSampledValidator:
                 created_at = dt.datetime.now(dt.timezone.utc)
 
             # Handle media array field (same robust handling as _create_twitter_entity)
-            raw_media = row.get('media', None)
+            raw_media = row.get("media", None)
             if raw_media is None:
                 media_value = None
-            elif hasattr(raw_media, '__iter__') and not isinstance(raw_media, str):
+            elif hasattr(raw_media, "__iter__") and not isinstance(raw_media, str):
                 try:
                     media_value = list(raw_media)
                 except TypeError:
@@ -1621,41 +1624,49 @@ class DuckDBSampledValidator:
                 username=username_str,
                 body=content_str,
                 url=url_str,
-                communityName=str(row.get('communityName', '') or ''),
+                communityName=str(row.get("communityName", "") or ""),
                 createdAt=created_at,
-                dataType=str(row.get('dataType', 'post') or 'post'),
-                parentId=str(row.get('parentId')) if row.get('parentId') and pd.notna(row.get('parentId')) else None,
-                title=str(row.get('title', '')) if pd.notna(row.get('title')) else None,
+                dataType=str(row.get("dataType", "post") or "post"),
+                parentId=str(row.get("parentId")) if row.get("parentId") and pd.notna(row.get("parentId")) else None,
+                title=str(row.get("title", "")) if pd.notna(row.get("title")) else None,
                 media=media_value,
-                is_nsfw=bool(row.get('is_nsfw', False)) if pd.notna(row.get('is_nsfw')) else None,
-                score=int(row.get('score', 0)) if pd.notna(row.get('score')) else None,
-                upvote_ratio=float(row.get('upvote_ratio', 0.0)) if pd.notna(row.get('upvote_ratio')) else None,
-                num_comments=int(row.get('num_comments', 0)) if pd.notna(row.get('num_comments')) else None,
-                scrapedAt=pd.to_datetime(row.get('scrapedAt')).to_pydatetime() if row.get('scrapedAt') is not None and pd.notna(row.get('scrapedAt')) else None,
+                is_nsfw=bool(row.get("is_nsfw", False)) if pd.notna(row.get("is_nsfw")) else None,
+                score=int(row.get("score", 0)) if pd.notna(row.get("score")) else None,
+                upvote_ratio=float(row.get("upvote_ratio", 0.0)) if pd.notna(row.get("upvote_ratio")) else None,
+                num_comments=int(row.get("num_comments", 0)) if pd.notna(row.get("num_comments")) else None,
+                scrapedAt=pd.to_datetime(row.get("scrapedAt")).to_pydatetime()
+                if row.get("scrapedAt") is not None and pd.notna(row.get("scrapedAt"))
+                else None,
             )
             return RedditContent.to_data_entity(reddit_content)
         except Exception as e:
             bt.logging.warning(f"_create_reddit_entity failed: {type(e).__name__}: {e}")
             return None
 
-    async def _validate_with_scraper(
-        self, entities: List[DataEntity], platform: str
-    ) -> List[ValidationResult]:
+    async def _validate_with_scraper(self, entities: list[DataEntity], platform: str) -> list[ValidationResult]:
         """Validate entities using appropriate scraper."""
         try:
-            if platform in ['x', 'twitter']:
+            if platform in ["x", "twitter"]:
                 data_source = DataSource.X
-            elif platform == 'reddit':
+            elif platform == "reddit":
                 data_source = DataSource.REDDIT
             else:
-                return [ValidationResult(is_valid=False, reason=f"Unknown platform: {platform}", content_size_bytes_validated=0) for _ in entities]
+                return [
+                    ValidationResult(
+                        is_valid=False, reason=f"Unknown platform: {platform}", content_size_bytes_validated=0
+                    )
+                    for _ in entities
+                ]
 
             scraper = self.scraper_provider.get(PREFERRED_SCRAPERS[data_source])
             return await scraper.validate(entities)
         except Exception as e:
-            return [ValidationResult(is_valid=False, reason=f"Scraper error: {e}", content_size_bytes_validated=0) for _ in entities]
+            return [
+                ValidationResult(is_valid=False, reason=f"Scraper error: {e}", content_size_bytes_validated=0)
+                for _ in entities
+            ]
 
-    def _parse_datetime(self, dt_val) -> Optional[dt.datetime]:
+    def _parse_datetime(self, dt_val) -> dt.datetime | None:
         """Parse datetime from job config."""
         if dt_val is None:
             return None
@@ -1691,7 +1702,7 @@ class DuckDBSampledValidator:
             sample_validation_results=[],
             sample_job_mismatches=[],
             effective_size_bytes=0.0,
-            job_coverage_rate=0.0
+            job_coverage_rate=0.0,
         )
 
     def close(self):
@@ -1699,24 +1710,24 @@ class DuckDBSampledValidator:
         pass
 
 
-def load_expected_jobs_from_gravity() -> Dict:
+def load_expected_jobs_from_gravity() -> dict:
     """Load expected jobs from dynamic_desirability/total.json"""
     try:
         current_dir = os.getcwd()
         for _ in range(3):
             total_json_path = os.path.join(current_dir, "dynamic_desirability", "total.json")
             if os.path.exists(total_json_path):
-                with open(total_json_path, 'r') as f:
+                with open(total_json_path) as f:
                     jobs_list = json.load(f)
-                    
+
                 jobs_dict = {}
                 for job in jobs_list:
-                    if isinstance(job, dict) and 'id' in job:
-                        jobs_dict[job['id']] = job
-                
+                    if isinstance(job, dict) and "id" in job:
+                        jobs_dict[job["id"]] = job
+
                 return jobs_dict
             current_dir = os.path.dirname(current_dir)
-        
+
         bt.logging.warning("dynamic_desirability/total.json not found")
         return {}
     except Exception as e:
@@ -1725,9 +1736,7 @@ def load_expected_jobs_from_gravity() -> Dict:
 
 
 async def validate_s3_miner_data(
-    wallet, s3_auth_url: str, miner_hotkey: str,
-    config=None, s3_reader=None,
-    sample_percent: float = 10.0
+    wallet, s3_auth_url: str, miner_hotkey: str, config=None, s3_reader=None, sample_percent: float = 10.0
 ) -> S3ValidationResult:
     """
     S3 validation using DuckDB-based sampled validation with competition scoring.
@@ -1750,14 +1759,9 @@ async def validate_s3_miner_data(
     validator = None
     try:
         validator = DuckDBSampledValidator(
-            wallet=wallet,
-            s3_auth_url=s3_auth_url,
-            s3_reader=s3_reader,
-            sample_percent=sample_percent
+            wallet=wallet, s3_auth_url=s3_auth_url, s3_reader=s3_reader, sample_percent=sample_percent
         )
-        result = await validator.validate_miner_s3_data(
-            miner_hotkey, expected_jobs
-        )
+        result = await validator.validate_miner_s3_data(miner_hotkey, expected_jobs)
         return result
 
     except Exception as e:
@@ -1781,7 +1785,7 @@ async def validate_s3_miner_data(
             validation_issues=[f"Validation error: {str(e)}"],
             reason=f"Validation failed: {str(e)}",
             sample_validation_results=[],
-            sample_job_mismatches=[]
+            sample_job_mismatches=[],
         )
 
     finally:

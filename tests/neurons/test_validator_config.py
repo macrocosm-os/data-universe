@@ -1,6 +1,7 @@
 import sys
 import unittest
 from unittest.mock import patch
+
 from neurons.config import NeuronType, create_config
 
 

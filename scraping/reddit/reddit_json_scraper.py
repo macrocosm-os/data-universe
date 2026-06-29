@@ -1,21 +1,23 @@
 import asyncio
-import aiohttp
-import traceback
 import datetime as dt
-import bittensor as bt
+import traceback
 from typing import List, Optional
+
+import aiohttp
+import bittensor as bt
+
 from common.data import DataEntity, DataLabel, DataSource
 from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
-from scraping.reddit.model import RedditContent, RedditDataType, DELETED_USER
+from common.protocol import KeywordMode
+from scraping.reddit.model import DELETED_USER, RedditContent, RedditDataType
 from scraping.reddit.utils import (
+    extract_media_urls,
     is_valid_reddit_url,
-    validate_reddit_content,
     normalize_label,
     normalize_permalink,
-    extract_media_urls,
+    validate_reddit_content,
 )
-from common.protocol import KeywordMode
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 
 
 class RedditJsonScraper(Scraper):
@@ -32,14 +34,14 @@ class RedditJsonScraper(Scraper):
     MAX_RETRIES = 3
     RETRY_DELAY = 2  # seconds
 
-    async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
+    async def validate(self, entities: list[DataEntity]) -> list[ValidationResult]:
         """
         Validate a list of DataEntity objects using Reddit's public JSON API.
         """
         if not entities:
             return []
 
-        results: List[ValidationResult] = []
+        results: list[ValidationResult] = []
 
         async with aiohttp.ClientSession(headers={"User-Agent": self.USER_AGENT}) as session:
             for entity in entities:
@@ -102,24 +104,16 @@ class RedditJsonScraper(Scraper):
 
         return results
 
-    async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
+    async def scrape(self, scrape_config: ScrapeConfig) -> list[DataEntity]:
         """Scrapes a batch of reddit posts/comments according to the scrape config."""
-        bt.logging.trace(
-            f"Reddit JSON scraper performing scrape with config: {scrape_config}."
-        )
+        bt.logging.trace(f"Reddit JSON scraper performing scrape with config: {scrape_config}.")
 
-        assert (
-            not scrape_config.labels or len(scrape_config.labels) <= 1
-        ), "Can only scrape 1 subreddit at a time."
+        assert not scrape_config.labels or len(scrape_config.labels) <= 1, "Can only scrape 1 subreddit at a time."
 
         # Strip the r/ from the config or use 'all' if no label is provided.
-        subreddit_name = (
-            normalize_label(scrape_config.labels[0]) if scrape_config.labels else "all"
-        )
+        subreddit_name = normalize_label(scrape_config.labels[0]) if scrape_config.labels else "all"
 
-        bt.logging.trace(
-            f"Running Reddit JSON scraper with subreddit: {subreddit_name}."
-        )
+        bt.logging.trace(f"Running Reddit JSON scraper with subreddit: {subreddit_name}.")
 
         # Get the search parameters
         limit = min(scrape_config.entity_limit, 100)  # Reddit API max is 100
@@ -139,10 +133,8 @@ class RedditJsonScraper(Scraper):
                     if content:
                         contents.append(content)
 
-        except Exception as e:
-            bt.logging.error(
-                f"Failed to scrape reddit using subreddit {subreddit_name}: {traceback.format_exc()}."
-            )
+        except Exception:
+            bt.logging.error(f"Failed to scrape reddit using subreddit {subreddit_name}: {traceback.format_exc()}.")
             return []
 
         # Filter out NSFW content with media
@@ -167,14 +159,14 @@ class RedditJsonScraper(Scraper):
 
     async def on_demand_scrape(
         self,
-        usernames: List[str] = None,
+        usernames: list[str] = None,
         subreddit: str = "all",
-        keywords: List[str] = None,
+        keywords: list[str] = None,
         keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
-        limit: int = 100
-    ) -> List[DataEntity]:
+        limit: int = 100,
+    ) -> list[DataEntity]:
         """
         Scrapes Reddit data based on specific search criteria using public JSON API.
 
@@ -206,7 +198,6 @@ class RedditJsonScraper(Scraper):
 
         try:
             async with aiohttp.ClientSession(headers={"User-Agent": self.USER_AGENT}) as session:
-
                 # Case 1: Search by usernames
                 if usernames:
                     for username in usernames:
@@ -218,7 +209,9 @@ class RedditJsonScraper(Scraper):
 
                             for post_data in posts:
                                 content = self._parse_post(post_data)
-                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                                if content and self._matches_criteria(
+                                    content, keywords, keyword_mode, start_datetime, end_datetime
+                                ):
                                     contents.append(content)
 
                             # Get user's comments
@@ -227,7 +220,9 @@ class RedditJsonScraper(Scraper):
 
                             for comment_data in comments:
                                 content = self._parse_comment(comment_data)
-                                if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                                if content and self._matches_criteria(
+                                    content, keywords, keyword_mode, start_datetime, end_datetime
+                                ):
                                     contents.append(content)
                         except Exception as e:
                             bt.logging.warning(f"Failed to scrape user '{username}': {e}")
@@ -235,15 +230,15 @@ class RedditJsonScraper(Scraper):
 
                 # Case 2: Search by subreddit (with optional keywords)
                 else:
-                    subreddit_name = subreddit.removeprefix("r/") if subreddit.startswith('r/') else subreddit
+                    subreddit_name = subreddit.removeprefix("r/") if subreddit.startswith("r/") else subreddit
 
                     # If we have keywords, use Reddit's search functionality
                     # raw_json=1 returns unescaped text to match PRAW output
                     if keywords:
                         if keyword_mode == "all":
-                            search_query = ' AND '.join(f'"{keyword}"' for keyword in keywords)
+                            search_query = " AND ".join(f'"{keyword}"' for keyword in keywords)
                         else:  # keyword_mode == "any"
-                            search_query = ' OR '.join(f'"{keyword}"' for keyword in keywords)
+                            search_query = " OR ".join(f'"{keyword}"' for keyword in keywords)
 
                         url = f"{self.BASE_URL}/r/{subreddit_name}/search.json?q={search_query}&restrict_sr=1&limit={limit}&sort=new&raw_json=1"
                     else:
@@ -262,7 +257,9 @@ class RedditJsonScraper(Scraper):
                         else:
                             content = self._parse_post(post_data)  # Default to post parsing
 
-                        if content and self._matches_criteria(content, keywords, keyword_mode, start_datetime, end_datetime):
+                        if content and self._matches_criteria(
+                            content, keywords, keyword_mode, start_datetime, end_datetime
+                        ):
                             contents.append(content)
 
         except Exception as e:
@@ -290,7 +287,7 @@ class RedditJsonScraper(Scraper):
 
         return data_entities
 
-    async def _fetch_posts(self, session: aiohttp.ClientSession, url: str) -> List[dict]:
+    async def _fetch_posts(self, session: aiohttp.ClientSession, url: str) -> list[dict]:
         """
         Fetch posts from Reddit's JSON API with retry logic.
 
@@ -341,20 +338,17 @@ class RedditJsonScraper(Scraper):
         return []
 
     async def _fetch_content_from_url(
-        self,
-        session: aiohttp.ClientSession,
-        url: str,
-        data_type: RedditDataType
-    ) -> Optional[RedditContent]:
+        self, session: aiohttp.ClientSession, url: str, data_type: RedditDataType
+    ) -> RedditContent | None:
         """
         Fetch and parse a specific post or comment from its URL.
         """
         # Normalize URL: remove .json if present, remove existing query params
         clean_url = url
-        if clean_url.rstrip('/').endswith('.json'):
-            clean_url = clean_url.rstrip('/')[:-5] + '/'
-        if '?' in clean_url:
-            clean_url = clean_url.split('?')[0]
+        if clean_url.rstrip("/").endswith(".json"):
+            clean_url = clean_url.rstrip("/")[:-5] + "/"
+        if "?" in clean_url:
+            clean_url = clean_url.split("?")[0]
 
         # Add .json and raw_json=1 parameter
         # raw_json=1 returns unescaped text (e.g., ">" instead of "&gt;") to match PRAW output
@@ -391,7 +385,7 @@ class RedditJsonScraper(Scraper):
 
         return None
 
-    def _parse_post(self, post_data: dict) -> Optional[RedditContent]:
+    def _parse_post(self, post_data: dict) -> RedditContent | None:
         """
         Parse a Reddit post from JSON API response.
         """
@@ -403,9 +397,9 @@ class RedditJsonScraper(Scraper):
             if data.get("url"):
                 # Check if it's an image/video URL
                 url = data["url"]
-                if any(url.endswith(ext) for ext in ['.jpg', '.jpeg', '.png', '.gif', '.mp4', '.webm']):
+                if any(url.endswith(ext) for ext in [".jpg", ".jpeg", ".png", ".gif", ".mp4", ".webm"]):
                     media_urls.append(url)
-                elif 'reddit_video' in str(data.get("media", {})):
+                elif "reddit_video" in str(data.get("media", {})):
                     if data.get("media", {}).get("reddit_video", {}).get("fallback_url"):
                         media_urls.append(data["media"]["reddit_video"]["fallback_url"])
 
@@ -425,9 +419,7 @@ class RedditJsonScraper(Scraper):
                 username=username,
                 communityName=data.get("subreddit_name_prefixed", ""),
                 body=data.get("selftext", ""),
-                createdAt=dt.datetime.utcfromtimestamp(data.get("created_utc", 0)).replace(
-                    tzinfo=dt.timezone.utc
-                ),
+                createdAt=dt.datetime.utcfromtimestamp(data.get("created_utc", 0)).replace(tzinfo=dt.timezone.utc),
                 dataType=RedditDataType.POST,
                 title=data.get("title", ""),
                 parentId=None,
@@ -442,7 +434,7 @@ class RedditJsonScraper(Scraper):
             bt.logging.trace(f"Failed to parse post: {e}")
             return None
 
-    def _parse_comment(self, comment_data: dict, parent_nsfw: bool = False) -> Optional[RedditContent]:
+    def _parse_comment(self, comment_data: dict, parent_nsfw: bool = False) -> RedditContent | None:
         """
         Parse a Reddit comment from JSON API response.
 
@@ -463,9 +455,7 @@ class RedditJsonScraper(Scraper):
                 username=username,
                 communityName=data.get("subreddit_name_prefixed", ""),
                 body=data.get("body", ""),
-                createdAt=dt.datetime.utcfromtimestamp(data.get("created_utc", 0)).replace(
-                    tzinfo=dt.timezone.utc
-                ),
+                createdAt=dt.datetime.utcfromtimestamp(data.get("created_utc", 0)).replace(tzinfo=dt.timezone.utc),
                 dataType=RedditDataType.COMMENT,
                 title=None,
                 parentId=data.get("parent_id"),
@@ -483,10 +473,10 @@ class RedditJsonScraper(Scraper):
     def _matches_criteria(
         self,
         content: RedditContent,
-        keywords: List[str] = None,
+        keywords: list[str] = None,
         keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
-        end_datetime: dt.datetime = None
+        end_datetime: dt.datetime = None,
     ) -> bool:
         """
         Check if content matches the specified criteria.
@@ -582,11 +572,7 @@ async def test_on_demand_scrape():
 
     # Test 3: Search with keywords
     print("\n3. Testing keyword search in r/python...")
-    entities = await scraper.on_demand_scrape(
-        subreddit="r/python",
-        keywords=["django"],
-        limit=3
-    )
+    entities = await scraper.on_demand_scrape(subreddit="r/python", keywords=["django"], limit=3)
     print(f"   Result: {len(entities)} entities with 'django'")
     if entities:
         print(f"   Sample: {entities[0].uri}")
@@ -637,8 +623,12 @@ async def test_validation():
             print(f"   Username: {content.username}")
             print(f"   Community: {content.community}")
             print(f"   Data Type: {content.data_type}")
-            print(f"   Title: {content.title[:80] + '...' if content.title and len(content.title) > 80 else content.title}")
-            print(f"   Body: {content.body[:100] + '...' if content.body and len(content.body) > 100 else content.body}")
+            print(
+                f"   Title: {content.title[:80] + '...' if content.title and len(content.title) > 80 else content.title}"
+            )
+            print(
+                f"   Body: {content.body[:100] + '...' if content.body and len(content.body) > 100 else content.body}"
+            )
             print(f"   Created At: {content.created_at}")
             print(f"   Score: {content.score}")
             print(f"   Upvote Ratio: {content.upvote_ratio}")
@@ -653,7 +643,7 @@ async def test_validation():
     print("3. Validating entities...")
     results = await scraper.validate(entities)
 
-    print(f"\n   Validation Results:")
+    print("\n   Validation Results:")
     for i, (entity, result) in enumerate(zip(entities, results), 1):
         print(f"\n   Entity #{i}: {entity.uri}")
         print(f"   Valid: {result.is_valid}")
@@ -676,9 +666,11 @@ async def test_validation():
     print(f"   Test Entity URI: {test_entity.uri}")
 
     validation_results = await scraper.validate([test_entity])
-    print(f"   Validation Result:")
+    print("   Validation Result:")
     print(f"   Valid: {validation_results[0].is_valid}")
-    print(f"   Reason: {validation_results[0].reason if hasattr(validation_results[0], 'reason') and validation_results[0].reason else 'N/A'}")
+    print(
+        f"   Reason: {validation_results[0].reason if hasattr(validation_results[0], 'reason') and validation_results[0].reason else 'N/A'}"
+    )
 
     print("\n" + "=" * 60)
     print("VALIDATION TESTS COMPLETED")

@@ -1,9 +1,11 @@
+import datetime as dt
 import json
 import threading
 from typing import List, Optional
-import torch
+
 import bittensor as bt
-import datetime as dt
+import torch
+
 from common.data import TimeBucket
 from common.data_v2 import ScorableMinerIndex
 from rewards.data_value_calculator import DataValueCalculator
@@ -44,13 +46,13 @@ class MinerScorer:
     # The exponent used to scale the miner's score by its credibility.
     _CREDIBILITY_EXP = 2.5
 
-    ONDEMAND_MAX_CRED_PENALTY = 0.0075   # 0.75%
+    ONDEMAND_MAX_CRED_PENALTY = 0.0075  # 0.75%
     ONDEMAND_BASE_REWARD = 100_000_000  # 100M
 
     # On-demand credibility: tracks job participation rate via EMA.
     # Scales the entire final score — non-participants decay toward 0.
     STARTING_ONDEMAND_CREDIBILITY = 0.5
-    ONDEMAND_CRED_ALPHA = 0.02          # EMA alpha: ~35 jobs (~70 sec) to halve
+    ONDEMAND_CRED_ALPHA = 0.02  # EMA alpha: ~35 jobs (~70 sec) to halve
     ONDEMAND_CRED_BAD_DATA_PENALTY = 0.05  # 5% direct penalty per bad submission
 
     # P2P dampener — DD job weights (1.0-5.0) inflate P2P scores far beyond S3/OD.
@@ -58,19 +60,16 @@ class MinerScorer:
     # This factor scales down the raw P2P score so it stays the smallest component.
     P2P_REWARD_SCALE = 0.05
 
-
     def __init__(
         self,
         num_neurons: int,
         value_calculator: DataValueCalculator,
         cred_alpha: float = 0.15,
-        s3_cred_alpha: float = 0.30
+        s3_cred_alpha: float = 0.30,
     ):
         # Tracks the raw scores of each miner. i.e. not the weights that are set on the blockchain.
         self.scores = torch.zeros(num_neurons, dtype=torch.float32)
-        self.miner_credibility = torch.full(
-            (num_neurons, 1), MinerScorer.STARTING_CREDIBILITY, dtype=torch.float32
-        )
+        self.miner_credibility = torch.full((num_neurons, 1), MinerScorer.STARTING_CREDIBILITY, dtype=torch.float32)
         # Keeps track of the amount of scorable bytes the miner had last time it was evaluated.
         self.scorable_bytes = torch.zeros(num_neurons, dtype=torch.float32)
         self.value_calculator = value_calculator
@@ -78,9 +77,7 @@ class MinerScorer:
 
         # Keeps track of the miner's current S3 boost based on the last S3 evaluation.
         self.s3_boosts = torch.zeros(num_neurons, dtype=torch.float32)
-        self.s3_credibility = torch.full(
-            (num_neurons, 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
-        )
+        self.s3_credibility = torch.full((num_neurons, 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32)
         self.s3_cred_alpha = s3_cred_alpha
 
         # Keeps track of the miner's OnDemand boost (EMA of recent OnDemand rewards)
@@ -129,13 +126,15 @@ class MinerScorer:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
             self.s3_boosts = state.get("s3_boosts", torch.zeros_like(self.scores))
-            self.s3_credibility = state.get("s3_credibility", torch.full(
-                (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
-            ))
+            self.s3_credibility = state.get(
+                "s3_credibility",
+                torch.full((self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32),
+            )
             self.ondemand_boosts = state.get("ondemand_boosts", torch.zeros_like(self.scores))
-            self.ondemand_credibility = state.get("ondemand_credibility", torch.full(
-                (self.scores.size(0), 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32
-            ))
+            self.ondemand_credibility = state.get(
+                "ondemand_credibility",
+                torch.full((self.scores.size(0), 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32),
+            )
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
             # --- State migrations ---
@@ -156,8 +155,7 @@ class MinerScorer:
             return self.scores.clone()
 
     def get_scores_for_weights(self) -> torch.Tensor:
-        """Returns scores with P2P capped at (S3 + OD) for weight setting.
-        """
+        """Returns scores with P2P capped at (S3 + OD) for weight setting."""
         with self.lock:
             capped_scores = torch.zeros_like(self.scores)
 
@@ -215,18 +213,14 @@ class MinerScorer:
         The new size must be greater than or equal to the current size.
         """
         with self.lock:
-            assert num_neurons >= self.scores.size(
-                0
-            ), f"Tried to downsize the number of neurons from {self.scores.size(0)} to {num_neurons}"
-
-            bt.logging.trace(
-                f"Resizing MinerScorer from {self.scores.size(0)} to {num_neurons}"
+            assert num_neurons >= self.scores.size(0), (
+                f"Tried to downsize the number of neurons from {self.scores.size(0)} to {num_neurons}"
             )
+
+            bt.logging.trace(f"Resizing MinerScorer from {self.scores.size(0)} to {num_neurons}")
 
             to_add = num_neurons - self.scores.size(0)
-            self.scores = torch.cat(
-                [self.scores, torch.zeros(to_add, dtype=torch.float32)]
-            )
+            self.scores = torch.cat([self.scores, torch.zeros(to_add, dtype=torch.float32)])
             self.miner_credibility = torch.cat(
                 [
                     self.miner_credibility,
@@ -237,13 +231,9 @@ class MinerScorer:
                     ),
                 ]
             )
-            self.scorable_bytes = torch.cat(
-                [self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)]
-            )
+            self.scorable_bytes = torch.cat([self.scorable_bytes, torch.zeros(to_add, dtype=torch.float32)])
 
-            self.s3_boosts = torch.cat(
-                [self.s3_boosts, torch.zeros(to_add, dtype=torch.float32)]
-            )
+            self.s3_boosts = torch.cat([self.s3_boosts, torch.zeros(to_add, dtype=torch.float32)])
             self.s3_credibility = torch.cat(
                 [
                     self.s3_credibility,
@@ -254,9 +244,7 @@ class MinerScorer:
                     ),
                 ]
             )
-            self.ondemand_boosts = torch.cat(
-                [self.ondemand_boosts, torch.zeros(to_add, dtype=torch.float32)]
-            )
+            self.ondemand_boosts = torch.cat([self.ondemand_boosts, torch.zeros(to_add, dtype=torch.float32)])
             self.ondemand_credibility = torch.cat(
                 [
                     self.ondemand_credibility,
@@ -267,9 +255,7 @@ class MinerScorer:
                     ),
                 ]
             )
-            self.effective_sizes = torch.cat(
-                [self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)]
-            )
+            self.effective_sizes = torch.cat([self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)])
 
     def update_s3_effective_size(
         self,
@@ -308,7 +294,9 @@ class MinerScorer:
                 # Success: Update effective_size and increase credibility
                 self.effective_sizes[uid] = effective_size
                 # EMA toward 1.0: new_cred = alpha * 1.0 + (1-alpha) * old_cred
-                self.s3_credibility[uid] = min(1.0, self.s3_cred_alpha + (1 - self.s3_cred_alpha) * self.s3_credibility[uid])
+                self.s3_credibility[uid] = min(
+                    1.0, self.s3_cred_alpha + (1 - self.s3_cred_alpha) * self.s3_credibility[uid]
+                )
             else:
                 # Failure: KEEP previous effective_size, reduce credibility via EMA
                 # This is the forgiving part - one bad validation doesn't kill the miner
@@ -317,7 +305,7 @@ class MinerScorer:
                 # Keep the old effective_size (don't update it)
                 bt.logging.info(
                     f"S3 validation failed for miner {uid}: "
-                    f"Keeping effective_size={old_effective/(1024*1024):.1f}MB, "
+                    f"Keeping effective_size={old_effective / (1024 * 1024):.1f}MB, "
                     f"reducing credibility {old_cred:.4f} -> {float(self.s3_credibility[uid]):.4f}"
                 )
 
@@ -329,7 +317,7 @@ class MinerScorer:
 
             bt.logging.info(
                 f"S3 Update for miner {uid}: "
-                f"effective_size={new_effective/(1024*1024):.1f}MB (was {old_effective/(1024*1024):.1f}MB), "
+                f"effective_size={new_effective / (1024 * 1024):.1f}MB (was {old_effective / (1024 * 1024):.1f}MB), "
                 f"s3_boost={float(self.s3_boosts[uid]):.0f}, "
                 f"s3_cred={new_cred:.4f} (was {old_cred:.4f}), "
                 f"passed={validation_passed}"
@@ -384,7 +372,7 @@ class MinerScorer:
 
             bt.logging.info(
                 f"Recalculated S3 boosts for {len(self.effective_sizes)} miners. "
-                f"Total effective_size: {total_effective/(1024*1024):.1f}MB, "
+                f"Total effective_size: {total_effective / (1024 * 1024):.1f}MB, "
                 f"Total s3_boosts: {total_boosts:.0f}"
             )
 
@@ -407,22 +395,21 @@ class MinerScorer:
             )
             new_od_cred = float(self.ondemand_credibility[uid])
 
-            bt.logging.info(json.dumps({
-                "event": "od_penalty",
-                "uid": uid,
-                "mult_factor": round(mult_factor, 4),
-                "od_cred_before": round(old_od_cred, 6),
-                "od_cred_after": round(new_od_cred, 6),
-                "boost_before": round(old_boost, 2),
-                "boost_after": round(new_boost, 2),
-            }))
+            bt.logging.info(
+                json.dumps(
+                    {
+                        "event": "od_penalty",
+                        "uid": uid,
+                        "mult_factor": round(mult_factor, 4),
+                        "od_cred_before": round(old_od_cred, 6),
+                        "od_cred_after": round(new_od_cred, 6),
+                        "boost_before": round(old_boost, 2),
+                        "boost_after": round(new_boost, 2),
+                    }
+                )
+            )
 
-    def apply_ondemand_reward(
-        self,
-        uid: int,
-        speed_multiplier: float,
-        volume_multiplier: float
-    ):
+    def apply_ondemand_reward(self, uid: int, speed_multiplier: float, volume_multiplier: float):
         """
         Updates the miner's OnDemand boost based on their latest on-demand performance.
         The boost is EMA'd with alpha=0.3 and will be applied (scaled by credibility^2.5)
@@ -440,30 +427,31 @@ class MinerScorer:
             # Update OnDemand boost using EMA (alpha=0.3)
             old_boost = float(self.ondemand_boosts[uid])
             self.ondemand_boosts[uid] = (
-                self.ondemand_alpha * raw_reward +
-                (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
+                self.ondemand_alpha * raw_reward + (1 - self.ondemand_alpha) * self.ondemand_boosts[uid]
             )
             new_boost = float(self.ondemand_boosts[uid])
 
             # Also bump OD credibility toward 1.0 on success (mirrors S3 credibility pattern)
             old_od_cred = float(self.ondemand_credibility[uid])
             alpha = MinerScorer.ONDEMAND_CRED_ALPHA
-            self.ondemand_credibility[uid] = min(
-                1.0, alpha * 1.0 + (1 - alpha) * self.ondemand_credibility[uid]
-            )
+            self.ondemand_credibility[uid] = min(1.0, alpha * 1.0 + (1 - alpha) * self.ondemand_credibility[uid])
             new_od_cred = float(self.ondemand_credibility[uid])
 
-            bt.logging.info(json.dumps({
-                "event": "od_reward",
-                "uid": uid,
-                "speed_mult": round(speed_multiplier, 4),
-                "volume_mult": round(volume_multiplier, 4),
-                "raw_reward": round(raw_reward, 2),
-                "boost_before": round(old_boost, 2),
-                "boost_after": round(new_boost, 2),
-                "od_cred_before": round(old_od_cred, 6),
-                "od_cred_after": round(new_od_cred, 6),
-            }))
+            bt.logging.info(
+                json.dumps(
+                    {
+                        "event": "od_reward",
+                        "uid": uid,
+                        "speed_mult": round(speed_multiplier, 4),
+                        "volume_mult": round(volume_multiplier, 4),
+                        "raw_reward": round(raw_reward, 2),
+                        "boost_before": round(old_boost, 2),
+                        "boost_after": round(new_boost, 2),
+                        "od_cred_before": round(old_od_cred, 6),
+                        "od_cred_after": round(new_od_cred, 6),
+                    }
+                )
+            )
 
     def apply_ondemand_credibility_bump(self, uid: int, count: int = 1) -> None:
         """Small credibility bump for miners who submitted to OD jobs but weren't sampled.
@@ -479,24 +467,23 @@ class MinerScorer:
             old_od_cred = float(self.ondemand_credibility[uid])
             alpha = MinerScorer.ONDEMAND_CRED_ALPHA * 0.5
             for _ in range(count):
-                self.ondemand_credibility[uid] = min(
-                    1.0, alpha * 1.0 + (1 - alpha) * self.ondemand_credibility[uid]
-                )
+                self.ondemand_credibility[uid] = min(1.0, alpha * 1.0 + (1 - alpha) * self.ondemand_credibility[uid])
             new_od_cred = float(self.ondemand_credibility[uid])
 
-            bt.logging.trace(json.dumps({
-                "event": "od_credibility_bump",
-                "uid": uid,
-                "count": count,
-                "od_cred_before": round(old_od_cred, 6),
-                "od_cred_after": round(new_od_cred, 6),
-            }))
+            bt.logging.trace(
+                json.dumps(
+                    {
+                        "event": "od_credibility_bump",
+                        "uid": uid,
+                        "count": count,
+                        "od_cred_before": round(old_od_cred, 6),
+                        "od_cred_after": round(new_od_cred, 6),
+                    }
+                )
+            )
 
     def on_miner_evaluated(
-        self,
-        uid: int,
-        index: Optional[ScorableMinerIndex],
-        validation_results: List[ValidationResult]
+        self, uid: int, index: ScorableMinerIndex | None, validation_results: list[ValidationResult]
     ) -> None:
         """Notifies the scorer that a miner has been evaluated and should have its score updated.
 
@@ -513,13 +500,9 @@ class MinerScorer:
             if index:
                 # Compute the raw miner score based on the amount of data it has, scaled based on
                 # the reward distribution.
-                current_time_bucket = TimeBucket.from_datetime(
-                    dt.datetime.now(tz=dt.timezone.utc)
-                )
+                current_time_bucket = TimeBucket.from_datetime(dt.datetime.now(tz=dt.timezone.utc))
                 for bucket in index.scorable_data_entity_buckets:
-                    score += self.value_calculator.get_score_for_data_entity_bucket(
-                        bucket, current_time_bucket
-                    )
+                    score += self.value_calculator.get_score_for_data_entity_bucket(bucket, current_time_bucket)
 
                 # If the score has increased since the last eval, decrease credibility so that the
                 # new score remains unchanged. i.e. "you've told us you now have more valuable data, prove it".
@@ -528,9 +511,7 @@ class MinerScorer:
                 previous_raw_score = self.scorable_bytes[uid].item()
                 if previous_raw_score > 0 and score > previous_raw_score:
                     previous_cred = self.miner_credibility[uid].item()
-                    cred_scalar = (previous_raw_score / score) ** (
-                        1 / MinerScorer._CREDIBILITY_EXP
-                    )
+                    cred_scalar = (previous_raw_score / score) ** (1 / MinerScorer._CREDIBILITY_EXP)
                     self.miner_credibility[uid] *= cred_scalar
                     bt.logging.debug(
                         f"Miner {uid}'s scorable bytes changed from {previous_raw_score} to {score}. Credibility changed from {previous_cred} to {self.miner_credibility[uid].item()}."
@@ -582,34 +563,28 @@ class MinerScorer:
                 f"OnDemand Cred={float(self.ondemand_credibility[uid]):.4f}."
             )
 
-    def _update_credibility(self, uid: int, validation_results: List[ValidationResult]):
+    def _update_credibility(self, uid: int, validation_results: list[ValidationResult]):
         """Updates the miner's credibility based on the most recent set of validation_results.
 
         Requires: self.lock is held.
         """
-        assert (
-            len(validation_results) > 0
-        ), "Must be provided at least 1 validation result."
+        assert len(validation_results) > 0, "Must be provided at least 1 validation result."
 
         # Weight the current set of validation_results by the total content size validaed
-        total_bytes_validated = sum(
-            result.content_size_bytes_validated for result in validation_results
-        )
+        total_bytes_validated = sum(result.content_size_bytes_validated for result in validation_results)
 
         credibility = 0
 
         if total_bytes_validated > 0:
             credibility = sum(
-                result.is_valid * result.content_size_bytes_validated
-                for result in validation_results
+                result.is_valid * result.content_size_bytes_validated for result in validation_results
             ) / float(total_bytes_validated)
 
         previous_credibility = self.miner_credibility[uid].clone().item()
 
         # Use EMA to update the miner's credibility.
         self.miner_credibility[uid] = (
-            self.cred_alpha * credibility
-            + (1 - self.cred_alpha) * self.miner_credibility[uid]
+            self.cred_alpha * credibility + (1 - self.cred_alpha) * self.miner_credibility[uid]
         )
 
         bt.logging.trace(

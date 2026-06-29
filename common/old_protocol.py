@@ -15,11 +15,13 @@
 # OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
 # DEALINGS IN THE SOFTWARE.
 
+from typing import List, Optional
+
 import bittensor as bt
 import pydantic
+
 from common import constants
-from common.data import DataEntityBucket, DataEntity, DataEntityBucketId
-from typing import List, Optional
+from common.data import DataEntity, DataEntityBucket, DataEntityBucketId
 
 
 class GetMinerIndex(bt.Synapse):
@@ -31,7 +33,7 @@ class GetMinerIndex(bt.Synapse):
     """
 
     # Required request output, filled by receiving axon.
-    data_entity_buckets: List[DataEntityBucket] = pydantic.Field(
+    data_entity_buckets: list[DataEntityBucket] = pydantic.Field(
         title="data_entity_buckets",
         description="All of the data entity buckets that a Miner can serve.",
         frozen=False,
@@ -51,7 +53,7 @@ class GetDataEntityBucket(bt.Synapse):
     """
 
     # Required request input, filled by sending dendrite caller.
-    data_entity_bucket_id: Optional[DataEntityBucketId] = pydantic.Field(
+    data_entity_bucket_id: DataEntityBucketId | None = pydantic.Field(
         title="data_entity_bucket_id",
         description="The identifier for the requested DataEntityBucket.",
         frozen=True,
@@ -60,7 +62,7 @@ class GetDataEntityBucket(bt.Synapse):
     )
 
     # Required request output, filled by recieving axon.
-    data_entities: List[DataEntity] = pydantic.Field(
+    data_entities: list[DataEntity] = pydantic.Field(
         title="data_entities",
         description="All of the data that makes up the requested DataEntityBucket.",
         frozen=False,

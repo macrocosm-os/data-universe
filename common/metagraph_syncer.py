@@ -1,12 +1,14 @@
 import asyncio
 import dataclasses
-from dataclasses import field
-from datetime import datetime
 import functools
-import bittensor as bt
-from typing import Dict, List, Callable, Optional
 import threading
 import traceback
+from collections.abc import Callable
+from dataclasses import field
+from datetime import datetime
+from typing import Dict, List, Optional
+
+import bittensor as bt
 
 from common import utils
 
@@ -14,11 +16,11 @@ from common import utils
 class MetagraphSyncer:
     @dataclasses.dataclass
     class _State:
-        metagraph: Optional[bt.metagraph] = None
-        last_synced_time: Optional[datetime] = None
-        listeners: List = field(default_factory=list)
+        metagraph: bt.metagraph | None = None
+        last_synced_time: datetime | None = None
+        listeners: list = field(default_factory=list)
 
-    def __init__(self, subtensor: bt.subtensor, config: Dict[int, int]):
+    def __init__(self, subtensor: bt.subtensor, config: dict[int, int]):
         """Constructs a new MetagraphSyncer, that periodically refreshes metagraph defined in the config.
 
         Args:
@@ -27,7 +29,7 @@ class MetagraphSyncer:
         """
         self.subtensor = subtensor
         self.config = config
-        self.metagraph_map: Dict[int, MetagraphSyncer._State] = {
+        self.metagraph_map: dict[int, MetagraphSyncer._State] = {
             netuid: MetagraphSyncer._State() for netuid in config.keys()
         }
         self.is_running = False
@@ -89,9 +91,7 @@ class MetagraphSyncer:
 
                 self._notify_listeners(state, netuid)
             except (BaseException, Exception) as e:
-                bt.logging.error(
-                    f"Error when syncing metagraph for {netuid}: {e}. Retrying in 60 seconds."
-                )
+                bt.logging.error(f"Error when syncing metagraph for {netuid}: {e}. Retrying in 60 seconds.")
                 await asyncio.sleep(60)
 
     async def _run_async(self):
@@ -110,9 +110,7 @@ class MetagraphSyncer:
         finally:
             bt.logging.info("MetagraphSyncer _run complete.")
 
-    def register_listener(
-        self, listener: Callable[[bt.metagraph, int], None], netuids: List[int]
-    ):
+    def register_listener(self, listener: Callable[[bt.metagraph, int], None], netuids: list[int]):
         """Registers a listener to be notified when a metagraph for any netuid in netuids is updated.
 
         The listener will be called from a different thread, so it must be thread-safe.
@@ -123,18 +121,14 @@ class MetagraphSyncer:
         with self.lock:
             for netuid in netuids:
                 if netuid not in self.metagraph_map:
-                    raise ValueError(
-                        f"Metagraph for {netuid} not being tracked in MetagraphSyncer."
-                    )
+                    raise ValueError(f"Metagraph for {netuid} not being tracked in MetagraphSyncer.")
                 self.metagraph_map[netuid].listeners.append(listener)
 
     def get_metagraph(self, netuid: int) -> bt.metagraph:
         """Returns the last synced version of the metagraph for netuid."""
         with self.lock:
             if netuid not in self.metagraph_map:
-                raise ValueError(
-                    f"Metagraph for {netuid} not known to MetagraphSyncer."
-                )
+                raise ValueError(f"Metagraph for {netuid} not known to MetagraphSyncer.")
             metagraph = self.metagraph_map[netuid].metagraph
             if not metagraph:
                 raise ValueError(f"Metagraph for {netuid} has not been synced yet.")

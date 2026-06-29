@@ -1,24 +1,24 @@
-from collections import defaultdict
+import concurrent
 import contextlib
+import datetime as dt
 import random
 import time
-from typing import Dict, List
 import unittest
-import concurrent
+from collections import defaultdict
+from typing import Dict, List
 
 from common import constants, utils
 from common.constants import DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
 from common.data import (
     CompressedEntityBucket,
     CompressedMinerIndex,
-    DataEntityBucket,
     DataEntity,
+    DataEntityBucket,
     DataEntityBucketId,
     DataLabel,
     DataSource,
     TimeBucket,
 )
-import datetime as dt
 from common.data_v2 import ScorableDataEntityBucket, ScorableMinerIndex
 from storage.validator.sqlite_memory_validator_storage import (
     SqliteMemoryValidatorStorage,
@@ -39,9 +39,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         self.assertEqual(miner_id, 1)
 
         # Check inserting the same miner again returns the same id.
-        next_id = self.test_storage._upsert_miner(
-            "test_hotkey", dt.datetime.utcnow(), credibility=0.5
-        )
+        next_id = self.test_storage._upsert_miner("test_hotkey", dt.datetime.utcnow(), credibility=0.5)
         self.assertEqual(next_id, miner_id)
 
         with contextlib.closing(self.test_storage._create_connection()) as connection:
@@ -51,9 +49,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             self.assertEqual(credibility, 0.5)
 
         # Finally, insert a new miner and make sure it has a new id.
-        other_id = self.test_storage._upsert_miner(
-            "other_hotkey", dt.datetime.utcnow(), credibility=0.5
-        )
+        other_id = self.test_storage._upsert_miner("other_hotkey", dt.datetime.utcnow(), credibility=0.5)
         self.assertNotEqual(other_id, miner_id)
 
     def test_upsert_compressed_miner_index_insert_index_special_characters(self):
@@ -124,10 +120,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             index.scorable_data_entity_buckets,
             expected_scorable_index.scorable_data_entity_buckets,
         )
-        self.assertTrue(
-            index.last_updated - expected_scorable_index.last_updated
-            < dt.timedelta(seconds=5)
-        )
+        self.assertTrue(index.last_updated - expected_scorable_index.last_updated < dt.timedelta(seconds=5))
 
     # TODO: Add a test to insert millions of rows across many miners and check the total memory size.
 
@@ -144,9 +137,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         # Create the index containing the buckets.
         hotkey = "hotkey1"
-        index = CompressedMinerIndex(
-            sources={DataSource.REDDIT.value: [bucket_1, bucket_1]}
-        )
+        index = CompressedMinerIndex(sources={DataSource.REDDIT.value: [bucket_1, bucket_1]})
 
         # Store the index.
         self.test_storage.upsert_compressed_miner_index(index, hotkey, credibility=1.0)
@@ -204,14 +195,10 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         )
 
         # Store the first index.
-        self.test_storage.upsert_compressed_miner_index(
-            compressed_index_1, "hotkey1", credibility=1.0
-        )
+        self.test_storage.upsert_compressed_miner_index(compressed_index_1, "hotkey1", credibility=1.0)
 
         # Store the second index.
-        self.test_storage.upsert_compressed_miner_index(
-            compressed_index_2, "hotkey1", credibility=1.0
-        )
+        self.test_storage.upsert_compressed_miner_index(compressed_index_2, "hotkey1", credibility=1.0)
 
         # Confirm we have only the last two buckets in the index.
         index = self.test_storage.read_miner_index("hotkey1")
@@ -244,9 +231,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         # Create the DataEntityBuckets for the index.
         sources = [int(DataSource.REDDIT), int(DataSource.X.value)]
         num_time_buckets = (
-            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4
-            // len(sources)
-            // len(labels)
+            constants.DATA_ENTITY_BUCKET_COUNT_LIMIT_PER_MINER_INDEX_PROTOCOL_4 // len(sources) // len(labels)
         )
         time_bucket_ids = list(range(1, num_time_buckets + 1))
 
@@ -268,9 +253,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         # Store the index.
         start = time.time()
-        self.test_storage.upsert_compressed_miner_index(
-            index, "hotkey1", credibility=1.0
-        )
+        self.test_storage.upsert_compressed_miner_index(index, "hotkey1", credibility=1.0)
         print(f"Stored index in {time.time() - start} seconds")
 
         # Confirm we can read the index.
@@ -306,18 +289,13 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             )
 
         sorted_got = sorted(scorable_index.scorable_data_entity_buckets, key=sort_key)
-        sorted_expected = sorted(
-            expected_index.scorable_data_entity_buckets, key=sort_key
-        )
+        sorted_expected = sorted(expected_index.scorable_data_entity_buckets, key=sort_key)
 
         # Using assertListEqual is very slow, so we perform our own element-wise comparison.
         for got, expected in zip(sorted_got, sorted_expected):
             self.assertEqual(got, expected)
 
-        self.assertTrue(
-            scorable_index.last_updated
-            > (dt.datetime.utcnow() - dt.timedelta(minutes=1))
-        )
+        self.assertTrue(scorable_index.last_updated > (dt.datetime.utcnow() - dt.timedelta(minutes=1)))
 
     def test_read_miner_index_with_duplicate_data_entity_buckets(self):
         """Tests that we can read (and score) a miner index when other miners have duplicate buckets."""
@@ -345,12 +323,8 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         )
 
         # Create the indexes containing the bucket.
-        index_1 = CompressedMinerIndex(
-            sources={DataSource.REDDIT.value: [bucket_1_miner_1]}
-        )
-        index_2 = CompressedMinerIndex(
-            sources={DataSource.REDDIT.value: [bucket_1_miner_2]}
-        )
+        index_1 = CompressedMinerIndex(sources={DataSource.REDDIT.value: [bucket_1_miner_1]})
+        index_2 = CompressedMinerIndex(sources={DataSource.REDDIT.value: [bucket_1_miner_2]})
 
         # Store the indexes.
         self.test_storage.upsert_compressed_miner_index(index_1, hotkey1, 1)
@@ -360,9 +334,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
         scored_index = self.test_storage.read_miner_index(hotkey1)
 
         # Confirm the scored index matches expectations.
-        self.assertEqual(
-            scored_index.scorable_data_entity_buckets[0], expected_bucket_1
-        )
+        self.assertEqual(scored_index.scorable_data_entity_buckets[0], expected_bucket_1)
 
     def test_read_non_existing_miner_index(self):
         """Tests that we correctly return none for a non existing miner index."""
@@ -438,9 +410,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
     def test_multithreaded_inserts(self):
         """In a multi-threaded environment, insert 5 indexes for 5 miners, then read them back and verify they're correct."""
 
-        def _create_index(
-            labels: List[str], time_buckets: List[int]
-        ) -> CompressedMinerIndex:
+        def _create_index(labels: list[str], time_buckets: list[int]) -> CompressedMinerIndex:
             """Creates a MinerIndex with the given labels and time buckets."""
             return CompressedMinerIndex(
                 sources={
@@ -478,9 +448,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
 
         # On 3 threads, insert the 5 indexes, twice each.
         def _insert_index(index: CompressedMinerIndex, hotkey: str):
-            self.test_storage.upsert_compressed_miner_index(
-                index, hotkey, credibility=1.0
-            )
+            self.test_storage.upsert_compressed_miner_index(index, hotkey, credibility=1.0)
 
         with concurrent.futures.ThreadPoolExecutor(max_workers=3) as executor:
             futures = []
@@ -540,9 +508,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             for label in labels2
         ]
 
-        def _is_index_as_expected(
-            index: ScorableMinerIndex, expected_index: List[ScorableDataEntityBucket]
-        ):
+        def _is_index_as_expected(index: ScorableMinerIndex, expected_index: list[ScorableDataEntityBucket]):
             """Returns True if the index contains the expected buckets, False otherwise."""
 
             # We can't assert equality because of the last_updated time.
@@ -622,9 +588,7 @@ class TestSqliteMemoryValidatorStorage(unittest.TestCase):
             }
             index = CompressedMinerIndex(sources=buckets_by_source)
             start = time.time()
-            self.test_storage.upsert_compressed_miner_index(
-                index, miner, credibility=random.random()
-            )
+            self.test_storage.upsert_compressed_miner_index(index, miner, credibility=random.random())
             print(
                 f"Inserted index of {CompressedMinerIndex.bucket_count(index)} buckets for miner {miner} in {time.time() - start}"
             )

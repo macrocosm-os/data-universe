@@ -1,13 +1,14 @@
 import os
 import unittest
 from unittest.mock import patch
+
 from common import constants
 from common.data import DataLabel, DataSource
 from scraping.config.config_reader import ConfigReader
 from scraping.coordinator import (
     CoordinatorConfig,
-    ScraperConfig,
     LabelScrapingConfig,
+    ScraperConfig,
 )
 from scraping.scraper import ScraperId
 
@@ -29,9 +30,7 @@ class TestConfigReader(unittest.TestCase):
                             max_data_entities=100,
                         ),
                         LabelScrapingConfig(
-                            max_age_hint_minutes=60
-                            * 24
-                            * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
+                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                             max_data_entities=500,
                         ),
                     ],
@@ -44,9 +43,7 @@ class TestConfigReader(unittest.TestCase):
                                 DataLabel(value="r/bittensor_"),
                                 DataLabel(value="r/bitcoin"),
                             ],
-                            max_age_hint_minutes=60
-                            * 24
-                            * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
+                            max_age_hint_minutes=60 * 24 * constants.DATA_ENTITY_BUCKET_AGE_LIMIT_DAYS,
                             max_data_entities=50,
                         ),
                     ],
@@ -67,15 +64,11 @@ class TestConfigReader(unittest.TestCase):
 
         with self.assertRaises(Exception) as e:
             ConfigReader.load_config(filepath)
-        self.assertIn(
-            "scraper_id\n  value is not a valid enumeration member", str(e.exception)
-        )
+        self.assertIn("scraper_id\n  value is not a valid enumeration member", str(e.exception))
 
     def test_load_real_config_valid(self):
         this_dir = os.path.abspath(os.path.dirname(__file__))
-        filepath = os.path.join(
-            this_dir, "../../../scraping/config/scraping_config.json"
-        )
+        filepath = os.path.join(this_dir, "../../../scraping/config/scraping_config.json")
         loaded_config = ConfigReader.load_config(filepath)
 
 

@@ -1,8 +1,11 @@
-from fastapi import APIRouter, Depends
-from .auth import APIKeyManager
-from pydantic import BaseModel
 from typing import List
+
+from fastapi import APIRouter, Depends
+from pydantic import BaseModel
+
 from vali_utils.api.utils import endpoint_error_handler
+
+from .auth import APIKeyManager
 
 
 class APIKeyCreate(BaseModel):
@@ -20,9 +23,7 @@ def create_key_routes(key_manager: APIKeyManager, require_master_key):
 
     @router.post("", response_model=APIKeyResponse)
     @endpoint_error_handler
-    async def create_api_key(
-        request: APIKeyCreate, _: bool = Depends(require_master_key)
-    ):
+    async def create_api_key(request: APIKeyCreate, _: bool = Depends(require_master_key)):
         """Create new API key (requires master key)"""
         key = key_manager.create_api_key(request.name)
         return {"key": key, "name": request.name}

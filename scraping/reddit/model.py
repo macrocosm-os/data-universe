@@ -1,11 +1,10 @@
 import datetime as dt
 from enum import Enum
-from typing import Optional, List
+from typing import List, Optional
 
 # Use v1 for these models to keep serialization consistent.
 # Pydantic v2 doesn't include spaces in its serialization.
 from pydantic.v1 import BaseModel, Field
-
 
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
@@ -36,51 +35,47 @@ class RedditContent(BaseModel):
         description="URL of the post/comment",
     )
     username: str
-    community: str = Field(
-        alias="communityName", description="The subreddit. Includes the 'r/' prefix"
-    )
+    community: str = Field(alias="communityName", description="The subreddit. Includes the 'r/' prefix")
     body: str = Field()
     created_at: dt.datetime = Field(alias="createdAt")
     data_type: RedditDataType = Field(alias="dataType")
 
     # Post-only fields.
-    title: Optional[str] = Field(
-        description="Title of the post. Empty for comments", default=None
-    )
+    title: str | None = Field(description="Title of the post. Empty for comments", default=None)
 
     # Comment-only fields.
-    parent_id: Optional[str] = Field(
+    parent_id: str | None = Field(
         description="The ID of the parent comment. Only applicable to comments.",
         alias="parentId",
         default=None,
     )
 
     # Media fields.
-    media: Optional[List[str]] = Field(
+    media: list[str] | None = Field(
         default=None,
         description="A list of media URLs associated with the post/comment. Can be None if no media is present.",
     )
-    is_nsfw: Optional[bool] = Field(
+    is_nsfw: bool | None = Field(
         default=None,
         description="Whether the post/comment is marked as NSFW (over_18).",
     )
 
     # Score fields.
-    score: Optional[int] = Field(
+    score: int | None = Field(
         default=None,
         description="Net score (upvotes minus downvotes) for the post/comment. Can be None for backward compatibility.",
     )
-    upvote_ratio: Optional[float] = Field(
+    upvote_ratio: float | None = Field(
         default=None,
         description="Ratio of upvotes to total votes (submissions only, 0.0-1.0). Can be None for backward compatibility.",
     )
-    num_comments: Optional[int] = Field(
+    num_comments: int | None = Field(
         default=None,
         description="Number of comments on the post (submissions only). Can be None for backward compatibility.",
     )
 
     # Scrape tracking
-    scraped_at: Optional[dt.datetime] = Field(default=None, alias="scrapedAt")
+    scraped_at: dt.datetime | None = Field(default=None, alias="scrapedAt")
 
     @classmethod
     def to_data_entity(cls, content: "RedditContent") -> DataEntity:
@@ -97,9 +92,7 @@ class RedditContent(BaseModel):
             uri=content.url,
             datetime=entity_created_at,
             source=DataSource.REDDIT,
-            label=DataLabel(
-                value=content.community.lower()[: constants.MAX_LABEL_LENGTH]
-            ),
+            label=DataLabel(value=content.community.lower()[: constants.MAX_LABEL_LENGTH]),
             content=content_bytes,
             content_size_bytes=len(content_bytes),
         )

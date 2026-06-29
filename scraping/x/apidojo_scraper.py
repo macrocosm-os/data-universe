@@ -1,16 +1,18 @@
 import asyncio
+import datetime as dt
 import threading
 import traceback
+from typing import List, Optional, Tuple
+
 import bittensor as bt
-from typing import List, Tuple, Optional
+
 from common.data import DataEntity, DataLabel, DataSource
-from common.protocol import KeywordMode
 from common.date_range import DateRange
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from common.protocol import KeywordMode
 from scraping.apify import ActorRunner, RunConfig
-from scraping.x.model import XContent
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.x import utils
-import datetime as dt
+from scraping.x.model import XContent
 
 
 class ApiDojoTwitterScraper(Scraper):
@@ -30,7 +32,7 @@ class ApiDojoTwitterScraper(Scraper):
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
 
-    async def validate(self, entities: List[DataEntity], allow_low_engagement: bool = False) -> List[ValidationResult]:
+    async def validate(self, entities: list[DataEntity], allow_low_engagement: bool = False) -> list[ValidationResult]:
         """Validate the correctness of a DataEntity by URI."""
 
         async def validate_entity(entity) -> ValidationResult:
@@ -62,17 +64,15 @@ class ApiDojoTwitterScraper(Scraper):
                 )
 
                 # Retrieve the tweets from Apify.
-                dataset: List[dict] = None
+                dataset: list[dict] = None
                 try:
-                    dataset: List[dict] = await self.runner.run(run_config, run_input)
-                except Exception as e:  # Catch all exceptions here to ensure we do not exit validation early.
+                    dataset: list[dict] = await self.runner.run(run_config, run_input)
+                except Exception:  # Catch all exceptions here to ensure we do not exit validation early.
                     if attempt != max_attempts:
                         # Retrying.
                         continue
                     else:
-                        bt.logging.error(
-                            f"Failed to run actor: {traceback.format_exc()}."
-                        )
+                        bt.logging.error(f"Failed to run actor: {traceback.format_exc()}.")
                         # This is an unfortunate situation. We have no way to distinguish a genuine failure from
                         # one caused by malicious input. In my own testing I was able to make the Actor timeout by
                         # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
@@ -85,8 +85,8 @@ class ApiDojoTwitterScraper(Scraper):
 
                 # Parse the response
                 check_engagement = not allow_low_engagement
-                tweets, is_retweets, author_datas, view_counts = (
-                    self._best_effort_parse_dataset(dataset=dataset, check_engagement=check_engagement)
+                tweets, is_retweets, author_datas, view_counts = self._best_effort_parse_dataset(
+                    dataset=dataset, check_engagement=check_engagement
                 )
 
                 actual_tweet = None
@@ -94,9 +94,7 @@ class ApiDojoTwitterScraper(Scraper):
                 actual_view_count = 0
 
                 for index, tweet in enumerate(tweets):
-                    if utils.normalize_url(tweet.url) == utils.normalize_url(
-                        entity.uri
-                    ):
+                    if utils.normalize_url(tweet.url) == utils.normalize_url(entity.uri):
                         actual_tweet = tweet
                         is_retweet = is_retweets[index]
                         actual_author_data = author_datas[index]
@@ -130,15 +128,11 @@ class ApiDojoTwitterScraper(Scraper):
 
         with ApiDojoTwitterScraper.concurrent_validates_semaphore:
             bt.logging.trace("Acquired semaphore for concurrent apidojo validations.")
-            results = await asyncio.gather(
-                *[validate_entity(entity) for entity in entities]
-            )
+            results = await asyncio.gather(*[validate_entity(entity) for entity in entities])
 
         return results
 
-    async def scrape(
-        self, scrape_config: ScrapeConfig, allow_low_engagement: bool = False
-    ) -> List[DataEntity]:
+    async def scrape(self, scrape_config: ScrapeConfig, allow_low_engagement: bool = False) -> list[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config.
 
         Args:
@@ -154,9 +148,7 @@ class ApiDojoTwitterScraper(Scraper):
         query_parts.append(
             f"since:{scrape_config.date_range.start.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
         )
-        query_parts.append(
-            f"until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}"
-        )
+        query_parts.append(f"until:{scrape_config.date_range.end.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
 
         # Handle labels - separate usernames and keywords
         if scrape_config.labels:
@@ -204,26 +196,20 @@ class ApiDojoTwitterScraper(Scraper):
         bt.logging.success(f"Performing Twitter scrape for search terms: {query}.")
 
         # Run the Actor and retrieve the scraped data.
-        dataset: List[dict] = None
+        dataset: list[dict] = None
         try:
-            dataset: List[dict] = await self.runner.run(run_config, run_input)
+            dataset: list[dict] = await self.runner.run(run_config, run_input)
         except Exception:
-            bt.logging.error(
-                f"Failed to scrape tweets using search terms {query}: {traceback.format_exc()}."
-            )
+            bt.logging.error(f"Failed to scrape tweets using search terms {query}: {traceback.format_exc()}.")
             return []
 
         # Return the parsed results, optionally disabling engagement filtering
-        check_engagement = (
-            not allow_low_engagement
-        )  # Disable filtering if allow_low_engagement=True
+        check_engagement = not allow_low_engagement  # Disable filtering if allow_low_engagement=True
         x_contents, is_retweets, _, _ = self._best_effort_parse_dataset(
             dataset=dataset, check_engagement=check_engagement
         )
 
-        bt.logging.success(
-            f"Completed scrape for {query}. Scraped {len(x_contents)} items."
-        )
+        bt.logging.success(f"Completed scrape for {query}. Scraped {len(x_contents)} items.")
 
         data_entities = []
         for x_content in x_contents:
@@ -233,14 +219,14 @@ class ApiDojoTwitterScraper(Scraper):
 
     async def on_demand_scrape(
         self,
-        usernames: List[str] = None,
-        keywords: List[str] = None,
+        usernames: list[str] = None,
+        keywords: list[str] = None,
         url: str = None,
         keyword_mode: KeywordMode = "all",
         start_datetime: dt.datetime = None,
         end_datetime: dt.datetime = None,
-        limit: int = 100
-    ) -> List[DataEntity]:
+        limit: int = 100,
+    ) -> list[DataEntity]:
         """
         Scrapes Twitter/X data based on specific search criteria, including low-engagement posts.
 
@@ -283,7 +269,7 @@ class ApiDojoTwitterScraper(Scraper):
 
             # Run the Actor and retrieve the scraped data
             try:
-                dataset: List[dict] = await self.runner.run(run_config, run_input)
+                dataset: list[dict] = await self.runner.run(run_config, run_input)
             except Exception as e:
                 bt.logging.exception(f"Failed to scrape tweet from URL {url}: {str(e)}")
                 return []
@@ -291,9 +277,7 @@ class ApiDojoTwitterScraper(Scraper):
             # Parse the results - ALLOW LOW ENGAGEMENT POSTS
             x_contents, _, _, _ = self._best_effort_parse_dataset(dataset=dataset, check_engagement=False)
 
-            bt.logging.success(
-                f"Completed on-demand scrape for URL {url}. Scraped {len(x_contents)} items."
-            )
+            bt.logging.success(f"Completed on-demand scrape for URL {url}. Scraped {len(x_contents)} items.")
 
             # Convert to DataEntity objects
             data_entities = []
@@ -311,22 +295,22 @@ class ApiDojoTwitterScraper(Scraper):
             f"On-demand X scrape with usernames={usernames}, keywords={keywords}, "
             f"keyword_mode={keyword_mode}, start={start_datetime}, end={end_datetime}"
         )
-        
+
         # Construct the query string
         date_format = "%Y-%m-%d_%H:%M:%S_UTC"
         query_parts = []
-        
+
         # Add date range if provided
         if start_datetime:
             query_parts.append(f"since:{start_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
         if end_datetime:
             query_parts.append(f"until:{end_datetime.astimezone(tz=dt.timezone.utc).strftime(date_format)}")
-        
+
         # Add usernames with OR logic between them
         if usernames:
             username_queries = [f"from:{username.removeprefix('@')}" for username in usernames]
             query_parts.append(f"({' OR '.join(username_queries)})")
-        
+
         # Add keywords with specified logic
         if keywords:
             quoted_keywords = [f'"{keyword}"' for keyword in keywords]
@@ -334,13 +318,13 @@ class ApiDojoTwitterScraper(Scraper):
                 query_parts.append(f"({' AND '.join(quoted_keywords)})")
             else:  # keyword_mode == "any"
                 query_parts.append(f"({' OR '.join(quoted_keywords)})")
-        
+
         # If no specific criteria provided, add default search term
         if not query_parts or (not usernames and not keywords):
             query_parts.append("e")  # Most common letter in English
-        
+
         query = " ".join(query_parts)
-        
+
         # Construct the input to the runner
         run_input = {
             **ApiDojoTwitterScraper.BASE_RUN_INPUT,
@@ -359,7 +343,7 @@ class ApiDojoTwitterScraper(Scraper):
 
         # Run the Actor and retrieve the scraped data
         try:
-            dataset: List[dict] = await self.runner.run(run_config, run_input)
+            dataset: list[dict] = await self.runner.run(run_config, run_input)
         except Exception as e:
             bt.logging.exception(f"Failed to scrape tweets using query {query}: {str(e)}")
             return []
@@ -367,9 +351,7 @@ class ApiDojoTwitterScraper(Scraper):
         # Parse the results using enhanced methods - ALLOW LOW ENGAGEMENT POSTS
         x_contents, _, _, _ = self._best_effort_parse_dataset(dataset=dataset, check_engagement=False)
 
-        bt.logging.success(
-            f"Completed on-demand scrape for {query}. Scraped {len(x_contents)} items."
-        )
+        bt.logging.success(f"Completed on-demand scrape for {query}. Scraped {len(x_contents)} items.")
 
         # Convert to DataEntity objects
         data_entities = []
@@ -379,18 +361,18 @@ class ApiDojoTwitterScraper(Scraper):
         return data_entities
 
     def _best_effort_parse_dataset(
-        self, dataset: List[dict], check_engagement: bool = True
-    ) -> Tuple[List[XContent], List[bool], List[dict], List[int]]:
+        self, dataset: list[dict], check_engagement: bool = True
+    ) -> tuple[list[XContent], list[bool], list[dict], list[int]]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
         Any errors are logged and ignored."""
 
         if dataset == [{"zero_result": True}] or not dataset:
             return [], [], [], []
 
-        results: List[XContent] = []
-        is_retweets: List[bool] = []
-        author_datas: List[dict] = []
-        view_counts: List[int] = []
+        results: list[XContent] = []
+        is_retweets: list[bool] = []
+        author_datas: list[dict] = []
+        view_counts: list[int] = []
 
         for data in dataset:
             try:
@@ -401,15 +383,11 @@ class ApiDojoTwitterScraper(Scraper):
                 # Filter spam accounts and low engagement tweets if check_engagement is True
                 if check_engagement:
                     if "author" in data and utils.is_spam_account(data["author"]):
-                        bt.logging.debug(
-                            f"Filtered spam account: {data.get('author', {}).get('userName', 'unknown')}"
-                        )
+                        bt.logging.debug(f"Filtered spam account: {data.get('author', {}).get('userName', 'unknown')}")
                         continue
 
                     if utils.is_low_engagement_tweet(data):
-                        bt.logging.debug(
-                            f"Filtered low engagement tweet: {data.get('url', 'unknown')}"
-                        )
+                        bt.logging.debug(f"Filtered low engagement tweet: {data.get('url', 'unknown')}")
                         continue
 
                 # Extract reply user ID directly from Apify data
@@ -439,9 +417,7 @@ class ApiDojoTwitterScraper(Scraper):
                         username=data["author"]["userName"],
                         text=utils.sanitize_scraped_tweet(data["text"]),
                         url=data["url"],
-                        timestamp=dt.datetime.strptime(
-                            data["createdAt"], "%a %b %d %H:%M:%S %z %Y"
-                        ),
+                        timestamp=dt.datetime.strptime(data["createdAt"], "%a %b %d %H:%M:%S %z %Y"),
                         tweet_hashtags=tags,
                         media=media_urls if media_urls else None,
                         # Enhanced fields
@@ -479,9 +455,7 @@ class ApiDojoTwitterScraper(Scraper):
                     )
                 )
             except Exception:
-                bt.logging.warning(
-                    f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
-                )
+                bt.logging.warning(f"Failed to decode XContent from Apify response: {traceback.format_exc()}.")
 
         return results, is_retweets, author_datas, view_counts
 
@@ -503,7 +477,7 @@ class ApiDojoTwitterScraper(Scraper):
             ),
         }
 
-    def _extract_tags(self, data: dict) -> List[str]:
+    def _extract_tags(self, data: dict) -> list[str]:
         """Extract and format hashtags and cashtags from tweet"""
         entities = data.get("entities", {})
         hashtags = entities.get("hashtags", [])
@@ -514,7 +488,7 @@ class ApiDojoTwitterScraper(Scraper):
 
         return ["#" + item["text"] for item in all_tags]
 
-    def _extract_media_urls(self, data: dict) -> List[str]:
+    def _extract_media_urls(self, data: dict) -> list[str]:
         """Extract media URLs from tweet"""
         media_urls = []
         media_data = data.get("media", [])
@@ -723,17 +697,13 @@ async def test_shadowban_detection():
     bt.logging.success(f"Testing shadowban detection for @{username}")
 
     try:
-        dataset: List[dict] = await scraper.runner.run(run_config, run_input)
+        dataset: list[dict] = await scraper.runner.run(run_config, run_input)
 
         if not dataset or dataset == [{"zero_result": True}]:
-            bt.logging.success(
-                f"✅ SHADOWBANNED: @{username} - No results from 'from:username' search"
-            )
+            bt.logging.success(f"✅ SHADOWBANNED: @{username} - No results from 'from:username' search")
             return True  # Account is shadowbanned
         else:
-            bt.logging.info(
-                f"❌ NOT SHADOWBANNED: @{username} - Found {len(dataset)} results"
-            )
+            bt.logging.info(f"❌ NOT SHADOWBANNED: @{username} - Found {len(dataset)} results")
             for tweet in dataset[:2]:  # Show first 2 results
                 bt.logging.info(f"  - Tweet: {tweet.get('text', '')[:100]}...")
             return False  # Account is not shadowbanned
@@ -769,9 +739,7 @@ async def test_multi_thread_validate():
         """Synchronous version of eval_miner."""
         asyncio.run(scraper.validate(entities))
 
-    threads = [
-        threading.Thread(target=sync_validate, args=(true_entities,)) for _ in range(5)
-    ]
+    threads = [threading.Thread(target=sync_validate, args=(true_entities,)) for _ in range(5)]
 
     for thread in threads:
         thread.start()

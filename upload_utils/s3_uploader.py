@@ -9,15 +9,17 @@ per job_id, so the snapshot model matches its semantics directly.
 Upload flow: per-file presigned URL via POST /get-file-upload-url.
 """
 
-import os
-import json
 import datetime as dt
-import pandas as pd
-import bittensor as bt
-import sqlite3
+import json
+import os
 import secrets
+import sqlite3
 from contextlib import contextmanager
-from typing import List, Dict
+from typing import Dict, List
+
+import bittensor as bt
+import pandas as pd
+
 from common.api_client import DataUniverseApiClient
 from common.data import DataSource
 
@@ -37,7 +39,7 @@ def _to_iso_string(v):
     return str(v)
 
 
-def load_dynamic_lookup() -> Dict[str, List[Dict]]:
+def load_dynamic_lookup() -> dict[str, list[dict]]:
     """Load dynamic desirability lookup from dynamic_desirability/total.json"""
     try:
         # Look for dynamic_desirability/total.json in current directory or parent directories
@@ -45,7 +47,7 @@ def load_dynamic_lookup() -> Dict[str, List[Dict]]:
         for _ in range(3):  # Check up to 3 levels up
             total_json_path = os.path.join(current_dir, "dynamic_desirability", "total.json")
             if os.path.exists(total_json_path):
-                with open(total_json_path, 'r') as f:
+                with open(total_json_path) as f:
                     data = json.load(f)
                     bt.logging.info(f"Loaded dynamic lookup from {total_json_path}")
                     return data
@@ -74,7 +76,7 @@ class S3PartitionedUploader:
         wallet,
         s3_auth_url: str,
         state_file: str,
-        output_dir: str = 's3_partitioned_storage',
+        output_dir: str = "s3_partitioned_storage",
     ):
         self.db_path = db_path
         self.wallet = wallet
@@ -100,11 +102,11 @@ class S3PartitionedUploader:
         finally:
             conn.close()
 
-    def _load_processed_state(self) -> Dict[str, Dict]:
+    def _load_processed_state(self) -> dict[str, dict]:
         """Load processed state - tracks last processed info per job"""
         if os.path.exists(self.state_file):
             try:
-                with open(self.state_file, 'r') as f:
+                with open(self.state_file) as f:
                     return json.load(f)
             except Exception as e:
                 bt.logging.warning(f"Failed to load processed state: {e}")
@@ -113,12 +115,12 @@ class S3PartitionedUploader:
     def _save_processed_state(self):
         """Save processed state"""
         try:
-            with open(self.state_file, 'w') as f:
+            with open(self.state_file, "w") as f:
                 json.dump(self.processed_state, f, indent=2)
         except Exception as e:
             bt.logging.error(f"Failed to save processed state: {e}")
 
-    def _load_dd_list(self) -> Dict[str, Dict]:
+    def _load_dd_list(self) -> dict[str, dict]:
         """Load job configurations from Gravity and return by job_id"""
         try:
             lookup = load_dynamic_lookup()
@@ -126,53 +128,53 @@ class S3PartitionedUploader:
 
             if isinstance(lookup, list):
                 for item in lookup:
-                    if not isinstance(item, dict) or 'params' not in item:
+                    if not isinstance(item, dict) or "params" not in item:
                         continue
 
-                    job_id = item.get('id')  # Use the job_id from Gravity
+                    job_id = item.get("id")  # Use the job_id from Gravity
                     if not job_id:
                         continue
 
-                    params = item['params']
-                    platform = params.get('platform', '').lower()
-                    weight = item.get('weight', 1.0)
+                    params = item["params"]
+                    platform = params.get("platform", "").lower()
+                    weight = item.get("weight", 1.0)
 
                     # Map platform to source integer
-                    if platform == 'reddit':
+                    if platform == "reddit":
                         source_int = DataSource.REDDIT.value
-                    elif platform in ['x', 'twitter']:
+                    elif platform in ["x", "twitter"]:
                         source_int = DataSource.X.value
                     else:
                         continue
 
                     # Store job configuration by job_id
-                    max_rows = item.get('max_rows')
+                    max_rows = item.get("max_rows")
 
-                    if params.get('label') and params.get('keyword'):
+                    if params.get("label") and params.get("keyword"):
                         # Both label and keyword required
                         result[job_id] = {
                             "source": source_int,
                             "type": "label_and_keyword",
-                            "label": params['label'],
-                            "keyword": params['keyword'],
+                            "label": params["label"],
+                            "keyword": params["keyword"],
                             "weight": weight,
                             "max_rows": max_rows,
                         }
-                    elif params.get('label'):
+                    elif params.get("label"):
                         # Label only
                         result[job_id] = {
                             "source": source_int,
                             "type": "label",
-                            "value": params['label'],
+                            "value": params["label"],
                             "weight": weight,
                             "max_rows": max_rows,
                         }
-                    elif params.get('keyword'):
+                    elif params.get("keyword"):
                         # Keyword only
                         result[job_id] = {
                             "source": source_int,
                             "type": "keyword",
-                            "value": params['keyword'],
+                            "value": params["keyword"],
                             "weight": weight,
                             "max_rows": max_rows,
                         }
@@ -199,7 +201,7 @@ class S3PartitionedUploader:
                 f"LOWER(label) = 'r/{normalized.removeprefix('r/')}'",
             ]
         else:
-            without_hash = normalized.lstrip('#')
+            without_hash = normalized.lstrip("#")
             with_hash = f"#{without_hash}"
             parts = [
                 f"EXISTS (SELECT 1 FROM json_each(content, '$.tweet_hashtags') WHERE LOWER(value) = '{with_hash}')",
@@ -237,7 +239,7 @@ class S3PartitionedUploader:
 
         try:
             with self.get_db_connection() as conn:
-                df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
+                df = pd.read_sql_query(query, conn, params=params, parse_dates=["datetime"])
 
             bt.logging.debug(f"Found {len(df)} records for label '{label}' in source {source}")
             return df
@@ -261,7 +263,7 @@ class S3PartitionedUploader:
 
         try:
             with self.get_db_connection() as conn:
-                df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
+                df = pd.read_sql_query(query, conn, params=params, parse_dates=["datetime"])
 
             bt.logging.debug(f"Found {len(df)} records for keyword '{keyword}' in source {source}")
             return df
@@ -288,7 +290,7 @@ class S3PartitionedUploader:
 
         try:
             with self.get_db_connection() as conn:
-                df = pd.read_sql_query(query, conn, params=params, parse_dates=['datetime'])
+                df = pd.read_sql_query(query, conn, params=params, parse_dates=["datetime"])
 
             bt.logging.debug(f"Found {len(df)} records for label '{label}' AND keyword '{keyword}' in source {source}")
             return df
@@ -307,72 +309,76 @@ class S3PartitionedUploader:
             def decode_content(content_bytes):
                 try:
                     if isinstance(content_bytes, bytes):
-                        return json.loads(content_bytes.decode('utf-8'))
+                        return json.loads(content_bytes.decode("utf-8"))
                     return json.loads(content_bytes)
                 except:
                     return {}
 
-            df['decoded_content'] = df['content'].apply(decode_content)
+            df["decoded_content"] = df["content"].apply(decode_content)
 
             # Extract fields based on source type
             if source == DataSource.REDDIT.value:
                 # Reddit data structure (uri removed — validator uses url column)
-                result_df = pd.DataFrame({
-                    'datetime': df['datetime'],
-                    'label': df['label'],
-                    'id': df['decoded_content'].apply(lambda x: x.get('id')),
-                    'username': df['decoded_content'].apply(lambda x: x.get('username')),
-                    'communityName': df['decoded_content'].apply(lambda x: x.get('communityName')),
-                    'body': df['decoded_content'].apply(lambda x: x.get('body')),
-                    'title': df['decoded_content'].apply(lambda x: x.get('title')),
-                    'createdAt': df['decoded_content'].apply(lambda x: x.get('createdAt')),
-                    'dataType': df['decoded_content'].apply(lambda x: x.get('dataType')),
-                    'parentId': df['decoded_content'].apply(lambda x: x.get('parentId')),
-                    'url': df['decoded_content'].apply(lambda x: x.get('url')),
-                    'media': df['decoded_content'].apply(lambda x: x.get('media')),
-                    'is_nsfw': df['decoded_content'].apply(lambda x: x.get('is_nsfw')),
-                    'score': df['decoded_content'].apply(lambda x: x.get('score')),
-                    'upvote_ratio': df['decoded_content'].apply(lambda x: x.get('upvote_ratio')),
-                    'num_comments': df['decoded_content'].apply(lambda x: x.get('num_comments')),
-                    'scrapedAt': df['decoded_content'].apply(lambda x: _to_iso_string(x.get('scrapedAt'))),
-                })
+                result_df = pd.DataFrame(
+                    {
+                        "datetime": df["datetime"],
+                        "label": df["label"],
+                        "id": df["decoded_content"].apply(lambda x: x.get("id")),
+                        "username": df["decoded_content"].apply(lambda x: x.get("username")),
+                        "communityName": df["decoded_content"].apply(lambda x: x.get("communityName")),
+                        "body": df["decoded_content"].apply(lambda x: x.get("body")),
+                        "title": df["decoded_content"].apply(lambda x: x.get("title")),
+                        "createdAt": df["decoded_content"].apply(lambda x: x.get("createdAt")),
+                        "dataType": df["decoded_content"].apply(lambda x: x.get("dataType")),
+                        "parentId": df["decoded_content"].apply(lambda x: x.get("parentId")),
+                        "url": df["decoded_content"].apply(lambda x: x.get("url")),
+                        "media": df["decoded_content"].apply(lambda x: x.get("media")),
+                        "is_nsfw": df["decoded_content"].apply(lambda x: x.get("is_nsfw")),
+                        "score": df["decoded_content"].apply(lambda x: x.get("score")),
+                        "upvote_ratio": df["decoded_content"].apply(lambda x: x.get("upvote_ratio")),
+                        "num_comments": df["decoded_content"].apply(lambda x: x.get("num_comments")),
+                        "scrapedAt": df["decoded_content"].apply(lambda x: _to_iso_string(x.get("scrapedAt"))),
+                    }
+                )
             else:
                 # X/Twitter data structure (uri removed — validator uses url column)
-                result_df = pd.DataFrame({
-                    'datetime': df['datetime'],
-                    'label': df['label'],
-                    'username': df['decoded_content'].apply(lambda x: x.get('username')),
-                    'text': df['decoded_content'].apply(lambda x: x.get('text')),
-                    'tweet_hashtags': df['decoded_content'].apply(lambda x: x.get('tweet_hashtags', [])),
-                    'timestamp': df['decoded_content'].apply(lambda x: x.get('timestamp')),
-                    'url': df['decoded_content'].apply(lambda x: x.get('url')),
-                    'media': df['decoded_content'].apply(lambda x: x.get('media')),
-                    'user_id': df['decoded_content'].apply(lambda x: x.get('user_id')),
-                    'user_display_name': df['decoded_content'].apply(lambda x: x.get('user_display_name')),
-                    'user_verified': df['decoded_content'].apply(lambda x: x.get('user_verified')),
-                    'tweet_id': df['decoded_content'].apply(lambda x: x.get('tweet_id')),
-                    'is_reply': df['decoded_content'].apply(lambda x: x.get('is_reply')),
-                    'is_quote': df['decoded_content'].apply(lambda x: x.get('is_quote')),
-                    'conversation_id': df['decoded_content'].apply(lambda x: x.get('conversation_id')),
-                    'in_reply_to_user_id': df['decoded_content'].apply(lambda x: x.get('in_reply_to_user_id')),
-                    'language': df['decoded_content'].apply(lambda x: x.get('language')),
-                    'in_reply_to_username': df['decoded_content'].apply(lambda x: x.get('in_reply_to_username')),
-                    'quoted_tweet_id': df['decoded_content'].apply(lambda x: x.get('quoted_tweet_id')),
-                    'like_count': df['decoded_content'].apply(lambda x: x.get('like_count')),
-                    'retweet_count': df['decoded_content'].apply(lambda x: x.get('retweet_count')),
-                    'reply_count': df['decoded_content'].apply(lambda x: x.get('reply_count')),
-                    'quote_count': df['decoded_content'].apply(lambda x: x.get('quote_count')),
-                    'view_count': df['decoded_content'].apply(lambda x: x.get('view_count')),
-                    'bookmark_count': df['decoded_content'].apply(lambda x: x.get('bookmark_count')),
-                    'user_blue_verified': df['decoded_content'].apply(lambda x: x.get('user_blue_verified')),
-                    'user_description': df['decoded_content'].apply(lambda x: x.get('user_description')),
-                    'user_location': df['decoded_content'].apply(lambda x: x.get('user_location')),
-                    'profile_image_url': df['decoded_content'].apply(lambda x: x.get('profile_image_url')),
-                    'cover_picture_url': df['decoded_content'].apply(lambda x: x.get('cover_picture_url')),
-                    'user_followers_count': df['decoded_content'].apply(lambda x: x.get('user_followers_count')),
-                    'user_following_count': df['decoded_content'].apply(lambda x: x.get('user_following_count')),
-                    'scraped_at': df['decoded_content'].apply(lambda x: _to_iso_string(x.get('scraped_at'))),
-                })
+                result_df = pd.DataFrame(
+                    {
+                        "datetime": df["datetime"],
+                        "label": df["label"],
+                        "username": df["decoded_content"].apply(lambda x: x.get("username")),
+                        "text": df["decoded_content"].apply(lambda x: x.get("text")),
+                        "tweet_hashtags": df["decoded_content"].apply(lambda x: x.get("tweet_hashtags", [])),
+                        "timestamp": df["decoded_content"].apply(lambda x: x.get("timestamp")),
+                        "url": df["decoded_content"].apply(lambda x: x.get("url")),
+                        "media": df["decoded_content"].apply(lambda x: x.get("media")),
+                        "user_id": df["decoded_content"].apply(lambda x: x.get("user_id")),
+                        "user_display_name": df["decoded_content"].apply(lambda x: x.get("user_display_name")),
+                        "user_verified": df["decoded_content"].apply(lambda x: x.get("user_verified")),
+                        "tweet_id": df["decoded_content"].apply(lambda x: x.get("tweet_id")),
+                        "is_reply": df["decoded_content"].apply(lambda x: x.get("is_reply")),
+                        "is_quote": df["decoded_content"].apply(lambda x: x.get("is_quote")),
+                        "conversation_id": df["decoded_content"].apply(lambda x: x.get("conversation_id")),
+                        "in_reply_to_user_id": df["decoded_content"].apply(lambda x: x.get("in_reply_to_user_id")),
+                        "language": df["decoded_content"].apply(lambda x: x.get("language")),
+                        "in_reply_to_username": df["decoded_content"].apply(lambda x: x.get("in_reply_to_username")),
+                        "quoted_tweet_id": df["decoded_content"].apply(lambda x: x.get("quoted_tweet_id")),
+                        "like_count": df["decoded_content"].apply(lambda x: x.get("like_count")),
+                        "retweet_count": df["decoded_content"].apply(lambda x: x.get("retweet_count")),
+                        "reply_count": df["decoded_content"].apply(lambda x: x.get("reply_count")),
+                        "quote_count": df["decoded_content"].apply(lambda x: x.get("quote_count")),
+                        "view_count": df["decoded_content"].apply(lambda x: x.get("view_count")),
+                        "bookmark_count": df["decoded_content"].apply(lambda x: x.get("bookmark_count")),
+                        "user_blue_verified": df["decoded_content"].apply(lambda x: x.get("user_blue_verified")),
+                        "user_description": df["decoded_content"].apply(lambda x: x.get("user_description")),
+                        "user_location": df["decoded_content"].apply(lambda x: x.get("user_location")),
+                        "profile_image_url": df["decoded_content"].apply(lambda x: x.get("profile_image_url")),
+                        "cover_picture_url": df["decoded_content"].apply(lambda x: x.get("cover_picture_url")),
+                        "user_followers_count": df["decoded_content"].apply(lambda x: x.get("user_followers_count")),
+                        "user_following_count": df["decoded_content"].apply(lambda x: x.get("user_following_count")),
+                        "scraped_at": df["decoded_content"].apply(lambda x: _to_iso_string(x.get("scraped_at"))),
+                    }
+                )
 
             return result_df
 
@@ -380,7 +386,9 @@ class S3PartitionedUploader:
             bt.logging.error(f"Error creating raw dataframe: {e}")
             return pd.DataFrame()
 
-    async def _upload_job_snapshot(self, client: DataUniverseApiClient, df: pd.DataFrame, source: int, job_id: str) -> bool:
+    async def _upload_job_snapshot(
+        self, client: DataUniverseApiClient, df: pd.DataFrame, source: int, job_id: str
+    ) -> bool:
         """Upload the snapshot DataFrame as one parquet file via per-file presigned URL."""
         if df.empty:
             return True
@@ -402,13 +410,11 @@ class S3PartitionedUploader:
             local_path = os.path.join(self.output_dir, filename)
 
             # Save to parquet with snappy compression
-            raw_df.to_parquet(local_path, index=False, compression='snappy', row_group_size=10_000)
+            raw_df.to_parquet(local_path, index=False, compression="snappy", row_group_size=10_000)
 
             # Request presigned URL and upload via API
             try:
-                await client.miner_upload_parquet_file(
-                    job_id=job_id, filename=filename, file_path=local_path
-                )
+                await client.miner_upload_parquet_file(job_id=job_id, filename=filename, file_path=local_path)
                 bt.logging.success(f"Uploaded {len(raw_df)} records to job {job_id}")
             except Exception as upload_err:
                 err_str = str(upload_err)
@@ -427,7 +433,7 @@ class S3PartitionedUploader:
             bt.logging.error(f"Error uploading data chunk for job {job_id}: {e}")
             return False
 
-    async def _process_job(self, client: DataUniverseApiClient, job_id: str, job_config: Dict) -> bool:
+    async def _process_job(self, client: DataUniverseApiClient, job_id: str, job_config: dict) -> bool:
         """Re-snapshot a single job: query all matching rows up to max_rows and upload as one file."""
         source = job_config["source"]
         search_type = job_config["type"]
@@ -462,8 +468,8 @@ class S3PartitionedUploader:
             return False
 
         self.processed_state[job_id] = {
-            'last_snapshot_rows': len(df),
-            'last_snapshot_time': dt.datetime.now().isoformat(),
+            "last_snapshot_rows": len(df),
+            "last_snapshot_time": dt.datetime.now().isoformat(),
         }
         self._save_processed_state()
 

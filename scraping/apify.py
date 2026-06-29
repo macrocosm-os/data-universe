@@ -1,10 +1,10 @@
 import os
 from typing import List, Optional
-from apify_client import ApifyClientAsync
-from pydantic import BaseModel, Field, PositiveInt
-import bittensor as bt
 
+import bittensor as bt
+from apify_client import ApifyClientAsync
 from dotenv import load_dotenv
+from pydantic import BaseModel, Field, PositiveInt
 
 from common.data import StrictBaseModel
 
@@ -35,13 +35,9 @@ class RunConfig(StrictBaseModel):
         default=100,
     )
 
-    debug_info: str = Field(
-        description="Optional debug info to include in logs relating to this run."
-    )
+    debug_info: str = Field(description="Optional debug info to include in logs relating to this run.")
 
-    memory_mb: Optional[int] = Field(
-        description="The amount of memory in mb to use for this run.", default=None
-    )
+    memory_mb: int | None = Field(description="The amount of memory in mb to use for this run.", default=None)
 
 
 class ActorRunError(Exception):
@@ -56,7 +52,7 @@ class ActorRunner:
     def __init__(self):
         pass
 
-    async def run(self, config: RunConfig, run_input: dict) -> List[dict]:
+    async def run(self, config: RunConfig, run_input: dict) -> list[dict]:
         """
         Run an Apify actor and return the json results.
 
@@ -84,12 +80,9 @@ class ActorRunner:
 
         # We want a success status. Timeout is also okay because it will return partial results.
         if "status" not in run or not (
-            run["status"].casefold() == "SUCCEEDED".casefold()
-            or run["status"].casefold() == "TIMED-OUT".casefold()
+            run["status"].casefold() == "SUCCEEDED".casefold() or run["status"].casefold() == "TIMED-OUT".casefold()
         ):
-            raise ActorRunError(
-                f"Actor ({config.actor_id}) [{config.debug_info}] failed: {run}"
-            )
+            raise ActorRunError(f"Actor ({config.actor_id}) [{config.debug_info}] failed: {run}")
         iterator = client.dataset(run["defaultDatasetId"]).iterate_items()
         items = [i async for i in iterator]
 

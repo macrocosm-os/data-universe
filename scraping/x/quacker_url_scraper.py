@@ -1,15 +1,17 @@
 import asyncio
+import datetime as dt
 import traceback
-import bittensor as bt
 from typing import List
+
+import bittensor as bt
+
 from common import constants
 from common.data import DataEntity, DataLabel, DataSource
-from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
 from scraping.apify import ActorRunner, RunConfig
+from scraping.scraper import ScrapeConfig, Scraper, ValidationResult
+from scraping.x import utils
 from scraping.x.microworlds_scraper import test_scrape
 from scraping.x.model import XContent
-from scraping.x import utils
-import datetime as dt
 
 
 class QuackerUrlScraper(Scraper):
@@ -30,7 +32,7 @@ class QuackerUrlScraper(Scraper):
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
 
-    async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
+    async def validate(self, entities: list[DataEntity]) -> list[ValidationResult]:
         bt.logging.info("Using Quacker URL Scraper as backup while APIDojo is nonfunctional.")
         """Validate the correctness of a DataEntity by URI."""
         if not entities:
@@ -62,12 +64,10 @@ class QuackerUrlScraper(Scraper):
         )
 
         # Retrieve the tweet from Apify.
-        dataset: List[dict] = None
+        dataset: list[dict] = None
         try:
-            dataset: List[dict] = await self.runner.run(run_config, run_input)
-        except (
-            Exception
-        ) as e:  # Catch all exceptions here to ensure we do not exit validation early.
+            dataset: list[dict] = await self.runner.run(run_config, run_input)
+        except Exception:  # Catch all exceptions here to ensure we do not exit validation early.
             bt.logging.error(f"Failed to validate entities: {traceback.format_exc()}.")
             # This is an unfortunate situation. We have no way to distinguish a genuine failure from
             # one caused by malicious input. In my own testing I was able to make the Actor timeout by
@@ -106,22 +106,21 @@ class QuackerUrlScraper(Scraper):
                 utils.validate_tweet_content(
                     actual_tweet=actual_tweet,
                     entity=entity,
-                    is_retweet=False # Quacker does not have an is_retweet field, give credit to all tweets for now 
+                    is_retweet=False,  # Quacker does not have an is_retweet field, give credit to all tweets for now
                 )
             )
 
         return results
 
-
-    async def scrape(self, scrape_config: ScrapeConfig) -> List[DataEntity]:
+    async def scrape(self, scrape_config: ScrapeConfig) -> list[DataEntity]:
         """Scrapes a batch of Tweets according to the scrape config."""
         raise NotImplementedError("This scraper only validates.")
 
-    def _best_effort_parse_dataset(self, dataset: List[dict]) -> List[XContent]:
+    def _best_effort_parse_dataset(self, dataset: list[dict]) -> list[XContent]:
         """Performs a best effort parsing of Apify dataset into List[XContent]
 
         Any errors are logged and ignored."""
-        results: List[XContent] = []
+        results: list[XContent] = []
         for data in dataset:
             try:
                 results.append(
@@ -129,16 +128,14 @@ class QuackerUrlScraper(Scraper):
                         username=utils.extract_user(data["url"]),
                         text=utils.sanitize_scraped_tweet(data["full_text"]),
                         url=utils.normalize_url(data["url"]),
-                        timestamp=dt.datetime.strptime(
-                            data["created_at"], "%Y-%m-%dT%H:%M:%S.%fZ"
-                        ).replace(tzinfo=dt.timezone.utc),
+                        timestamp=dt.datetime.strptime(data["created_at"], "%Y-%m-%dT%H:%M:%S.%fZ").replace(
+                            tzinfo=dt.timezone.utc
+                        ),
                         tweet_hashtags=utils.extract_hashtags(data["full_text"]),
                     )
                 )
             except Exception:
-                bt.logging.warning(
-                    f"Failed to decode XContent from Apify response: {traceback.format_exc()}."
-                )
+                bt.logging.warning(f"Failed to decode XContent from Apify response: {traceback.format_exc()}.")
 
         return results
 
