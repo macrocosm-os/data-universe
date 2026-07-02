@@ -508,8 +508,14 @@ class Validator:
 
     def is_healthy(self) -> bool:
         """Returns true if the validator is healthy and is evaluating Miners."""
+        # Must exceed the longest legitimate eval batch: the batch runner joins
+        # to completion with a 4200s (70 min) backstop and each miner eval is
+        # individually bounded at 3900s. The old 35-min threshold self-killed
+        # (os._exit(1), silent) whenever the slowest miner in a batch ran past
+        # 35 min — the cause of the exit-code-1 restart loops (min observed
+        # restart gap 35m11s = watchdog period + startup).
         with self.lock:
-            return dt.datetime.utcnow() - self.last_eval_time < dt.timedelta(minutes=35)
+            return dt.datetime.utcnow() - self.last_eval_time < dt.timedelta(minutes=80)
 
     def should_set_weights(self) -> bool:
         # Check if enough epoch blocks have elapsed since the last epoch.
@@ -765,6 +771,14 @@ def main():
         while True:
             if not validator.is_healthy():
                 bt.logging.error("Validator is unhealthy. Restarting.")
+                # Also write to stderr: bt.logging goes to the trace-flooded,
+                # rotated out-log, which made these self-kills invisible.
+                print(
+                    "HEALTH WATCHDOG: no eval batch completed within the health "
+                    "threshold; exiting with os._exit(1) for pm2 to restart.",
+                    file=sys.stderr,
+                    flush=True,
+                )
                 # Sys.exit() may not shutdown the process because it'll wait for other threads
                 # to complete. Use os._exit() instead.
                 os._exit(1)
