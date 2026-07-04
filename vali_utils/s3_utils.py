@@ -31,54 +31,12 @@ from vali_utils.parquet_reader import read_random_row_group
 from urllib.parse import urlparse
 
 
-def normalize_url_for_dedup(url_str: str) -> str:
-    """Platform-aware URL normalization that extracts the canonical content ID for dedup.
-
-    Approach: define what a VALID canonical URL looks like, ignore everything else.
-    This is not a blacklist of known exploits — it's a whitelist of valid URL structure.
-
-    X:      Only the numeric tweet ID matters. Username is lowercased (decorative — X resolves by ID).
-    Reddit: Only post_id and comment_id (base36, exactly 7 chars) matter.
-
-    Canonical forms produced:
-      X tweet:        https://x.com/{user_lower}/status/{tweet_id}
-      Reddit post:    https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}
-      Reddit comment: https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}
-    """
-    url = str(url_str).strip()
-    parsed = urlparse(url)
-    netloc = parsed.netloc.lower()
-    path = parsed.path
-
-    # --- X / Twitter ---
-    if "x.com" in netloc or "twitter.com" in netloc:
-        # Extract /username/status/DIGITS — lowercase username to prevent case-fudging
-        m = re.match(r"^/([^/]+)/status/(\d+)", path)
-        if m:
-            username = m.group(1).lower()
-            tweet_id = m.group(2)
-            return f"https://x.com/{username}/status/{tweet_id}"
-        return f"https://x.com{path.rstrip('/').lower()}"
-
-    # --- Reddit ---
-    if "reddit.com" in netloc:
-        # /r/{sub}/comments/{post_id}/{slug}/{comment_id}
-        m = re.match(
-            r"^/r/([^/]+)/comments/([a-z0-9]+)(?:/([^/]*)(?:/([a-z0-9]+))?)?",
-            path,
-        )
-        if m:
-            sub, post_id, slug, comment_id = m.group(1), m.group(2), m.group(3) or "", m.group(4)
-            # Real Reddit IDs are base36, exactly 7 chars (post and comment).
-            # Verified against 240K+ real comment IDs and 704 post IDs — all 7 chars.
-            # Fake IDs (f1, _f1, aaaaaa0, etc.) fail this check.
-            if comment_id and re.match(r"^[a-z0-9]{7}$", comment_id):
-                return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}"
-            return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}"
-        return f"https://www.reddit.com{path.rstrip('/')}"
-
-    # --- Fallback: strip query/fragment, lowercase ---
-    return f"{parsed.scheme}://{netloc}{path.rstrip('/')}"
+# normalize_url_for_dedup moved to vali_utils/url_normalizer.py (a
+# dependency-light module) so the dedup worker PROCESSES can import it
+# without dragging in bittensor. Re-exported here so existing importers
+# (diag scripts, tests) keep working unchanged.
+from vali_utils.url_normalizer import normalize_url_for_dedup  # noqa: F401
+from vali_utils import dedup_pool
 
 
 _PRESIGNED_URL_RE = re.compile(
@@ -769,6 +727,66 @@ class DuckDBSampledValidator:
             except OSError as e:
                 bt.logging.warning(f"Could not prepare local validation temp dir: {e}")
 
+    # --- Dedup worker process pool -------------------------------------
+    # The per-row normalize+blake2b dedup loop is pure Python and GIL-bound:
+    # N eval THREADS running it concurrently serialize on one core (measured
+    # on 5x1M-row files: 5 threads = 0.8x of sequential — slower than no
+    # concurrency — while 5 processes = 3x+). The pool runs that loop in
+    # dedicated worker SUBPROCESSES (vali_utils/dedup_worker.py, dependency-
+    # light: 0.03s spawn / ~24MB each), so eval threads keep the I/O and the
+    # cores do the CPU. A wedged or crashed worker is SIGKILLed and respawned
+    # by the pool — one adversarial file can never poison the rest.
+    # Shared class-wide across all eval threads; lazily started.
+    # Rollback without a code edit: DEDUP_POOL_ENABLED=false in the env
+    # (then pm2 restart --update-env) reverts to the inline dedup path.
+    DEDUP_POOL_ENABLED = os.environ.get(
+        "DEDUP_POOL_ENABLED", "true").strip().lower() not in ("false", "0", "no")
+    DEDUP_POOL_WORKERS = int(os.environ.get(
+        "DEDUP_POOL_WORKERS", max(4, min(12, (os.cpu_count() or 8) - 4))
+    ))
+    _dedup_pool = None
+    _dedup_pool_lock = threading.Lock()
+
+    @classmethod
+    def _get_dedup_pool(cls) -> dedup_pool.DedupPool:
+        with cls._dedup_pool_lock:
+            if cls._dedup_pool is None:
+                cls._dedup_pool = dedup_pool.DedupPool(cls.DEDUP_POOL_WORKERS)
+            return cls._dedup_pool
+
+    def _pooled_url_scan(self, local_path: str, max_iterations: int,
+                         batch_size: int, timeout_secs: float) -> dict:
+        """Run the dedup scan on a pool worker and re-raise failures as the
+        SAME exception types the inline loop raised, so the per-file routing
+        (transient-skip / page-decode fail-closed / generic-skip) is
+        preserved unchanged.
+        """
+        try:
+            res = self._get_dedup_pool().scan(
+                local_path, max_iterations, batch_size, timeout_secs
+            )
+        except dedup_pool.WorkerTimeout as e:
+            # Same fail-closed route as a conn.interrupt timeout today.
+            raise duckdb.InterruptException(str(e))
+        except dedup_pool.WorkerCrashed as e:
+            # Native crash on a crafted file must fail the file closed —
+            # the v3-exploit invariant: a file that kills the parser fails.
+            raise duckdb.Error(str(e))
+        if "error_kind" in res:
+            if res["error_kind"] == "interrupt":
+                raise duckdb.InterruptException(res["error_msg"])
+            if res["error_kind"] == "duckdb":
+                # Re-raise the SAME DuckDB subclass the child hit, so the
+                # per-file handler routes it identically to the inline path
+                # (IOException/HTTPException/ConnectionException -> fail-open
+                # skip; any other duckdb.Error -> page-decode fail-closed).
+                exc_cls = getattr(duckdb, res.get("error_type", ""), duckdb.Error)
+                if not (isinstance(exc_cls, type) and issubclass(exc_cls, duckdb.Error)):
+                    exc_cls = duckdb.Error
+                raise exc_cls(res["error_msg"])
+            raise RuntimeError(f"Dedup worker error: {res['error_msg']}")
+        return res
+
     def _download_to_temp(self, presigned_url: str, declared_size: int) -> str:
         """Bulk-download one file to a temp file and return its local path.
 
@@ -1100,7 +1118,6 @@ class DuckDBSampledValidator:
                 # log line in _check_dedup at the end of the pass.
                 if job_id not in dedup_hashes_by_job:
                     dedup_hashes_by_job[job_id] = True  # presence marker for log only
-                file_hashes: set = set()
 
                 # Hard iteration cap so a misbehaving cursor cannot loop forever.
                 # Use footer total_rows when available (cheap, already validated);
@@ -1115,30 +1132,48 @@ class DuckDBSampledValidator:
 
                 file_decodable = 0
                 t_dedup = time.monotonic()
-                cur = conn.execute(
-                    f"SELECT url FROM read_parquet('{presigned_url}')"
-                )
-                cursor_overran = False
-                for _ in range(max_iterations):
-                    batch = cur.fetchmany(BATCH_SIZE)
-                    if not batch:
-                        break
-                    for (url_val,) in batch:
-                        if url_val and str(url_val).strip():
-                            file_decodable += 1
-                        normalized = normalize_url_for_dedup(url_val)
-                        h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
-                        dedup_total += 1
-                        if h in file_hashes:
-                            dedup_duplicates += 1
-                        else:
-                            file_hashes.add(h)
-                    del batch
+                if self.DEDUP_POOL_ENABLED:
+                    # GIL-bound loop runs in a worker PROCESS (see the pool
+                    # comment above). Same semantics; child failures re-raise
+                    # as the same duckdb exception types into the handlers
+                    # below. Timeout matches the parent watchdog's budget.
+                    scan_timeout = max(1.0, min(
+                        self.PER_FILE_DUCKDB_TIMEOUT_SECS,
+                        miner_deadline - time.monotonic(),
+                    ))
+                    scan = self._pooled_url_scan(
+                        presigned_url, max_iterations, BATCH_SIZE, scan_timeout
+                    )
+                    file_decodable = scan["decodable"]
+                    dedup_total += scan["rows"]
+                    dedup_duplicates += scan["dups"]
+                    cursor_overran = scan["overran"]
                 else:
-                    # Loop hit the iteration cap without seeing EOF — cursor is
-                    # returning more rows than the footer claimed. Treat as
-                    # malformed/adversarial and fail the file.
-                    cursor_overran = True
+                    file_hashes: set = set()
+                    cur = conn.execute(
+                        f"SELECT url FROM read_parquet('{presigned_url}')"
+                    )
+                    cursor_overran = False
+                    for _ in range(max_iterations):
+                        batch = cur.fetchmany(BATCH_SIZE)
+                        if not batch:
+                            break
+                        for (url_val,) in batch:
+                            if url_val and str(url_val).strip():
+                                file_decodable += 1
+                            normalized = normalize_url_for_dedup(url_val)
+                            h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
+                            dedup_total += 1
+                            if h in file_hashes:
+                                dedup_duplicates += 1
+                            else:
+                                file_hashes.add(h)
+                        del batch
+                    else:
+                        # Loop hit the iteration cap without seeing EOF — cursor is
+                        # returning more rows than the footer claimed. Treat as
+                        # malformed/adversarial and fail the file.
+                        cursor_overran = True
                 if cursor_overran:
                     bt.logging.warning(
                         f"URL dedup cursor overran metadata row count "
