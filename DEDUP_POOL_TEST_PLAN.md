@@ -89,6 +89,23 @@ wrong `s3_utils.py` was imported (line 1 of the output tells you).
 
 ---
 
+## Phase 1b — SEE the production speedup (~5 min, no wallet, no network)
+
+Simulates the exact production shape: 5 concurrent eval threads each
+dedup-scanning a 2M-row file, inline vs pool, with per-file `dedup=` lines
+in the same format as the pm2 logs:
+
+```bash
+python scripts/sim_prod_concurrency.py
+```
+
+Reference result (dev Mac): solo=6.3s; inline ×5 threads = **36–37s per file**
+(GIL queueing, ×5.8 the solo cost — this is production's `dedup=47–104s`);
+pool ×5 threads = **6.8s per file**, 5.4× wall speedup, counts identical on
+every file. Host numbers will differ in absolute terms, same shape.
+
+---
+
 ## Phase 2 — real-miner verdict equivalence (~35–45 min, the decisive test)
 
 Runs the FULL production validation twice per miner on a frozen file snapshot:
