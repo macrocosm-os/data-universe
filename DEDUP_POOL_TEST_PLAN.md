@@ -140,6 +140,33 @@ live-upload drift, so a strict diff here is a real bug.
 
 ---
 
+## Phase 2b — full-flow concurrent benchmark, WITH wallet (~25–40 min, optional but decisive for speed)
+
+The real production batch: top-5 miners, complete validation flow (real S3,
+real downloads), all 5 AT ONCE in threads — first with the inline path,
+then with the pool. This is the "see it with your own eyes" run: the
+interleaved `timing: dl=..s dedup=..s` lines are the same lines production
+pm2 logs show, and the summary prints per-miner dedup_phase + batch wall
+for both modes side by side.
+
+```bash
+cd ~/testing_playground
+nohup python -u scripts/bench_concurrent_flow.py \
+    --wallet.name cfusion --wallet.hotkey v3 \
+    --top_n 5 --skip_uids 162 > bench_concurrent.log 2>&1 &
+tail -f bench_concurrent.log
+```
+
+Expect: inline batch shows `dedup=` per 2M-row file stretching to ~50–100s
+(the GIL tax); pool batch holds ~15–25s; batch wall drops roughly 2.5–4x
+(dedup is ~60% of an eval; downloads don't speed up). NOTE: this is a SPEED
+benchmark only — 5 threads share the RNG, so sampling interleaves and
+verdict fields can differ between batches; correctness is Phase 2's job.
+Disk peak ~20GB in the temp dir (same as a production batch). Scraper API
+stubbed — no Apify cost.
+
+---
+
 ## Phase 3 — decision gate
 
 Deploy only if: Phase 1 PASS + Phase 2 `PASS on 3/3, diffs=0`.
