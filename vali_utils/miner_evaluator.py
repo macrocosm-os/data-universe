@@ -2,7 +2,6 @@ import os
 import gc
 import copy
 import asyncio
-import datetime
 import random
 import traceback
 import threading
@@ -130,9 +129,28 @@ class MinerEvaluator:
         """Returns the scorer used by the evaluator."""
         return self.scorer
 
+    # Outer backstop on the WHOLE eval_miner (async phases + the synchronous DuckDB
+    # phase). asyncio.wait_for only preempts at await points, so it can NOT interrupt
+    # a synchronous DuckDB scan — that is bounded by the watchdog + PER_MINER_DUCKDB
+    # _BUDGET_SECS (3600s) in s3_utils. This constant must therefore sit ABOVE the
+    # honest worst case (async ~320s: OD 60 + index 120 + bucket 140; plus the DuckDB
+    # budget 3600s) so it never fires on an honest large miner — it only catches a
+    # genuinely wedged async call. Kept under the join backstop.
+    PER_MINER_EVAL_TIMEOUT_SECS = 3900
+
     def eval_miner_sync(self, uid: int) -> None:
-        """Synchronous version of eval_miner."""
-        asyncio.run(self.eval_miner(uid))
+        """Synchronous wrapper with a wall-clock backstop for the awaitable phases."""
+        async def _run():
+            try:
+                await asyncio.wait_for(
+                    self.eval_miner(uid), timeout=self.PER_MINER_EVAL_TIMEOUT_SECS
+                )
+            except asyncio.TimeoutError:
+                bt.logging.warning(
+                    f"UID:{uid}: eval_miner exceeded "
+                    f"{self.PER_MINER_EVAL_TIMEOUT_SECS}s at an await point; abandoning."
+                )
+        asyncio.run(_run())
 
     # Maximum OD jobs to validate per miner per eval cycle.
     # Each validation downloads ~1MB + 1 scraper API call, so keep this bounded.
@@ -734,8 +752,11 @@ class MinerEvaluator:
             ).total_seconds()
 
         t_start = time.perf_counter()
-        # Run in batches of 5 (reduced from 15 to lower memory usage).
-        miners_to_eval = 5
+        # Run in batches of 10. Safe since the dedup worker pool (GIL fix):
+        # 10-concurrent full-flow bench = 6.6 min batch wall, per-eval within
+        # ~20% of solo, disk peak 45GB, dedup= flat. Bandwidth is the next
+        # ceiling — revisit before going higher.
+        miners_to_eval = 10
 
         # Otherwise, execute the next batch of evaluations.
         # Use a set in case the network has fewer than 5 miners.
@@ -752,11 +773,22 @@ class MinerEvaluator:
             thread.start()
 
         bt.logging.trace(f"Waiting for {len(threads)} miner evals to finish.")
-        end = datetime.datetime.now() + datetime.timedelta(seconds=300)
+        # Join the batch to completion (common case) so concurrency stays at
+        # miners_to_eval. The old shared-300s cap ABANDONED slow threads — but a
+        # Python thread can't be killed, so abandoned eval_miner_sync threads kept
+        # running (holding DuckDB scans) while `return 0` immediately launched the
+        # next batch. Concurrency grew as 5*ceil(eval/300s) -> memory spike -> OOM.
+        # Every blocking op inside the thread is now individually bounded (OD/index/
+        # bucket dendrite timeouts + the asyncio backstop in eval_miner_sync for the
+        # awaitable phases; the DuckDB watchdog + per-miner budget in s3_utils for
+        # the synchronous phase), so a worker can't run unbounded. The shared backstop
+        # is set ABOVE the per-miner DuckDB budget (3600s) so the join waits for an
+        # honest slow/large miner to finish rather than abandoning it (which would
+        # re-leak); it only fires if some future blocker is left uncapped — a bounded
+        # stall, never an OOM.
+        join_deadline = time.monotonic() + 4200
         for t in threads:
-            # Compute the timeout, so that all threads are waited for a total of 5 minutes.
-            timeout = max(0, (end - datetime.datetime.now()).total_seconds())
-            t.join(timeout=timeout)
+            t.join(timeout=max(0.0, join_deadline - time.monotonic()))
 
         duration = time.perf_counter() - t_start
         metrics.MINER_EVALUATOR_EVAL_BATCH_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address).observe(duration)

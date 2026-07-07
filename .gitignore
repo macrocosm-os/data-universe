@@ -3,6 +3,9 @@ __pycache__/
 *.py[cod]
 *$py.class
 
+# S3 validation temp downloads (download-to-temp validation; swept on startup)
+.s3_validation_tmp/
+
 # VS code
 .vscode/
 .env

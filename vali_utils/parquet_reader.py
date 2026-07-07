@@ -10,7 +10,6 @@ import random
 import requests
 import pandas as pd
 import pyarrow.parquet as pq
-import bittensor as bt
 from typing import List, Optional
 
 
@@ -28,11 +27,12 @@ class RangeRequestFile:
         f.close()
     """
 
-    def __init__(self, url: str, size: int):
+    def __init__(self, url: str, size: int, request_timeout: int = 30):
         self.url = url
         self.size = size
         self.pos = 0
         self.closed = False
+        self._timeout = request_timeout
         self._session = requests.Session()
 
     def seek(self, pos, whence=0):
@@ -56,7 +56,7 @@ class RangeRequestFile:
             return b""
         end = min(self.pos + n - 1, self.size - 1)
         resp = self._session.get(
-            self.url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=30
+            self.url, headers={"Range": f"bytes={self.pos}-{end}"}, timeout=self._timeout
         )
         if resp.status_code not in (200, 206):
             raise IOError(f"Range request failed: {resp.status_code}")
@@ -90,6 +90,7 @@ def read_random_row_group(
     file_size: int,
     columns: Optional[List[str]] = None,
     max_rows: Optional[int] = None,
+    request_timeout: int = 30,
 ) -> Optional[pd.DataFrame]:
     """Read a random row group from a remote parquet file via Range requests.
 
@@ -101,14 +102,23 @@ def read_random_row_group(
         file_size: Known file size in bytes (from S3 listing, avoids HEAD request).
         columns: Column names to read. None = all columns.
         max_rows: If set, randomly sample this many rows from the row group.
+        request_timeout: Per-range-request timeout in seconds. The validator
+            passes its remaining per-miner budget so a slow link cannot run past it.
 
     Returns:
         pandas DataFrame with the row group data, or None on error.
     """
     f = None
     try:
-        f = RangeRequestFile(presigned_url, file_size)
-        pf = pq.ParquetFile(f)
+        # A local path (download-to-temp validation) is opened directly; only a
+        # remote URL needs the HTTP Range wrapper. Without this branch a local
+        # path would be handed to requests.get() and fail, returning None and
+        # silently skipping the engagement/content checks that consume this read.
+        if presigned_url.startswith(("http://", "https://")):
+            f = RangeRequestFile(presigned_url, file_size, request_timeout=request_timeout)
+            pf = pq.ParquetFile(f)
+        else:
+            pf = pq.ParquetFile(presigned_url)
 
         num_rg = pf.metadata.num_row_groups
         if num_rg == 0:
@@ -123,8 +133,7 @@ def read_random_row_group(
 
         return df
 
-    except Exception as e:
-        bt.logging.debug(f"Failed to read row group: {e}")
+    except Exception:
         return None
     finally:
         if f is not None:
