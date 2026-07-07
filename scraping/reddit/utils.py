@@ -108,14 +108,8 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
-    # URL <-> content-id self-consistency. The Apify actor echoes the submitted
-    # URL's slug/subreddit back verbatim, so the url-equality check above cannot
-    # catch content stapled onto a URL for a DIFFERENT post/comment. Pin the
-    # base36 id embedded in the URL to the id field: for a comment it's the
-    # URL's terminal segment, for a post it's the segment after /comments/.
-    # Reddit IDs are lowercase base36 of VARIABLE length (grow over time), so
-    # match >=4 chars, not a fixed length. The slug (middle segment) is never
-    # compared, so honest slug variance is untouched.
+    # The URL's embedded id must match the content id (the actor echoes the
+    # submitted URL, so the url check above can't catch a mismatched id).
     _url_m = re.match(
         r"^/r/[^/]+/comments/([a-z0-9]{4,})(?:/[^/]*(?:/([a-z0-9]{4,}))?)?",
         urlparse(content_to_validate.url).path.lower(),
