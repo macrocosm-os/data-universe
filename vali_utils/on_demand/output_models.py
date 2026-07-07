@@ -313,12 +313,12 @@ def _validate_reddit_metadata_completeness(
 ) -> tuple[bool, List[str]]:
     """Validate Reddit content metadata completeness using RedditOrganicOutput model."""
     try:
-        from scraping.reddit.model import RedditContent
+        from scraping.reddit.model import RedditContent, RedditDataType
 
         reddit_content = RedditContent.from_data_entity(data_entity)
         missing_fields = []
 
-        # All required fields
+        # Fields required for both posts and comments.
         required_fields = [
             ("id", reddit_content.id),
             ("url", reddit_content.url),
@@ -329,9 +329,16 @@ def _validate_reddit_metadata_completeness(
             ("dataType", reddit_content.data_type),
             ("is_nsfw", reddit_content.is_nsfw),
             ("score", reddit_content.score),
-            ("upvote_ratio", reddit_content.upvote_ratio),
-            ("num_comments", reddit_content.num_comments),
         ]
+
+        # upvote_ratio and num_comments are submission-only fields (see
+        # scraping/reddit/model.py); they are None by design for comments, so
+        # only require them for posts to avoid penalizing valid comments.
+        if reddit_content.data_type == RedditDataType.POST:
+            required_fields += [
+                ("upvote_ratio", reddit_content.upvote_ratio),
+                ("num_comments", reddit_content.num_comments),
+            ]
 
         # Check all required fields
         for field_name, field_value in required_fields:
