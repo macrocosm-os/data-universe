@@ -36,9 +36,10 @@ def normalize_url_for_dedup(url_str: str) -> str:
 
     # --- Reddit ---
     if "reddit.com" in netloc:
-        # /r/{sub}/comments/{post_id}/{slug}/{comment_id} — key on the IDs only.
+        # /r/{sub}/comments/... and /user/{name}/comments/... (profile posts) —
+        # key on the IDs only.
         m = re.match(
-            r"^/r/[^/]+/comments/([a-z0-9]+)(?:/[^/]*(?:/([a-z0-9]+))?)?",
+            r"^/(?:r|user)/[^/]+/comments/([a-z0-9]+)(?:/[^/]*(?:/([a-z0-9]+))?)?",
             path,
         )
         if m:

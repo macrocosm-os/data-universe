@@ -111,7 +111,7 @@ def validate_reddit_content(
     # The URL's embedded id must match the content id (the actor echoes the
     # submitted URL, so the url check above can't catch a mismatched id).
     _url_m = re.match(
-        r"^/r/[^/]+/comments/([a-z0-9]{4,})(?:/[^/]*(?:/([a-z0-9]{4,}))?)?",
+        r"^/(?:r|user)/[^/]+/comments/([a-z0-9]{4,})(?:/[^/]*(?:/([a-z0-9]{4,}))?)?",
         urlparse(content_to_validate.url).path.lower(),
     )
     _url_post_id = _url_m.group(1) if _url_m else None
