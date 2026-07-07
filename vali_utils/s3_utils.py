@@ -36,44 +36,55 @@ def normalize_url_for_dedup(url_str: str) -> str:
     Approach: define what a VALID canonical URL looks like, ignore everything else.
     This is not a blacklist of known exploits — it's a whitelist of valid URL structure.
 
-    X:      Only the numeric tweet ID matters. Username is lowercased (decorative — X resolves by ID).
-    Reddit: Only post_id and comment_id (base36, exactly 7 chars) matter.
+    Key on IMMUTABLE content IDs only. The slug and subreddit (Reddit) and the
+    username (X) are decorative and attacker-controlled: Reddit and the Apify
+    actor resolve a post/comment by its base36 ID regardless of slug or even
+    subreddit, and X resolves a tweet by ID regardless of username. Keying on
+    those cosmetic fields let a miner mint unlimited "unique" URLs for one real
+    piece of content (mutate the slug → different hash → counts as unique).
 
-    Canonical forms produced:
-      X tweet:        https://x.com/{user_lower}/status/{tweet_id}
-      Reddit post:    https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}
-      Reddit comment: https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}
+    X:      Only the numeric tweet ID identifies the content — username dropped.
+    Reddit: Only post_id (+ comment_id) identify the content — sub + slug dropped.
+
+    Canonical (ID-only) keys produced:
+      X tweet:        x:{tweet_id}
+      Reddit post:    reddit:{post_id}
+      Reddit comment: reddit:{post_id}:{comment_id}
     """
     url = str(url_str).strip()
     parsed = urlparse(url)
     netloc = parsed.netloc.lower()
-    path = parsed.path
+    # Lowercase the path so an uppercased ID can't dodge the [a-z0-9] match
+    # (which would truncate it and collapse distinct posts to a short key).
+    path = parsed.path.lower()
 
     # --- X / Twitter ---
     if "x.com" in netloc or "twitter.com" in netloc:
-        # Extract /username/status/DIGITS — lowercase username to prevent case-fudging
-        m = re.match(r"^/([^/]+)/status/(\d+)", path)
+        # Only the numeric tweet ID is identity; username is decorative and
+        # attacker-controlled, so it is NOT part of the key.
+        m = re.match(r"^/[^/]+/status/(\d+)", path)
         if m:
-            username = m.group(1).lower()
-            tweet_id = m.group(2)
-            return f"https://x.com/{username}/status/{tweet_id}"
-        return f"https://x.com{path.rstrip('/').lower()}"
+            return f"x:{m.group(1)}"
+        return f"https://x.com{path.rstrip('/')}"
 
     # --- Reddit ---
     if "reddit.com" in netloc:
         # /r/{sub}/comments/{post_id}/{slug}/{comment_id}
+        # Only post_id and comment_id are identity; sub and slug are
+        # attacker-mutable (the actor echoes them back), so they are NOT keyed.
         m = re.match(
-            r"^/r/([^/]+)/comments/([a-z0-9]+)(?:/([^/]*)(?:/([a-z0-9]+))?)?",
+            r"^/r/[^/]+/comments/([a-z0-9]+)(?:/[^/]*(?:/([a-z0-9]+))?)?",
             path,
         )
         if m:
-            sub, post_id, slug, comment_id = m.group(1), m.group(2), m.group(3) or "", m.group(4)
+            post_id, comment_id = m.group(1), m.group(2)
             # Real Reddit IDs are base36, exactly 7 chars (post and comment).
-            # Verified against 240K+ real comment IDs and 704 post IDs — all 7 chars.
-            # Fake IDs (f1, _f1, aaaaaa0, etc.) fail this check.
+            # Verified against 240K+ real comment IDs and 704 post IDs — all 7
+            # chars. A short/fake comment segment is ignored (keys as the post)
+            # so a mutated slug can't masquerade as a comment layer.
             if comment_id and re.match(r"^[a-z0-9]{7}$", comment_id):
-                return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}"
-            return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}"
+                return f"reddit:{post_id}:{comment_id}"
+            return f"reddit:{post_id}"
         return f"https://www.reddit.com{path.rstrip('/')}"
 
     # --- Fallback: strip query/fragment, lowercase ---
@@ -171,7 +182,7 @@ class DuckDBSampledValidator:
     """
 
     # Validation thresholds
-    MAX_DUPLICATE_RATE = 5.0    # 5% max duplicates within same job
+    MAX_DUPLICATE_RATE = 1.0    # 1% max duplicates within same job (honest miners dedup locally)
     MAX_EMPTY_RATE = 10.0       # 10% max empty content
     # Missing URLs = instant fail (no rate threshold needed)
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate

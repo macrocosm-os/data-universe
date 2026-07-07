@@ -33,7 +33,10 @@ class MinerScorer:
     # v15: Reset S3 — latest-file-per-job validation + whole-job-snapshot miner uploads.
     #      Old effective_size/credibility was computed across all historical chunks; new
     #      model counts only the latest snapshot per job, so prior scores are not comparable.
-    STATE_VERSION = 15
+    # v16: Reset S3 — Reddit slug/username dedup-bypass fix (key on immutable IDs only) +
+    #      MAX_DUPLICATE_RATE 5%->1%. Pre-fix effective_size/credibility was inflated by
+    #      slug-mutated content that deduped as unique.
+    STATE_VERSION = 16
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -139,11 +142,11 @@ class MinerScorer:
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
             # --- State migrations ---
-            if saved_version < 15:
+            if saved_version < 16:
                 bt.logging.warning(
-                    f"State migration v{saved_version} -> v15: "
+                    f"State migration v{saved_version} -> v16: "
                     f"S3 boost/credibility/effective_size reset "
-                    f"(latest-file-per-job validation + whole-job-snapshot uploads)"
+                    f"(reddit slug/username dedup-bypass fix + dup-rate 5%->1%)"
                 )
                 self.s3_boosts.zero_()
                 self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)

@@ -1,4 +1,5 @@
 import bittensor as bt
+import re
 import traceback
 import datetime as dt
 import random
@@ -104,6 +105,36 @@ def validate_reddit_content(
         return ValidationResult(
             is_valid=False,
             reason="Reddit urls do not match",
+            content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        )
+
+    # URL <-> content-id self-consistency. The Apify actor echoes the submitted
+    # URL's slug/subreddit back verbatim, so the url-equality check above cannot
+    # catch a miner who staples a real comment's content onto a URL for a
+    # DIFFERENT post/comment. Pin the base36 id embedded in the URL to the id
+    # field: for a comment it's the URL's terminal segment, for a post it's the
+    # segment after /comments/. The slug (middle segment) is never compared, so
+    # honest slug variance is untouched.
+    _url_m = re.match(
+        r"^/r/[^/]+/comments/([a-z0-9]{7})(?:/[^/]*(?:/([a-z0-9]{7}))?)?",
+        urlparse(content_to_validate.url).path.lower(),
+    )
+    _url_post_id = _url_m.group(1) if _url_m else None
+    _url_comment_id = _url_m.group(2) if _url_m else None
+    _bare_id = content_to_validate.id.split("_", 1)[-1].lower()  # strip t1_/t3_
+    _expected_url_id = (
+        _url_comment_id
+        if content_to_validate.data_type == RedditDataType.COMMENT
+        else _url_post_id
+    )
+    if _expected_url_id is None or _expected_url_id != _bare_id:
+        bt.logging.info(
+            f"Reddit URL id does not match content id: url={content_to_validate.url} "
+            f"id={content_to_validate.id}"
+        )
+        return ValidationResult(
+            is_valid=False,
+            reason="Reddit URL id does not match content id",
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
