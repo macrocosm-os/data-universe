@@ -430,6 +430,32 @@ class MinerEvaluator:
         if not s3_validation_info or (current_block - s3_validation_info['block']) > 600:  # ~2 hrs
             s3_validation_result = await self._perform_s3_validation(uid, hotkey, current_block)
 
+        # Apply the S3 result NOW, before the P2P bucket query. The P2P step has
+        # several early returns on a failed/invalid GetDataEntityBucket response;
+        # if the S3 update were left until after them, a miner could freeze a
+        # stale (inflated) S3 boost/credibility forever by intentionally failing
+        # the bucket query. S3 scoring must not depend on the P2P outcome.
+        if s3_validation_result:
+            if s3_validation_result.is_valid:
+                bt.logging.info(
+                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} passed S3 validation. "
+                    f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
+                    f"Jobs: {s3_validation_result.total_active_jobs}, Files: {s3_validation_result.recent_files_count}, "
+                    f"Coverage: {s3_validation_result.job_coverage_rate:.1f}%, "
+                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB, "
+                    f"Job match: {s3_validation_result.job_match_rate:.1f}%"
+                )
+            else:
+                bt.logging.info(
+                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. "
+                    f"Reason: {s3_validation_result.reason}"
+                )
+            self.scorer.update_s3_effective_size(
+                uid=uid,
+                effective_size=s3_validation_result.effective_size_bytes,
+                validation_passed=s3_validation_result.is_valid,
+            )
+
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
             vali_utils.choose_data_entity_bucket_to_query(index)
@@ -552,30 +578,6 @@ class MinerEvaluator:
         gc.collect()
 
         metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='ok').observe(time.perf_counter() - t_start)
-
-        if s3_validation_result:
-            # Log validation result
-            if s3_validation_result.is_valid:
-                bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} passed S3 validation. "
-                    f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
-                    f"Jobs: {s3_validation_result.total_active_jobs}, Files: {s3_validation_result.recent_files_count}, "
-                    f"Coverage: {s3_validation_result.job_coverage_rate:.1f}%, "
-                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB, "
-                    f"Job match: {s3_validation_result.job_match_rate:.1f}%"
-                )
-            else:
-                bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. "
-                    f"Reason: {s3_validation_result.reason}"
-                )
-
-            # Update scorer with competition-based effective_size
-            self.scorer.update_s3_effective_size(
-                uid=uid,
-                effective_size=s3_validation_result.effective_size_bytes,
-                validation_passed=s3_validation_result.is_valid,
-            )
 
     async def _perform_s3_validation(
         self, uid: int, hotkey: str, current_block: int
