@@ -115,8 +115,11 @@ def validate_reddit_content(
     # field: for a comment it's the URL's terminal segment, for a post it's the
     # segment after /comments/. The slug (middle segment) is never compared, so
     # honest slug variance is untouched.
+    # Reddit IDs are lowercase base36 of VARIABLE length (grow over time), so
+    # match >=4 chars, not a fixed length — a fixed guard would reject honest
+    # rows whose real id isn't that length.
     _url_m = re.match(
-        r"^/r/[^/]+/comments/([a-z0-9]{7})(?:/[^/]*(?:/([a-z0-9]{7}))?)?",
+        r"^/r/[^/]+/comments/([a-z0-9]{4,})(?:/[^/]*(?:/([a-z0-9]{4,}))?)?",
         urlparse(content_to_validate.url).path.lower(),
     )
     _url_post_id = _url_m.group(1) if _url_m else None

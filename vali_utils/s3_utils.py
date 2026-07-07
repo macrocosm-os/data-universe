@@ -78,11 +78,14 @@ def normalize_url_for_dedup(url_str: str) -> str:
         )
         if m:
             post_id, comment_id = m.group(1), m.group(2)
-            # Real Reddit IDs are base36, exactly 7 chars (post and comment).
-            # Verified against 240K+ real comment IDs and 704 post IDs — all 7
-            # chars. A short/fake comment segment is ignored (keys as the post)
-            # so a mutated slug can't masquerade as a comment layer.
-            if comment_id and re.match(r"^[a-z0-9]{7}$", comment_id):
+            # Reddit IDs are lowercase base36 of VARIABLE length — they grow as
+            # the ID space fills (6 chars historically, 7 since ~2023, 8 in
+            # newer content; older comments can be shorter). So accept >=4 chars
+            # rather than a fixed length (a fixed guard collapses every distinct
+            # real comment whose id isn't that length into the bare post key).
+            # A short junk segment (e.g. a trailing "f1" on some post URLs) is
+            # under 4 chars, so it's ignored and the row keys as the post.
+            if comment_id and re.match(r"^[a-z0-9]{4,}$", comment_id):
                 return f"reddit:{post_id}:{comment_id}"
             return f"reddit:{post_id}"
         return f"https://www.reddit.com{path.rstrip('/')}"
