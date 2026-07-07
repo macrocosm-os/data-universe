@@ -752,8 +752,11 @@ class MinerEvaluator:
             ).total_seconds()
 
         t_start = time.perf_counter()
-        # Run in batches of 5 (reduced from 15 to lower memory usage).
-        miners_to_eval = 5
+        # Run in batches of 10. Safe since the dedup worker pool (GIL fix):
+        # 10-concurrent full-flow bench = 6.6 min batch wall, per-eval within
+        # ~20% of solo, disk peak 45GB, dedup= flat. Bandwidth is the next
+        # ceiling — revisit before going higher.
+        miners_to_eval = 10
 
         # Otherwise, execute the next batch of evaluations.
         # Use a set in case the network has fewer than 5 miners.

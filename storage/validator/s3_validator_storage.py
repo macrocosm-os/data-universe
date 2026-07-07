@@ -1,5 +1,7 @@
 import pandas as pd
 import os
+import threading
+import uuid
 import pyarrow as pa
 import pyarrow.parquet as pq
 
@@ -7,6 +9,11 @@ import pyarrow.parquet as pq
 class S3ValidationStorage:
     def __init__(self, storage_path):
         self.file_path = storage_path
+        # Serializes the read-modify-write against the shared parquet file. Up to 5
+        # miner-eval threads call update_validation_info concurrently; without this
+        # they raced on a shared temp file (FileNotFoundError in os.replace, which
+        # crashed the validator) and silently clobbered each other's row updates.
+        self._lock = threading.Lock()
         # Ensure directory exists
         os.makedirs(os.path.dirname(self.file_path), exist_ok=True)
         self._ensure_file_exists()
@@ -20,7 +27,10 @@ class S3ValidationStorage:
         self._safe_write_parquet(df)
 
     def _safe_write_parquet(self, df):
-        temp_file = f"{self.file_path}.temp"
+        # Unique per write so concurrent writers can't consume each other's temp
+        # file between write_table and os.replace. os.replace is atomic, so the
+        # final file is always a complete parquet.
+        temp_file = f"{self.file_path}.{uuid.uuid4().hex}.temp"
         try:
             table = pa.Table.from_pandas(df)
             pq.write_table(table, temp_file)
@@ -53,10 +63,13 @@ class S3ValidationStorage:
         return matching_rows.to_dict('records')[0] if not matching_rows.empty else None
 
     def update_validation_info(self, hotkey, job_count, block):
-        df = self._safe_read_parquet()
-        new_row = pd.DataFrame({'hotkey': [hotkey], 'job_count': [job_count], 'block': [block]})
-        df = pd.concat([df[df['hotkey'] != hotkey], new_row], ignore_index=True)
-        self._safe_write_parquet(df)
+        # Lock the whole read-modify-write: concurrent eval threads would otherwise
+        # each read the same df, append their row, and overwrite each other.
+        with self._lock:
+            df = self._safe_read_parquet()
+            new_row = pd.DataFrame({'hotkey': [hotkey], 'job_count': [job_count], 'block': [block]})
+            df = pd.concat([df[df['hotkey'] != hotkey], new_row], ignore_index=True)
+            self._safe_write_parquet(df)
 
     def get_all_validations(self):
         return self._safe_read_parquet()

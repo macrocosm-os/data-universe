@@ -11,6 +11,7 @@ import pandas as pd
 import pyarrow
 import json
 import os
+import tempfile
 import time
 import threading
 import duckdb
@@ -30,54 +31,12 @@ from vali_utils.parquet_reader import read_random_row_group
 from urllib.parse import urlparse
 
 
-def normalize_url_for_dedup(url_str: str) -> str:
-    """Platform-aware URL normalization that extracts the canonical content ID for dedup.
-
-    Approach: define what a VALID canonical URL looks like, ignore everything else.
-    This is not a blacklist of known exploits — it's a whitelist of valid URL structure.
-
-    X:      Only the numeric tweet ID matters. Username is lowercased (decorative — X resolves by ID).
-    Reddit: Only post_id and comment_id (base36, exactly 7 chars) matter.
-
-    Canonical forms produced:
-      X tweet:        https://x.com/{user_lower}/status/{tweet_id}
-      Reddit post:    https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}
-      Reddit comment: https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}
-    """
-    url = str(url_str).strip()
-    parsed = urlparse(url)
-    netloc = parsed.netloc.lower()
-    path = parsed.path
-
-    # --- X / Twitter ---
-    if "x.com" in netloc or "twitter.com" in netloc:
-        # Extract /username/status/DIGITS — lowercase username to prevent case-fudging
-        m = re.match(r"^/([^/]+)/status/(\d+)", path)
-        if m:
-            username = m.group(1).lower()
-            tweet_id = m.group(2)
-            return f"https://x.com/{username}/status/{tweet_id}"
-        return f"https://x.com{path.rstrip('/').lower()}"
-
-    # --- Reddit ---
-    if "reddit.com" in netloc:
-        # /r/{sub}/comments/{post_id}/{slug}/{comment_id}
-        m = re.match(
-            r"^/r/([^/]+)/comments/([a-z0-9]+)(?:/([^/]*)(?:/([a-z0-9]+))?)?",
-            path,
-        )
-        if m:
-            sub, post_id, slug, comment_id = m.group(1), m.group(2), m.group(3) or "", m.group(4)
-            # Real Reddit IDs are base36, exactly 7 chars (post and comment).
-            # Verified against 240K+ real comment IDs and 704 post IDs — all 7 chars.
-            # Fake IDs (f1, _f1, aaaaaa0, etc.) fail this check.
-            if comment_id and re.match(r"^[a-z0-9]{7}$", comment_id):
-                return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}"
-            return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}"
-        return f"https://www.reddit.com{path.rstrip('/')}"
-
-    # --- Fallback: strip query/fragment, lowercase ---
-    return f"{parsed.scheme}://{netloc}{path.rstrip('/')}"
+# normalize_url_for_dedup moved to vali_utils/url_normalizer.py (a
+# dependency-light module) so the dedup worker PROCESSES can import it
+# without dragging in bittensor. Re-exported here so existing importers
+# (diag scripts, tests) keep working unchanged.
+from vali_utils.url_normalizer import normalize_url_for_dedup  # noqa: F401
+from vali_utils import dedup_pool
 
 
 _PRESIGNED_URL_RE = re.compile(
@@ -200,6 +159,22 @@ class DuckDBSampledValidator:
     PER_FILE_DUCKDB_TIMEOUT_SECS = 180    # max wall-clock for one file's DuckDB work
     PER_MINER_DUCKDB_BUDGET_SECS = 3600   # total S3/DuckDB wall-clock per miner (~60 min)
 
+    # Each sampled file is bulk-downloaded to a temp file, then parsed locally.
+    # DuckDB read_parquet over R2 httpfs issues many small serial HTTP Range GETs
+    # (latency-bound on Cloudflare's edge) and reads a 522MB file's url column in
+    # ~24s; one bulk GET of the whole file is ~7s, so download-then-parse-local is
+    # ~3x faster per file with identical validation output (same DuckDB queries,
+    # same PyArrow read, just against a local path). Files are cleaned in a finally;
+    # a startup sweep clears anything orphaned by a crash so it can't grow.
+    #
+    # Lives inside the repo dir (on the data disk), NOT under /tmp: on the validator
+    # host /tmp is a tmpfs (RAM-backed), so writing 520MB files there would consume
+    # RAM (~520MB x up-to-5 concurrent miners) — reintroducing memory pressure.
+    LOCAL_VALIDATION_TEMP_DIR = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+        ".s3_validation_tmp",
+    )
+
     # Scraper validation window — only files uploaded within this window are scraper-validated.
     # Older files rely on credibility from previous validation cycles.
     SCRAPER_MAX_AGE_HOURS = 96
@@ -245,6 +220,15 @@ class DuckDBSampledValidator:
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
         self._signer = TaoSigner(keypair=wallet.hotkey)
+        # Eval-scoped cache of downloaded sampled files: file_key -> local temp
+        # path. All three read phases (dedup, job content matching, scraper
+        # entity sampling) draw from the same sampled_files, so each file is
+        # downloaded ONCE and read locally everywhere (measured ~180x faster
+        # than per-column HTTP Range reads). Swept in close(); bounded by
+        # LOCAL_CACHE_MAX_BYTES (oldest-first eviction) so 5 concurrent evals
+        # of near-cap files cannot exhaust the shared disk.
+        self._local_files: Dict[str, str] = {}
+        self._cached_bytes = 0
 
     async def validate_miner_s3_data(
         self,
@@ -433,7 +417,8 @@ class DuckDBSampledValidator:
             # Step 4: Lightweight DuckDB validation (sampled - memory safe)
             bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
             duckdb_result = await self._sampled_duckdb_validation(
-                sampled_files, expected_jobs, presigned_urls, samples_per_file=100
+                sampled_files, expected_jobs, presigned_urls, samples_per_file=100,
+                miner_hotkey=miner_hotkey,
             )
 
             # If schema validation failed, skip remaining checks (fail fast)
@@ -699,12 +684,188 @@ class DuckDBSampledValidator:
         match = self._FILENAME_ROW_COUNT_RE.match(filename)
         return int(match.group(1)) if match else None
 
+    # Rate-limits the crash-orphan sweep (recurring, at most once per interval,
+    # so a hard kill's orphans are reclaimed within ~TEMP_ORPHAN_AGE_SECS instead
+    # of persisting for the whole post-restart process lifetime).
+    _temp_dir_last_sweep = 0.0
+    _temp_dir_lock = threading.Lock()
+    SWEEP_INTERVAL_SECS = 600
+
+    # A temp file older than this is assumed orphaned by a crashed run. Cached
+    # files legitimately live for a WHOLE miner eval (downloaded in the dedup
+    # phase, re-read by job matching + scraper sampling, deleted in close()),
+    # bounded by PER_MINER_EVAL_TIMEOUT_SECS=3900s in miner_evaluator.py — so
+    # this must comfortably exceed that (2x margin), or a sweep (this process's
+    # or a second process sharing the repo dir) could delete a LIVE file.
+    TEMP_ORPHAN_AGE_SECS = 7800
+
+    @classmethod
+    def _sweep_local_temp_dir(cls):
+        """Ensure the temp dir exists and delete only STALE orphans (files older than
+        TEMP_ORPHAN_AGE_SECS) left by a previous crashed run.
+
+        Runs at most once per SWEEP_INTERVAL_SECS. Crucially it does NOT rmtree the
+        dir: 5 miner threads share this dir concurrently, so a blanket wipe would
+        delete a file another thread is mid-read (observed: 'Failed to open local
+        file ... No such file'). Age-gating (above the whole-eval file lifetime)
+        means only genuine crash-leftovers are removed."""
+        with cls._temp_dir_lock:
+            now_mono = time.monotonic()
+            if now_mono - cls._temp_dir_last_sweep < cls.SWEEP_INTERVAL_SECS and cls._temp_dir_last_sweep > 0:
+                return
+            cls._temp_dir_last_sweep = now_mono
+            try:
+                os.makedirs(cls.LOCAL_VALIDATION_TEMP_DIR, exist_ok=True)
+                now = time.time()
+                for name in os.listdir(cls.LOCAL_VALIDATION_TEMP_DIR):
+                    p = os.path.join(cls.LOCAL_VALIDATION_TEMP_DIR, name)
+                    try:
+                        if now - os.path.getmtime(p) > cls.TEMP_ORPHAN_AGE_SECS:
+                            os.unlink(p)
+                    except OSError:
+                        pass
+            except OSError as e:
+                bt.logging.warning(f"Could not prepare local validation temp dir: {e}")
+
+    # --- Dedup worker process pool -------------------------------------
+    # The per-row normalize+blake2b dedup loop is pure Python and GIL-bound:
+    # N eval THREADS running it concurrently serialize on one core (measured
+    # on 5x1M-row files: 5 threads = 0.8x of sequential — slower than no
+    # concurrency — while 5 processes = 3x+). The pool runs that loop in
+    # dedicated worker SUBPROCESSES (vali_utils/dedup_worker.py, dependency-
+    # light: 0.03s spawn / ~24MB each), so eval threads keep the I/O and the
+    # cores do the CPU. A wedged or crashed worker is SIGKILLed and respawned
+    # by the pool — one adversarial file can never poison the rest.
+    # Shared class-wide across all eval threads; lazily started.
+    # Rollback without a code edit: DEDUP_POOL_ENABLED=false in the env
+    # (then pm2 restart --update-env) reverts to the inline dedup path.
+    DEDUP_POOL_ENABLED = os.environ.get(
+        "DEDUP_POOL_ENABLED", "true").strip().lower() not in ("false", "0", "no")
+    DEDUP_POOL_WORKERS = int(os.environ.get(
+        "DEDUP_POOL_WORKERS", max(4, min(12, (os.cpu_count() or 8) - 4))
+    ))
+    _dedup_pool = None
+    _dedup_pool_lock = threading.Lock()
+
+    @classmethod
+    def _get_dedup_pool(cls) -> dedup_pool.DedupPool:
+        with cls._dedup_pool_lock:
+            if cls._dedup_pool is None:
+                cls._dedup_pool = dedup_pool.DedupPool(cls.DEDUP_POOL_WORKERS)
+            return cls._dedup_pool
+
+    def _pooled_url_scan(self, local_path: str, max_iterations: int,
+                         batch_size: int, timeout_secs: float) -> dict:
+        """Run the dedup scan on a pool worker and re-raise failures as the
+        SAME exception types the inline loop raised, so the per-file routing
+        (transient-skip / page-decode fail-closed / generic-skip) is
+        preserved unchanged.
+        """
+        try:
+            res = self._get_dedup_pool().scan(
+                local_path, max_iterations, batch_size, timeout_secs
+            )
+        except dedup_pool.WorkerTimeout as e:
+            # Same fail-closed route as a conn.interrupt timeout today.
+            raise duckdb.InterruptException(str(e))
+        except dedup_pool.WorkerCrashed as e:
+            # Native crash on a crafted file must fail the file closed —
+            # the v3-exploit invariant: a file that kills the parser fails.
+            raise duckdb.Error(str(e))
+        if "error_kind" in res:
+            if res["error_kind"] == "interrupt":
+                raise duckdb.InterruptException(res["error_msg"])
+            if res["error_kind"] == "duckdb":
+                # Re-raise the SAME DuckDB subclass the child hit, so the
+                # per-file handler routes it identically to the inline path
+                # (IOException/HTTPException/ConnectionException -> fail-open
+                # skip; any other duckdb.Error -> page-decode fail-closed).
+                exc_cls = getattr(duckdb, res.get("error_type", ""), duckdb.Error)
+                if not (isinstance(exc_cls, type) and issubclass(exc_cls, duckdb.Error)):
+                    exc_cls = duckdb.Error
+                raise exc_cls(res["error_msg"])
+            raise RuntimeError(f"Dedup worker error: {res['error_msg']}")
+        return res
+
+    def _download_to_temp(self, presigned_url: str, declared_size: int) -> str:
+        """Bulk-download one file to a temp file and return its local path.
+
+        Replaces DuckDB's slow per-column HTTP Range reads with a single GET.
+        Acquire files through _local_file_for, which owns the path lifetime
+        (deleted in close()). The write is capped at
+        the declared size (+8MB margin) so a miner that under-reports its size in the
+        listing cannot balloon the disk; the size guard at the call site already
+        rejects anything over MAX_FILE_SIZE_BYTES before we get here.
+        """
+        cap = min(declared_size, self.MAX_FILE_SIZE_BYTES) + (8 * 1024 * 1024)
+        fd, path = tempfile.mkstemp(suffix=".parquet", dir=self.LOCAL_VALIDATION_TEMP_DIR)
+        written = 0
+        try:
+            with os.fdopen(fd, "wb") as out, requests.get(
+                presigned_url, stream=True, timeout=300
+            ) as r:
+                r.raise_for_status()
+                for chunk in r.iter_content(chunk_size=1 << 20):
+                    written += len(chunk)
+                    if written > cap:
+                        raise IOError(
+                            f"download exceeded size cap ({written} > {cap} bytes)"
+                        )
+                    out.write(chunk)
+        except Exception:
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+            raise
+        return path
+
+    # Per-instance cap on cached bytes. Worst-case sample is ~20 files x ~1GB
+    # (MAX_FILE_SIZE_BYTES) and 5 evals run concurrently, so an unbounded cache
+    # would let miners with near-cap files hold ~100GB of shared disk. Oldest
+    # entries are evicted once over budget; evicted files are simply re-read
+    # over the network by the later (cache-only) phases.
+    LOCAL_CACHE_MAX_BYTES = 8 * 1024 * 1024 * 1024
+
+    def _local_file_for(self, file_key: str, presigned_url: str, declared_size: int) -> str:
+        """Return this eval's local copy of the file, downloading it on first use.
+
+        The copy is registered in self._local_files and lives until close() (or
+        oldest-first eviction under LOCAL_CACHE_MAX_BYTES), so later phases
+        reading the same sampled file get it for free instead of re-fetching
+        bytes over the network."""
+        path = self._local_files.get(file_key)
+        if path and os.path.exists(path):
+            return path
+        path = self._download_to_temp(presigned_url, declared_size)
+        self._local_files[file_key] = path
+        try:
+            self._cached_bytes += os.path.getsize(path)
+        except OSError:
+            pass
+        # Evict oldest entries (dict preserves insertion order) until under
+        # budget. Only the dedup phase downloads, and it reads each file right
+        # after acquiring it, so evicting older entries never races a reader
+        # within this instance; instances don't share the dict.
+        while self._cached_bytes > self.LOCAL_CACHE_MAX_BYTES and len(self._local_files) > 1:
+            old_key = next(iter(self._local_files))
+            if old_key == file_key:
+                break
+            old_path = self._local_files.pop(old_key)
+            try:
+                self._cached_bytes -= os.path.getsize(old_path)
+                os.unlink(old_path)
+            except OSError:
+                pass
+        return path
+
     async def _sampled_duckdb_validation(
         self,
         sampled_files: List[Dict],
         expected_jobs: Dict[str, Dict],
         presigned_urls: Dict[str, str],
-        samples_per_file: int = 100
+        samples_per_file: int = 100,
+        miner_hotkey: str = "unknown",
     ) -> Dict[str, Any]:
         """
         Lightweight validation using DuckDB metadata + DuckDB url column read + PyArrow row-group reads.
@@ -756,10 +917,22 @@ class DuckDBSampledValidator:
         # gated by a deadline recheck below.
         miner_deadline = time.monotonic() + self.PER_MINER_DUCKDB_BUDGET_SECS
 
-        for file_info in files_to_check:
+        # Timing instrumentation: this phase has been observed to run up to ~2h
+        # for some miners. Log per-file + per-stage durations (with hotkey) so the
+        # slow segment can be identified.
+        phase_start = time.monotonic()
+        bt.logging.info(
+            f"{miner_hotkey}: DuckDB phase START — {len(files_to_check)} files to check"
+        )
+
+        # Clear anything a prior crashed run left behind before we start writing.
+        self._sweep_local_temp_dir()
+
+        for file_idx, file_info in enumerate(files_to_check):
             if schema_failures > 0:
                 break
 
+            file_start = time.monotonic()
             file_size = file_info.get('size', 0)
             if file_size > self.MAX_FILE_SIZE_BYTES:
                 continue
@@ -792,6 +965,18 @@ class DuckDBSampledValidator:
                         f"({self.PER_MINER_DUCKDB_BUDGET_SECS}s)"
                     )
 
+                # Bulk-download the file once, then point every stage below at the
+                # local copy. DuckDB read_parquet / parquet_schema / _check_file_metadata
+                # and the PyArrow read_random_row_group all accept a local path
+                # identically to a URL, so validation logic is unchanged — only the
+                # slow per-column httpfs Range reads are replaced by one GET. A
+                # download error raises into the same handlers below (transient ->
+                # skip, else -> fail). The temp file is cached for the whole eval
+                # (job matching + scraper sampling re-read it) and swept in close().
+                t_dl = time.monotonic()
+                presigned_url = self._local_file_for(file_key, presigned_url, file_size)
+                dl_secs = time.monotonic() - t_dl
+
                 conn = duckdb.connect(':memory:')
                 conn.execute("SET memory_limit='1GB';")
                 conn.execute("SET threads=1;")
@@ -815,7 +1000,9 @@ class DuckDBSampledValidator:
                 watchdog.start()
 
                 # --- Metadata check (footer-only read, ~1-10KB) ---
+                t_meta = time.monotonic()
                 metadata = self._check_file_metadata(presigned_url, conn)
+                meta_secs = time.monotonic() - t_meta
                 if metadata:
                     file_rows = metadata['total_rows']
 
@@ -858,9 +1045,11 @@ class DuckDBSampledValidator:
                         )
 
                 # --- Schema check (footer-only read) ---
+                t_schema = time.monotonic()
                 schema_result = conn.execute(
                     f"SELECT name, type FROM parquet_schema('{presigned_url}')"
                 ).fetchall()
+                schema_secs = time.monotonic() - t_schema
                 excluded_names = {'schema', 'list', 'element', 'model_config'}
                 all_column_names = [row[0].lower() for row in schema_result if row[0].lower() not in excluded_names]
                 available_columns = set(all_column_names)
@@ -929,7 +1118,6 @@ class DuckDBSampledValidator:
                 # log line in _check_dedup at the end of the pass.
                 if job_id not in dedup_hashes_by_job:
                     dedup_hashes_by_job[job_id] = True  # presence marker for log only
-                file_hashes: set = set()
 
                 # Hard iteration cap so a misbehaving cursor cannot loop forever.
                 # Use footer total_rows when available (cheap, already validated);
@@ -943,30 +1131,49 @@ class DuckDBSampledValidator:
                 max_iterations = (expected_rows // BATCH_SIZE) + 2  # +2 = remainder + EOF probe
 
                 file_decodable = 0
-                cur = conn.execute(
-                    f"SELECT url FROM read_parquet('{presigned_url}')"
-                )
-                cursor_overran = False
-                for _ in range(max_iterations):
-                    batch = cur.fetchmany(BATCH_SIZE)
-                    if not batch:
-                        break
-                    for (url_val,) in batch:
-                        if url_val and str(url_val).strip():
-                            file_decodable += 1
-                        normalized = normalize_url_for_dedup(url_val)
-                        h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
-                        dedup_total += 1
-                        if h in file_hashes:
-                            dedup_duplicates += 1
-                        else:
-                            file_hashes.add(h)
-                    del batch
+                t_dedup = time.monotonic()
+                if self.DEDUP_POOL_ENABLED:
+                    # GIL-bound loop runs in a worker PROCESS (see the pool
+                    # comment above). Same semantics; child failures re-raise
+                    # as the same duckdb exception types into the handlers
+                    # below. Timeout matches the parent watchdog's budget.
+                    scan_timeout = max(1.0, min(
+                        self.PER_FILE_DUCKDB_TIMEOUT_SECS,
+                        miner_deadline - time.monotonic(),
+                    ))
+                    scan = self._pooled_url_scan(
+                        presigned_url, max_iterations, BATCH_SIZE, scan_timeout
+                    )
+                    file_decodable = scan["decodable"]
+                    dedup_total += scan["rows"]
+                    dedup_duplicates += scan["dups"]
+                    cursor_overran = scan["overran"]
                 else:
-                    # Loop hit the iteration cap without seeing EOF — cursor is
-                    # returning more rows than the footer claimed. Treat as
-                    # malformed/adversarial and fail the file.
-                    cursor_overran = True
+                    file_hashes: set = set()
+                    cur = conn.execute(
+                        f"SELECT url FROM read_parquet('{presigned_url}')"
+                    )
+                    cursor_overran = False
+                    for _ in range(max_iterations):
+                        batch = cur.fetchmany(BATCH_SIZE)
+                        if not batch:
+                            break
+                        for (url_val,) in batch:
+                            if url_val and str(url_val).strip():
+                                file_decodable += 1
+                            normalized = normalize_url_for_dedup(url_val)
+                            h = hashlib.blake2b(normalized.encode(), digest_size=8).digest()
+                            dedup_total += 1
+                            if h in file_hashes:
+                                dedup_duplicates += 1
+                            else:
+                                file_hashes.add(h)
+                        del batch
+                    else:
+                        # Loop hit the iteration cap without seeing EOF — cursor is
+                        # returning more rows than the footer claimed. Treat as
+                        # malformed/adversarial and fail the file.
+                        cursor_overran = True
                 if cursor_overran:
                     bt.logging.warning(
                         f"URL dedup cursor overran metadata row count "
@@ -974,6 +1181,8 @@ class DuckDBSampledValidator:
                     )
                     schema_failures += 1
                     break
+
+                dedup_secs = time.monotonic() - t_dedup
 
                 # L3: decodable rows vs filename-claimed rows
                 file_claimed = self._parse_row_count_from_filename(file_key)
@@ -1001,9 +1210,21 @@ class DuckDBSampledValidator:
                         f"({self.PER_MINER_DUCKDB_BUDGET_SECS}s)"
                     )
                 remaining_for_rg = max(1, int(miner_deadline - time.monotonic()))
+                t_rg = time.monotonic()
                 rg_df = read_random_row_group(
                     presigned_url, file_size, columns=read_cols,
                     request_timeout=min(30, remaining_for_rg)
+                )
+                rg_secs = time.monotonic() - t_rg
+                # Per-file timing breakdown (hotkey + which stage was slow).
+                # dedup = full SELECT url scan; rg = PyArrow row-group read.
+                file_rows_dbg = (metadata or {}).get('total_rows', '?')
+                bt.logging.info(
+                    f"{miner_hotkey}: file {file_idx+1}/{len(files_to_check)} "
+                    f"({file_size/1e6:.0f}MB, {file_rows_dbg} rows) timing: "
+                    f"dl={dl_secs:.1f}s meta={meta_secs:.1f}s schema={schema_secs:.1f}s "
+                    f"dedup={dedup_secs:.1f}s rg={rg_secs:.1f}s "
+                    f"total={time.monotonic()-file_start:.1f}s key={file_key.split('/')[-1]}"
                 )
                 if rg_df is not None and len(rg_df) > 0:
                     rg_df.columns = [c.lower() for c in rg_df.columns]
@@ -1094,16 +1315,25 @@ class DuckDBSampledValidator:
             except (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException) as e:
                 # Transient S3/network errors — log and skip, do NOT fail the miner.
                 # scrub_log strips R2 presigned-URL query strings (signature + key id).
-                bt.logging.warning(scrub_log(f"Transient S3/IO error: {type(e).__name__}: {e}"))
+                bt.logging.warning(scrub_log(
+                    f"{miner_hotkey}: Transient S3/IO error after "
+                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
+                    f"{type(e).__name__}: {e}"
+                ))
                 continue
             except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
                 page_decode_failures += 1
-                bt.logging.warning(
-                    scrub_log(f"Page-decode failure: {type(e).__name__}: {e}")
-                )
+                bt.logging.warning(scrub_log(
+                    f"{miner_hotkey}: Page-decode failure after "
+                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
+                    f"{type(e).__name__}: {e}"
+                ))
                 continue
             except Exception as e:
-                bt.logging.warning(scrub_log(f"Sampled validation error: {e}"))
+                bt.logging.warning(scrub_log(
+                    f"{miner_hotkey}: Sampled validation error after "
+                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: {e}"
+                ))
                 continue
             finally:
                 # Cancel the timer first (no-op if it already fired); the shim
@@ -1115,6 +1345,16 @@ class DuckDBSampledValidator:
                         conn.close()
                     except Exception:
                         pass
+                # Downloaded temp files are NOT removed here: they are cached in
+                # self._local_files so job content matching and scraper entity
+                # sampling read them locally instead of re-fetching over the
+                # network. close() deletes them at the end of the miner eval.
+
+        bt.logging.info(
+            f"{miner_hotkey}: DuckDB phase DONE in {time.monotonic()-phase_start:.1f}s "
+            f"— {files_checked} files checked, {schema_failures} schema_fail, "
+            f"{page_decode_failures} page_decode_fail, {dedup_total} urls hashed"
+        )
 
         # Zero tolerance for schema failures
         if schema_failures > 0:
@@ -1286,6 +1526,14 @@ class DuckDBSampledValidator:
                 if not presigned_url:
                     continue
 
+                # Reuse the eval-scoped local copy when the dedup phase already
+                # downloaded this file (~180x faster than per-column HTTP Range
+                # reads). Cache-only: this phase has no time budget, so it must
+                # never trigger a fresh bulk download — uncached files are read
+                # over the network exactly as before the cache existed.
+                cached = self._local_files.get(file_info['key'])
+                read_source = cached if cached and os.path.exists(cached) else presigned_url
+
                 conn = None
                 try:
                     # Schema validation — only reads parquet footer
@@ -1293,7 +1541,7 @@ class DuckDBSampledValidator:
                     conn.execute("SET memory_limit='1GB';")
                     conn.execute("SET threads=1;")
                     schema_result = conn.execute(
-                        f"SELECT name FROM parquet_schema('{presigned_url}')"
+                        f"SELECT name FROM parquet_schema('{read_source}')"
                     ).fetchall()
                     excluded_names = {'schema', 'list', 'element', 'model_config'}
                     all_column_names = [r[0].lower() for r in schema_result if r[0].lower() not in excluded_names]
@@ -1316,9 +1564,9 @@ class DuckDBSampledValidator:
                     if required - available_cols:
                         continue
 
-                    # Read 1 random row group via Range requests (~3MB vs full scan)
+                    # Read 1 random row group (local path when cached, else Range)
                     sample_df = read_random_row_group(
-                        presigned_url, file_size,
+                        read_source, file_size,
                         columns=None, max_rows=samples_per_file
                     )
 
@@ -1491,6 +1739,14 @@ class DuckDBSampledValidator:
             else:
                 continue
 
+            # Reuse the eval-scoped local copy when the dedup phase already
+            # downloaded this file (~180x faster than per-column HTTP Range
+            # reads). Cache-only: this phase has no time budget, so it must
+            # never trigger a fresh bulk download — uncached files are read
+            # over the network exactly as before the cache existed.
+            cached = self._local_files.get(file_key)
+            read_source = cached if cached and os.path.exists(cached) else presigned_url
+
             conn = None
             try:
                 # Schema validation — only reads parquet footer
@@ -1498,7 +1754,7 @@ class DuckDBSampledValidator:
                 conn.execute("SET memory_limit='1GB';")
                 conn.execute("SET threads=1;")
                 schema_result = conn.execute(
-                    f"SELECT name FROM parquet_schema('{presigned_url}')"
+                    f"SELECT name FROM parquet_schema('{read_source}')"
                 ).fetchall()
                 excluded_names = {'schema', 'list', 'element', 'model_config'}
                 all_column_names = [r[0].lower() for r in schema_result if r[0].lower() not in excluded_names]
@@ -1523,7 +1779,7 @@ class DuckDBSampledValidator:
 
                 # Read 1 random row group; sample size scales with file's byte share.
                 df = read_random_row_group(
-                    presigned_url, file_size,
+                    read_source, file_size,
                     columns=None, max_rows=_rows_for_file(file_info)
                 )
 
@@ -1851,8 +2107,14 @@ class DuckDBSampledValidator:
         )
 
     def close(self):
-        """Cleanup resources."""
-        pass
+        """Cleanup resources: delete this eval's cached temp files."""
+        for path in self._local_files.values():
+            try:
+                os.unlink(path)
+            except OSError:
+                pass
+        self._local_files.clear()
+        self._cached_bytes = 0
 
 
 def load_expected_jobs_from_gravity() -> Dict:
