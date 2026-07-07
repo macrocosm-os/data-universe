@@ -130,7 +130,7 @@ class DuckDBSampledValidator:
     """
 
     # Validation thresholds
-    MAX_DUPLICATE_RATE = 5.0    # 5% max duplicates within same job
+    MAX_DUPLICATE_RATE = 1.0    # 1% max duplicates within same job (honest miners dedup locally)
     MAX_EMPTY_RATE = 10.0       # 10% max empty content
     # Missing URLs = instant fail (no rate threshold needed)
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate

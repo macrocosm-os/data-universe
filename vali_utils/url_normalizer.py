@@ -15,43 +15,38 @@ def normalize_url_for_dedup(url_str: str) -> str:
     This is not a blacklist of known exploits — it's a whitelist of valid URL structure.
 
     X:      Only the numeric tweet ID matters. Username is lowercased (decorative — X resolves by ID).
-    Reddit: Only post_id and comment_id (base36, exactly 7 chars) matter.
+    Reddit: Only post_id and comment_id (base36) matter. Subreddit and slug are decorative.
 
     Canonical forms produced:
       X tweet:        https://x.com/{user_lower}/status/{tweet_id}
-      Reddit post:    https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}
-      Reddit comment: https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}
+      Reddit post:    reddit:{post_id}
+      Reddit comment: reddit:{post_id}:{comment_id}
     """
     url = str(url_str).strip()
     parsed = urlparse(url)
     netloc = parsed.netloc.lower()
-    path = parsed.path
+    path = parsed.path.lower()
 
     # --- X / Twitter ---
     if "x.com" in netloc or "twitter.com" in netloc:
-        # Extract /username/status/DIGITS — lowercase username to prevent case-fudging
         m = re.match(r"^/([^/]+)/status/(\d+)", path)
         if m:
-            username = m.group(1).lower()
-            tweet_id = m.group(2)
-            return f"https://x.com/{username}/status/{tweet_id}"
-        return f"https://x.com{path.rstrip('/').lower()}"
+            return f"https://x.com/{m.group(1)}/status/{m.group(2)}"
+        return f"https://x.com{path.rstrip('/')}"
 
     # --- Reddit ---
     if "reddit.com" in netloc:
-        # /r/{sub}/comments/{post_id}/{slug}/{comment_id}
+        # /r/{sub}/comments/{post_id}/{slug}/{comment_id} — key on the IDs only.
         m = re.match(
-            r"^/r/([^/]+)/comments/([a-z0-9]+)(?:/([^/]*)(?:/([a-z0-9]+))?)?",
+            r"^/r/[^/]+/comments/([a-z0-9]+)(?:/[^/]*(?:/([a-z0-9]+))?)?",
             path,
         )
         if m:
-            sub, post_id, slug, comment_id = m.group(1), m.group(2), m.group(3) or "", m.group(4)
-            # Real Reddit IDs are base36, exactly 7 chars (post and comment).
-            # Verified against 240K+ real comment IDs and 704 post IDs — all 7 chars.
-            # Fake IDs (f1, _f1, aaaaaa0, etc.) fail this check.
-            if comment_id and re.match(r"^[a-z0-9]{7}$", comment_id):
-                return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}/{comment_id}"
-            return f"https://www.reddit.com/r/{sub}/comments/{post_id}/{slug}"
+            post_id, comment_id = m.group(1), m.group(2)
+            # Reddit base36 IDs are variable length, so accept >=4 chars.
+            if comment_id and re.match(r"^[a-z0-9]{4,}$", comment_id):
+                return f"reddit:{post_id}:{comment_id}"
+            return f"reddit:{post_id}"
         return f"https://www.reddit.com{path.rstrip('/')}"
 
     # --- Fallback: strip query/fragment, lowercase ---
