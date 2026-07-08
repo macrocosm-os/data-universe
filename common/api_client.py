@@ -210,6 +210,28 @@ class ListMinerJobsForValidationResponse(BaseModel):
     jobs: List[MinerJobForValidation]
 
 
+class OnDemandJobsStatsRequest(BaseModel):
+    """Request for per-platform job counts within an expiry window."""
+    expired_since: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc) - timedelta(hours=2)
+    )
+    expired_until: datetime = Field(
+        default_factory=lambda: datetime.now(timezone.utc)
+    )
+    min_submitters: int = Field(default=5, ge=1, le=100)
+
+
+class PlatformJobStats(BaseModel):
+    model_config = ConfigDict(extra="allow")
+
+    total_jobs: int = 0
+    doable_jobs: int = 0
+
+
+class OnDemandJobsStatsResponse(BaseModel):
+    platforms: Dict[str, PlatformJobStats]
+
+
 def _sha256_hex(data: bytes) -> str:
     return sha256(data).hexdigest()
 
@@ -462,6 +484,19 @@ class DataUniverseApiClient:
         )
         _raise_for_status(resp)
         return ListMinerJobsForValidationResponse.model_validate_json(resp.text)
+
+    async def validator_get_jobs_stats(
+        self, req: OnDemandJobsStatsRequest
+    ) -> OnDemandJobsStatsResponse:
+        """Per-platform job totals for a window — OD coverage denominators."""
+        if not self._signer:
+            raise RuntimeError("validator_keypair was not provided.")
+
+        resp = await self._post_signed_json(
+            "/on-demand/validator/jobs/stats", self._signer, req.model_dump_json()
+        )
+        _raise_for_status(resp)
+        return OnDemandJobsStatsResponse.model_validate_json(resp.text)
 
     async def validator_list_and_download_submission_json(
         self,
