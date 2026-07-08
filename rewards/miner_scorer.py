@@ -33,7 +33,7 @@ class MinerScorer:
     # v15: Reset S3 — latest-file-per-job validation + whole-job-snapshot miner uploads.
     #      Old effective_size/credibility was computed across all historical chunks; new
     #      model counts only the latest snapshot per job, so prior scores are not comparable.
-    STATE_VERSION = 15
+    STATE_VERSION = 16
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -57,6 +57,13 @@ class MinerScorer:
     # DD jobs are designed for S3 uploads, not P2P index broadcasting.
     # This factor scales down the raw P2P score so it stays the smallest component.
     P2P_REWARD_SCALE = 0.05
+
+    # OD abstention penalty: miners that submit to ZERO jobs on a judgeable
+    # platform (doable jobs existed, they sent nothing) get their od_component
+    # scaled by this per abstained platform. Via the S3<=2xOD and P2P<=S3+OD
+    # caps this drags the whole composite score. Recovers to 1.0 the moment
+    # they participate again.
+    OD_ABSTAIN_MULT = 0.3
 
 
     def __init__(
@@ -93,6 +100,11 @@ class MinerScorer:
             (num_neurons, 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32
         )
 
+        # OD abstention multiplier: 1.0 for miners that submit to jobs on every
+        # judgeable platform, OD_ABSTAIN_MULT^k for k abstained platforms.
+        # Set each eval from coverage measurement; scales od_component only.
+        self.od_coverage_mult = torch.ones(num_neurons, dtype=torch.float32)
+
         # Competition-based S3 scoring: stores effective_size for each miner
         # effective_size = total_size_bytes × coverage² (set during S3 validation)
         # S3 boost is calculated as: (my_effective_size / total_effective_size) × max_boost
@@ -115,6 +127,7 @@ class MinerScorer:
                     "scorable_bytes": self.scorable_bytes,
                     "ondemand_boosts": self.ondemand_boosts,
                     "ondemand_credibility": self.ondemand_credibility,
+                    "od_coverage_mult": self.od_coverage_mult,
                     "effective_sizes": self.effective_sizes,
                 },
                 filepath,
@@ -136,6 +149,9 @@ class MinerScorer:
             self.ondemand_credibility = state.get("ondemand_credibility", torch.full(
                 (self.scores.size(0), 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32
             ))
+            self.od_coverage_mult = state.get(
+                "od_coverage_mult", torch.ones(self.scores.size(0), dtype=torch.float32)
+            )
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
             # --- State migrations ---
@@ -148,6 +164,15 @@ class MinerScorer:
                 self.s3_boosts.zero_()
                 self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
                 self.effective_sizes.zero_()
+
+            if saved_version < 16:
+                bt.logging.warning(
+                    f"State migration v{saved_version} -> v16: "
+                    f"OnDemand boost/credibility reset (coverage-based OD scoring "
+                    f"rollout — boosts rebuild from the next OD evals)"
+                )
+                self.ondemand_boosts.zero_()
+                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -171,7 +196,11 @@ class MinerScorer:
 
                 p2p_component = float(self.scorable_bytes[uid]) * MinerScorer.P2P_REWARD_SCALE * p2p_cred
                 s3_component = float(self.s3_boosts[uid]) * s3_cred
-                od_component = float(self.ondemand_boosts[uid]) * od_cred
+                od_component = (
+                    float(self.ondemand_boosts[uid])
+                    * od_cred
+                    * float(self.od_coverage_mult[uid])
+                )
 
                 # S3 cap (existing): S3 <= 2x OD
                 if od_component > 0:
@@ -202,7 +231,21 @@ class MinerScorer:
             self.s3_credibility[uid] = MinerScorer.STARTING_S3_CREDIBILITY
             self.ondemand_boosts[uid] = 0.0
             self.ondemand_credibility[uid] = MinerScorer.STARTING_ONDEMAND_CREDIBILITY
+            self.od_coverage_mult[uid] = 1.0
             self.effective_sizes[uid] = 0.0
+
+    def set_od_coverage_mult(self, uid: int, mult: float) -> None:
+        """Sets the OD abstention multiplier from the coverage measurement."""
+        with self.lock:
+            old = float(self.od_coverage_mult[uid])
+            self.od_coverage_mult[uid] = max(0.0, min(1.0, mult))
+            if old != float(self.od_coverage_mult[uid]):
+                bt.logging.info(json.dumps({
+                    "event": "od_coverage_mult",
+                    "uid": uid,
+                    "before": round(old, 4),
+                    "after": round(float(self.od_coverage_mult[uid]), 4),
+                }))
 
     def get_miner_credibility(self, uid: int) -> float:
         """Returns the credibility of miner 'uid'."""
@@ -266,6 +309,9 @@ class MinerScorer:
                         dtype=torch.float32,
                     ),
                 ]
+            )
+            self.od_coverage_mult = torch.cat(
+                [self.od_coverage_mult, torch.ones(to_add, dtype=torch.float32)]
             )
             self.effective_sizes = torch.cat(
                 [self.effective_sizes, torch.zeros(to_add, dtype=torch.float64)]

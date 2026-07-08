@@ -1,6 +1,7 @@
 import os
 import gc
 import copy
+import json
 import asyncio
 import random
 import traceback
@@ -46,7 +47,10 @@ import httpx
 from common.api_client import (
     DataUniverseApiClient,
     ListMinerJobsForValidationRequest,
+    MinerJobForValidation,
     OnDemandJob,
+    OnDemandJobsStatsRequest,
+    OnDemandJobsStatsResponse,
     OnDemandJobSubmission,
     OnDemandMinerUpload,
 )
@@ -107,6 +111,10 @@ class MinerEvaluator:
         # Track last OD eval time per miner to query only new jobs each cycle.
         # Not persisted — on restart defaults to a 2h lookback window.
         self._last_od_eval_at: Dict[str, dt.datetime] = {}
+        # OD jobs-stats cache: identical for every miner in a batch, so fetch
+        # rarely and share. Guarded by a lock — miner evals run in parallel.
+        self._od_stats_cache: Optional[Tuple[dt.datetime, OnDemandJobsStatsResponse]] = None
+        self._od_stats_lock = threading.Lock()
         # Cache API client construction params (derived once, reused every eval).
         self._api_base_url = self.config.s3_auth_url
         self._api_verify_ssl = "localhost" not in self._api_base_url
@@ -157,6 +165,92 @@ class MinerEvaluator:
     OD_MAX_JOBS_TO_VALIDATE = 3
     # Number of entities to schema-check per downloaded submission.
     OD_SCHEMA_SAMPLE_SIZE = 5
+    # OD coverage measurement: trailing window and the 'doable' threshold
+    # for the denominator.
+    OD_COVERAGE_WINDOW_HOURS = 3
+    OD_COVERAGE_MIN_SUBMITTERS = 5
+    # Below this many doable jobs on a platform the window is too thin to
+    # judge a coverage RATIO (shadow logging only).
+    OD_COVERAGE_MIN_PLATFORM_JOBS = 20
+    # Total ABSTENTION (zero submissions) is a much stronger signal — it is
+    # penalized once at least this many doable jobs existed on the platform.
+    OD_ABSTAIN_MIN_PLATFORM_JOBS = 3
+    # Stats are identical for every miner in a batch — cache and refetch rarely.
+    OD_STATS_CACHE_TTL_SECS = 600
+
+    async def _get_od_jobs_stats(
+        self, client: DataUniverseApiClient
+    ) -> Optional[OnDemandJobsStatsResponse]:
+        """Per-platform job totals for the coverage window, cached across the batch."""
+        now = dt.datetime.now(dt.timezone.utc)
+        with self._od_stats_lock:
+            if self._od_stats_cache is not None:
+                fetched_at, cached = self._od_stats_cache
+                if (now - fetched_at).total_seconds() < self.OD_STATS_CACHE_TTL_SECS:
+                    return cached
+            try:
+                resp = await client.validator_get_jobs_stats(
+                    OnDemandJobsStatsRequest(
+                        expired_since=now
+                        - dt.timedelta(hours=self.OD_COVERAGE_WINDOW_HOURS),
+                        expired_until=now,
+                        min_submitters=self.OD_COVERAGE_MIN_SUBMITTERS,
+                    )
+                )
+            except Exception as e:
+                bt.logging.warning(
+                    f"OD jobs-stats fetch failed (coverage shadow skipped): {e}"
+                )
+                return None
+            self._od_stats_cache = (now, resp)
+            return resp
+
+    def _log_od_coverage_shadow(
+        self,
+        uid: int,
+        hotkey: str,
+        all_jobs: List["MinerJobForValidation"],
+        stats: Optional[OnDemandJobsStatsResponse],
+        coverage_since: dt.datetime,
+    ) -> None:
+        """Shadow-log per-platform OD coverage. Measurement only — no score impact."""
+        if stats is None:
+            return
+        submitted: Dict[str, int] = {}
+        volume_bytes: Dict[str, int] = {}
+        for j in all_jobs:
+            exp = j.job.expire_at
+            if exp is None or exp < coverage_since:
+                continue
+            platform = j.job.job.platform
+            submitted[platform] = submitted.get(platform, 0) + 1
+            volume_bytes[platform] = volume_bytes.get(platform, 0) + (
+                j.submission.s3_content_length or 0
+            )
+
+        event = {
+            "event": "od_coverage_shadow",
+            "uid": uid,
+            "hotkey": hotkey,
+            "window_hours": self.OD_COVERAGE_WINDOW_HOURS,
+        }
+        for platform, pstats in stats.platforms.items():
+            done = submitted.get(platform, 0)
+            coverage = (
+                round(min(1.0, done / pstats.doable_jobs), 4)
+                if pstats.doable_jobs >= self.OD_COVERAGE_MIN_PLATFORM_JOBS
+                else None  # too few jobs this window to judge
+            )
+            total_bytes = volume_bytes.get(platform, 0)
+            event[platform] = {
+                "submitted": done,
+                "doable": pstats.doable_jobs,
+                "total": pstats.total_jobs,
+                "coverage": coverage,
+                "bytes": total_bytes,
+                "avg_bytes": round(total_bytes / done) if done else 0,
+            }
+        bt.logging.info(json.dumps(event))
 
     async def _evaluate_od(self, uid: int, hotkey: str) -> None:
         """Evaluate a miner's on-demand submissions by querying the API directly.
@@ -173,24 +267,54 @@ class MinerEvaluator:
         expired_since = self._last_od_eval_at.get(
             hotkey, now - dt.timedelta(hours=2)
         )
+        # Fetch wide enough to also cover the coverage window; the reward
+        # path below still only sees jobs from the since-last-eval window.
+        coverage_since = now - dt.timedelta(hours=self.OD_COVERAGE_WINDOW_HOURS)
+        fetch_since = min(expired_since, coverage_since)
 
         try:
             async with self._on_demand_client() as client:
                 resp = await client.validator_list_miner_jobs(
                     ListMinerJobsForValidationRequest(
                         miner_hotkey=hotkey,
-                        expired_since=expired_since,
+                        expired_since=fetch_since,
                         expired_until=now,
-                        limit=500,
+                        limit=1000,
                     )
                 )
+                stats = await self._get_od_jobs_stats(client)
         except Exception as e:
             bt.logging.warning(f"UID:{uid} - HOTKEY:{hotkey}: OD API fetch failed: {e}")
             return
 
         self._last_od_eval_at[hotkey] = now
 
-        jobs = resp.jobs
+        self._log_od_coverage_shadow(uid, hotkey, resp.jobs, stats, coverage_since)
+
+        # Abstention penalty: zero submissions on a platform where doable jobs
+        # existed scales od_component down (recovers on next participation).
+        # Runs BEFORE the empty-jobs early return so fully-absent miners are hit.
+        if stats is not None:
+            submitted_platforms = {
+                j.job.job.platform
+                for j in resp.jobs
+                if j.job.expire_at is None or j.job.expire_at >= coverage_since
+            }
+            mult = 1.0
+            for platform, pstats in stats.platforms.items():
+                if (
+                    pstats.doable_jobs >= self.OD_ABSTAIN_MIN_PLATFORM_JOBS
+                    and platform not in submitted_platforms
+                ):
+                    mult *= MinerScorer.OD_ABSTAIN_MULT
+            self.scorer.set_od_coverage_mult(uid, mult)
+
+        # Reward path: unchanged semantics — only jobs from the since-last-eval window.
+        jobs = [
+            j
+            for j in resp.jobs
+            if j.job.expire_at is None or j.job.expire_at >= expired_since
+        ]
         if not jobs:
             return
 
@@ -226,6 +350,25 @@ class MinerEvaluator:
             )
             for j in to_validate
         ])
+
+        # Rows+bytes for the sampled jobs — calibrates the bytes-only volume
+        # signal in od_coverage_shadow (bytes/row ratio per miner/platform).
+        bt.logging.info(json.dumps({
+            "event": "od_sampled_rows",
+            "uid": uid,
+            "hotkey": hotkey,
+            "sampled": [
+                {
+                    "job_id": j.submission.job_id,
+                    "platform": j.job.job.platform,
+                    "limit": j.job.limit,
+                    "rows": count,
+                    "bytes": j.submission.s3_content_length or 0,
+                    "passed": passed,
+                }
+                for j, (passed, count) in zip(to_validate, validation_results)
+            ],
+        }))
 
         # Apply per-job rewards/penalties based on validation results
         validated_pass = 0
