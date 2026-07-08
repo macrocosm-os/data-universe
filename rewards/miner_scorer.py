@@ -33,7 +33,7 @@ class MinerScorer:
     # v15: Reset S3 — latest-file-per-job validation + whole-job-snapshot miner uploads.
     #      Old effective_size/credibility was computed across all historical chunks; new
     #      model counts only the latest snapshot per job, so prior scores are not comparable.
-    STATE_VERSION = 15
+    STATE_VERSION = 16
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -148,6 +148,15 @@ class MinerScorer:
                 self.s3_boosts.zero_()
                 self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
                 self.effective_sizes.zero_()
+
+            if saved_version < 16:
+                bt.logging.warning(
+                    f"State migration v{saved_version} -> v16: "
+                    f"OnDemand boost/credibility reset (coverage-based OD scoring "
+                    f"rollout — boosts rebuild from the next OD evals)"
+                )
+                self.ondemand_boosts.zero_()
+                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
