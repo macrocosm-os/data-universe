@@ -165,12 +165,16 @@ class MinerEvaluator:
     OD_MAX_JOBS_TO_VALIDATE = 3
     # Number of entities to schema-check per downloaded submission.
     OD_SCHEMA_SAMPLE_SIZE = 5
-    # OD coverage shadow measurement (log-only, no scoring impact yet):
-    # trailing window and the 'doable' threshold for the denominator.
+    # OD coverage measurement: trailing window and the 'doable' threshold
+    # for the denominator.
     OD_COVERAGE_WINDOW_HOURS = 3
     OD_COVERAGE_MIN_SUBMITTERS = 5
-    # Below this many doable jobs on a platform the window is too thin to judge.
+    # Below this many doable jobs on a platform the window is too thin to
+    # judge a coverage RATIO (shadow logging only).
     OD_COVERAGE_MIN_PLATFORM_JOBS = 20
+    # Total ABSTENTION (zero submissions) is a much stronger signal — it is
+    # penalized once at least this many doable jobs existed on the platform.
+    OD_ABSTAIN_MIN_PLATFORM_JOBS = 3
     # Stats are identical for every miner in a batch — cache and refetch rarely.
     OD_STATS_CACHE_TTL_SECS = 600
 
@@ -286,6 +290,24 @@ class MinerEvaluator:
         self._last_od_eval_at[hotkey] = now
 
         self._log_od_coverage_shadow(uid, hotkey, resp.jobs, stats, coverage_since)
+
+        # Abstention penalty: zero submissions on a platform where doable jobs
+        # existed scales od_component down (recovers on next participation).
+        # Runs BEFORE the empty-jobs early return so fully-absent miners are hit.
+        if stats is not None:
+            submitted_platforms = {
+                j.job.job.platform
+                for j in resp.jobs
+                if j.job.expire_at is None or j.job.expire_at >= coverage_since
+            }
+            mult = 1.0
+            for platform, pstats in stats.platforms.items():
+                if (
+                    pstats.doable_jobs >= self.OD_ABSTAIN_MIN_PLATFORM_JOBS
+                    and platform not in submitted_platforms
+                ):
+                    mult *= MinerScorer.OD_ABSTAIN_MULT
+            self.scorer.set_od_coverage_mult(uid, mult)
 
         # Reward path: unchanged semantics — only jobs from the since-last-eval window.
         jobs = [

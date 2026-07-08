@@ -126,6 +126,100 @@ class TestStatsCache(unittest.TestCase):
         self.assertIsNotNone(asyncio.run(self.ev._get_od_jobs_stats(client)))
 
 
+class TestAbstentionPenalty(unittest.TestCase):
+    def _run_eval(self, jobs, stats):
+        ev = _stub_evaluator()
+        ev.scorer = MagicMock()
+        resp = MagicMock()
+        resp.jobs = jobs
+        client = MagicMock()
+        client.validator_list_miner_jobs = AsyncMock(return_value=resp)
+        client.__aenter__ = AsyncMock(return_value=client)
+        client.__aexit__ = AsyncMock(return_value=False)
+        ev._on_demand_client = MagicMock(return_value=client)
+        ev._get_od_jobs_stats = AsyncMock(return_value=stats)
+        ev._log_od_coverage_shadow = MagicMock()
+        ev._validate_od_submission = AsyncMock(return_value=(True, 10))
+        ev.on_demand_validator.calculate_ondemand_reward_multipliers = MagicMock(
+            return_value=(1.0, 1.0)
+        )
+        asyncio.run(ev._evaluate_od(1, "hk"))
+        return ev
+
+    def test_x_abstainer_penalized(self):
+        """Reddit-only miner gets OD_ABSTAIN_MULT when doable X jobs existed."""
+        from rewards.miner_scorer import MinerScorer
+
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [_job("reddit", now - dt.timedelta(hours=1))]
+        ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 4)))
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(
+            1, MinerScorer.OD_ABSTAIN_MULT
+        )
+
+    def test_fully_absent_miner_penalized_on_both(self):
+        """Zero submissions anywhere -> penalty applied per platform, despite early return."""
+        from rewards.miner_scorer import MinerScorer
+
+        ev = self._run_eval([], _stats(reddit=(90, 85), x=(60, 4)))
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(
+            1, MinerScorer.OD_ABSTAIN_MULT ** 2
+        )
+
+    def test_thin_platform_not_judged_for_abstention(self):
+        """X with fewer doable jobs than OD_ABSTAIN_MIN_PLATFORM_JOBS is skipped."""
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [_job("reddit", now - dt.timedelta(hours=1))]
+        ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 2)))
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 1.0)
+
+    def test_participant_restored_to_full_mult(self):
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [
+            _job("reddit", now - dt.timedelta(hours=1)),
+            _job("x", now - dt.timedelta(hours=1)),
+        ]
+        ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 4)))
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 1.0)
+
+
+class TestScorerCoverageMult(unittest.TestCase):
+    def test_mult_scales_od_and_drags_caps(self):
+        from rewards.data_value_calculator import DataValueCalculator
+        from rewards.miner_scorer import MinerScorer
+        import torch
+
+        scorer = MinerScorer(2, DataValueCalculator())
+        for uid in (0, 1):
+            scorer.ondemand_boosts[uid] = 100.0
+            scorer.ondemand_credibility[uid] = 1.0
+            scorer.s3_boosts[uid] = 1000.0
+            scorer.s3_credibility[uid] = 1.0
+
+        scorer.set_od_coverage_mult(1, MinerScorer.OD_ABSTAIN_MULT)
+        scores = scorer.get_scores_for_weights()
+
+        # uid0: od=100, s3 capped at 200 -> 300. uid1: od=30, s3 capped at 60 -> 90.
+        self.assertAlmostEqual(float(scores[0]), 300.0, places=2)
+        self.assertAlmostEqual(float(scores[1]), 90.0, places=2)
+
+    def test_state_roundtrip_preserves_mult(self):
+        import os
+        import tempfile
+        from rewards.data_value_calculator import DataValueCalculator
+        from rewards.miner_scorer import MinerScorer
+
+        scorer = MinerScorer(4, DataValueCalculator())
+        scorer.set_od_coverage_mult(2, 0.3)
+        with tempfile.TemporaryDirectory() as d:
+            path = os.path.join(d, "scorer.pickle")
+            scorer.save_state(path)
+            loaded = MinerScorer(4, DataValueCalculator())
+            loaded.load_state(path)
+        self.assertAlmostEqual(float(loaded.od_coverage_mult[2]), 0.3, places=4)
+        self.assertAlmostEqual(float(loaded.od_coverage_mult[0]), 1.0, places=4)
+
+
 class TestEvaluateOdRewardWindow(unittest.TestCase):
     def test_reward_path_only_sees_since_last_eval_jobs(self):
         """Coverage fetch widens the window; rewards must not resample old jobs."""
