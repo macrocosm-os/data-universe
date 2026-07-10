@@ -555,7 +555,11 @@ class MinerScorer:
             score = 0.0
 
             # If the miner has an index, update it's credibility based on the validation result and score the current index.
-            # Otherwise, score the miner 0 for this round, but don't touch its credibility.
+            # Otherwise, apply the failed validation to credibility and score the miner 0 for this round.
+            # Credibility must decay here: get_scores_for_weights() recomputes the P2P component
+            # from scorable_bytes * credibility, so leaving credibility untouched would let a miner
+            # freeze a stale (inflated) P2P score forever by refusing the index query.
+            # The EMA self-heals, so a transient network failure costs one decay step, not the score.
             if index:
                 # Compute the raw miner score based on the amount of data it has, scaled based on
                 # the reward distribution.
@@ -619,6 +623,8 @@ class MinerScorer:
                     f"{f', capped from {s3_uncapped:.0f}' if s3_uncapped != s3_component else ''}, "
                     f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={float(self.ondemand_credibility[uid]):.4f})"
                 )
+            else:
+                self._update_credibility(uid, validation_results)
 
             self.scores[uid] = score
 
