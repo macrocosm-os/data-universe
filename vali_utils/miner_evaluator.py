@@ -544,6 +544,39 @@ class MinerEvaluator:
         # Apply any cached OD results before the main P2P/S3 evaluation
         await self._evaluate_od(uid, hotkey)
 
+        current_block = int(self.metagraph.block)
+        s3_validation_info = self.s3_storage.get_validation_info(hotkey)
+        s3_validation_result = None
+
+        if not s3_validation_info or (current_block - s3_validation_info['block']) > 600:  # ~2 hrs
+            s3_validation_result = await self._perform_s3_validation(uid, hotkey, current_block)
+
+        # Apply the S3 result NOW, before any P2P step. Both the index fetch and
+        # the GetDataEntityBucket query have early returns a miner can trigger on
+        # purpose; if the S3 update ran after them, a miner could freeze a stale
+        # (inflated) S3 boost/credibility forever by intentionally failing P2P.
+        # S3 validation only needs the hotkey, not the index.
+        if s3_validation_result:
+            if s3_validation_result.is_valid:
+                bt.logging.info(
+                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} passed S3 validation. "
+                    f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
+                    f"Jobs: {s3_validation_result.total_active_jobs}, Files: {s3_validation_result.recent_files_count}, "
+                    f"Coverage: {s3_validation_result.job_coverage_rate:.1f}%, "
+                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB, "
+                    f"Job match: {s3_validation_result.job_match_rate:.1f}%"
+                )
+            else:
+                bt.logging.info(
+                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. "
+                    f"Reason: {s3_validation_result.reason}"
+                )
+            self.scorer.update_s3_effective_size(
+                uid=uid,
+                effective_size=s3_validation_result.effective_size_bytes,
+                validation_passed=s3_validation_result.is_valid,
+            )
+
         # Query the miner for the latest index.
         index = await self._update_and_get_miner_index(hotkey, uid, axon_info)
         if not index:
@@ -565,39 +598,6 @@ class MinerEvaluator:
 
             metrics.MINER_EVALUATOR_EVAL_MINER_DURATION.labels(hotkey=self.wallet.hotkey.ss58_address, miner_hotkey=hotkey, status='unavailable miner index').observe(time.perf_counter() - t_start)
             return
-
-        current_block = int(self.metagraph.block)
-        s3_validation_info = self.s3_storage.get_validation_info(hotkey)
-        s3_validation_result = None
-
-        if not s3_validation_info or (current_block - s3_validation_info['block']) > 600:  # ~2 hrs
-            s3_validation_result = await self._perform_s3_validation(uid, hotkey, current_block)
-
-        # Apply the S3 result NOW, before the P2P bucket query. The P2P step has
-        # several early returns on a failed/invalid GetDataEntityBucket response;
-        # if the S3 update were left until after them, a miner could freeze a
-        # stale (inflated) S3 boost/credibility forever by intentionally failing
-        # the bucket query. S3 scoring must not depend on the P2P outcome.
-        if s3_validation_result:
-            if s3_validation_result.is_valid:
-                bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} passed S3 validation. "
-                    f"Validation: {s3_validation_result.validation_percentage:.1f}%, "
-                    f"Jobs: {s3_validation_result.total_active_jobs}, Files: {s3_validation_result.recent_files_count}, "
-                    f"Coverage: {s3_validation_result.job_coverage_rate:.1f}%, "
-                    f"Effective size: {s3_validation_result.effective_size_bytes/(1024*1024):.1f}MB, "
-                    f"Job match: {s3_validation_result.job_match_rate:.1f}%"
-                )
-            else:
-                bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: Miner {uid} did not pass S3 validation. "
-                    f"Reason: {s3_validation_result.reason}"
-                )
-            self.scorer.update_s3_effective_size(
-                uid=uid,
-                effective_size=s3_validation_result.effective_size_bytes,
-                validation_passed=s3_validation_result.is_valid,
-            )
 
         # From that index, find a data entity bucket to sample and get it from the miner.
         chosen_data_entity_bucket: DataEntityBucket = (
