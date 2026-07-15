@@ -139,7 +139,7 @@ class TestAbstentionPenalty(unittest.TestCase):
         ev._on_demand_client = MagicMock(return_value=client)
         ev._get_od_jobs_stats = AsyncMock(return_value=stats)
         ev._log_od_coverage_shadow = MagicMock()
-        ev._validate_od_submission = AsyncMock(return_value=(True, 10))
+        ev._validate_od_submission = AsyncMock(return_value=(True, 10, 10))
         ev.on_demand_validator.calculate_ondemand_reward_multipliers = MagicMock(
             return_value=(1.0, 1.0)
         )
@@ -242,7 +242,7 @@ class TestEvaluateOdRewardWindow(unittest.TestCase):
         ev._on_demand_client = MagicMock(return_value=client)
         ev._get_od_jobs_stats = AsyncMock(return_value=_stats())
         ev._log_od_coverage_shadow = MagicMock()
-        ev._validate_od_submission = AsyncMock(return_value=(True, 10))
+        ev._validate_od_submission = AsyncMock(return_value=(True, 10, 10))
         ev.on_demand_validator.calculate_ondemand_reward_multipliers = MagicMock(
             return_value=(1.0, 1.0)
         )
