@@ -138,6 +138,16 @@ class DuckDBSampledValidator:
     MIN_ENGAGEMENT_RATE = 95.0  # 95% of X rows must have non-null view_count
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
 
+    # Per-platform scraper-sampling floor. A platform contributing at least
+    # SCRAPER_PLATFORM_FLOOR_PCT of a miner's CLAIMED ROWS must get at least
+    # SCRAPER_PLATFORM_MIN_ENTITIES rows scraper-validated, regardless of the
+    # random draw. Without this, a miner can keep a small pool of real data as
+    # ballast and bury fabricated high-volume data (e.g. 76% fake X) that the
+    # 20-row scraper sample rarely inspects. The floor guarantees the platform
+    # holding the volume gets checked → one dead URL trips MIN_SCRAPER_SUCCESS.
+    SCRAPER_PLATFORM_FLOOR_PCT = 10.0
+    SCRAPER_PLATFORM_MIN_ENTITIES = 5
+
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
     MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024       # 1GB - single file cap
@@ -374,13 +384,16 @@ class DuckDBSampledValidator:
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
             sample_count = min(sample_count, len(active_files), FILE_SAMPLE_CAP)
 
-            # Byte-weighted sampling: file selection probability proportional to its
-            # byte share of the total submitted size. Prior 50:50 big/small split let
-            # miners hide fab content behind a thin layer of real "bait" big files —
-            # uniform sampling across thousands of fab small files gave each fab file
-            # a ~0% chance of inspection. Byte-weighted weights tie validation effort
-            # to where the bytes (and the effective_size claim) actually live.
-            weights = [max(1, f.get('size', 0)) for f, _ in active_files]
+            # Row-weighted sampling: file selection probability proportional to its
+            # CLAIMED ROW share, not byte share. effective_size is row-based, so rows
+            # are what's scored; bytes are an artifact of compression. Byte-weighting
+            # let a fabricator hide fake volume in files that compress small — e.g. a
+            # 410k-row fab file at ~52 B/row (just over the MIN_BYTES_PER_ROW floor)
+            # weighs far less than a real 120 B/row file of the same row count, so the
+            # rows driving the effective_size claim went under-inspected. Tie sampling
+            # to the quantity actually rewarded.
+            weights = [max(1, self._parse_row_count_from_filename(f.get('key', '')) or 1)
+                       for f, _ in active_files]
             sampled_files_with_job = _weighted_sample_without_replacement(
                 active_files, weights, sample_count
             )
@@ -1692,26 +1705,33 @@ class DuckDBSampledValidator:
         """
         all_entities = []
 
-        # Byte-weighted random ordering: each file's rank is exponential(weight=size),
-        # the same trick used for file sampling. Larger files come first on average
-        # without deterministic ordering — and tiny fab files retain a real probability
-        # of being inspected, preventing bait-saturation of the entity pool.
-        file_weights = [max(f.get('size', 0), 1) for f in sampled_files]
+        # Row-weighted random ordering: each file's rank is exponential(weight=claimed
+        # rows), NOT bytes. Bytes track compression, not the scored quantity; a fab
+        # file that compresses small (~52 B/row) got few scraper rows under byte-share
+        # even though it claims the same rows as a real file. Files claiming more rows
+        # (which drive effective_size) come first on average; tiny files retain a real
+        # probability of inspection.
+        def _claimed_rows_for(f):
+            r = self._parse_row_count_from_filename(f.get('key', ''))
+            return r if r and r > 0 else 1
+
+        file_weights = [_claimed_rows_for(f) for f in sampled_files]
         ranked = _weighted_sample_without_replacement(
             sampled_files, file_weights, len(sampled_files)
         )
         sampled_files = ranked
 
-        # Size-proportional per-file row budget: a file holding 50% of the bytes
+        # Row-proportional per-file budget: a file holding 50% of the CLAIMED ROWS
         # contributes ~50% of the rows we sample. Total entity budget is
-        # `num_entities * 2` (the existing pool-size target); allocate it pro-rata.
-        sample_total_bytes = max(sum(file_weights), 1)
+        # `num_entities * 2` (the existing pool-size target); allocate it pro-rata by
+        # claimed-row share so scraper effort tracks the effective_size claim.
+        sample_total_rows = max(sum(file_weights), 1)
         entity_budget = num_entities * 2
         MIN_ROWS_PER_FILE = 2
         MAX_ROWS_PER_FILE = 20
 
         def _rows_for_file(f):
-            share = f.get('size', 0) / sample_total_bytes
+            share = _claimed_rows_for(f) / sample_total_rows
             target = int(round(share * entity_budget))
             return max(MIN_ROWS_PER_FILE, min(MAX_ROWS_PER_FILE, target))
 
@@ -1826,7 +1846,45 @@ class DuckDBSampledValidator:
         if not all_entities:
             return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
 
-        entities_to_validate = random.sample(all_entities, min(num_entities, len(all_entities)))
+        # Per-platform floor: any platform that is >= SCRAPER_PLATFORM_FLOOR_PCT of
+        # this miner's claimed rows must contribute >= SCRAPER_PLATFORM_MIN_ENTITIES
+        # to the scraper sample, so a high-volume platform can't be crowded out of the
+        # 20-row draw by ballast on another platform. Claimed-row share is measured
+        # over the sampled files (what we actually pulled), keyed by job platform.
+        platform_claimed_rows: Dict[str, int] = {}
+        for f in sampled_files:
+            fk = f.get('key', '')
+            if '/job_id=' not in fk:
+                continue
+            jid = fk.split('/job_id=')[1].split('/')[0]
+            jcfg = expected_jobs.get(jid, {})
+            plat = (jcfg.get('params', {}) if isinstance(jcfg, dict) else {}).get('platform', 'unknown').lower()
+            rows = self._parse_row_count_from_filename(fk) or 0
+            platform_claimed_rows[plat] = platform_claimed_rows.get(plat, 0) + rows
+        total_claimed = max(sum(platform_claimed_rows.values()), 1)
+
+        entities_by_plat: Dict[str, list] = {}
+        for item in all_entities:
+            entities_by_plat.setdefault(item[1], []).append(item)
+
+        target = min(num_entities, len(all_entities))
+        selected: list = []
+        selected_ids = set()
+        for plat, rows in platform_claimed_rows.items():
+            if rows / total_claimed * 100.0 < self.SCRAPER_PLATFORM_FLOOR_PCT:
+                continue
+            pool = entities_by_plat.get(plat, [])
+            floor = min(self.SCRAPER_PLATFORM_MIN_ENTITIES, len(pool), target)
+            for item in random.sample(pool, floor):
+                if id(item) not in selected_ids:
+                    selected.append(item)
+                    selected_ids.add(id(item))
+
+        # Fill the rest of the budget with a random draw over everything not yet picked.
+        remaining = [it for it in all_entities if id(it) not in selected_ids]
+        fill = max(0, target - len(selected))
+        selected.extend(random.sample(remaining, min(fill, len(remaining))))
+        entities_to_validate = selected[:target]
 
         total_validated = 0
         total_passed = 0
