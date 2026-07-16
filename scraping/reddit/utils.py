@@ -262,7 +262,7 @@ def validate_reddit_content(
 
         # Extra check that the content size is reasonably close to what we expect.
         # Allow a 10 byte difference to account for timestamp serialization differences.
-        byte_difference_allowed = 0
+        byte_difference_allowed = 10
 
         if (
                 entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
