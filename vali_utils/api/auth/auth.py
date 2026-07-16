@@ -21,7 +21,7 @@ api_key_header = APIKeyHeader(name=API_KEY_NAME)
 class APIKeyManager:
     API_KEYS_FILENAME = "api_keys.db"
 
-    def __init__(self, config: "bt.config" = None, db_path: str = None):
+    def __init__(self, config: "bt.Config" = None, db_path: str = None):
         self.metrics_api_key = os.getenv("METRICS_API_KEY", str(uuid4()))
 
         # Master key from environment

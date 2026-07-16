@@ -109,7 +109,7 @@ class IntegrationTestProtocol(unittest.TestCase):
 
         self.ip = bt.utils.networking.get_external_ip()
 
-        self.wallet = bt.wallet(name="unit_test2", hotkey="unit_test2")
+        self.wallet = bt.Wallet(name="unit_test2", hotkey="unit_test2")
         self.wallet.create_if_non_existent(
             coldkey_use_password=False, hotkey_use_password=False
         )
@@ -121,7 +121,7 @@ class IntegrationTestProtocol(unittest.TestCase):
     def _test_round_trip(self, forward_fn: Callable, request: bt.Epistula) -> bt.Epistula:
         """Base test for verifying a protocol message between dendrite and axon."""
         port = 1234
-        axon = bt.axon(
+        axon = bt.Axon(
             wallet=self.wallet,
             ip="0.0.0.0",
             port=port,
@@ -132,7 +132,7 @@ class IntegrationTestProtocol(unittest.TestCase):
             axon.attach(forward_fn=forward_fn)
             axon.start()
 
-            dendrite = bt.dendrite(wallet=self.wallet)
+            dendrite = bt.Dendrite(wallet=self.wallet)
 
             response = dendrite.query(
                 axons=bt.AxonInfo(

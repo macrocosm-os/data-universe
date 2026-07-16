@@ -12,7 +12,7 @@ from common.api_client import TaoSigner
 class ValidatorS3Access:
     """S3 access for validators — lists miner files via presigned URLs."""
 
-    def __init__(self, wallet: bt.wallet, s3_auth_url: str, debug: bool = False):
+    def __init__(self, wallet: bt.Wallet, s3_auth_url: str, debug: bool = False):
         self.wallet = wallet
         self.s3_auth_url = s3_auth_url
         self._signer = TaoSigner(keypair=wallet.hotkey)

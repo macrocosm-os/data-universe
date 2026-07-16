@@ -19,20 +19,16 @@ def _sync_retrieve_metadata(netuid: int, hotkey: str, network: str = "finney"):
     """Standalone function that can be pickled"""
     try:
         # Create a fresh subtensor instance for each call
-        fresh_subtensor = bt.subtensor(network=network)
-        
-        metadata = bt.core.extrinsics.serving.get_metadata(
-            fresh_subtensor, 
-            netuid, 
-            hotkey
+        fresh_subtensor = bt.Subtensor(network=network)
+
+        # bittensor 10.x: serving.get_metadata is gone; get_commitment takes a
+        # uid and returns the decoded commitment string directly.
+        uid = fresh_subtensor.get_uid_for_hotkey_on_subnet(
+            hotkey_ss58=hotkey, netuid=netuid
         )
-        
-        if not metadata:
+        if uid is None:
             return None
-            
-        commitment = metadata["info"]["fields"][0]
-        hex_data = commitment[list(commitment.keys())[0]][2:]
-        return bytes.fromhex(hex_data).decode()
+        return fresh_subtensor.get_commitment(netuid=netuid, uid=uid) or None
     except Exception as e:
         bt.logging.error(f"Error retrieving metadata for {hotkey}: {str(e)}")
         return None
@@ -70,9 +66,9 @@ def run_in_subprocess(func: functools.partial, ttl: int = 10) -> Any:
 class ChainPreferenceStore:
     def __init__(
         self,
-        subtensor: bt.subtensor,
+        subtensor: bt.Subtensor,
         netuid: int,
-        wallet: Optional[bt.wallet] = None,
+        wallet: Optional[bt.Wallet] = None,
     ):
         self.subtensor = subtensor
         self.wallet = wallet
@@ -91,14 +87,12 @@ class ChainPreferenceStore:
             raise ValueError("No data provided to store on the chain.")
 
         def sync_store():
-            return bt.core.extrinsics.serving.publish_metadata(
-                self.subtensor,
-                self.wallet,
-                self.netuid,
-                f"Raw{len(data)}",
-                data.encode(),
-                wait_for_inclusion,
-                wait_for_finalization,
+            # bittensor 10.x: serving.publish_metadata is gone; set_commitment
+            # writes a raw commitment for (wallet, netuid).
+            return self.subtensor.set_commitment(
+                wallet=self.wallet,
+                netuid=self.netuid,
+                data=data,
             )
 
         partial = functools.partial(sync_store)
@@ -145,8 +139,8 @@ if __name__ == "__main__":
     add_args(parser, is_upload=False)
     args = parser.parse_args()
 
-    subtensor = bt.subtensor(network=args.network)
-    wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
+    subtensor = bt.Subtensor(network=args.network)
+    wallet = bt.Wallet(name=args.wallet, hotkey=args.hotkey)
     
     store = ChainPreferenceStore(subtensor, args.netuid, wallet)
     

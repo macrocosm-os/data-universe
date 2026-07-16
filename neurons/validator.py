@@ -72,7 +72,7 @@ class Validator:
         evaluator: MinerEvaluator,
         uid: int,
         config=None,
-        subtensor: bt.subtensor = None,
+        subtensor: bt.Subtensor = None,
     ):
         """
 
@@ -81,7 +81,7 @@ class Validator:
             evaluator (MinerEvaluator): The evaluator to evaluate miners.
             uid (int): The uid of the validator.
             config (_type_, optional): _description_. Defaults to None.
-            subtensor (bt.subtensor, optional): _description_. Defaults to None.
+            subtensor (bt.Subtensor, optional): _description_. Defaults to None.
         """
         self.metagraph_syncer = metagraph_syncer
         self.evaluator = evaluator
@@ -93,11 +93,11 @@ class Validator:
         bt.logging.info(self.config)
 
         # The wallet holds the cryptographic key pairs for the miner.
-        self.wallet = bt.wallet(config=self.config)
+        self.wallet = bt.Wallet(config=self.config)
         bt.logging.info(f"Wallet: {self.wallet}.")
 
         # The subtensor is our connection to the Bittensor blockchain.
-        self.subtensor = subtensor or bt.subtensor(config=self.config)
+        self.subtensor = subtensor or bt.Subtensor(config=self.config)
         bt.logging.info(f"Subtensor: {self.subtensor}.")
 
         # The metagraph holds the state of the network, letting us know about other validators and miners.
@@ -430,7 +430,7 @@ class Validator:
         """Serve axon to enable external connections."""
 
         try:
-            self.axon = bt.axon(wallet=self.wallet, config=self.config)
+            self.axon = bt.Axon(wallet=self.wallet, config=self.config)
 
             self.axon.serve(netuid=self.config.netuid, subtensor=self.subtensor).start()
             if self.config.neuron.api_on:
@@ -455,7 +455,7 @@ class Validator:
             bt.logging.error(f"Failed to setup Axon: {e}.")
             sys.exit(1)
 
-    def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
+    def _on_metagraph_updated(self, metagraph: bt.Metagraph, netuid: int):
         """Processes an update to the metagraph"""
         with self.lock:
             assert netuid == self.config.netuid
@@ -735,9 +735,9 @@ def main():
 
     bt.logging(config=config, logging_dir=config.full_path)
 
-    subtensor = bt.subtensor(config=config)
+    subtensor = bt.Subtensor(config=config)
     metagraph = subtensor.metagraph(netuid=config.netuid)
-    wallet = bt.wallet(config=config)
+    wallet = bt.Wallet(config=config)
 
     # Get the wallet's UID, if registered.
     utils.assert_registered(wallet, metagraph)

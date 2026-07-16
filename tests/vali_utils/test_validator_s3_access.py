@@ -24,12 +24,12 @@ def main():
     args = parser.parse_args()
 
     # Create config
-    config = bt.config()
+    config = bt.Config()
     config.netuid = args.netuid
     config.s3_auth_url = args.s3_auth_url
 
     # Create wallet and S3 access
-    wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
+    wallet = bt.Wallet(name=args.wallet, hotkey=args.hotkey)
     s3_access = ValidatorS3Access(
         wallet=wallet,
         s3_auth_url=args.s3_auth_url
