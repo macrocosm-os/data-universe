@@ -12,8 +12,8 @@ class S3Auth:
         self.s3_auth_url = s3_auth_url
 
     def get_credentials(self,
-                        subtensor: bt.subtensor,
-                        wallet: bt.wallet) -> Optional[Dict[str, Any]]:
+                        subtensor: bt.Subtensor,
+                        wallet: bt.Wallet) -> Optional[Dict[str, Any]]:
         """Get S3 credentials using blockchain commitments and hotkey signature"""
         try:
             coldkey = wallet.get_coldkeypub().ss58_address
