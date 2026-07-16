@@ -336,6 +336,11 @@ class DataUniverseApiClient:
         client = self._ensure_client()
         body_bytes = payload_json.encode("utf-8")
         headers = signer.headers(body=body_bytes)
+        # Send the raw signed bytes as the body but declare JSON explicitly:
+        # starlette/fastapi >= the versions bittensor 10.x pulls in no longer
+        # infer a JSON body without this header and return 422. The signature
+        # is over body_bytes only, so setting a header does not affect it.
+        headers["Content-Type"] = "application/json"
         return await client.post(path, content=body_bytes, headers=headers)
 
     async def miner_list_active_jobs(
