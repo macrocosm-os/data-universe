@@ -19,7 +19,7 @@ def _sync_retrieve_metadata(netuid: int, hotkey: str, network: str = "finney"):
     """Standalone function that can be pickled"""
     try:
         # Create a fresh subtensor instance for each call
-        fresh_subtensor = bt.subtensor(network=network)
+        fresh_subtensor = bt.Subtensor(network=network)
         
         metadata = bt.core.extrinsics.serving.get_metadata(
             fresh_subtensor, 
@@ -70,9 +70,9 @@ def run_in_subprocess(func: functools.partial, ttl: int = 10) -> Any:
 class ChainPreferenceStore:
     def __init__(
         self,
-        subtensor: bt.subtensor,
+        subtensor: bt.Subtensor,
         netuid: int,
-        wallet: Optional[bt.wallet] = None,
+        wallet: Optional[bt.Wallet] = None,
     ):
         self.subtensor = subtensor
         self.wallet = wallet
@@ -145,8 +145,8 @@ if __name__ == "__main__":
     add_args(parser, is_upload=False)
     args = parser.parse_args()
 
-    subtensor = bt.subtensor(network=args.network)
-    wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
+    subtensor = bt.Subtensor(network=args.network)
+    wallet = bt.Wallet(name=args.wallet, hotkey=args.hotkey)
     
     store = ChainPreferenceStore(subtensor, args.netuid, wallet)
     

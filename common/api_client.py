@@ -10,7 +10,14 @@ from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from common.data import DataEntity, DataSource
-from substrateinterface.keypair import Keypair
+
+try:
+    # bittensor >= 10 ships Keypair via bittensor_wallet and no longer depends
+    # on substrate-interface (whose scalecodec conflicts with cyscale). Prefer
+    # it; fall back to the legacy package for older SDK installs.
+    from bittensor_wallet.keypair import Keypair
+except ImportError:  # pragma: no cover - legacy bittensor < 10
+    from substrateinterface.keypair import Keypair
 import httpx
 
 import bittensor as bt

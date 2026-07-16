@@ -105,9 +105,9 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
 
 
 async def run_uploader(args):
-    my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
+    my_wallet = bt.Wallet(name=args.wallet, hotkey=args.hotkey)
     my_hotkey = my_wallet.hotkey.ss58_address
-    subtensor = bt.subtensor(network=args.network)
+    subtensor = bt.Subtensor(network=args.network)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=my_hotkey, netuid=args.netuid)
 
     try:
@@ -128,8 +128,8 @@ async def run_uploader(args):
 
 
 def run_uploader_from_gravity(config, desirability_dict) -> Tuple[bool, str]:
-    wallet = bt.wallet(config=config)
-    subtensor = bt.subtensor(config=config)
+    wallet = bt.Wallet(config=config)
+    subtensor = bt.Subtensor(config=config)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
     try:
         json_content = normalize_preferences_json(

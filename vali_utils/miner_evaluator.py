@@ -71,7 +71,7 @@ class MinerEvaluator:
 
     def __init__(
         self,
-        config: bt.config,
+        config: bt.Config,
         uid: int,
         metagraph_syncer: MetagraphSyncer,
         s3_reader: ValidatorS3Access,
@@ -85,7 +85,7 @@ class MinerEvaluator:
             self._on_metagraph_updated, netuids=[config.netuid]
         )
         self.vpermit_rao_limit = self.config.vpermit_rao_limit
-        self.wallet = bt.wallet(config=self.config)
+        self.wallet = bt.Wallet(config=self.config)
 
         # API-backed S3 validation results. Used by non-macrocosmos validators
         # to fetch what UID 89 published; UID 89 uses it to publish results.
@@ -608,7 +608,7 @@ class MinerEvaluator:
         )
 
         responses = None
-        async with bt.dendrite(wallet=self.wallet) as dendrite:
+        async with bt.Dendrite(wallet=self.wallet) as dendrite:
             responses = await dendrite.forward(
                 axons=[axon_info],
                 synapse=GetDataEntityBucket(
@@ -988,7 +988,7 @@ class MinerEvaluator:
 
         try:
             responses: List[GetMinerIndex] = None
-            async with bt.dendrite(wallet=self.wallet) as dendrite:
+            async with bt.Dendrite(wallet=self.wallet) as dendrite:
                 responses = await dendrite.forward(
                     axons=[miner_axon],
                     synapse=GetMinerIndex(version=constants.PROTOCOL_VERSION),
@@ -1035,7 +1035,7 @@ class MinerEvaluator:
             )
             return None
 
-    def _on_metagraph_updated(self, metagraph: bt.metagraph, netuid: int):
+    def _on_metagraph_updated(self, metagraph: bt.Metagraph, netuid: int):
         """Handles an update to a metagraph."""
         bt.logging.info(
             f"Evaluator processing an update to metagraph on subnet {netuid}."

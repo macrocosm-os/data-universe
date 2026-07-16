@@ -127,7 +127,7 @@ async def query_bucket(
 
             # Query miner
             bt.logging.info(f"Querying miner {uid} for bucket {latest_bucket}")
-            async with bt.dendrite(wallet=validator.wallet) as dendrite:
+            async with bt.Dendrite(wallet=validator.wallet) as dendrite:
                 response = await dendrite.forward(
                     axons=[axon],
                     synapse=GetDataEntityBucket(

@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-def check_config(config: bt.config):
+def check_config(config: bt.Config):
     r"""Checks/validates the config namespace object."""
     bt.logging.check_config(config)
 
@@ -251,10 +251,10 @@ def create_config(neuron_type: NeuronType):
     Returns the configuration for the NeuronType
     """
     parser = argparse.ArgumentParser()
-    bt.wallet.add_args(parser)
-    bt.subtensor.add_args(parser)
+    bt.Wallet.add_args(parser)
+    bt.Subtensor.add_args(parser)
     bt.logging.add_args(parser)
-    bt.axon.add_args(parser)
+    bt.Axon.add_args(parser)
     add_args(neuron_type, parser)
 
-    return bt.config(parser)
+    return bt.Config(parser)

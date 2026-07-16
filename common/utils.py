@@ -39,7 +39,7 @@ def datetime_from_hours_since_epoch(hours: int) -> dt.datetime:
     return dt.datetime.fromtimestamp(hours * 3600, tz=dt.timezone.utc)
 
 
-def is_miner(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int) -> bool:
+def is_miner(uid: int, metagraph: bt.Metagraph, vpermit_rao_limit: int) -> bool:
     """Checks if a UID on the subnet is a miner."""
     # Assume everyone who isn't a validator is a miner.
     # This explicilty disallows validator/miner hybrids.
@@ -54,7 +54,7 @@ def is_miner(uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int) -> bool:
 
 
 def is_validator(
-    uid: int, metagraph: bt.metagraph, vpermit_rao_limit: int = 10_000
+    uid: int, metagraph: bt.Metagraph, vpermit_rao_limit: int = 10_000
 ) -> bool:
     """Checks if a UID on the subnet is a validator."""
     return (
@@ -63,7 +63,7 @@ def is_validator(
 
 
 def get_validator_data(
-    metagraph: bt.metagraph, vpermit_rao_limit: int
+    metagraph: bt.Metagraph, vpermit_rao_limit: int
 ) -> Dict[str, Dict[str, Any]]:
     """Retrieve validator data (hotkey, percent stake) from metagraph. For use in Gravity."""
     total_stake = sum(
@@ -85,7 +85,7 @@ def get_validator_data(
     return validator_data
 
 
-def get_miner_uids(metagraph: bt.metagraph, vpermit_rao_limit: int) -> List[int]:
+def get_miner_uids(metagraph: bt.Metagraph, vpermit_rao_limit: int) -> List[int]:
     """Gets the uids of all miners in the metagraph."""
     return sorted(
         [
@@ -96,14 +96,14 @@ def get_miner_uids(metagraph: bt.metagraph, vpermit_rao_limit: int) -> List[int]
     )
 
 
-def get_uid(wallet: bt.wallet, metagraph: bt.metagraph) -> Optional[int]:
+def get_uid(wallet: bt.Wallet, metagraph: bt.Metagraph) -> Optional[int]:
     """Gets the uid of the wallet in the metagraph or None if not registered."""
     if wallet.hotkey.ss58_address in metagraph.hotkeys:
         return metagraph.hotkeys.index(wallet.hotkey.ss58_address)
     return None
 
 
-def assert_registered(wallet: bt.wallet, metagraph: bt.metagraph):
+def assert_registered(wallet: bt.Wallet, metagraph: bt.Metagraph):
     """Exits the process if wallet isn't registered in metagraph"""
     # --- Check for registration.
     if wallet.hotkey.ss58_address not in metagraph.hotkeys:
@@ -338,7 +338,7 @@ class LRUSet:
 
     def __contains__(self, key: str) -> bool:
         return key in self.data
-def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> Optional[str]:
+def get_subnet_owner_hotkey(subtensor: bt.Subtensor, netuid: int) -> Optional[str]:
     """Query the subnet owner hotkey from the chain.
 
     Args:
@@ -363,8 +363,8 @@ def get_subnet_owner_hotkey(subtensor: bt.subtensor, netuid: int) -> Optional[st
 
 def apply_burn_to_weights(
     raw_weights: torch.Tensor,
-    metagraph: bt.metagraph,
-    subtensor: bt.subtensor,
+    metagraph: bt.Metagraph,
+    subtensor: bt.Subtensor,
     netuid: int,
     burn_percentage: float
 ) -> torch.Tensor:

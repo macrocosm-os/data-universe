@@ -81,7 +81,7 @@ class Miner:
         self.use_gravity_retrieval = self.config.gravity
 
         # The wallet holds the cryptographic key pairs for the miner.
-        self.wallet = bt.wallet(config=self.config)
+        self.wallet = bt.Wallet(config=self.config)
         bt.logging.info(f"Wallet: {self.wallet}.")
 
         if self.config.offline:
@@ -92,7 +92,7 @@ class Miner:
             self.uid = 0  # Offline mode so assume it's == 0
         else:
             # The subtensor is our connection to the Bittensor blockchain.
-            self.subtensor = bt.subtensor(config=self.config)
+            self.subtensor = bt.Subtensor(config=self.config)
             bt.logging.info(f"Subtensor: {self.subtensor}.")
 
             # The metagraph holds the state of the network, letting us know about other validators and miners.
@@ -116,7 +116,7 @@ class Miner:
             self.step = 0
 
             # The axon handles request processing, allowing validators to send this miner requests.
-            self.axon = bt.axon(wallet=self.wallet, port=self.config.axon.port)
+            self.axon = bt.Axon(wallet=self.wallet, port=self.config.axon.port)
 
             # Attach determiners which functions are called when servicing a request.
             bt.logging.info("Attaching forward function to miner axon.")
@@ -885,7 +885,7 @@ class Miner:
         )
         return priority
 
-    def get_config_for_test(self) -> bt.config:
+    def get_config_for_test(self) -> bt.Config:
         return self.config
 
     def sync(self):
