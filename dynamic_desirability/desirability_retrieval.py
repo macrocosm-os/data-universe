@@ -283,7 +283,7 @@ def datetime_to_timebucket(datetime_str: Optional[str]) -> Optional[int]:
         print(f"Warning: Could not parse datetime string: {datetime_str}. Error: {e}")
         return None
 
-def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: bt.metagraph, hotkey: str):
+def get_hotkey_json_submission(subtensor: bt.Subtensor, netuid: int, metagraph: bt.Metagraph, hotkey: str):
     """Gets the unscaled JSON submisson for a specified validator hotkey. 
        If no hotkey is specified, returns the current aggregate desirability list. """
     try:
@@ -313,8 +313,8 @@ def get_hotkey_json_submission(subtensor: bt.subtensor, netuid: int, metagraph: 
 async def run_retrieval(config) -> DataDesirabilityLookup:
     """Legacy GitHub-based retrieval. Use run_retrieval_from_api instead."""
     try:
-        my_wallet = bt.wallet(config=config)
-        subtensor = bt.subtensor(config=config)
+        my_wallet = bt.Wallet(config=config)
+        subtensor = bt.Subtensor(config=config)
         metagraph = subtensor.metagraph(netuid=config.netuid)
 
         bt.logging.info("\nGetting validator weights from the metagraph...\n")

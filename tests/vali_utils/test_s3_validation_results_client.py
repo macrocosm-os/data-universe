@@ -72,8 +72,11 @@ def server():
 
 @pytest.fixture
 def fake_wallet():
-    # Create a real Keypair via substrateinterface so TaoSigner.headers() can sign.
-    from substrateinterface.keypair import Keypair
+    # Create a real Keypair so TaoSigner.headers() can sign.
+    try:
+        from bittensor_wallet.keypair import Keypair
+    except ImportError:  # pragma: no cover - legacy bittensor < 10
+        from substrateinterface.keypair import Keypair
 
     kp = Keypair.create_from_mnemonic(Keypair.generate_mnemonic())
     wallet = MagicMock()

@@ -29,7 +29,7 @@ class PublishedScore:
 class S3ValidationResultsClient:
     """HTTP client for /s3-validation/results on data-universe-api."""
 
-    def __init__(self, wallet: bt.wallet, api_base_url: str, timeout: int = 30):
+    def __init__(self, wallet: bt.Wallet, api_base_url: str, timeout: int = 30):
         self.api_base_url = api_base_url.rstrip("/")
         self._signer = TaoSigner(keypair=wallet.hotkey)
         self._timeout = timeout

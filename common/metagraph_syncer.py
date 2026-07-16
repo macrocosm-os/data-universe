@@ -14,15 +14,15 @@ from common import utils
 class MetagraphSyncer:
     @dataclasses.dataclass
     class _State:
-        metagraph: Optional[bt.metagraph] = None
+        metagraph: Optional[bt.Metagraph] = None
         last_synced_time: Optional[datetime] = None
         listeners: List = field(default_factory=list)
 
-    def __init__(self, subtensor: bt.subtensor, config: Dict[int, int]):
+    def __init__(self, subtensor: bt.Subtensor, config: Dict[int, int]):
         """Constructs a new MetagraphSyncer, that periodically refreshes metagraph defined in the config.
 
         Args:
-            subtensor (bt.subtensor): The subtensor used to fetch the metagraphs.
+            subtensor (bt.Subtensor): The subtensor used to fetch the metagraphs.
             config (Dict[int, int]): A mapping of netuid to the cadence (in seconds) to sync the metagraph.
         """
         self.subtensor = subtensor
@@ -111,7 +111,7 @@ class MetagraphSyncer:
             bt.logging.info("MetagraphSyncer _run complete.")
 
     def register_listener(
-        self, listener: Callable[[bt.metagraph, int], None], netuids: List[int]
+        self, listener: Callable[[bt.Metagraph, int], None], netuids: List[int]
     ):
         """Registers a listener to be notified when a metagraph for any netuid in netuids is updated.
 
@@ -128,7 +128,7 @@ class MetagraphSyncer:
                     )
                 self.metagraph_map[netuid].listeners.append(listener)
 
-    def get_metagraph(self, netuid: int) -> bt.metagraph:
+    def get_metagraph(self, netuid: int) -> bt.Metagraph:
         """Returns the last synced version of the metagraph for netuid."""
         with self.lock:
             if netuid not in self.metagraph_map:

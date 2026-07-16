@@ -9,10 +9,10 @@ from common.metagraph_syncer import MetagraphSyncer
 class TestMetagraphSyncer(unittest.TestCase):
     def test_do_initial_sync(self):
         # Mock subtensor.metagraph() function
-        metagraph1 = bt.metagraph(netuid=1, sync=False)
-        metagraph2 = bt.metagraph(netuid=2, sync=False)
+        metagraph1 = bt.Metagraph(netuid=1, sync=False)
+        metagraph2 = bt.Metagraph(netuid=2, sync=False)
 
-        def get_metagraph(netuid) -> bt.metagraph:
+        def get_metagraph(netuid) -> bt.Metagraph:
             if netuid == 1:
                 return metagraph1
             elif netuid == 2:
@@ -20,7 +20,7 @@ class TestMetagraphSyncer(unittest.TestCase):
             else:
                 raise Exception("Invalid netuid")
 
-        mock_subtensor = mock.MagicMock(spec=bt.subtensor)
+        mock_subtensor = mock.MagicMock(spec=bt.Subtensor)
         metagraph_mock = mock.MagicMock(side_effect=get_metagraph)
         mock_subtensor.metagraph = metagraph_mock
 
@@ -31,17 +31,17 @@ class TestMetagraphSyncer(unittest.TestCase):
         metagraph_syncer.do_initial_sync()
 
         # Verify get_metagraph() returns the expected metagraph.
-        # We can't check object equality because of how equality is done on bt.metagraph
+        # We can't check object equality because of how equality is done on bt.Metagraph
         # so just check the netuid.
         self.assertEqual(metagraph_syncer.get_metagraph(1).netuid, metagraph1.netuid)
         self.assertEqual(metagraph_syncer.get_metagraph(2).netuid, metagraph2.netuid)
 
     def test_listener_called(self):
         # Mock subtensor.metagraph() function
-        metagraph1 = bt.metagraph(netuid=1, sync=False)
-        metagraph2 = bt.metagraph(netuid=2, sync=False)
+        metagraph1 = bt.Metagraph(netuid=1, sync=False)
+        metagraph2 = bt.Metagraph(netuid=2, sync=False)
 
-        def get_metagraph(netuid) -> bt.metagraph:
+        def get_metagraph(netuid) -> bt.Metagraph:
             if netuid == 1:
                 return metagraph1
             elif netuid == 2:
@@ -49,7 +49,7 @@ class TestMetagraphSyncer(unittest.TestCase):
             else:
                 raise Exception("Invalid netuid")
 
-        mock_subtensor = mock.MagicMock(spec=bt.subtensor)
+        mock_subtensor = mock.MagicMock(spec=bt.Subtensor)
         metagraph_mock = mock.MagicMock(side_effect=get_metagraph)
         mock_subtensor.metagraph = metagraph_mock
 

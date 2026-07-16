@@ -105,9 +105,9 @@ def upload_to_github(json_content: str, hotkey: str) -> str:
 
 
 async def run_uploader(args):
-    my_wallet = bt.wallet(name=args.wallet, hotkey=args.hotkey)
+    my_wallet = bt.Wallet(name=args.wallet, hotkey=args.hotkey)
     my_hotkey = my_wallet.hotkey.ss58_address
-    subtensor = bt.subtensor(network=args.network)
+    subtensor = bt.Subtensor(network=args.network)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=my_hotkey, netuid=args.netuid)
 
     try:
@@ -118,7 +118,7 @@ async def run_uploader(args):
 
         bt.logging.info(f"JSON content:\n{json_content}")
         github_commit = upload_to_github(json_content, my_hotkey)
-        subtensor.commit(wallet=my_wallet, netuid=args.netuid, data=github_commit)
+        subtensor.set_commitment(wallet=my_wallet, netuid=args.netuid, data=github_commit)
         result = subtensor.get_commitment(netuid=args.netuid, uid=uid)
         bt.logging.info(f"Stored {result} on chain commit hash.")
         return result
@@ -128,8 +128,8 @@ async def run_uploader(args):
 
 
 def run_uploader_from_gravity(config, desirability_dict) -> Tuple[bool, str]:
-    wallet = bt.wallet(config=config)
-    subtensor = bt.subtensor(config=config)
+    wallet = bt.Wallet(config=config)
+    subtensor = bt.Subtensor(config=config)
     uid = subtensor.get_uid_for_hotkey_on_subnet(hotkey_ss58=wallet.hotkey.ss58_address, netuid=config.netuid)
     try:
         json_content = normalize_preferences_json(
@@ -142,7 +142,7 @@ def run_uploader_from_gravity(config, desirability_dict) -> Tuple[bool, str]:
             return False, message
 
         github_commit = upload_to_github(json_content, wallet.hotkey.ss58_address)
-        subtensor.commit(wallet=wallet, netuid=config.netuid, data=github_commit)
+        subtensor.set_commitment(wallet=wallet, netuid=config.netuid, data=github_commit)
         result = subtensor.get_commitment(netuid=config.netuid, uid=uid)
         message = f"Stored {result} on chain commit hash."
         bt.logging.info(message)

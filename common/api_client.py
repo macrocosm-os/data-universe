@@ -10,7 +10,14 @@ from typing import Any, Dict, List, Literal, Optional, Set, Union
 
 from pydantic import BaseModel, ConfigDict, Field
 from common.data import DataEntity, DataSource
-from substrateinterface.keypair import Keypair
+
+try:
+    # bittensor >= 10 ships Keypair via bittensor_wallet and no longer depends
+    # on substrate-interface (whose scalecodec conflicts with cyscale). Prefer
+    # it; fall back to the legacy package for older SDK installs.
+    from bittensor_wallet.keypair import Keypair
+except ImportError:  # pragma: no cover - legacy bittensor < 10
+    from substrateinterface.keypair import Keypair
 import httpx
 
 import bittensor as bt
@@ -329,6 +336,11 @@ class DataUniverseApiClient:
         client = self._ensure_client()
         body_bytes = payload_json.encode("utf-8")
         headers = signer.headers(body=body_bytes)
+        # Send the raw signed bytes as the body but declare JSON explicitly:
+        # starlette/fastapi >= the versions bittensor 10.x pulls in no longer
+        # infer a JSON body without this header and return 422. The signature
+        # is over body_bytes only, so setting a header does not affect it.
+        headers["Content-Type"] = "application/json"
         return await client.post(path, content=body_bytes, headers=headers)
 
     async def miner_list_active_jobs(
