@@ -49,7 +49,7 @@ def main():
     import bittensor as bt
     from common.api_client import TaoSigner
 
-    wallet = bt.wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
+    wallet = bt.Wallet(name=args.wallet_name, hotkey=args.wallet_hotkey)
     signer = TaoSigner(keypair=wallet.hotkey)
     print(f"validator hotkey: {wallet.hotkey.ss58_address}")
 
@@ -57,7 +57,7 @@ def main():
     miners = []  # (label, hotkey)
     if args.top > 0:
         print(f"fetching metagraph (netuid={args.netuid}, {args.network})...")
-        mg = bt.metagraph(netuid=args.netuid, network=args.network, lite=True)
+        mg = bt.Metagraph(netuid=args.netuid, network=args.network, lite=True)
         order = sorted(range(len(mg.hotkeys)), key=lambda u: -float(mg.I[u]))
         picked = 0
         for uid in order:
