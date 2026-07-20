@@ -155,8 +155,34 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
+    # Reddit can replace a post/comment body with a removal marker — exactly "[removed]"
+    # (mod/admin) or "[deleted]" (author) — between the miner's scrape and this validator
+    # re-fetch, a content change entirely outside the miner's control. When the CURRENT
+    # (re-fetched) body is exactly such a marker, the body and content-size mismatches are
+    # benign, so those two checks (only) are skipped below; every other check still runs.
+    #
+    # Why this is not a fabrication lever:
+    #   * The marker comes from the validator's OWN fresh re-fetch, which a miner cannot
+    #     control, so the exemption only ever applies to GENUINELY removed content.
+    #   * Every immutable identity field (id, url, url-embedded id, username, community,
+    #     obfuscated datetime, parent id) is verified ABOVE this point, so identity is
+    #     fully confirmed before the body is trusted.
+    #   * The success path credits content_size_bytes_validated = the actual (removed)
+    #     size, so a fabricated body cannot inflate the credibility-weighted byte channel
+    #     (rewards/miner_scorer.py credibility update).
+    #   * Only the exact lowercase markers qualify (Reddit emits lowercase); an empty
+    #     re-fetched body is a legitimate link/image post and stays strictly checked, so
+    #     there is no empty-body fabrication vector.
+    # Inherent, bounded residual: once a body is deleted there is no ground truth, so on a
+    # genuinely-removed post an honest miner and a fabricator are indistinguishable, and the
+    # self-reported P2P index size for such a row is not re-checked here. This is bounded by
+    # the identity checks above + the per-bucket byte cap; S3 scoring never calls this path.
+    content_body_removed = (
+        (actual_content.body or "").strip() in ("[removed]", "[deleted]")
+    )
+
     # Check Reddit body
-    if content_to_validate.body != actual_content.body:
+    if not content_body_removed and content_to_validate.body != actual_content.body:
         bt.logging.info(
             f"Reddit bodies do not match: {actual_content} != {content_to_validate}"
         )
@@ -264,7 +290,12 @@ def validate_reddit_content(
         # Allow a 10 byte difference to account for timestamp serialization differences.
         byte_difference_allowed = 0
 
-        if (
+        # Skip this upper-bound size check when the body was removed/deleted after
+        # scraping: the miner's (real) content is legitimately larger than the current
+        # re-fetched "[removed]"/"[deleted]" stub. No inflation results — the final result
+        # credits only the actual (removed) size (below) — and an oversized entity remains
+        # bounded by the per-bucket byte cap enforced upstream.
+        if not content_body_removed and (
                 entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
         ) > byte_difference_allowed:
             return ValidationResult(
@@ -304,10 +335,17 @@ def validate_reddit_content(
         return comment_validation_result
 
     # At last, all checks have passed. The DataEntity is indeed valid. Nice work!
+    # If the body was removed/deleted after scraping, credit only the actual (removed)
+    # size rather than the claimed size, so the exemption above cannot inflate the
+    # credibility-weighted byte channel with unverifiable content.
     return ValidationResult(
         is_valid=True,
         reason="Good job, you honest miner!",
-        content_size_bytes_validated=entity_to_validate.content_size_bytes,
+        content_size_bytes_validated=(
+            actual_entity.content_size_bytes
+            if content_body_removed
+            else entity_to_validate.content_size_bytes
+        ),
     )
 
 
