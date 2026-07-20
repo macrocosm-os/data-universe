@@ -59,6 +59,70 @@ class TestUtils(unittest.TestCase):
         )
         self.assertTrue(validation_result.is_valid)
 
+    def test_validate_reddit_content_removed_or_deleted_body(self):
+        """A body replaced with [removed]/[deleted] after scraping (by mods/admins/author)
+        must not fail an otherwise-valid, identity-matching submission — and the exemption
+        must never be exploitable to inflate the validated byte count."""
+        created = dt.datetime(2023, 12, 5, 16, 35, 16, tzinfo=dt.timezone.utc)
+        scraped = dt.datetime(2023, 12, 5, 16, 40, 0, tzinfo=dt.timezone.utc)
+
+        def _content(body):
+            return RedditContent(
+                id="t1_kc3w8lk",
+                url="https://www.reddit.com/r/bittensor_/comments/18bf67l/how_do_you_add_tao_to_metamask/kc3w8lk/",
+                username="KOOLBREEZE144", communityName="r/bittensor_", body=body,
+                createdAt=created, dataType=RedditDataType.COMMENT, title=None,
+                parentId="t1_kc3vd3n", scrapedAt=scraped,
+            )
+
+        real = "Thanks for responding. Do you recommend a wallet or YT video for setting this up?"
+        removed_size = RedditContent.to_data_entity(_content("[removed]")).content_size_bytes
+
+        # Honest drift: real body submitted, re-fetch shows an exact removal marker ->
+        # valid, credited only the actual (removed) size.
+        for marker in ("[removed]", "[deleted]"):
+            r = utils.validate_reddit_content(
+                _content(marker), RedditContent.to_data_entity(_content(real))
+            )
+            self.assertTrue(r.is_valid, f"re-fetched marker {marker!r} should validate")
+            self.assertEqual(r.content_size_bytes_validated, removed_size)
+
+        # An honest empty-body submission (e.g. a link/image post) whose post is later
+        # removed is also accepted — the exemption keys only on the re-fetched marker.
+        r = utils.validate_reddit_content(
+            _content("[removed]"), RedditContent.to_data_entity(_content(""))
+        )
+        self.assertTrue(r.is_valid)
+
+        # Fabrication cannot inflate score: a huge fabricated body still credits only the
+        # actual (removed) size, never the claimed size.
+        r = utils.validate_reddit_content(
+            _content("[removed]"), RedditContent.to_data_entity(_content("X" * 5000))
+        )
+        self.assertTrue(r.is_valid)
+        self.assertEqual(r.content_size_bytes_validated, removed_size)
+
+        # Match is EXACT + case-sensitive (Reddit emits lowercase markers): a real
+        # user-typed body of "[REMOVED]" is not a marker, so it is not exempted and a
+        # genuine mismatch against it still fails.
+        r = utils.validate_reddit_content(
+            _content("[REMOVED]"), RedditContent.to_data_entity(_content(real))
+        )
+        self.assertFalse(r.is_valid)
+
+        # An empty re-fetched body is a legitimate link/image post, NOT a removal marker,
+        # so a fabricated body against it must still fail (no empty-body fabrication vector).
+        r = utils.validate_reddit_content(
+            _content(""), RedditContent.to_data_entity(_content("fabricated body"))
+        )
+        self.assertFalse(r.is_valid)
+
+        # Genuine body drift to different real content is still rejected.
+        r = utils.validate_reddit_content(
+            _content("different real content"), RedditContent.to_data_entity(_content(real))
+        )
+        self.assertFalse(r.is_valid)
+
     def test_validate_reddit_content_obfuscated_date_required(self):
         """Performs a validation on a RedditContent that hasn't obfuscated the date and verifies
         the validation fails."""
