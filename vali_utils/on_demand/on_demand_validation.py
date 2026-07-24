@@ -22,7 +22,12 @@ from vali_utils.metrics import ORGANIC_MINER_RESULTS
 
 
 # Reward multiplier tuning constants (see docs/od_reward_formula.md)
+# Speed: full multiplier within the grace window so live scraping isn't
+# out-scored by cached serving; half-life decay past it; floored so
+# late-but-delivered data still scores above not serving.
+SPEED_GRACE_S = 30.0
 SPEED_HALF_LIFE_S = 45.0
+SPEED_FLOOR = 0.3
 VOLUME_SHORTFALL_EXPONENT = 1.3
 VOLUME_OVER_LOG_COEF = 0.15
 VOLUME_OVER_BONUS_CAP = 0.25
@@ -31,9 +36,9 @@ VOLUME_OPEN_MAX = 1.5
 
 
 def _speed_multiplier(upload_seconds: float) -> float:
-    """Half-life decay; clamps to [0, 1]. See docs/od_reward_formula.md §3."""
+    """1.0 within the grace window, half-life decay past it, floored."""
     t = max(0.0, float(upload_seconds))
-    return min(1.0, 0.5 ** (t / SPEED_HALF_LIFE_S))
+    return max(SPEED_FLOOR, min(1.0, 0.5 ** ((t - SPEED_GRACE_S) / SPEED_HALF_LIFE_S)))
 
 
 def _volume_multiplier(returned: int, limit: Optional[int]) -> float:
