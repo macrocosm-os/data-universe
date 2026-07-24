@@ -100,9 +100,10 @@ class MinerScorer:
             (num_neurons, 1), MinerScorer.STARTING_ONDEMAND_CREDIBILITY, dtype=torch.float32
         )
 
-        # OD abstention multiplier: 1.0 for miners that submit to jobs on every
-        # judgeable platform, OD_ABSTAIN_MULT^k for k abstained platforms.
-        # Set each eval from coverage measurement; scales od_component only.
+        # OD coverage multiplier: 1.0 for full coverage on every judgeable
+        # platform, scaled down for abstention or low coverage. Scales
+        # od_component; via the S3<=2xOD and P2P<=S3+OD caps a low mult
+        # also drags the composite score.
         self.od_coverage_mult = torch.ones(num_neurons, dtype=torch.float32)
 
         # Competition-based S3 scoring: stores effective_size for each miner
@@ -235,13 +236,37 @@ class MinerScorer:
             self.effective_sizes[uid] = 0.0
 
     def set_od_coverage_mult(self, uid: int, mult: float) -> None:
-        """Sets the OD abstention multiplier from the coverage measurement."""
+        """Sets the OD coverage multiplier from the coverage measurement.
+
+        A drop moves halfway toward the target per eval; an improvement
+        applies instantly.
+        """
         with self.lock:
             old = float(self.od_coverage_mult[uid])
-            self.od_coverage_mult[uid] = max(0.0, min(1.0, mult))
+            target = max(0.0, min(1.0, mult))
+            applied = target if target >= old else (old + target) / 2
+            self.od_coverage_mult[uid] = applied
             if old != float(self.od_coverage_mult[uid]):
                 bt.logging.info(json.dumps({
                     "event": "od_coverage_mult",
+                    "uid": uid,
+                    "before": round(old, 4),
+                    "target": round(target, 4),
+                    "after": round(float(self.od_coverage_mult[uid]), 4),
+                }))
+
+    def relax_od_coverage_mult(self, uid: int) -> None:
+        """Moves the OD coverage multiplier halfway back toward 1.0.
+
+        Called when coverage cannot be judged this eval, so a stale
+        penalty doesn't stick.
+        """
+        with self.lock:
+            old = float(self.od_coverage_mult[uid])
+            if old < 1.0:
+                self.od_coverage_mult[uid] = (old + 1.0) / 2
+                bt.logging.info(json.dumps({
+                    "event": "od_coverage_mult_relaxed",
                     "uid": uid,
                     "before": round(old, 4),
                     "after": round(float(self.od_coverage_mult[uid]), 4),
