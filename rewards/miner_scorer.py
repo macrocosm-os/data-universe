@@ -155,24 +155,24 @@ class MinerScorer:
             self.effective_sizes = state.get("effective_sizes", torch.zeros(self.scores.size(0), dtype=torch.float64))
 
             # --- State migrations ---
-            if saved_version < 15:
-                bt.logging.warning(
-                    f"State migration v{saved_version} -> v15: "
-                    f"S3 boost/credibility/effective_size reset "
-                    f"(latest-file-per-job validation + whole-job-snapshot uploads)"
-                )
-                self.s3_boosts.zero_()
-                self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
-                self.effective_sizes.zero_()
-
-            if saved_version < 16:
-                bt.logging.warning(
-                    f"State migration v{saved_version} -> v16: "
-                    f"OnDemand boost/credibility reset (coverage-based OD scoring "
-                    f"rollout — boosts rebuild from the next OD evals)"
-                )
-                self.ondemand_boosts.zero_()
-                self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
+            # if saved_version < 15:
+            #     bt.logging.warning(
+            #         f"State migration v{saved_version} -> v15: "
+            #         f"S3 boost/credibility/effective_size reset "
+            #         f"(latest-file-per-job validation + whole-job-snapshot uploads)"
+            #     )
+            #     self.s3_boosts.zero_()
+            #     self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
+            #     self.effective_sizes.zero_()
+            #
+            # if saved_version < 16:
+            #     bt.logging.warning(
+            #         f"State migration v{saved_version} -> v16: "
+            #         f"OnDemand boost/credibility reset (coverage-based OD scoring "
+            #         f"rollout — boosts rebuild from the next OD evals)"
+            #     )
+            #     self.ondemand_boosts.zero_()
+            #     self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
