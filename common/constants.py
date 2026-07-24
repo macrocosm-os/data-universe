@@ -45,4 +45,4 @@ X_ENHANCED_FORMAT_COMPATIBILITY_EXPIRATION_DATE = dt.datetime(2025, 9, 30, tzinf
 EVALUATION_ON_STARTUP = 10
 
 # Emission Control / Burn Configuration
-EMISSION_CONTROL_PERCENTAGE = 0.70  # 70% of emissions redirected to subnet owner (burn)
+EMISSION_CONTROL_PERCENTAGE = 0.0  # 70% of emissions redirected to subnet owner (burn)
