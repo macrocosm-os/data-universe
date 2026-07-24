@@ -388,7 +388,15 @@ def validate_data_entity_fields(
         content_size_bytes=entity.content_size_bytes,
     )
 
-    byte_difference_allowed = 0
+    # Allow a small tolerance for benign serialized-size drift. Mutable tweet
+    # counters (like_count, view_count, retweet_count, reply_count, quote_count,
+    # follower counts) change between the miner's scrape and the validator's
+    # re-scrape, shifting the serialized JSON size by a byte or two purely from
+    # digit-count changes (e.g. view_count 1000 -> 999). This check only guards
+    # against *over-claiming* size (claimed > actual), so a small tolerance admits
+    # nothing fabricated while sparing honest, unmodified tweets. Mirrors the
+    # Reddit-side tolerance.
+    byte_difference_allowed = 10
 
     if (
         entity.content_size_bytes - tweet_entity.content_size_bytes
