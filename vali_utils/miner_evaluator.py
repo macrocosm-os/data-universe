@@ -3,7 +3,9 @@ import gc
 import copy
 import json
 import asyncio
+import math
 import random
+import statistics
 import traceback
 import threading
 import time
@@ -56,6 +58,7 @@ from common.api_client import (
 )
 from rewards.miner_scorer import MinerScorer
 from vali_utils.on_demand.on_demand_validation import OnDemandValidator
+from vali_utils.url_normalizer import normalize_url_for_dedup
 
 
 class MinerEvaluator:
@@ -177,6 +180,12 @@ class MinerEvaluator:
     OD_ABSTAIN_MIN_PLATFORM_JOBS = 3
     # Stats are identical for every miner in a batch — cache and refetch rarely.
     OD_STATS_CACHE_TTL_SECS = 600
+    # Content-final timing: max seconds the S3 object write may trail the
+    # submit call. submitted_at is stamped BEFORE the upload and the presigned
+    # POST allows overwriting the same key afterwards, so content written long
+    # after submit (or after job expiry) is treated as an overwrite exploit.
+    # 60s is a generous first value; tighten from the shadow upload_lag data.
+    OD_CONTENT_FINAL_GUARD_SECS = 60
 
     async def _get_od_jobs_stats(
         self, client: DataUniverseApiClient
@@ -205,6 +214,51 @@ class MinerEvaluator:
             self._od_stats_cache = (now, resp)
             return resp
 
+    @staticmethod
+    def _as_utc(ts: Optional[dt.datetime]) -> Optional[dt.datetime]:
+        if ts is None:
+            return None
+        return ts if ts.tzinfo is not None else ts.replace(tzinfo=dt.timezone.utc)
+
+    @staticmethod
+    def _upload_lag_seconds(
+        submission: OnDemandJobSubmission,
+    ) -> Optional[float]:
+        """Seconds between the submit call and the S3 object write, when both known."""
+        if submission.s3_last_modified is None or submission.submitted_at is None:
+            return None
+        lm = MinerEvaluator._as_utc(submission.s3_last_modified)
+        sub = MinerEvaluator._as_utc(submission.submitted_at)
+        return (lm - sub).total_seconds()
+
+    def _od_content_final_violation(
+        self, job: OnDemandJob, submission: OnDemandJobSubmission
+    ) -> Optional[str]:
+        """Content-final timing check.
+
+        submitted_at is stamped server-side at the metadata call BEFORE the S3
+        upload, and the presigned POST stays valid for the same deterministic
+        key long after — a miner can lock a fast timestamp with junk and
+        overwrite the content later.
+
+        Enforcement is deliberately limited to writes past job expiry, with
+        the guard as grace so honest uploads finishing near the deadline are
+        spared. Within-window lag is only MEASURED (shadow upload_lag) until
+        the guard is calibrated; the speed multiplier already prices that lag
+        because it is scored from s3_last_modified. Depends only on
+        s3_last_modified so a missing submitted_at cannot disable it.
+
+        Returns a violation description, or None when timing is acceptable
+        (including when no S3 HEAD metadata is available).
+        """
+        lm = submission.s3_last_modified
+        if lm is None or job.expire_at is None:
+            return None
+        grace = dt.timedelta(seconds=self.OD_CONTENT_FINAL_GUARD_SECS)
+        if self._as_utc(lm) > self._as_utc(job.expire_at) + grace:
+            return "content written after job expiry"
+        return None
+
     def _log_od_coverage_shadow(
         self,
         uid: int,
@@ -218,6 +272,10 @@ class MinerEvaluator:
             return
         submitted: Dict[str, int] = {}
         volume_bytes: Dict[str, int] = {}
+        lags: List[float] = []
+        lag_over_guard = 0
+        lag_over_expiry = 0
+        lag_missing = 0
         for j in all_jobs:
             exp = j.job.expire_at
             if exp is None or exp < coverage_since:
@@ -227,6 +285,17 @@ class MinerEvaluator:
             volume_bytes[platform] = volume_bytes.get(platform, 0) + (
                 j.submission.s3_content_length or 0
             )
+            lag = self._upload_lag_seconds(j.submission)
+            if lag is not None:
+                lags.append(lag)
+                if lag > self.OD_CONTENT_FINAL_GUARD_SECS:
+                    lag_over_guard += 1
+                if self._as_utc(j.submission.s3_last_modified) > self._as_utc(exp):
+                    lag_over_expiry += 1
+            elif (j.submission.s3_content_length or 0) > 0:
+                # Content exists but HEAD metadata is missing — if this grows,
+                # the content-final protection is silently degraded.
+                lag_missing += 1
 
         event = {
             "event": "od_coverage_shadow",
@@ -249,6 +318,21 @@ class MinerEvaluator:
                 "coverage": coverage,
                 "bytes": total_bytes,
                 "avg_bytes": round(total_bytes / done) if done else 0,
+            }
+        # Upload-lag distribution (submit call -> S3 write) — calibrates the
+        # content-final guard before within-window lag is enforced.
+        if lags or lag_missing:
+            lags.sort()
+            n = len(lags)
+            event["upload_lag"] = {
+                "n": n,
+                "p50": round(statistics.median(lags), 2) if lags else None,
+                # nearest-rank p95
+                "p95": round(lags[max(0, math.ceil(0.95 * n) - 1)], 2) if lags else None,
+                "max": round(lags[-1], 2) if lags else None,
+                "over_guard": lag_over_guard,
+                "over_expiry": lag_over_expiry,
+                "missing": lag_missing,
             }
         bt.logging.info(json.dumps(event))
 
@@ -318,22 +402,34 @@ class MinerEvaluator:
         if not jobs:
             return
 
-        # Single-pass partition into empty vs non-empty submissions
-        empty, non_empty = [], []
+        # Single-pass partition into empty / timing-violating / clean
+        # submissions. The timing screen runs on the LISTING (timestamps only,
+        # no download) so an overwrite past expiry cannot hide in the
+        # unsampled majority and still collect credibility bumps.
+        empty, violations, non_empty = [], [], []
         for j in jobs:
-            if (j.submission.s3_content_length or 0) > 0:
-                non_empty.append(j)
-            else:
+            if (j.submission.s3_content_length or 0) <= 0:
                 empty.append(j)
+                continue
+            violation = self._od_content_final_violation(j.job, j.submission)
+            if violation:
+                violations.append((j, violation))
+            else:
+                non_empty.append(j)
 
         for j in empty:
             self.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+        for j, violation in violations:
+            bt.logging.warning(
+                f"UID:{uid} - OD: job {j.submission.job_id} TIMING FAILED ({violation})"
+            )
+            self.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
 
         if not non_empty:
-            if empty:
+            if empty or violations:
                 bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(empty)} empty submissions penalized, "
-                    f"0 non-empty"
+                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(empty)} empty and "
+                    f"{len(violations)} timing-violating submissions penalized, 0 clean"
                 )
             return
 
@@ -344,7 +440,7 @@ class MinerEvaluator:
         not_sampled_count = len(non_empty) - len(to_validate)
 
         # Validate sampled jobs concurrently
-        validation_results: List[Tuple[Optional[bool], int]] = await asyncio.gather(*[
+        validation_results: List[Tuple[Optional[bool], int, int]] = await asyncio.gather(*[
             self._validate_od_submission(
                 uid, hotkey, j.job, j.submission, j.submission.job_id
             )
@@ -353,6 +449,7 @@ class MinerEvaluator:
 
         # Rows+bytes for the sampled jobs — calibrates the bytes-only volume
         # signal in od_coverage_shadow (bytes/row ratio per miner/platform).
+        # unique_rows (distinct normalized URLs) vs rows measures padding.
         bt.logging.info(json.dumps({
             "event": "od_sampled_rows",
             "uid": uid,
@@ -363,10 +460,12 @@ class MinerEvaluator:
                     "platform": j.job.job.platform,
                     "limit": j.job.limit,
                     "rows": count,
+                    "unique_rows": unique,
                     "bytes": j.submission.s3_content_length or 0,
+                    "lag_s": self._upload_lag_seconds(j.submission),
                     "passed": passed,
                 }
-                for j, (passed, count) in zip(to_validate, validation_results)
+                for j, (passed, count, unique) in zip(to_validate, validation_results)
             ],
         }))
 
@@ -375,7 +474,7 @@ class MinerEvaluator:
         validated_fail = 0
         validated_skipped = 0
 
-        for j, (passed, entity_count) in zip(to_validate, validation_results):
+        for j, (passed, entity_count, _unique_count) in zip(to_validate, validation_results):
             if passed is None:
                 # Validator-side download failure (5xx/timeout) — neither reward nor
                 # penalize; the miner is not at fault for our infrastructure. (companion to #805)
@@ -386,10 +485,17 @@ class MinerEvaluator:
                 )
                 continue
 
+            # Content-final: score speed from when the bytes landed in S3, not
+            # from the pre-upload metadata stamp (which a miner controls).
+            # Both operands go through _as_utc — a naive/aware mix raises
+            # inside the subtraction and would kill the whole eval thread.
             speed_mult, vol_mult = (
                 self.on_demand_validator.calculate_ondemand_reward_multipliers(
-                    job_created_at=j.job.created_at,
-                    submission_timestamp=j.submission.submitted_at,
+                    job_created_at=self._as_utc(j.job.created_at),
+                    submission_timestamp=(
+                        self._as_utc(j.submission.s3_last_modified)
+                        or self._as_utc(j.submission.submitted_at)
+                    ),
                     returned_count=entity_count,
                     requested_limit=j.job.limit,
                 )
@@ -409,7 +515,8 @@ class MinerEvaluator:
         bt.logging.info(
             f"UID:{uid} - HOTKEY:{hotkey}: OD summary — "
             f"{len(non_empty)} non-empty (validated: {validated_pass} pass, {validated_fail} fail, "
-            f"{not_sampled_count} credibility-bumped), {len(empty)} empty penalized"
+            f"{not_sampled_count} credibility-bumped), {len(empty)} empty penalized, "
+            f"{len(violations)} timing-violation penalized"
         )
 
     async def _validate_od_submission(
@@ -419,14 +526,25 @@ class MinerEvaluator:
         job: OnDemandJob,
         submission: OnDemandJobSubmission,
         job_id: str,
-    ) -> Tuple[Optional[bool], int]:
+    ) -> Tuple[Optional[bool], int, int]:
         """Download and validate a single OD submission.
 
-        Returns (passed, entity_count) — entity_count is the number of
-        entities the miner actually returned (used for volume_multiplier).
+        Returns (passed, entity_count, unique_count) — entity_count is the
+        number of entities the miner actually returned (used for
+        volume_multiplier); unique_count is the number of distinct normalized
+        URLs among them (shadow padding measurement).
         passed=None signals a validator-side download failure (5xx/timeout):
         the caller leaves credibility unchanged (neither reward nor penalty). (#805)
         """
+        # Content-final timing guard: junk-then-overwrite locks a fast
+        # submitted_at, but S3's LastModified betrays the real write time.
+        violation = self._od_content_final_violation(job, submission)
+        if violation:
+            bt.logging.warning(
+                f"UID:{uid} - OD validate: TIMING FAILED for job {job_id} ({violation})"
+            )
+            return False, 0, 0
+
         try:
             async with httpx.AsyncClient(timeout=30.0) as http:
                 dl_resp = await http.get(submission.s3_presigned_url, follow_redirects=True)
@@ -437,8 +555,20 @@ class MinerEvaluator:
                     )
                     if dl_resp.status_code >= 500:
                         # Validator/AWS server-side error — not the miner's fault.
-                        return None, 0
-                    return False, 0
+                        return None, 0, 0
+                    return False, 0, 0
+
+                # The listing's HEAD metadata predates this GET — an overwrite
+                # in between would serve different bytes than the timestamps
+                # the guard validated. ETag pins the content to the listing.
+                resp_etag = (dl_resp.headers.get("etag") or "").strip('"')
+                known_etag = (submission.s3_etag or "").strip('"')
+                if known_etag and resp_etag and resp_etag != known_etag:
+                    bt.logging.warning(
+                        f"UID:{uid} - OD validate: TIMING FAILED for job {job_id} "
+                        f"(content changed between listing and validation)"
+                    )
+                    return False, 0, 0
 
                 miner_upload = OnDemandMinerUpload.model_validate(dl_resp.json())
 
@@ -452,15 +582,16 @@ class MinerEvaluator:
                         f"UID:{uid} - OD validate: empty submission but data exists "
                         f"for job {job_id}"
                     )
-                    return False, 0
+                    return False, 0, 0
                 else:
                     bt.logging.info(
                         f"UID:{uid} - OD validate: empty submission, data doesn't exist "
                         f"for job {job_id} — acceptable"
                     )
-                    return True, 0
+                    return True, 0, 0
 
             entity_count = len(entities)
+            unique_count = len({normalize_url_for_dedup(e.uri) for e in entities})
 
             # Cap to job limit
             if job.limit and entity_count > job.limit:
@@ -478,7 +609,7 @@ class MinerEvaluator:
                     f"UID:{uid} - OD validate: SCHEMA FAILED for job {job_id} "
                     f"(wrong XContent format)"
                 )
-                return False, entity_count
+                return False, entity_count, unique_count
 
             # Phase 2: Job match — check request fields on a sample
             for entity in schema_sample:
@@ -488,7 +619,7 @@ class MinerEvaluator:
                         f"UID:{uid} - OD validate: JOB MATCH FAILED for job {job_id}, "
                         f"post {post_id} (wrong username/keyword/date)"
                     )
-                    return False, entity_count
+                    return False, entity_count, unique_count
 
             # Phase 3: Scraper validation on 1 entity from the schema-validated sample
             entity = random.choice(schema_sample)
@@ -501,25 +632,25 @@ class MinerEvaluator:
                     f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
                     f"post {post_id}"
                 )
-                return False, entity_count
+                return False, entity_count, unique_count
 
             bt.logging.info(
                 f"UID:{uid} - OD validate: PASSED job {job_id} "
                 f"({entity_count} entities, schema OK, job match OK, scraper OK)"
             )
-            return True, entity_count
+            return True, entity_count, unique_count
 
         except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
             # Validator-side network failure downloading the submission — neutral, not miner's fault (#805)
             bt.logging.warning(
                 f"UID:{uid} - OD validate: network error for job {job_id}: {e}"
             )
-            return None, 0
+            return None, 0, 0
         except Exception as e:
             bt.logging.warning(
                 f"UID:{uid} - OD validate: error for job {job_id}: {e}"
             )
-            return False, 0
+            return False, 0, 0
 
     async def eval_miner(self, uid: int) -> None:
         """Evaluates a miner and updates their score.
