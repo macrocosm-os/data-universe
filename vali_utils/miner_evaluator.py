@@ -170,11 +170,19 @@ class MinerEvaluator:
     OD_COVERAGE_WINDOW_HOURS = 3
     OD_COVERAGE_MIN_SUBMITTERS = 5
     # Below this many doable jobs on a platform the window is too thin to
-    # judge a coverage RATIO (shadow logging only).
+    # judge a coverage RATIO (gates both the shadow log and the live
+    # coverage-ratio penalty below).
     OD_COVERAGE_MIN_PLATFORM_JOBS = 20
     # Total ABSTENTION (zero submissions) is a much stronger signal — it is
     # penalized once at least this many doable jobs existed on the platform.
     OD_ABSTAIN_MIN_PLATFORM_JOBS = 3
+    # At or above this share of a platform's doable jobs the coverage
+    # multiplier is 1.0; below it, it scales down linearly (floored at
+    # OD_ABSTAIN_MULT, so participating is never worse than abstaining).
+    OD_COVERAGE_FULL_MULT_AT = 0.15
+    # Per-miner jobs fetch page size. A full page may truncate the coverage
+    # numerator — coverage is then resolved in the miner's favor.
+    OD_JOBS_FETCH_LIMIT = 1000
     # Stats are identical for every miner in a batch — cache and refetch rarely.
     OD_STATS_CACHE_TTL_SECS = 600
 
@@ -205,6 +213,29 @@ class MinerEvaluator:
             self._od_stats_cache = (now, resp)
             return resp
 
+    @staticmethod
+    def _od_submission_counts(
+        all_jobs: List["MinerJobForValidation"], coverage_since: dt.datetime
+    ) -> Dict[str, Dict[str, int]]:
+        """Per-platform submission counts for the coverage window.
+
+        Shared numerator for the coverage log and the scoring block.
+        'nonempty' counts submissions whose bytes landed in S3.
+        """
+        counts: Dict[str, Dict[str, int]] = {}
+        for j in all_jobs:
+            exp = j.job.expire_at
+            if exp is not None and exp < coverage_since:
+                continue
+            platform = j.job.job.platform
+            c = counts.setdefault(platform, {"any": 0, "nonempty": 0, "bytes": 0})
+            length = j.submission.s3_content_length or 0
+            c["any"] += 1
+            if length > 0:
+                c["nonempty"] += 1
+                c["bytes"] += length
+        return counts
+
     def _log_od_coverage_shadow(
         self,
         uid: int,
@@ -213,20 +244,10 @@ class MinerEvaluator:
         stats: Optional[OnDemandJobsStatsResponse],
         coverage_since: dt.datetime,
     ) -> None:
-        """Shadow-log per-platform OD coverage. Measurement only — no score impact."""
+        """Log per-platform OD coverage with the same numerator the scoring uses."""
         if stats is None:
             return
-        submitted: Dict[str, int] = {}
-        volume_bytes: Dict[str, int] = {}
-        for j in all_jobs:
-            exp = j.job.expire_at
-            if exp is None or exp < coverage_since:
-                continue
-            platform = j.job.job.platform
-            submitted[platform] = submitted.get(platform, 0) + 1
-            volume_bytes[platform] = volume_bytes.get(platform, 0) + (
-                j.submission.s3_content_length or 0
-            )
+        counts = self._od_submission_counts(all_jobs, coverage_since)
 
         event = {
             "event": "od_coverage_shadow",
@@ -235,20 +256,20 @@ class MinerEvaluator:
             "window_hours": self.OD_COVERAGE_WINDOW_HOURS,
         }
         for platform, pstats in stats.platforms.items():
-            done = submitted.get(platform, 0)
+            c = counts.get(platform, {"any": 0, "nonempty": 0, "bytes": 0})
             coverage = (
-                round(min(1.0, done / pstats.doable_jobs), 4)
+                round(min(1.0, c["nonempty"] / pstats.doable_jobs), 4)
                 if pstats.doable_jobs >= self.OD_COVERAGE_MIN_PLATFORM_JOBS
                 else None  # too few jobs this window to judge
             )
-            total_bytes = volume_bytes.get(platform, 0)
             event[platform] = {
-                "submitted": done,
+                "submitted": c["any"],
+                "nonempty": c["nonempty"],
                 "doable": pstats.doable_jobs,
                 "total": pstats.total_jobs,
                 "coverage": coverage,
-                "bytes": total_bytes,
-                "avg_bytes": round(total_bytes / done) if done else 0,
+                "bytes": c["bytes"],
+                "avg_bytes": round(c["bytes"] / c["nonempty"]) if c["nonempty"] else 0,
             }
         bt.logging.info(json.dumps(event))
 
@@ -279,35 +300,52 @@ class MinerEvaluator:
                         miner_hotkey=hotkey,
                         expired_since=fetch_since,
                         expired_until=now,
-                        limit=1000,
+                        limit=self.OD_JOBS_FETCH_LIMIT,
                     )
                 )
                 stats = await self._get_od_jobs_stats(client)
         except Exception as e:
             bt.logging.warning(f"UID:{uid} - HOTKEY:{hotkey}: OD API fetch failed: {e}")
+            # Can't judge coverage this eval — don't hold a stale penalty.
+            self.scorer.relax_od_coverage_mult(uid)
             return
 
         self._last_od_eval_at[hotkey] = now
 
         self._log_od_coverage_shadow(uid, hotkey, resp.jobs, stats, coverage_since)
 
-        # Abstention penalty: zero submissions on a platform where doable jobs
-        # existed scales od_component down (recovers on next participation).
-        # Runs BEFORE the empty-jobs early return so fully-absent miners are hit.
-        if stats is not None:
-            submitted_platforms = {
-                j.job.job.platform
-                for j in resp.jobs
-                if j.job.expire_at is None or j.job.expire_at >= coverage_since
-            }
+        # Coverage multiplier: abstention (zero submissions) and low coverage
+        # of doable jobs both scale od_component down. Any submission counts
+        # against abstention; only submissions with bytes in S3 count toward
+        # the ratio. Runs BEFORE the empty-jobs early return. A full fetch
+        # page may truncate the numerator — resolved in the miner's favor.
+        if stats is not None and len(resp.jobs) >= self.OD_JOBS_FETCH_LIMIT:
+            self.scorer.set_od_coverage_mult(uid, 1.0)
+        elif stats is not None:
+            counts = self._od_submission_counts(resp.jobs, coverage_since)
             mult = 1.0
             for platform, pstats in stats.platforms.items():
-                if (
-                    pstats.doable_jobs >= self.OD_ABSTAIN_MIN_PLATFORM_JOBS
-                    and platform not in submitted_platforms
-                ):
-                    mult *= MinerScorer.OD_ABSTAIN_MULT
+                c = counts.get(platform, {"any": 0, "nonempty": 0})
+                if c["any"] == 0:
+                    if pstats.doable_jobs >= self.OD_ABSTAIN_MIN_PLATFORM_JOBS:
+                        mult *= MinerScorer.OD_ABSTAIN_MULT
+                elif pstats.doable_jobs >= self.OD_COVERAGE_MIN_PLATFORM_JOBS:
+                    # Cap the full-mult bar at half the max observable
+                    # coverage so it stays reachable at any job volume.
+                    full_at = min(
+                        self.OD_COVERAGE_FULL_MULT_AT,
+                        0.5 * self.OD_JOBS_FETCH_LIMIT / pstats.doable_jobs,
+                    )
+                    coverage = min(1.0, c["nonempty"] / pstats.doable_jobs)
+                    if coverage < full_at:
+                        mult *= max(
+                            MinerScorer.OD_ABSTAIN_MULT,
+                            coverage / full_at,
+                        )
             self.scorer.set_od_coverage_mult(uid, mult)
+        else:
+            # Stats unavailable — can't judge; don't hold a stale penalty.
+            self.scorer.relax_od_coverage_mult(uid)
 
         # Reward path: unchanged semantics — only jobs from the since-last-eval window.
         jobs = [

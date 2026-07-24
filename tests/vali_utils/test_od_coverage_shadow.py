@@ -1,9 +1,11 @@
-"""Tests for the OD coverage shadow measurement (log-only, no scoring impact).
+"""Tests for OD coverage measurement and the coverage multiplier.
 
 Covers:
 - _log_od_coverage_shadow: per-platform numerators, thin-window skip, clamping
 - _get_od_jobs_stats: caching across calls, failure tolerance
-- _evaluate_od: reward path still restricted to the since-last-eval window
+- _evaluate_od: abstention penalty, coverage-ratio multiplier (skipping
+  penalty), full-page truncation failsafe, reward path still restricted to
+  the since-last-eval window
 """
 
 import asyncio
@@ -126,14 +128,17 @@ class TestStatsCache(unittest.TestCase):
         self.assertIsNotNone(asyncio.run(self.ev._get_od_jobs_stats(client)))
 
 
-class TestAbstentionPenalty(unittest.TestCase):
-    def _run_eval(self, jobs, stats):
+class _EvaluateOdTestBase(unittest.TestCase):
+    def _run_eval(self, jobs, stats, fetch_error=None):
         ev = _stub_evaluator()
         ev.scorer = MagicMock()
         resp = MagicMock()
         resp.jobs = jobs
         client = MagicMock()
-        client.validator_list_miner_jobs = AsyncMock(return_value=resp)
+        if fetch_error is not None:
+            client.validator_list_miner_jobs = AsyncMock(side_effect=fetch_error)
+        else:
+            client.validator_list_miner_jobs = AsyncMock(return_value=resp)
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
         ev._on_demand_client = MagicMock(return_value=client)
@@ -146,12 +151,14 @@ class TestAbstentionPenalty(unittest.TestCase):
         asyncio.run(ev._evaluate_od(1, "hk"))
         return ev
 
+
+class TestAbstentionPenalty(_EvaluateOdTestBase):
     def test_x_abstainer_penalized(self):
-        """Reddit-only miner gets OD_ABSTAIN_MULT when doable X jobs existed."""
+        """Full-coverage reddit miner gets OD_ABSTAIN_MULT when doable X jobs existed."""
         from rewards.miner_scorer import MinerScorer
 
         now = dt.datetime.now(dt.timezone.utc)
-        jobs = [_job("reddit", now - dt.timedelta(hours=1))]
+        jobs = [_job("reddit", now - dt.timedelta(hours=1)) for _ in range(20)]
         ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 4)))
         ev.scorer.set_od_coverage_mult.assert_called_once_with(
             1, MinerScorer.OD_ABSTAIN_MULT
@@ -169,54 +176,193 @@ class TestAbstentionPenalty(unittest.TestCase):
     def test_thin_platform_not_judged_for_abstention(self):
         """X with fewer doable jobs than OD_ABSTAIN_MIN_PLATFORM_JOBS is skipped."""
         now = dt.datetime.now(dt.timezone.utc)
-        jobs = [_job("reddit", now - dt.timedelta(hours=1))]
+        jobs = [_job("reddit", now - dt.timedelta(hours=1)) for _ in range(20)]
         ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 2)))
         ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 1.0)
 
     def test_participant_restored_to_full_mult(self):
         now = dt.datetime.now(dt.timezone.utc)
-        jobs = [
-            _job("reddit", now - dt.timedelta(hours=1)),
+        jobs = [_job("reddit", now - dt.timedelta(hours=1)) for _ in range(20)] + [
             _job("x", now - dt.timedelta(hours=1)),
         ]
         ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 4)))
         ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 1.0)
 
 
+class TestCoverageRatioMult(_EvaluateOdTestBase):
+    """Low coverage of doable jobs scales the OD multiplier (skipping penalty)."""
+
+    def _mult(self, ev):
+        return ev.scorer.set_od_coverage_mult.call_args.args[1]
+
+    def _reddit_jobs(self, n):
+        now = dt.datetime.now(dt.timezone.utc)
+        return [_job("reddit", now - dt.timedelta(hours=1)) for _ in range(n)] + [
+            _job("x", now - dt.timedelta(hours=1))
+        ]
+
+    def test_coverage_at_threshold_gets_full_mult(self):
+        """coverage == OD_COVERAGE_FULL_MULT_AT -> 1.0 (15/100 doable)."""
+        ev = self._run_eval(self._reddit_jobs(15), _stats(reddit=(110, 100), x=(60, 4)))
+        self.assertAlmostEqual(self._mult(ev), 1.0, places=4)
+
+    def test_coverage_below_threshold_scales_linearly(self):
+        """10/100 doable -> 0.10 coverage -> 0.10/0.15 mult."""
+        ev = self._run_eval(self._reddit_jobs(10), _stats(reddit=(110, 100), x=(60, 4)))
+        self.assertAlmostEqual(self._mult(ev), 0.10 / 0.15, places=4)
+
+    def test_minimal_complier_floored_at_abstain_mult(self):
+        """1/100 doable -> ratio would be 0.067 but floors at OD_ABSTAIN_MULT."""
+        from rewards.miner_scorer import MinerScorer
+
+        ev = self._run_eval(self._reddit_jobs(1), _stats(reddit=(110, 100), x=(60, 4)))
+        self.assertAlmostEqual(self._mult(ev), MinerScorer.OD_ABSTAIN_MULT, places=4)
+
+    def test_thin_platform_participant_not_ratio_judged(self):
+        """X participant with doable < OD_COVERAGE_MIN_PLATFORM_JOBS: no ratio penalty."""
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [_job("reddit", now - dt.timedelta(hours=1)) for _ in range(20)] + [
+            _job("x", now - dt.timedelta(hours=1))
+        ]
+        ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 19)))
+        self.assertAlmostEqual(self._mult(ev), 1.0, places=4)
+
+    def test_full_fetch_page_resolves_in_miners_favor(self):
+        """A full page (possible truncation) -> mult 1.0, no coverage/abstention judged."""
+        now = dt.datetime.now(dt.timezone.utc)
+        # 1000 reddit jobs, zero x jobs: without the failsafe this would be
+        # ratio-judged on a truncated numerator AND x-abstention-penalized.
+        jobs = [
+            _job("reddit", now - dt.timedelta(hours=1))
+            for _ in range(MinerEvaluator.OD_JOBS_FETCH_LIMIT)
+        ]
+        ev = self._run_eval(jobs, _stats(reddit=(9000, 8500), x=(60, 4)))
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 1.0)
+
+    def test_out_of_window_jobs_do_not_count_toward_coverage(self):
+        """Jobs older than the coverage window are excluded from the numerator."""
+        from rewards.miner_scorer import MinerScorer
+
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [_job("reddit", now - dt.timedelta(hours=5)) for _ in range(50)] + [
+            _job("reddit", now - dt.timedelta(hours=1)),
+            _job("x", now - dt.timedelta(hours=1)),
+        ]
+        ev = self._run_eval(jobs, _stats(reddit=(110, 100), x=(60, 4)))
+        self.assertAlmostEqual(self._mult(ev), MinerScorer.OD_ABSTAIN_MULT, places=4)
+
+    def test_empty_submissions_dodge_abstention_but_not_ratio(self):
+        """0-byte submissions count against abstention but earn no coverage."""
+        from rewards.miner_scorer import MinerScorer
+
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [
+            _job("reddit", now - dt.timedelta(hours=1), content_length=0)
+            for _ in range(30)
+        ] + [_job("x", now - dt.timedelta(hours=1))]
+        ev = self._run_eval(jobs, _stats(reddit=(110, 100), x=(60, 4)))
+        # No abstention (they did submit), but ratio coverage is 0 -> floor.
+        self.assertAlmostEqual(self._mult(ev), MinerScorer.OD_ABSTAIN_MULT, places=4)
+
+    def test_full_page_of_old_jobs_still_resolves_in_miners_favor(self):
+        """The failsafe keys off the RAW page length, not the window-filtered count."""
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [
+            _job("reddit", now - dt.timedelta(hours=8))
+            for _ in range(MinerEvaluator.OD_JOBS_FETCH_LIMIT)
+        ]
+        ev = self._run_eval(jobs, _stats(reddit=(9000, 8500), x=(60, 4)))
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 1.0)
+
+    def test_zero_doable_platform_is_ignored(self):
+        """A platform with zero doable jobs neither penalizes nor divides by zero."""
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [_job("reddit", now - dt.timedelta(hours=1)) for _ in range(20)]
+        ev = self._run_eval(jobs, _stats(reddit=(90, 85), x=(60, 0)))
+        self.assertAlmostEqual(self._mult(ev), 1.0, places=4)
+
+    def test_threshold_adapts_when_doable_exceeds_fetch_cap(self):
+        """With doable >> fetch limit, the full-mult bar caps at 0.5*limit/doable."""
+        now = dt.datetime.now(dt.timezone.utc)
+        # doable=8000 -> full_at = min(0.15, 500/8000) = 0.0625.
+        jobs = [_job("reddit", now - dt.timedelta(hours=1)) for _ in range(600)] + [
+            _job("x", now - dt.timedelta(hours=1))
+        ]
+        ev = self._run_eval(jobs, _stats(reddit=(9000, 8000), x=(60, 4)))
+        # 600/8000 = 0.075 >= 0.0625 -> full mult despite being far below 0.15.
+        self.assertAlmostEqual(self._mult(ev), 1.0, places=4)
+
+    def test_stats_none_relaxes_instead_of_judging(self):
+        """No stats -> relax toward 1.0; never judge, never hold a stale penalty."""
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [_job("reddit", now - dt.timedelta(hours=1))]
+        ev = self._run_eval(jobs, None)
+        ev.scorer.set_od_coverage_mult.assert_not_called()
+        ev.scorer.relax_od_coverage_mult.assert_called_once_with(1)
+
+    def test_fetch_failure_relaxes_instead_of_holding_penalty(self):
+        """Jobs-fetch failure -> relax toward 1.0 and skip the eval."""
+        ev = self._run_eval([], _stats(), fetch_error=RuntimeError("boom"))
+        ev.scorer.set_od_coverage_mult.assert_not_called()
+        ev.scorer.relax_od_coverage_mult.assert_called_once_with(1)
+
+
 class TestScorerCoverageMult(unittest.TestCase):
-    def test_mult_scales_od_and_drags_caps(self):
+    def _scorer(self, n=2):
         from rewards.data_value_calculator import DataValueCalculator
         from rewards.miner_scorer import MinerScorer
-        import torch
 
-        scorer = MinerScorer(2, DataValueCalculator())
+        return MinerScorer(n, DataValueCalculator())
+
+    def test_mult_scales_od_and_drags_caps(self):
+        from rewards.miner_scorer import MinerScorer
+
+        scorer = self._scorer()
         for uid in (0, 1):
             scorer.ondemand_boosts[uid] = 100.0
             scorer.ondemand_credibility[uid] = 1.0
             scorer.s3_boosts[uid] = 1000.0
             scorer.s3_credibility[uid] = 1.0
 
+        # First drop smooths halfway: 1.0 -> 0.65; converge with repeats.
         scorer.set_od_coverage_mult(1, MinerScorer.OD_ABSTAIN_MULT)
+        self.assertAlmostEqual(float(scorer.od_coverage_mult[1]), 0.65, places=4)
         scores = scorer.get_scores_for_weights()
 
-        # uid0: od=100, s3 capped at 200 -> 300. uid1: od=30, s3 capped at 60 -> 90.
+        # uid0: od=100, s3 capped at 200 -> 300. uid1: od=65, s3 capped at 130 -> 195.
         self.assertAlmostEqual(float(scores[0]), 300.0, places=2)
-        self.assertAlmostEqual(float(scores[1]), 90.0, places=2)
+        self.assertAlmostEqual(float(scores[1]), 195.0, places=2)
+
+    def test_penalty_phases_in_recovery_is_instant(self):
+        scorer = self._scorer()
+        scorer.set_od_coverage_mult(0, 0.3)
+        self.assertAlmostEqual(float(scorer.od_coverage_mult[0]), 0.65, places=4)
+        scorer.set_od_coverage_mult(0, 0.3)
+        self.assertAlmostEqual(float(scorer.od_coverage_mult[0]), 0.475, places=4)
+        # Improvement applies instantly.
+        scorer.set_od_coverage_mult(0, 1.0)
+        self.assertAlmostEqual(float(scorer.od_coverage_mult[0]), 1.0, places=4)
+
+    def test_relax_moves_halfway_to_full(self):
+        scorer = self._scorer()
+        scorer.set_od_coverage_mult(0, 0.0)  # -> 0.5 (smoothed)
+        scorer.relax_od_coverage_mult(0)
+        self.assertAlmostEqual(float(scorer.od_coverage_mult[0]), 0.75, places=4)
+        scorer.relax_od_coverage_mult(1)  # already 1.0 -> no-op
+        self.assertAlmostEqual(float(scorer.od_coverage_mult[1]), 1.0, places=4)
 
     def test_state_roundtrip_preserves_mult(self):
         import os
         import tempfile
-        from rewards.data_value_calculator import DataValueCalculator
-        from rewards.miner_scorer import MinerScorer
 
-        scorer = MinerScorer(4, DataValueCalculator())
-        scorer.set_od_coverage_mult(2, 0.3)
+        scorer = self._scorer(4)
+        scorer.set_od_coverage_mult(2, 0.3)  # smoothed: 1.0 -> 0.65
         with tempfile.TemporaryDirectory() as d:
             path = os.path.join(d, "scorer.pickle")
             scorer.save_state(path)
-            loaded = MinerScorer(4, DataValueCalculator())
+            loaded = self._scorer(4)
             loaded.load_state(path)
-        self.assertAlmostEqual(float(loaded.od_coverage_mult[2]), 0.3, places=4)
+        self.assertAlmostEqual(float(loaded.od_coverage_mult[2]), 0.65, places=4)
         self.assertAlmostEqual(float(loaded.od_coverage_mult[0]), 1.0, places=4)
 
 
