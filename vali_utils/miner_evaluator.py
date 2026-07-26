@@ -356,22 +356,42 @@ class MinerEvaluator:
         if not jobs:
             return
 
-        # Single-pass partition into empty vs non-empty submissions
-        empty, non_empty = [], []
+        # Single-pass partition into non-empty vs never-uploaded submissions.
+        #
+        # `s3_content_length == 0` is not reachable from any completed upload: the
+        # smallest well-formed payload a miner can PUT is `{"data_entities": []}`
+        # (21 bytes). Zero therefore means the submission record was created by
+        # POST /on-demand/miner/jobs/submit but the body never landed in S3 — the
+        # upload leg failed. That is our infrastructure, not the miner's answer.
+        #
+        # A miner that deliberately answers "nothing here" uploads those 21 bytes,
+        # lands in `non_empty`, and is judged on the merits by
+        # _validate_od_submission (which already forgives an empty answer when
+        # check_data_exists() confirms there was nothing to return). Penalising the
+        # zero-byte case here inverted that: the miner who could not control the
+        # outcome was charged, while the deliberate empty answer was forgiven.
+        #
+        # The penalty also compounds — apply_ondemand_penalty multiplies od_boost by
+        # (1 - ondemand_alpha) = 0.7 per occurrence — so a single API incident is
+        # geometric in the number of jobs in flight. Observed on mainnet 2026-07-26:
+        # nine failed uploads inside one eval window took a miner's od_boost from
+        # 83.4M to 1.19M (0.7^9 = 0.040) and its emission from 0.145 to 0.0025.
+        #
+        # Treat a never-uploaded submission the same way an unanswered job is
+        # treated: no reward, no penalty. Consistent with #844 (OD download
+        # failures) and #849 (S3 scraper failures).
+        not_uploaded, non_empty = [], []
         for j in jobs:
             if (j.submission.s3_content_length or 0) > 0:
                 non_empty.append(j)
             else:
-                empty.append(j)
-
-        for j in empty:
-            self.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                not_uploaded.append(j)
 
         if not non_empty:
-            if empty:
+            if not_uploaded:
                 bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(empty)} empty submissions penalized, "
-                    f"0 non-empty"
+                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(not_uploaded)} submission(s) "
+                    f"with no uploaded body (upload leg failed; not penalized), 0 non-empty"
                 )
             return
 
@@ -447,7 +467,8 @@ class MinerEvaluator:
         bt.logging.info(
             f"UID:{uid} - HOTKEY:{hotkey}: OD summary — "
             f"{len(non_empty)} non-empty (validated: {validated_pass} pass, {validated_fail} fail, "
-            f"{not_sampled_count} credibility-bumped), {len(empty)} empty penalized"
+            f"{not_sampled_count} credibility-bumped), "
+            f"{len(not_uploaded)} not uploaded (skipped, not penalized)"
         )
 
     async def _validate_od_submission(
