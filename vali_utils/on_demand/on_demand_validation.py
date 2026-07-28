@@ -28,6 +28,16 @@ from vali_utils.metrics import ORGANIC_MINER_RESULTS
 SPEED_GRACE_S = 30.0
 SPEED_HALF_LIFE_S = 45.0
 SPEED_FLOOR = 0.3
+
+# Reasons a scraper emits when IT failed, as opposed to a verdict about the
+# miner's data. Scrapers return their own faults as is_valid=False *results*
+# rather than raising (e.g. scraping/reddit/reddit_mc_scraper.py builds
+# reason=f"Validation error: {e}" inside its except block), so without this
+# an Apify actor timeout is scored identically to fabricated content.
+SCRAPER_ERROR_REASON_PREFIXES = (
+    "Validation error:",
+    "UNFETCHABLE",
+)
 VOLUME_SHORTFALL_EXPONENT = 1.3
 VOLUME_OVER_LOG_COEF = 0.15
 VOLUME_OVER_BONUS_CAP = 0.25
@@ -200,7 +210,9 @@ class OnDemandValidator:
         entity: DataEntity,
         post_id: str,
         miner_uid: int,
-    ) -> bool:
+    ) -> Optional[bool]:
+        """True = valid, False = genuinely invalid, None = no evidence (see
+        _validate_with_scraper). None must not be scored as a miner failure."""
         try:
             # Phase 1: Request field validation
             if not self._validate_request_fields(ctx, entity, miner_uid):
@@ -229,10 +241,11 @@ class OnDemandValidator:
             )
 
         except Exception as e:
+            # Validator-side fault while validating — no evidence either way.
             bt.logging.error(
                 f"Miner {miner_uid}:{self.metagraph.hotkeys[miner_uid]} validation error for {post_id}: {str(e)}"
             )
-            return False
+            return None
 
     # ------------------------------------------------------------------
     # Request-field validation
@@ -425,12 +438,20 @@ class OnDemandValidator:
 
     async def _validate_with_scraper(
         self, ctx: ValidationContext, data_entity: DataEntity, post_id: str
-    ) -> bool:
+    ) -> Optional[bool]:
+        """Re-fetch the post and compare it with what the miner submitted.
+
+        Returns True (content matches), False (content genuinely does not match —
+        removed, edited, wrong fields), or **None meaning "no evidence"**: the
+        validator could not reach a verdict because its own scraping failed.
+        None must NOT be scored as a miner failure; see the caller.
+        """
         try:
             scraper = self._get_scraper(ctx.source)
             if not scraper:
+                # Validator-side configuration gap, not a statement about the data.
                 bt.logging.warning(f"No scraper available for {ctx.source}")
-                return False
+                return None
 
             if ctx.source.upper() == "X":
                 results = await scraper.validate(
@@ -444,18 +465,31 @@ class OnDemandValidator:
                 is_valid = (
                     result.is_valid if hasattr(result, "is_valid") else bool(result)
                 )
+                reason = getattr(result, "reason", "") or ""
                 if not is_valid:
+                    # Scrapers report their OWN failures as is_valid=False *results*
+                    # rather than raising, so an actor timeout or transport fault is
+                    # otherwise indistinguishable from "the miner sent bad data".
+                    # e.g. scraping/reddit/reddit_mc_scraper.py builds
+                    # reason=f"Validation error: {e}" inside its except block.
+                    if reason.startswith(SCRAPER_ERROR_REASON_PREFIXES):
+                        bt.logging.warning(
+                            f"Post {post_id}: scraper error, no verdict — {reason}"
+                        )
+                        return None
                     bt.logging.error(
-                        f"Post {post_id} failed scraper validation: {getattr(result, 'reason', 'Unknown')}"
+                        f"Post {post_id} failed scraper validation: {reason or 'Unknown'}"
                     )
                 return is_valid
             else:
+                # An empty result list is a failure to obtain evidence, not
+                # evidence of failure.
                 bt.logging.error(f"No scraper validation results for {post_id}")
-                return False
+                return None
 
         except Exception as e:
             bt.logging.error(f"Scraper validation error for {post_id}: {str(e)}")
-            return False
+            return None
 
     def _get_scraper(self, source: str):
         try:

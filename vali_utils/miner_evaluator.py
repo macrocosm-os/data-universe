@@ -534,6 +534,19 @@ class MinerEvaluator:
             is_valid = await self.on_demand_validator._validate_entity(
                 ctx, entity, post_id, uid
             )
+            if is_valid is None:
+                # The validator's own scraping failed, so there is no verdict about
+                # this post. Skip neutrally rather than penalising the miner — same
+                # treatment as the validator-side network error handled below (#805).
+                # This matters disproportionately because Phase 3 samples exactly ONE
+                # entity, so a single transient scraper fault would otherwise condemn
+                # the whole job (od_boost x0.70 + od_cred -0.05) with no sampling to
+                # damp it.
+                bt.logging.warning(
+                    f"UID:{uid} - OD validate: SCRAPER ERROR (no verdict) for job "
+                    f"{job_id}, post {post_id} — skipping, not penalising"
+                )
+                return None, 0
             if not is_valid:
                 bt.logging.warning(
                     f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
