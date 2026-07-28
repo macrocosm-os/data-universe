@@ -220,20 +220,21 @@ class MinerEvaluator:
         """Per-platform submission counts for the coverage window.
 
         Shared numerator for the coverage log and the scoring block.
-        'nonempty' counts submissions whose bytes landed in S3.
+        Only submissions whose bodies landed in S3 count as participation.
         """
         counts: Dict[str, Dict[str, int]] = {}
         for j in all_jobs:
             exp = j.job.expire_at
             if exp is not None and exp < coverage_since:
                 continue
+            length = j.submission.s3_content_length or 0
+            if length <= 0:
+                continue
             platform = j.job.job.platform
             c = counts.setdefault(platform, {"any": 0, "nonempty": 0, "bytes": 0})
-            length = j.submission.s3_content_length or 0
             c["any"] += 1
-            if length > 0:
-                c["nonempty"] += 1
-                c["bytes"] += length
+            c["nonempty"] += 1
+            c["bytes"] += length
         return counts
 
     def _log_od_coverage_shadow(
@@ -316,13 +317,15 @@ class MinerEvaluator:
 
         # Coverage multiplier: abstention (zero submissions) and low coverage
         # of doable jobs both scale od_component down. Any submission counts
-        # against abstention; only submissions with bytes in S3 count toward
-        # the ratio. Runs BEFORE the empty-jobs early return. A full fetch
-        # page may truncate the numerator — resolved in the miner's favor.
-        if stats is not None and len(resp.jobs) >= self.OD_JOBS_FETCH_LIMIT:
+        # against abstention only after their bodies land in S3; zero-byte
+        # submission records are equivalent to unanswered jobs. Runs BEFORE
+        # the empty-jobs early return. A full page of uploaded bodies may
+        # truncate the numerator — resolved in the miner's favor.
+        counts = self._od_submission_counts(resp.jobs, coverage_since)
+        nonempty_total = sum(c["nonempty"] for c in counts.values())
+        if stats is not None and nonempty_total >= self.OD_JOBS_FETCH_LIMIT:
             self.scorer.set_od_coverage_mult(uid, 1.0)
         elif stats is not None:
-            counts = self._od_submission_counts(resp.jobs, coverage_since)
             mult = 1.0
             for platform, pstats in stats.platforms.items():
                 c = counts.get(platform, {"any": 0, "nonempty": 0})
@@ -356,22 +359,42 @@ class MinerEvaluator:
         if not jobs:
             return
 
-        # Single-pass partition into empty vs non-empty submissions
-        empty, non_empty = [], []
+        # Single-pass partition into non-empty vs never-uploaded submissions.
+        #
+        # `s3_content_length == 0` is not reachable from any completed upload: the
+        # smallest well-formed payload a miner can PUT is `{"data_entities": []}`
+        # (21 bytes). Zero therefore means the submission record was created by
+        # POST /on-demand/miner/jobs/submit but the body never landed in S3 — the
+        # upload leg failed. That is our infrastructure, not the miner's answer.
+        #
+        # A miner that deliberately answers "nothing here" uploads those 21 bytes,
+        # lands in `non_empty`, and is judged on the merits by
+        # _validate_od_submission (which already forgives an empty answer when
+        # check_data_exists() confirms there was nothing to return). Penalising the
+        # zero-byte case here inverted that: the miner who could not control the
+        # outcome was charged, while the deliberate empty answer was forgiven.
+        #
+        # The penalty also compounds — apply_ondemand_penalty multiplies od_boost by
+        # (1 - ondemand_alpha) = 0.7 per occurrence — so a single API incident is
+        # geometric in the number of jobs in flight. Observed on mainnet 2026-07-26:
+        # nine failed uploads inside one eval window took a miner's od_boost from
+        # 83.4M to 1.19M (0.7^9 = 0.040) and its emission from 0.145 to 0.0025.
+        #
+        # Treat a never-uploaded submission the same way an unanswered job is
+        # treated: no reward, no penalty. Consistent with #844 (OD download
+        # failures) and #849 (S3 scraper failures).
+        not_uploaded, non_empty = [], []
         for j in jobs:
             if (j.submission.s3_content_length or 0) > 0:
                 non_empty.append(j)
             else:
-                empty.append(j)
-
-        for j in empty:
-            self.scorer.apply_ondemand_penalty(uid=uid, mult_factor=1.0)
+                not_uploaded.append(j)
 
         if not non_empty:
-            if empty:
+            if not_uploaded:
                 bt.logging.info(
-                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(empty)} empty submissions penalized, "
-                    f"0 non-empty"
+                    f"UID:{uid} - HOTKEY:{hotkey}: OD — {len(not_uploaded)} submission(s) "
+                    f"with no uploaded body (upload leg failed; not penalized), 0 non-empty"
                 )
             return
 
@@ -447,7 +470,8 @@ class MinerEvaluator:
         bt.logging.info(
             f"UID:{uid} - HOTKEY:{hotkey}: OD summary — "
             f"{len(non_empty)} non-empty (validated: {validated_pass} pass, {validated_fail} fail, "
-            f"{not_sampled_count} credibility-bumped), {len(empty)} empty penalized"
+            f"{not_sampled_count} credibility-bumped), "
+            f"{len(not_uploaded)} not uploaded (skipped, not penalized)"
         )
 
     async def _validate_od_submission(
@@ -534,6 +558,19 @@ class MinerEvaluator:
             is_valid = await self.on_demand_validator._validate_entity(
                 ctx, entity, post_id, uid
             )
+            if is_valid is None:
+                # The validator's own scraping failed, so there is no verdict about
+                # this post. Skip neutrally rather than penalising the miner — same
+                # treatment as the validator-side network error handled below (#805).
+                # This matters disproportionately because Phase 3 samples exactly ONE
+                # entity, so a single transient scraper fault would otherwise condemn
+                # the whole job (od_boost x0.70 + od_cred -0.05) with no sampling to
+                # damp it.
+                bt.logging.warning(
+                    f"UID:{uid} - OD validate: SCRAPER ERROR (no verdict) for job "
+                    f"{job_id}, post {post_id} — skipping, not penalising"
+                )
+                return None, 0
             if not is_valid:
                 bt.logging.warning(
                     f"UID:{uid} - OD validate: SCRAPER FAILED for job {job_id}, "
