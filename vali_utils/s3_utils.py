@@ -3,6 +3,7 @@ S3 validation utilities for enhanced miner data validation.
 Provides comprehensive validation of S3-stored miner data using metadata analysis.
 """
 
+import asyncio
 import hashlib
 import random
 import re
@@ -116,6 +117,61 @@ PREFERRED_SCRAPERS = {
     DataSource.X: ScraperId.X_APIDOJO,
     DataSource.REDDIT: ScraperId.REDDIT_MC,
 }
+
+
+class S3ValidationSkip(Exception):
+    """Raised when S3 validation cannot be COMPLETED due to a validator-side /
+    infrastructure transient failure — e.g. the presigned-URL auth API keeps
+    returning 5xx after retries, or the miner's file listing could not be
+    paginated to completion (a mid-listing 5xx would otherwise return a PARTIAL
+    file set and crater the miner's coverage/score).
+
+    The caller must treat this as SKIP — neither reward nor penalty, S3
+    credibility/score left unchanged — NOT as a validation FAILURE. It is our
+    infrastructure that failed, not the miner's data. (Same spirit as the OD
+    'validator-side download failure' skip, #805.)
+    """
+
+
+# Transient HTTP/network conditions worth retrying, then skipping (not failing).
+_S3_RETRY_STATUS = {429, 500, 502, 503, 504}
+_S3_RETRY_ATTEMPTS = 4          # 1 try + 3 retries
+_S3_RETRY_BACKOFF = 2.0         # seconds, exponential: 2, 4, 8
+
+
+async def http_with_retry(send, what: str) -> "requests.Response":
+    """Run a blocking request with retries, or raise S3ValidationSkip.
+
+    `send` is a zero-arg callable returning a requests.Response; it is executed
+    in the default executor so a slow endpoint never blocks the event loop.
+
+    Retries transient failures (5xx/429, timeouts, connection errors) with
+    exponential backoff. Anything that is still unresolved — including a
+    non-transient status, which retrying cannot fix — raises S3ValidationSkip:
+    we could not obtain the data, so the run must be SKIPPED rather than scored
+    against the miner.
+    """
+    loop = asyncio.get_running_loop()
+    last_err = None
+
+    for attempt in range(_S3_RETRY_ATTEMPTS):
+        try:
+            response = await loop.run_in_executor(None, send)
+            if response.status_code == 200:
+                return response
+            last_err = f"HTTP {response.status_code}"
+            if response.status_code not in _S3_RETRY_STATUS:
+                break  # non-transient (4xx): retrying cannot help
+        except (requests.Timeout, requests.ConnectionError) as e:
+            last_err = f"{type(e).__name__}: {e}"
+        except Exception as e:
+            last_err = scrub_log(str(e))
+
+        if attempt < _S3_RETRY_ATTEMPTS - 1:
+            await asyncio.sleep(_S3_RETRY_BACKOFF * (2 ** attempt))
+
+    raise S3ValidationSkip(f"{what} failed after {_S3_RETRY_ATTEMPTS} attempt(s): {last_err}")
+
 
 class DuckDBSampledValidator:
     """
@@ -425,7 +481,10 @@ class DuckDBSampledValidator:
             presigned_urls = await self._get_presigned_urls_batch(miner_hotkey, file_keys)
 
             if not presigned_urls:
-                return self._create_failed_result("Failed to get presigned URLs")
+                # Could not obtain ANY presigned URLs (transient exhaustion is
+                # already raised inside the batch helper; this covers the all-4xx
+                # / empty case) — can't validate, so SKIP rather than fail.
+                raise S3ValidationSkip("no presigned URLs obtained for sampled files")
 
             # Step 4: Lightweight DuckDB validation (sampled - memory safe)
             bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
@@ -577,6 +636,10 @@ class DuckDBSampledValidator:
                 job_coverage_rate=job_coverage_rate
             )
 
+        except S3ValidationSkip:
+            # Validator-side/infra transient failure — propagate so the caller
+            # SKIPS (neutral), instead of turning it into a FAILED result.
+            raise
         except Exception as e:
             bt.logging.error(scrub_log(f"{miner_hotkey}: DuckDB validation error: {str(e)}"))
             return self._create_failed_result(f"Validation error: {str(e)}")
@@ -594,41 +657,35 @@ class DuckDBSampledValidator:
         for i in range(0, len(file_keys), batch_size):
             batch = file_keys[i:i + batch_size]
 
-            try:
-                # TODO: decrease back to 1h once validation runtimes stabilise. Bumped to 3h
-                # because long validation passes (large miners + retries) were hitting 403s
-                # on presigned URLs minted at the start of the run.
-                payload = {
-                    "miner_hotkey": miner_hotkey,
-                    "file_keys": batch,
-                    "expiry_hours": 3
-                }
+            # TODO: decrease back to 1h once validation runtimes stabilise. Bumped to 3h
+            # because long validation passes (large miners + retries) were hitting 403s
+            # on presigned URLs minted at the start of the run.
+            payload = {
+                "miner_hotkey": miner_hotkey,
+                "file_keys": batch,
+                "expiry_hours": 3
+            }
+            body = json.dumps(payload).encode()
+            headers = self._signer.headers(body)
+            headers["Content-Type"] = "application/json"
 
-                body = json.dumps(payload).encode()
-                headers = self._signer.headers(body)
-                headers["Content-Type"] = "application/json"
-
-                response = requests.post(
+            # A batch we cannot resolve raises S3ValidationSkip: dropping it would
+            # leave us validating a PARTIAL sample, which understates the miner.
+            response = await http_with_retry(
+                lambda: requests.post(
                     f"{self.s3_auth_url}/get-file-presigned-urls",
                     data=body,
                     headers=headers,
-                    timeout=120
-                )
+                    timeout=120,
+                ),
+                what=f"get-file-presigned-urls ({len(batch)} keys)",
+            )
 
-                if response.status_code == 200:
-                    file_urls = response.json().get('file_urls', {})
-                    for key, data in file_urls.items():
-                        if isinstance(data, dict) and 'presigned_url' in data:
-                            all_urls[key] = data['presigned_url']
-                        elif isinstance(data, str):
-                            all_urls[key] = data
-                else:
-                    bt.logging.warning(
-                        f"get-file-presigned-urls failed: {response.status_code}"
-                    )
-
-            except Exception as e:
-                bt.logging.warning(scrub_log(f"Presigned URL batch error: {e}"))
+            for key, data in response.json().get('file_urls', {}).items():
+                if isinstance(data, dict) and 'presigned_url' in data:
+                    all_urls[key] = data['presigned_url']
+                elif isinstance(data, str):
+                    all_urls[key] = data
 
         return all_urls
 
@@ -2240,6 +2297,10 @@ async def validate_s3_miner_data(
         )
         return result
 
+    except S3ValidationSkip:
+        # Transient/infra skip — propagate to _perform_s3_validation, which
+        # returns None (no reward, no penalty).
+        raise
     except Exception as e:
         bt.logging.error(f"DuckDB validation failed for {miner_hotkey}: {str(e)}")
         return S3ValidationResult(

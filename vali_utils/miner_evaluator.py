@@ -34,7 +34,7 @@ from vali_utils import metrics, utils as vali_utils
 
 from typing import Dict, List, Optional, Tuple
 from vali_utils.validator_s3_access import ValidatorS3Access
-from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
+from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult, S3ValidationSkip
 from vali_utils.s3_logging_utils import log_s3_validation_table
 from vali_utils.s3_validation_results_client import (
     MACROCOSMOS_VALIDATOR_UID,
@@ -803,6 +803,14 @@ class MinerEvaluator:
 
             if not s3_validation_result.is_valid and s3_validation_result.validation_issues:
                 bt.logging.debug(f"{hotkey}: S3 validation issues: {', '.join(s3_validation_result.validation_issues[:3])}")
+
+        except S3ValidationSkip as e:
+            # Validator-side/infra transient failure (presigned-URL API 5xx after
+            # retries, or the file listing could not be paginated to completion).
+            # SKIP — return None so the caller leaves S3 score/credibility UNCHANGED
+            # (no reward, no penalty). The miner is not at fault for our infra.
+            bt.logging.warning(f"{hotkey}: S3 validation SKIPPED (transient/infra): {e} — no reward/penalty")
+            return None
 
         except Exception as e:
             bt.logging.error(f"{hotkey}: Error in S3 validation: {str(e)}")
