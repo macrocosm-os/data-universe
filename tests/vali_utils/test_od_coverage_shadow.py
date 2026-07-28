@@ -251,8 +251,8 @@ class TestCoverageRatioMult(_EvaluateOdTestBase):
         ev = self._run_eval(jobs, _stats(reddit=(110, 100), x=(60, 4)))
         self.assertAlmostEqual(self._mult(ev), MinerScorer.OD_ABSTAIN_MULT, places=4)
 
-    def test_empty_submissions_dodge_abstention_but_not_ratio(self):
-        """0-byte submissions count against abstention but earn no coverage."""
+    def test_empty_submissions_count_as_abstention(self):
+        """0-byte submission records are equivalent to unanswered jobs."""
         from rewards.miner_scorer import MinerScorer
 
         now = dt.datetime.now(dt.timezone.utc)
@@ -261,18 +261,22 @@ class TestCoverageRatioMult(_EvaluateOdTestBase):
             for _ in range(30)
         ] + [_job("x", now - dt.timedelta(hours=1))]
         ev = self._run_eval(jobs, _stats(reddit=(110, 100), x=(60, 4)))
-        # No abstention (they did submit), but ratio coverage is 0 -> floor.
+        # Reddit abstention applies; the uploaded X submission avoids X abstention.
         self.assertAlmostEqual(self._mult(ev), MinerScorer.OD_ABSTAIN_MULT, places=4)
 
-    def test_full_page_of_old_jobs_still_resolves_in_miners_favor(self):
-        """The failsafe keys off the RAW page length, not the window-filtered count."""
+    def test_full_page_of_old_jobs_does_not_bypass_coverage(self):
+        """Only in-window uploaded bodies can trigger the truncation failsafe."""
+        from rewards.miner_scorer import MinerScorer
+
         now = dt.datetime.now(dt.timezone.utc)
         jobs = [
             _job("reddit", now - dt.timedelta(hours=8))
             for _ in range(MinerEvaluator.OD_JOBS_FETCH_LIMIT)
         ]
         ev = self._run_eval(jobs, _stats(reddit=(9000, 8500), x=(60, 4)))
-        ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 1.0)
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(
+            1, MinerScorer.OD_ABSTAIN_MULT ** 2
+        )
 
     def test_zero_doable_platform_is_ignored(self):
         """A platform with zero doable jobs neither penalizes nor divides by zero."""
