@@ -106,6 +106,23 @@ class TestNotUploadedIsNeutral(unittest.TestCase):
 
         ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 0.3)
 
+    def test_full_page_of_zero_byte_submissions_does_not_bypass_coverage(self):
+        """Zero-byte spam cannot trigger the full-page truncation safeguard."""
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [
+            _job("x", now - dt.timedelta(hours=1), 0)
+            for _ in range(MinerEvaluator.OD_JOBS_FETCH_LIMIT)
+        ]
+        stats = OnDemandJobsStatsResponse(
+            platforms={
+                "x": PlatformJobStats(total_jobs=100, doable_jobs=100),
+            }
+        )
+
+        ev = self._run(jobs, stats=stats)
+
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 0.3)
+
     def test_uploaded_submissions_still_scored(self):
         """A body that DID land is still validated and rewarded — no regression."""
         now = dt.datetime.now(dt.timezone.utc)

@@ -319,12 +319,13 @@ class MinerEvaluator:
         # of doable jobs both scale od_component down. Any submission counts
         # against abstention only after their bodies land in S3; zero-byte
         # submission records are equivalent to unanswered jobs. Runs BEFORE
-        # the empty-jobs early return. A full fetch
-        # page may truncate the numerator — resolved in the miner's favor.
-        if stats is not None and len(resp.jobs) >= self.OD_JOBS_FETCH_LIMIT:
+        # the empty-jobs early return. A full page of uploaded bodies may
+        # truncate the numerator — resolved in the miner's favor.
+        counts = self._od_submission_counts(resp.jobs, coverage_since)
+        nonempty_total = sum(c["nonempty"] for c in counts.values())
+        if stats is not None and nonempty_total >= self.OD_JOBS_FETCH_LIMIT:
             self.scorer.set_od_coverage_mult(uid, 1.0)
         elif stats is not None:
-            counts = self._od_submission_counts(resp.jobs, coverage_since)
             mult = 1.0
             for platform, pstats in stats.platforms.items():
                 c = counts.get(platform, {"any": 0, "nonempty": 0})
