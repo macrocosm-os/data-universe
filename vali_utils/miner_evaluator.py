@@ -220,20 +220,21 @@ class MinerEvaluator:
         """Per-platform submission counts for the coverage window.
 
         Shared numerator for the coverage log and the scoring block.
-        'nonempty' counts submissions whose bytes landed in S3.
+        Only submissions whose bodies landed in S3 count as participation.
         """
         counts: Dict[str, Dict[str, int]] = {}
         for j in all_jobs:
             exp = j.job.expire_at
             if exp is not None and exp < coverage_since:
                 continue
+            length = j.submission.s3_content_length or 0
+            if length <= 0:
+                continue
             platform = j.job.job.platform
             c = counts.setdefault(platform, {"any": 0, "nonempty": 0, "bytes": 0})
-            length = j.submission.s3_content_length or 0
             c["any"] += 1
-            if length > 0:
-                c["nonempty"] += 1
-                c["bytes"] += length
+            c["nonempty"] += 1
+            c["bytes"] += length
         return counts
 
     def _log_od_coverage_shadow(
@@ -316,8 +317,9 @@ class MinerEvaluator:
 
         # Coverage multiplier: abstention (zero submissions) and low coverage
         # of doable jobs both scale od_component down. Any submission counts
-        # against abstention; only submissions with bytes in S3 count toward
-        # the ratio. Runs BEFORE the empty-jobs early return. A full fetch
+        # against abstention only after their bodies land in S3; zero-byte
+        # submission records are equivalent to unanswered jobs. Runs BEFORE
+        # the empty-jobs early return. A full fetch
         # page may truncate the numerator — resolved in the miner's favor.
         if stats is not None and len(resp.jobs) >= self.OD_JOBS_FETCH_LIMIT:
             self.scorer.set_od_coverage_mult(uid, 1.0)

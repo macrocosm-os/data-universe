@@ -53,7 +53,7 @@ def _stats() -> OnDemandJobsStatsResponse:
 
 
 class TestNotUploadedIsNeutral(unittest.TestCase):
-    def _run(self, jobs):
+    def _run(self, jobs, stats=None):
         ev = _stub_evaluator()
         ev.scorer = MagicMock()
         resp = MagicMock()
@@ -63,7 +63,7 @@ class TestNotUploadedIsNeutral(unittest.TestCase):
         client.__aenter__ = AsyncMock(return_value=client)
         client.__aexit__ = AsyncMock(return_value=False)
         ev._on_demand_client = MagicMock(return_value=client)
-        ev._get_od_jobs_stats = AsyncMock(return_value=_stats())
+        ev._get_od_jobs_stats = AsyncMock(return_value=stats or _stats())
         ev._log_od_coverage_shadow = MagicMock()
         ev._validate_od_submission = AsyncMock(return_value=(True, 10))
         ev.on_demand_validator.calculate_ondemand_reward_multipliers = MagicMock(
@@ -91,6 +91,20 @@ class TestNotUploadedIsNeutral(unittest.TestCase):
 
         ev.scorer.apply_ondemand_penalty.assert_not_called()
         ev.scorer.apply_ondemand_reward.assert_not_called()
+
+    def test_zero_byte_submission_does_not_avoid_abstention(self):
+        """A submission record without a body is not coverage participation."""
+        now = dt.datetime.now(dt.timezone.utc)
+        jobs = [_job("x", now - dt.timedelta(hours=1), 0)]
+        stats = OnDemandJobsStatsResponse(
+            platforms={
+                "x": PlatformJobStats(total_jobs=4, doable_jobs=4),
+            }
+        )
+
+        ev = self._run(jobs, stats=stats)
+
+        ev.scorer.set_od_coverage_mult.assert_called_once_with(1, 0.3)
 
     def test_uploaded_submissions_still_scored(self):
         """A body that DID land is still validated and rewarded — no regression."""
