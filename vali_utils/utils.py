@@ -14,7 +14,7 @@ from common.data import (
 from common.data_v2 import ScorableMinerIndex
 from common.date_range import DateRange
 from common.protocol import GetMinerIndex
-from scraping.x import utils as x_utils
+from vali_utils.url_normalizer import normalize_url_for_dedup
 
 from random import Random
 
@@ -123,10 +123,8 @@ def are_entities_valid(
 
 
 def _normalize_uri(uri: str) -> str:
-    """Normalizes a URI (independent of DataSource) for equality comparison."""
-    # For now, we only normalize twitter URIs. Other DataSources don't require any normalization.
-    # Note: This will leave the URI untouched if it is not a twitter URI.
-    return x_utils.normalize_url(uri)
+    """Returns the platform's stable content identity for equality comparison."""
+    return normalize_url_for_dedup(uri)
 
 
 def are_entities_unique(entities: List[DataEntity]) -> bool:

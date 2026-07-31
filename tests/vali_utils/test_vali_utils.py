@@ -503,6 +503,31 @@ class TestValiUtils(unittest.TestCase):
         ]
         self.assertFalse(vali_utils.are_entities_unique(entities))
 
+    def test_are_entities_unique_duplicate_reddit_ids_with_different_slugs(self):
+        """Reddit title slugs are decorative and must not bypass P2P dedup."""
+        datetime = dt.datetime(2026, 7, 17, 14, 0, tzinfo=dt.timezone.utc)
+        label = DataLabel(value="r/PS5")
+        entities = [
+            DataEntity(
+                uri="https://www.reddit.com/r/PS5/comments/1uyyuut/real_title/oy3g9gm/",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b'{"id":"t1_oy3g9gm","url":"https://www.reddit.com/r/PS5/comments/1uyyuut/real_title/oy3g9gm/"}',
+                content_size_bytes=103,
+            ),
+            DataEntity(
+                uri="https://www.reddit.com/r/PS5/comments/1uyyuut/fabricated_title/oy3g9gm/",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b'{"id":"t1_oy3g9gm","url":"https://www.reddit.com/r/PS5/comments/1uyyuut/fabricated_title/oy3g9gm/"}',
+                content_size_bytes=109,
+            ),
+        ]
+
+        self.assertFalse(vali_utils.are_entities_unique(entities))
+
     def test_get_miner_index_from_response_compressed_index(self):
         """Tests get_miner_index_from_response with a compressed index."""
 
