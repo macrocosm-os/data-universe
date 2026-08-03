@@ -33,7 +33,9 @@ class MinerScorer:
     # v15: Reset S3 — latest-file-per-job validation + whole-job-snapshot miner uploads.
     #      Old effective_size/credibility was computed across all historical chunks; new
     #      model counts only the latest snapshot per job, so prior scores are not comparable.
-    STATE_VERSION = 16
+    # v17: Reset P2P score/credibility — per-entity content-size validation closes
+    #      the underdeclared filler exploit that inflated every advertised bucket.
+    STATE_VERSION = 17
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -142,6 +144,9 @@ class MinerScorer:
         with self.lock:
             self.scores = state["scores"]
             self.miner_credibility = state["credibility"]
+            self.scorable_bytes = state.get(
+                "scorable_bytes", torch.zeros_like(self.scores)
+            )
             self.s3_boosts = state.get("s3_boosts", torch.zeros_like(self.scores))
             self.s3_credibility = state.get("s3_credibility", torch.full(
                 (self.scores.size(0), 1), MinerScorer.STARTING_S3_CREDIBILITY, dtype=torch.float32
@@ -174,6 +179,16 @@ class MinerScorer:
             #     )
             #     self.ondemand_boosts.zero_()
             #     self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
+
+            if saved_version < 17:
+                bt.logging.warning(
+                    f"State migration v{saved_version} -> v17: "
+                    f"P2P score/credibility reset (per-entity content-size "
+                    f"validation rollout)"
+                )
+                self.scores.zero_()
+                self.scorable_bytes.zero_()
+                self.miner_credibility.fill_(MinerScorer.STARTING_CREDIBILITY)
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
