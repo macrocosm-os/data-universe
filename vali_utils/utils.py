@@ -44,10 +44,9 @@ def choose_data_entity_bucket_to_query(index: ScorableMinerIndex) -> DataEntityB
 def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
     """Given a list of DataEntities from a DataEntityBucket, chooses a random set of entities to verify."""
 
-    # Randomly choose between 1 or 2 entities with 50% probability each.
-    # This adds variability to validation and reduces predictability for miners.
+    # Randomly choose one or two entities to add variability to validation.
     chosen_entities = []
-    total_size = sum(entity.content_size_bytes for entity in entities)
+    total_size = sum(len(entity.content or b"") for entity in entities)
 
     # 85% chance of validating 1 entity, 15% chance of validating 2 entities
     num_to_select = 1 if random.random() < 0.85 else 2
@@ -61,13 +60,14 @@ def choose_entities_to_verify(entities: List[DataEntity]) -> List[DataEntity]:
                 # Ensure we skip over already chosen entities if we see them again.
                 continue
 
-            if iterated_bytes + entity.content_size_bytes >= chosen_byte:
+            entity_size = len(entity.content or b"")
+            if iterated_bytes + entity_size >= chosen_byte:
                 chosen_entities.append(entity)
                 # Adjust total_size to account for the entity we already selected.
-                total_size -= entity.content_size_bytes
+                total_size -= entity_size
                 break
 
-            iterated_bytes += entity.content_size_bytes
+            iterated_bytes += entity_size
 
     return chosen_entities
 
@@ -89,7 +89,15 @@ def are_entities_valid(
     )
 
     for entity in entities:
-        actual_size += len(entity.content or b"")
+        entity_actual_size = len(entity.content or b"")
+        if entity.content_size_bytes != entity_actual_size:
+            return (
+                False,
+                f"Entity content size mismatch. Actual={entity_actual_size}. "
+                f"Claimed={entity.content_size_bytes}",
+            )
+
+        actual_size += entity_actual_size
         claimed_size += entity.content_size_bytes
         if entity.source != data_entity_bucket.id.source:
             return (
