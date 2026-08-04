@@ -1,6 +1,7 @@
 import bittensor as bt
 import datetime as dt
 import unittest
+from unittest import mock
 from common import constants
 from common.data import (
     CompressedEntityBucket,
@@ -78,33 +79,33 @@ class TestValiUtils(unittest.TestCase):
                 uri="uri1",
                 datetime=dt.datetime.now(tz=dt.timezone.utc),
                 source=DataSource.REDDIT,
-                content=b"content1",
+                content=b"1" * 100,
                 content_size_bytes=100,
             ),
             DataEntity(
                 uri="uri2",
                 datetime=dt.datetime.now(tz=dt.timezone.utc),
                 source=DataSource.REDDIT,
-                content=b"content2",
+                content=b"2" * 200,
                 content_size_bytes=200,
             ),
             DataEntity(
                 uri="uri3",
                 datetime=dt.datetime.now(tz=dt.timezone.utc),
                 source=DataSource.REDDIT,
-                content=b"content3",
+                content=b"3" * 300,
                 content_size_bytes=300,
             ),
         ]
 
-        # Sample the buckets, counting how often each is chosen
+        # Exercise the two-entity branch while measuring its weighted distribution.
         counts = [0, 0, 0]
-        for _ in range(10000):
-            chosen_entities = vali_utils.choose_entities_to_verify(entities)
-            # Expect exactly 2 samples are chosen each time.
-            self.assertEqual(len(chosen_entities), 2)
-            counts[entities.index(chosen_entities[0])] += 1
-            counts[entities.index(chosen_entities[1])] += 1
+        with mock.patch("vali_utils.utils.random.random", return_value=0.99):
+            for _ in range(10000):
+                chosen_entities = vali_utils.choose_entities_to_verify(entities)
+                self.assertEqual(len(chosen_entities), 2)
+                counts[entities.index(chosen_entities[0])] += 1
+                counts[entities.index(chosen_entities[1])] += 1
 
         total = sum(counts)
         ratios = [count / total for count in counts]
@@ -128,7 +129,7 @@ class TestValiUtils(unittest.TestCase):
                 uri="uri1",
                 datetime=dt.datetime.now(tz=dt.timezone.utc),
                 source=DataSource.REDDIT,
-                content=b"content1",
+                content=b"1" * 100,
                 content_size_bytes=100,
             ),
         ]
@@ -172,7 +173,7 @@ class TestValiUtils(unittest.TestCase):
                     ),
                 ],
                 "data_entity_bucket": default_data_entity_bucket,
-                "expected_error": "Size not as expected",
+                "expected_error": "Entity content size mismatch",
             },
             {
                 "name": "Actual size less than bucket summary",
@@ -331,6 +332,43 @@ class TestValiUtils(unittest.TestCase):
         ]
         valid, _ = vali_utils.are_entities_valid(entities, data_entity_bucket)
         self.assertTrue(valid)
+
+    def test_are_entities_valid_rejects_underdeclared_filler(self):
+        """A large entity cannot hide from sampling by claiming a one-byte size."""
+        datetime = dt.datetime(2023, 12, 10, 12, 1, 0, tzinfo=dt.timezone.utc)
+        label = DataLabel(value="label")
+        data_entity_bucket = DataEntityBucket(
+            id=DataEntityBucketId(
+                time_bucket=TimeBucket.from_datetime(datetime),
+                source=DataSource.REDDIT,
+                label=label,
+            ),
+            size_bytes=1_005,
+        )
+        entities = [
+            DataEntity(
+                uri="http://legitimate",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"valid",
+                content_size_bytes=5,
+            ),
+            DataEntity(
+                uri="http://filler",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b"X" * 1_000,
+                content_size_bytes=1,
+            ),
+        ]
+
+        valid, reason = vali_utils.are_entities_valid(entities, data_entity_bucket)
+
+        self.assertFalse(valid)
+        self.assertIn("Actual=1000", reason)
+        self.assertIn("Claimed=1", reason)
 
     def test_are_entities_valid_non_utc_timezones(self):
         """Tests are_entities_valid with different timezones."""
@@ -501,6 +539,31 @@ class TestValiUtils(unittest.TestCase):
                 content_size_bytes=482,
             ),
         ]
+        self.assertFalse(vali_utils.are_entities_unique(entities))
+
+    def test_are_entities_unique_duplicate_reddit_ids_with_different_slugs(self):
+        """Reddit title slugs are decorative and must not bypass P2P dedup."""
+        datetime = dt.datetime(2026, 7, 17, 14, 0, tzinfo=dt.timezone.utc)
+        label = DataLabel(value="r/PS5")
+        entities = [
+            DataEntity(
+                uri="https://www.reddit.com/r/PS5/comments/1uyyuut/real_title/oy3g9gm/",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b'{"id":"t1_oy3g9gm","url":"https://www.reddit.com/r/PS5/comments/1uyyuut/real_title/oy3g9gm/"}',
+                content_size_bytes=103,
+            ),
+            DataEntity(
+                uri="https://www.reddit.com/r/PS5/comments/1uyyuut/fabricated_title/oy3g9gm/",
+                datetime=datetime,
+                source=DataSource.REDDIT,
+                label=label,
+                content=b'{"id":"t1_oy3g9gm","url":"https://www.reddit.com/r/PS5/comments/1uyyuut/fabricated_title/oy3g9gm/"}',
+                content_size_bytes=109,
+            ),
+        ]
+
         self.assertFalse(vali_utils.are_entities_unique(entities))
 
     def test_get_miner_index_from_response_compressed_index(self):
