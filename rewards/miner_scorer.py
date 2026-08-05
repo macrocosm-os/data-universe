@@ -196,6 +196,22 @@ class MinerScorer:
         with self.lock:
             return self.scores.clone()
 
+    @staticmethod
+    def _s3_component(s3_boost: float, s3_cred: float, od_component: float) -> float:
+        """S3 reward: raw boost capped at 2x OD, THEN scaled by credibility.
+
+        TEMPORARY cap: prevents fabricators from profiting purely off S3 volume;
+        legit miners with real OD participation still get rewarded for S3. Will
+        be replaced by proper incentive redesign.
+
+        The order matters economically: applied after (boost x cred capped at
+        2xOD), any credibility above (cap/boost)^(1/2.5) saturated the cap and
+        validation failures cost nothing — a 2B boost hit the cap from cred 0.435.
+        """
+        if od_component <= 0:
+            return 0.0
+        return min(s3_boost, od_component * 2) * s3_cred
+
     def get_scores_for_weights(self) -> torch.Tensor:
         """Returns scores with P2P capped at (S3 + OD) for weight setting.
         """
@@ -211,18 +227,15 @@ class MinerScorer:
                 od_cred = float(self.ondemand_credibility[uid])
 
                 p2p_component = float(self.scorable_bytes[uid]) * MinerScorer.P2P_REWARD_SCALE * p2p_cred
-                s3_component = float(self.s3_boosts[uid]) * s3_cred
                 od_component = (
                     float(self.ondemand_boosts[uid])
                     * od_cred
                     * float(self.od_coverage_mult[uid])
                 )
 
-                # S3 cap (existing): S3 <= 2x OD
-                if od_component > 0:
-                    s3_component = min(s3_component, od_component * 2)
-                else:
-                    s3_component = 0.0
+                s3_component = self._s3_component(
+                    float(self.s3_boosts[uid]), s3_cred, od_component
+                )
 
                 # P2P cap: P2P can't exceed S3 + OD
                 service_component = s3_component + od_component
@@ -362,6 +375,8 @@ class MinerScorer:
         uid: int,
         effective_size: float,
         validation_passed: bool,
+        pass_rate: Optional[float] = None,
+        hard_invalid: bool = False,
     ) -> None:
         """
         Update miner's effective_size for S3 competition scoring.
@@ -374,27 +389,57 @@ class MinerScorer:
 
         This rewards miners who have MORE data than others (squared advantage).
 
-        FORGIVING APPROACH (like P2P credibility):
-        - On success: Always update effective_size, increase credibility toward 1.0
-        - On failure: KEEP previous effective_size, decrease credibility via EMA
-        - This way one failed validation doesn't instantly zero out the miner
-        - Consistent failures will eventually reduce credibility to near-zero
+        FORGIVING APPROACH (like P2P credibility), with two exceptions:
+        - On success: update effective_size; credibility EMAs toward the OBSERVED
+          scraper pass rate, not 1.0 — 16/20 and 20/20 no longer pay the same.
+          If claimed size grew, credibility is first scaled by
+          (old/new)^(1/_CREDIBILITY_EXP) (same "prove it" rule as P2P in
+          on_miner_evaluated) so new volume earns nothing until it survives
+          validation.
+        - On failure: KEEP previous effective_size, decrease credibility via EMA.
+        - On hard_invalid (provable fabrication — Snowflake/URL-ID/row-count/
+          compression): QUARANTINE — effective_size is zeroed, not retained.
+          Retention is forgiveness for unproven failures; it must not apply to
+          proven fraud.
 
         Args:
             uid: Miner UID
             effective_size: total_size_bytes × coverage² (calculated from current validation)
             validation_passed: Whether the miner passed quality validation
+            pass_rate: Observed scraper pass fraction (0..1), or None if no
+                entities were scraper-validated this cycle
+            hard_invalid: Whether the failure included provable fabrication
         """
         with self.lock:
             old_effective = float(self.effective_sizes[uid])
             old_cred = float(self.s3_credibility[uid])
 
             # Update S3 credibility based on validation result
-            if validation_passed:
-                # Success: Update effective_size and increase credibility
+            if hard_invalid:
+                # Provable fabrication: quarantine the volume, don't retain it.
+                self.effective_sizes[uid] = 0.0
+                self.s3_credibility[uid] = (1 - self.s3_cred_alpha) * self.s3_credibility[uid]
+                bt.logging.info(
+                    f"S3 hard-invalid for miner {uid}: quarantining "
+                    f"effective_size={old_effective/(1024*1024):.1f}MB -> 0, "
+                    f"credibility {old_cred:.4f} -> {float(self.s3_credibility[uid]):.4f}"
+                )
+            elif validation_passed:
+                # "Prove new volume": growth in claimed size scales credibility
+                # down so the boost is unchanged until the new volume also
+                # passes validation (mirrors the P2P rule in on_miner_evaluated).
+                if old_effective > 0 and effective_size > old_effective:
+                    self.s3_credibility[uid] *= (old_effective / effective_size) ** (
+                        1 / MinerScorer._CREDIBILITY_EXP
+                    )
+                # Success: Update effective_size and move credibility toward the
+                # observed pass rate (1.0 when nothing was scraper-checked).
                 self.effective_sizes[uid] = effective_size
-                # EMA toward 1.0: new_cred = alpha * 1.0 + (1-alpha) * old_cred
-                self.s3_credibility[uid] = min(1.0, self.s3_cred_alpha + (1 - self.s3_cred_alpha) * self.s3_credibility[uid])
+                target = 1.0 if pass_rate is None else max(0.0, min(1.0, pass_rate))
+                self.s3_credibility[uid] = min(
+                    1.0,
+                    self.s3_cred_alpha * target + (1 - self.s3_cred_alpha) * float(self.s3_credibility[uid]),
+                )
             else:
                 # Failure: KEEP previous effective_size, reduce credibility via EMA
                 # This is the forgiving part - one bad validation doesn't kill the miner
@@ -641,25 +686,18 @@ class MinerScorer:
                 od_cred = float(self.ondemand_credibility[uid])
 
                 p2p_component = score * MinerScorer.P2P_REWARD_SCALE * p2p_cred
-                s3_component = float(self.s3_boosts[uid]) * s3_cred
                 od_component = float(self.ondemand_boosts[uid]) * od_cred
 
-                # TEMPORARY: S3 capped at 2x on-demand component.
-                # Prevents fabricators from profiting purely off S3 volume.
-                # Legit miners with real OD participation still get rewarded for S3.
-                # Will be replaced by proper incentive redesign.
-                s3_uncapped = s3_component
-                if od_component > 0:
-                    s3_component = min(s3_component, od_component * 2)
-                else:
-                    s3_component = 0.0
+                s3_boost = float(self.s3_boosts[uid])
+                s3_uncapped = s3_boost * s3_cred
+                s3_component = self._s3_component(s3_boost, s3_cred, od_component)
 
                 score = p2p_component + s3_component + od_component
 
                 bt.logging.info(
                     f"Miner {uid} score breakdown: "
                     f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
-                    f"S3={s3_component:.0f} (boost={float(self.s3_boosts[uid]):.0f}, cred={float(self.s3_credibility[uid]):.4f})"
+                    f"S3={s3_component:.0f} (boost={s3_boost:.0f}, cred={float(self.s3_credibility[uid]):.4f})"
                     f"{f', capped from {s3_uncapped:.0f}' if s3_uncapped != s3_component else ''}, "
                     f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={float(self.ondemand_credibility[uid]):.4f})"
                 )

@@ -91,6 +91,7 @@ def read_random_row_group(
     columns: Optional[List[str]] = None,
     max_rows: Optional[int] = None,
     request_timeout: int = 30,
+    rng: Optional[random.Random] = None,
 ) -> Optional[pd.DataFrame]:
     """Read a random row group from a remote parquet file via Range requests.
 
@@ -104,6 +105,8 @@ def read_random_row_group(
         max_rows: If set, randomly sample this many rows from the row group.
         request_timeout: Per-range-request timeout in seconds. The validator
             passes its remaining per-miner budget so a slow link cannot run past it.
+        rng: Optional seeded random.Random for committed (reproducible) sampling
+            of the row group index and rows. None keeps module-level randomness.
 
     Returns:
         pandas DataFrame with the row group data, or None on error.
@@ -124,12 +127,13 @@ def read_random_row_group(
         if num_rg == 0:
             return None
 
-        rg_idx = random.randint(0, num_rg - 1)
+        r = rng if rng is not None else random
+        rg_idx = r.randint(0, num_rg - 1)
         table = pf.read_row_group(rg_idx, columns=columns)
         df = table.to_pandas()
 
         if max_rows and len(df) > max_rows:
-            df = df.drop_duplicates(subset=['url']).sample(n=min(max_rows, len(df)), random_state=random.randint(0, 2**31))
+            df = df.drop_duplicates(subset=['url']).sample(n=min(max_rows, len(df)), random_state=r.randint(0, 2**31))
 
         return df
 

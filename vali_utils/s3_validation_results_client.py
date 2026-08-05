@@ -6,7 +6,7 @@ those scores and apply them locally instead of running S3 validation themselves.
 import asyncio
 import json
 from dataclasses import dataclass
-from typing import Dict
+from typing import Dict, Optional
 
 import bittensor as bt
 import requests
@@ -24,6 +24,11 @@ class PublishedScore:
     validator_uid: int
     effective_size_bytes: float
     validation_passed: bool
+    # Observed scraper pass fraction (0..1); None when the publisher checked
+    # no entities (or published before this field existed).
+    scraper_pass_rate: Optional[float] = None
+    # Provable fabrication detected — consumers quarantine effective_size.
+    hard_invalid: bool = False
 
 
 class S3ValidationResultsClient:
@@ -112,11 +117,14 @@ class S3ValidationResultsClient:
         out: Dict[str, PublishedScore] = {}
         for entry in data.get("results", []) or []:
             score = entry.get("score") or {}
+            raw_rate = score.get("scraper_pass_rate")
             out[entry["miner_hotkey"]] = PublishedScore(
                 miner_hotkey=entry["miner_hotkey"],
                 validator_hotkey=entry.get("validator_hotkey", ""),
                 validator_uid=int(entry.get("validator_uid", -1)),
                 effective_size_bytes=float(score.get("effective_size_bytes", 0.0)),
                 validation_passed=bool(score.get("validation_passed", False)),
+                scraper_pass_rate=float(raw_rate) if raw_rate is not None else None,
+                hard_invalid=bool(score.get("hard_invalid", False)),
             )
         return out
