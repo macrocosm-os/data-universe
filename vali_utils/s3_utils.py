@@ -71,6 +71,46 @@ def _weighted_sample_without_replacement(items, weights, k):
     return [it for _, it in keys[:k]]
 
 
+_X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657
+_X_SNOWFLAKE_CUTOFF = pd.Timestamp(
+    _X_SNOWFLAKE_EPOCH_MS, unit="ms", tz="UTC"
+)
+_X_SNOWFLAKE_TIMESTAMP_TOLERANCE_MS = 60_000
+
+
+def _is_x_snowflake_timestamp_consistent(tweet_id: object, timestamp: object) -> bool:
+    """Return whether a modern X ID encodes the claimed creation minute."""
+    try:
+        claimed = pd.Timestamp(timestamp)
+        if claimed.tzinfo is None:
+            claimed = claimed.tz_localize("UTC")
+        else:
+            claimed = claimed.tz_convert("UTC")
+    except (TypeError, ValueError):
+        return False
+    # NaT survives Timestamp() construction; without this guard it falls through
+    # to .timestamp() and raises, which the caller's broad except turns into a
+    # silent file skip — one null datetime per file would evade the check.
+    if pd.isna(claimed):
+        return False
+
+    # X/Twitter used sequential IDs before Snowflake. Do not apply the modern
+    # invariant to historical rows from before the migration.
+    if claimed < _X_SNOWFLAKE_CUTOFF:
+        return True
+
+    try:
+        numeric_id = int(str(tweet_id))
+    except (TypeError, ValueError):
+        return False
+    if numeric_id <= 0:
+        return False
+
+    encoded_ms = (numeric_id >> 22) + _X_SNOWFLAKE_EPOCH_MS
+    claimed_ms = claimed.timestamp() * 1000
+    return abs(encoded_ms - claimed_ms) <= _X_SNOWFLAKE_TIMESTAMP_TOLERANCE_MS
+
+
 @dataclass
 class S3ValidationResult:
     """S3 validation result structure"""
@@ -1205,7 +1245,10 @@ class DuckDBSampledValidator:
 
                 # --- PyArrow row-group read for empty/missing content check ---
                 if platform in ['x', 'twitter']:
-                    read_cols = ['url', 'text', 'view_count', 'tweet_id', 'username']
+                    read_cols = [
+                        'url', 'text', 'view_count', 'tweet_id', 'username',
+                        'datetime',
+                    ]
                 else:
                     read_cols = ['url', 'body', 'title', 'id']
                 read_cols = [c for c in read_cols if c in available_columns]
@@ -1292,6 +1335,39 @@ class DuckDBSampledValidator:
                             ids = rg_df['tweet_id'].dropna().astype(str)
                             total_content_id_rows += len(ids)
                             unique_content_ids.update(ids.tolist())
+
+                            # Modern X IDs are Snowflakes whose high bits encode
+                            # creation time. This catches synthetic IDs locally,
+                            # before fake rows can be hidden behind scraper-valid
+                            # ballast from another platform.
+                            if 'datetime' in rg_df.columns:
+                                check_df = rg_df[['tweet_id', 'datetime']]
+                                snowflake_mismatches = sum(
+                                    not _is_x_snowflake_timestamp_consistent(
+                                        r['tweet_id'], r['datetime']
+                                    )
+                                    for _, r in check_df.iterrows()
+                                )
+                                if snowflake_mismatches > 0:
+                                    mismatch_rate = (
+                                        snowflake_mismatches / len(check_df) * 100
+                                    )
+                                    bt.logging.warning(
+                                        f"X Snowflake timestamp mismatch: "
+                                        f"{snowflake_mismatches}/{len(check_df)} "
+                                        f"sampled rows ({mismatch_rate:.1f}%)"
+                                    )
+                                    return {
+                                        "success": False,
+                                        "duplicate_rate_within_job": 100.0,
+                                        "empty_rate": 100.0,
+                                        "total_rows": 0,
+                                        "reason": (
+                                            "X tweet ID timestamp mismatch in "
+                                            f"{snowflake_mismatches} sampled rows "
+                                            f"({mismatch_rate:.1f}%)"
+                                        ),
+                                    }
 
                             # URL↔tweet_id consistency: status ID in URL must match tweet_id
                             if 'url' in rg_df.columns:
