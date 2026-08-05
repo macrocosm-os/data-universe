@@ -204,9 +204,9 @@ class S3ValidationResult:
     effective_size_bytes: float = 0.0
     job_coverage_rate: float = 0.0
 
-    # Provable fabrication detected by structural checks (row-count lie,
-    # uncompressed padding, Snowflake mismatch, URL↔tweet_id mismatch).
-    # The scorer quarantines effective_size instead of retaining it.
+    # Structural detection (row-count mismatch, uncompressed file, Snowflake
+    # mismatch, URL↔tweet_id mismatch). Telemetry only — scoring treats it as
+    # a normal failure; see update_s3_effective_size.
     hard_invalid: bool = False
 
     # Observed scraper pass fraction (0..1); None when no entities were
@@ -664,11 +664,10 @@ class DuckDBSampledValidator:
 
             is_valid = len(issues) == 0
 
-            # Provable fabrication (structural evidence), as opposed to
-            # unverifiable content ("URL not found" may be honest deletion).
-            # The scorer quarantines effective_size on hard_invalid instead of
-            # retaining the previous value. Snowflake / URL↔tweet_id detections
-            # set the structured flag at their point of detection.
+            # Structural detection, as opposed to unverifiable content
+            # ("URL not found" may be honest deletion). Telemetry only —
+            # scoring treats it as a normal failure. Snowflake / URL↔tweet_id
+            # checks set the structured flag at their point of detection.
             hard_invalid = (
                 row_count_mismatches > 0
                 or compression_failures > 0

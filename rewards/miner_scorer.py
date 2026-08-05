@@ -376,7 +376,6 @@ class MinerScorer:
         effective_size: float,
         validation_passed: bool,
         pass_rate: Optional[float] = None,
-        hard_invalid: bool = False,
     ) -> None:
         """
         Update miner's effective_size for S3 competition scoring.
@@ -389,7 +388,7 @@ class MinerScorer:
 
         This rewards miners who have MORE data than others (squared advantage).
 
-        FORGIVING APPROACH (like P2P credibility), with two exceptions:
+        FORGIVING APPROACH (like P2P credibility):
         - On success: update effective_size; credibility EMAs toward the OBSERVED
           scraper pass rate, not 1.0 — 16/20 and 20/20 no longer pay the same.
           If claimed size grew, credibility is first scaled by
@@ -397,10 +396,10 @@ class MinerScorer:
           on_miner_evaluated) so new volume earns nothing until it survives
           validation.
         - On failure: KEEP previous effective_size, decrease credibility via EMA.
-        - On hard_invalid (provable fabrication — Snowflake/URL-ID/row-count/
-          compression): QUARANTINE — effective_size is zeroed, not retained.
-          Retention is forgiveness for unproven failures; it must not apply to
-          proven fraud.
+          Every detection type routes here, including structural ones: those
+          depend on the validator reading the miner's parquet successfully, so a
+          flaky read must not cost a miner its volume outright. Repeated
+          detections drive credibility down geometrically instead.
 
         Args:
             uid: Miner UID
@@ -408,23 +407,13 @@ class MinerScorer:
             validation_passed: Whether the miner passed quality validation
             pass_rate: Observed scraper pass fraction (0..1), or None if no
                 entities were scraper-validated this cycle
-            hard_invalid: Whether the failure included provable fabrication
         """
         with self.lock:
             old_effective = float(self.effective_sizes[uid])
             old_cred = float(self.s3_credibility[uid])
 
             # Update S3 credibility based on validation result
-            if hard_invalid:
-                # Provable fabrication: quarantine the volume, don't retain it.
-                self.effective_sizes[uid] = 0.0
-                self.s3_credibility[uid] = (1 - self.s3_cred_alpha) * self.s3_credibility[uid]
-                bt.logging.info(
-                    f"S3 hard-invalid for miner {uid}: quarantining "
-                    f"effective_size={old_effective/(1024*1024):.1f}MB -> 0, "
-                    f"credibility {old_cred:.4f} -> {float(self.s3_credibility[uid]):.4f}"
-                )
-            elif validation_passed:
+            if validation_passed:
                 # "Prove new volume": growth in claimed size scales credibility
                 # down so the boost is unchanged until the new volume also
                 # passes validation (mirrors the P2P rule in on_miner_evaluated).
