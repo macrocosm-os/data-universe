@@ -660,7 +660,6 @@ class MinerEvaluator:
                 effective_size=s3_validation_result.effective_size_bytes,
                 validation_passed=s3_validation_result.is_valid,
                 pass_rate=s3_validation_result.pass_rate,
-                hard_invalid=s3_validation_result.hard_invalid,
             )
 
         # Query the miner for the latest index.

@@ -68,14 +68,20 @@ class TestS3QualityScoring(unittest.TestCase):
             places=5,
         )
 
-    def test_hard_invalid_quarantines_effective_size(self):
-        """Provable fabrication must not enjoy the forgiving retention rule."""
+    def test_repeated_failures_decay_credibility_geometrically(self):
+        """Structural detections route through the forgiving path — a flaky
+        validator-side read must not cost a miner its volume outright — so
+        credibility, not quarantine, does the work over repeated cycles."""
         uid = 0
         self.scorer.update_s3_effective_size(uid, 1000.0, True, pass_rate=1.0)
+        cred = float(self.scorer.s3_credibility[uid])
+        for _ in range(5):
+            self.scorer.update_s3_effective_size(uid, 0.0, False, pass_rate=0.0)
+        expected = cred * (1 - self.scorer.s3_cred_alpha) ** 5
+        self.assertAlmostEqual(float(self.scorer.s3_credibility[uid]), expected, places=5)
+        # Volume is retained; the multiplier is what collapses.
         self.assertEqual(float(self.scorer.effective_sizes[uid]), 1000.0)
-        self.scorer.update_s3_effective_size(uid, 0.0, False, pass_rate=0.0, hard_invalid=True)
-        self.assertEqual(float(self.scorer.effective_sizes[uid]), 0.0)
-        self.assertEqual(float(self.scorer.s3_boosts[uid]), 0.0)
+        self.assertLess(expected ** MinerScorer._CREDIBILITY_EXP, 0.03)
 
     def test_prove_new_volume_scales_credibility(self):
         """Doubling claimed size must scale cred by 0.5^(1/2.5) before the EMA,
