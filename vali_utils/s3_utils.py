@@ -19,7 +19,7 @@ import datetime as dt
 import math
 import bittensor as bt
 from typing import Dict, List, Optional, Any, Set
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 from scraping.provider import ScraperProvider
 from scraping.scraper import ScraperId, ValidationResult
@@ -57,18 +57,112 @@ def scrub_log(text: object) -> str:
     return _PRESIGNED_URL_RE.sub(lambda m: m.group(0).split("?", 1)[0] + "?[scrubbed]", s)
 
 
-def _weighted_sample_without_replacement(items, weights, k):
+def _weighted_sample_without_replacement(items, weights, k, rng=None):
     """Sample k items without replacement, probability proportional to weight.
     Uses the exponential-rank trick: key = -log(U) / w, take k smallest keys."""
     if k <= 0 or not items:
         return []
+    r = rng if rng is not None else random
     k = min(k, len(items))
     keys = []
     for it, w in zip(items, weights):
         w_eff = max(w, 1)
-        keys.append((-math.log(max(random.random(), 1e-12)) / w_eff, it))
+        keys.append((-math.log(max(r.random(), 1e-12)) / w_eff, it))
     keys.sort(key=lambda x: x[0])
     return [it for _, it in keys[:k]]
+
+
+def _derive_committed_rng(seed_material: Optional[str], miner_hotkey: str,
+                          manifest_entries: List[str]) -> random.Random:
+    """Build the sampling RNG for one validation cycle.
+
+    seed = H(block_hash ‖ hotkey ‖ manifest_hash). The block hash did not exist
+    when the miner uploaded, so the draw is unpredictable at arrangement time;
+    once the block lands the draw is exactly reproducible from (block hash,
+    manifest snapshot). The manifest is part of the seed so any change to the
+    uploaded file set changes the entire draw.
+
+    With no seed material (block hash unavailable) fall back to a fresh
+    nondeterministic RNG — identical to the pre-committed behavior.
+    """
+    if not seed_material:
+        return random.Random()
+    seed = hashlib.sha256(
+        "|".join([str(seed_material), miner_hotkey, *sorted(manifest_entries)]).encode()
+    ).digest()
+    return random.Random(seed)
+
+
+# The committed-sampling seed anchors to the hash of a recent block: deep
+# enough to be final, recent enough that all validated data was uploaded
+# before it existed. This offset is protocol — every reproducer (validator,
+# offline tooling) must use the same one or replayed draws won't match.
+COMMITTED_SEED_BLOCK_OFFSET = 10
+
+
+def committed_seed_block(current_block: int) -> int:
+    return max(current_block - COMMITTED_SEED_BLOCK_OFFSET, 1)
+
+
+def committed_seed_material(subtensor, current_block: int) -> Optional[str]:
+    """Fetch the seed block hash for committed sampling."""
+    return subtensor.get_block_hash(committed_seed_block(current_block))
+
+
+def _split_sample_budget(sample_count: int) -> tuple:
+    """(row_weighted, uniform_jobs, suspicion) split of the file-sample budget.
+
+    ~70% row-weighted (audits where the reward flows), ~20% uniform over jobs
+    (long-tail coverage — a purely weighted draw concentrates on a handful of
+    mega-jobs and leaves the rest unaudited), ~10% suspicion-targeted
+    (detection-only). Weighted always keeps the largest share.
+    """
+    if sample_count <= 3:
+        return sample_count, 0, 0
+    uniform = max(1, round(sample_count * 0.2))
+    suspicion = max(1, round(sample_count * 0.1))
+    weighted = sample_count - uniform - suspicion
+    return weighted, uniform, suspicion
+
+
+_X_SNOWFLAKE_EPOCH_MS = 1_288_834_974_657
+_X_SNOWFLAKE_CUTOFF = pd.Timestamp(
+    _X_SNOWFLAKE_EPOCH_MS, unit="ms", tz="UTC"
+)
+_X_SNOWFLAKE_TIMESTAMP_TOLERANCE_MS = 60_000
+
+
+def _is_x_snowflake_timestamp_consistent(tweet_id: object, timestamp: object) -> bool:
+    """Return whether a modern X ID encodes the claimed creation minute."""
+    try:
+        claimed = pd.Timestamp(timestamp)
+        if claimed.tzinfo is None:
+            claimed = claimed.tz_localize("UTC")
+        else:
+            claimed = claimed.tz_convert("UTC")
+    except (TypeError, ValueError):
+        return False
+    # NaT survives Timestamp() construction; without this guard it falls through
+    # to .timestamp() and raises, which the caller's broad except turns into a
+    # silent file skip — one null datetime per file would evade the check.
+    if pd.isna(claimed):
+        return False
+
+    # X/Twitter used sequential IDs before Snowflake. Do not apply the modern
+    # invariant to historical rows from before the migration.
+    if claimed < _X_SNOWFLAKE_CUTOFF:
+        return True
+
+    try:
+        numeric_id = int(str(tweet_id))
+    except (TypeError, ValueError):
+        return False
+    if numeric_id <= 0:
+        return False
+
+    encoded_ms = (numeric_id >> 22) + _X_SNOWFLAKE_EPOCH_MS
+    claimed_ms = claimed.timestamp() * 1000
+    return abs(encoded_ms - claimed_ms) <= _X_SNOWFLAKE_TIMESTAMP_TOLERANCE_MS
 
 
 @dataclass
@@ -110,6 +204,21 @@ class S3ValidationResult:
     effective_size_bytes: float = 0.0
     job_coverage_rate: float = 0.0
 
+    # Structural detection (row-count mismatch, uncompressed file, Snowflake
+    # mismatch, URL↔tweet_id mismatch). Telemetry only — scoring treats it as
+    # a normal failure; see update_s3_effective_size.
+    hard_invalid: bool = False
+
+    # Observed scraper pass fraction (0..1); None when no entities were
+    # scraper-checked this cycle. The single source for the rolling-quality
+    # credibility target — consumers must not re-derive it from
+    # scraper_success_rate/entities_validated.
+    pass_rate: Optional[float] = None
+
+    # File keys picked by the suspicion sampling slice (detection-only:
+    # structural checks ran on them, scraper pass-rate excluded them).
+    suspicion_files: List[str] = field(default_factory=list)
+
 
 # Mapping of scrapers to use based on the data source to validate
 PREFERRED_SCRAPERS = {
@@ -138,14 +247,10 @@ class DuckDBSampledValidator:
     MIN_ENGAGEMENT_RATE = 95.0  # 95% of X rows must have non-null view_count
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
 
-    # Per-platform scraper-sampling floor. A platform contributing at least
-    # SCRAPER_PLATFORM_FLOOR_PCT of a miner's CLAIMED ROWS must get at least
-    # SCRAPER_PLATFORM_MIN_ENTITIES rows scraper-validated, regardless of the
-    # random draw. Without this, a miner can keep a small pool of real data as
-    # ballast and bury fabricated high-volume data (e.g. 76% fake X) that the
-    # 20-row scraper sample rarely inspects. The floor guarantees the platform
-    # holding the volume gets checked → one dead URL trips MIN_SCRAPER_SUCCESS.
-    SCRAPER_PLATFORM_FLOOR_PCT = 10.0
+    # Per-platform scraper-sampling floor. Every platform with claimed rows in
+    # the sampled files gets at least this many rows scraper-validated,
+    # regardless of the random draw, and each platform reaching the floor is
+    # held to MIN_SCRAPER_SUCCESS on its own rather than in a combined rate.
     SCRAPER_PLATFORM_MIN_ENTITIES = 5
 
     # File size limits - prevent empty file exploit and oversized file OOM
@@ -222,7 +327,8 @@ class DuckDBSampledValidator:
         wallet,
         s3_auth_url: str,
         s3_reader=None,
-        sample_percent: float = 10.0
+        sample_percent: float = 10.0,
+        seed_material: Optional[str] = None
     ):
         self.wallet = wallet
         self.s3_auth_url = s3_auth_url
@@ -230,6 +336,11 @@ class DuckDBSampledValidator:
         self.sample_percent = sample_percent
         self.scraper_provider = ScraperProvider()
         self._signer = TaoSigner(keypair=wallet.hotkey)
+        # Committed sampling: seed material (a recent block hash) combined with
+        # the miner's file manifest derives the cycle RNG in
+        # validate_miner_s3_data. None → nondeterministic, as before.
+        self._seed_material = seed_material
+        self._rng: random.Random = random.Random()
         # Eval-scoped cache of downloaded sampled files: file_key -> local temp
         # path. All three read phases (dedup, job content matching, scraper
         # entity sampling) draw from the same sampled_files, so each file is
@@ -368,6 +479,19 @@ class DuckDBSampledValidator:
             if not active_files:
                 return self._create_failed_result("No files in active jobs")
 
+            # Committed sampling: derive this cycle's RNG from
+            # H(block_hash ‖ hotkey ‖ manifest). Unpredictable when the miner
+            # arranged their data (the block hash didn't exist yet), exactly
+            # reproducible afterwards, and any manifest change reshuffles the
+            # whole draw. No seed material → nondeterministic as before.
+            manifest_entries = [
+                f"{f.get('key', '')}:{f.get('size', 0)}" for f, _ in active_files
+            ]
+            self._rng = _derive_committed_rng(
+                self._seed_material, miner_hotkey, manifest_entries
+            )
+            suspicion_keys: Set[str] = set()
+
             # Cap jobs/cycle. Post-snapshot each file == one whole job (up to
             # 1GB / 3M rows). The economic-detection math is r/N ≤ D: with the
             # top-5 force-include collapsing per-fab-job reward inflation to r≈10
@@ -384,40 +508,74 @@ class DuckDBSampledValidator:
             sample_count = max(10, int(len(active_files) * self.sample_percent / 100))
             sample_count = min(sample_count, len(active_files), FILE_SAMPLE_CAP)
 
-            # Row-weighted sampling: file selection probability proportional to its
-            # CLAIMED ROW share, not byte share. effective_size is row-based, so rows
-            # are what's scored; bytes are an artifact of compression. Byte-weighting
-            # let a fabricator hide fake volume in files that compress small — e.g. a
-            # 410k-row fab file at ~52 B/row (just over the MIN_BYTES_PER_ROW floor)
-            # weighs far less than a real 120 B/row file of the same row count, so the
-            # rows driving the effective_size claim went under-inspected. Tie sampling
-            # to the quantity actually rewarded.
-            weights = [max(1, self._parse_row_count_from_filename(f.get('key', '')) or 1)
-                       for f, _ in active_files]
+            # One row-count parse per file; weights, the uniform slice, and the
+            # top-5 sort all read this dict instead of re-running the regex.
+            claimed_rows_by_key = {
+                f.get('key', ''): (self._parse_row_count_from_filename(f.get('key', '')) or 1)
+                for f, _ in active_files
+            }
+
+            def _claimed_rows(item):
+                return max(1, claimed_rows_by_key.get(item[0].get('key', ''), 1))
+
+            # Budget split (see _split_sample_budget): row-weighted where the
+            # reward flows, uniform over jobs for long-tail coverage, suspicion
+            # for cheap anomaly targeting.
+            weighted_count, uniform_count, suspicion_count = _split_sample_budget(sample_count)
+
+            # Slice 1 — row-weighted: selection probability proportional to
+            # CLAIMED ROW share, not byte share. effective_size is row-based, so
+            # rows are what's scored; bytes are an artifact of compression.
+            # Sampling tracks the quantity actually rewarded.
+            weights = [_claimed_rows(it) for it in active_files]
             sampled_files_with_job = _weighted_sample_without_replacement(
-                active_files, weights, sample_count
+                active_files, weights, weighted_count, rng=self._rng
             )
+            picked_keys = {f.get('key') for f, _ in sampled_files_with_job}
+
+            # Slice 2 — uniform over JOBS: the weighted draw concentrates on the
+            # largest jobs, so draw jobs uniformly as well and take each one's
+            # biggest-claim file.
+            remaining = [it for it in active_files if it[0].get('key') not in picked_keys]
+            jobs_to_files: Dict[str, list] = {}
+            for it in remaining:
+                jobs_to_files.setdefault(it[1], []).append(it)
+            if uniform_count > 0 and jobs_to_files:
+                uniform_jobs = self._rng.sample(
+                    sorted(jobs_to_files.keys()),
+                    min(uniform_count, len(jobs_to_files)),
+                )
+                for j in uniform_jobs:
+                    pick = max(jobs_to_files[j], key=_claimed_rows)
+                    sampled_files_with_job.append(pick)
+                    picked_keys.add(pick[0].get('key'))
+
+            # Slice 3 — suspicion-targeted (detection-only; excluded from the
+            # scraper entity pool so it can't bias the pass-rate estimate).
+            remaining = [it for it in remaining if it[0].get('key') not in picked_keys]
+            if suspicion_count > 0 and remaining:
+                for pick in self._pick_suspicious_files(active_files, remaining, suspicion_count):
+                    sampled_files_with_job.append(pick)
+                    picked_keys.add(pick[0].get('key'))
+                    suspicion_keys.add(pick[0].get('key'))
 
             # Force-include top-N by claimed rows (these drive effective_size and must
-            # always be inspected even if byte-weights would have skipped them).
-            def _claimed_rows(item):
-                f, _ = item
-                r = self._parse_row_count_from_filename(f.get('key', ''))
-                return r if r and r > 0 else 1
-
+            # always be inspected even if the draw would have skipped them).
             top_n = sorted(active_files, key=lambda item: -_claimed_rows(item))[:5]
-            already_keys = {f.get('key') for f, _ in sampled_files_with_job}
-            forced = [item for item in top_n if item[0].get('key') not in already_keys]
+            forced = [item for item in top_n if item[0].get('key') not in picked_keys]
 
             sampled_files_with_job = sampled_files_with_job + forced
-            random.shuffle(sampled_files_with_job)
+            self._rng.shuffle(sampled_files_with_job)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
             sampled_bytes = sum(f.get('size', 0) for f, _ in sampled_files_with_job)
+            seed_note = (
+                f"seed={str(self._seed_material)[:18]}" if self._seed_material else "unseeded"
+            )
             bt.logging.info(
                 f"{miner_hotkey}: Sampled {len(sampled_files)} files "
                 f"({sampled_bytes/(1024*1024):.1f}MB / {total_size_bytes/(1024*1024):.1f}MB, "
-                f"{sampled_bytes/max(total_size_bytes,1)*100:.1f}% of bytes)"
+                f"{sampled_bytes/max(total_size_bytes,1)*100:.1f}% of bytes, {seed_note})"
             )
 
             # Step 3: Get presigned URLs for sample
@@ -447,9 +605,14 @@ class DuckDBSampledValidator:
                 )
 
                 # Step 6: Scraper validation — sampled_files is already latest-per-job,
-                # so no recent/older split is needed.
-                scraper_files = list(sampled_files)
-                random.shuffle(scraper_files)
+                # so no recent/older split is needed. Suspicion-slice picks are
+                # excluded: they are detection-only (structural checks still ran
+                # on them) and must not bias the pass-rate estimate.
+                scraper_files = [
+                    f for f in sampled_files
+                    if f.get('key') not in suspicion_keys
+                ]
+                self._rng.shuffle(scraper_files)
 
                 if scraper_files:
                     bt.logging.info(
@@ -487,6 +650,9 @@ class DuckDBSampledValidator:
                 issues.append(f"Low job match: {job_match_rate:.1f}%")
             if scraper_success_rate is not None and scraper_success_rate < self.MIN_SCRAPER_SUCCESS:
                 issues.append(f"Low scraper success: {scraper_success_rate:.1f}%")
+            # Per-platform bar: each platform with a floor-sized sample must
+            # reach MIN_SCRAPER_SUCCESS on its own, not just in the combined rate.
+            issues.extend(self._per_platform_issues(scraper_result.get('platform_stats', {})))
 
             # Compression exploit detection — always fail
             if compression_failures > 0:
@@ -497,6 +663,16 @@ class DuckDBSampledValidator:
                 issues.append(f"Row count mismatch: {row_count_mismatches} files with filename!=metadata rows")
 
             is_valid = len(issues) == 0
+
+            # Structural detection, as opposed to unverifiable content
+            # ("URL not found" may be honest deletion). Telemetry only —
+            # scoring treats it as a normal failure. Snowflake / URL↔tweet_id
+            # checks set the structured flag at their point of detection.
+            hard_invalid = (
+                row_count_mismatches > 0
+                or compression_failures > 0
+                or bool(duckdb_result.get("hard_invalid", False))
+            )
 
             # Calculate effective_size for competition scoring
             # Row-based: total rows from filenames × standard bytes per row × coverage²
@@ -574,7 +750,14 @@ class DuckDBSampledValidator:
                 sample_validation_results=scraper_result.get('sample_results', []),
                 sample_job_mismatches=job_match_result.get('mismatch_samples', []),
                 effective_size_bytes=effective_size_bytes,
-                job_coverage_rate=job_coverage_rate
+                job_coverage_rate=job_coverage_rate,
+                hard_invalid=hard_invalid,
+                pass_rate=(
+                    scraper_success_rate / 100.0
+                    if scraper_result['entities_validated'] > 0 and scraper_success_rate is not None
+                    else None
+                ),
+                suspicion_files=sorted(suspicion_keys)
             )
 
         except Exception as e:
@@ -1205,7 +1388,10 @@ class DuckDBSampledValidator:
 
                 # --- PyArrow row-group read for empty/missing content check ---
                 if platform in ['x', 'twitter']:
-                    read_cols = ['url', 'text', 'view_count', 'tweet_id', 'username']
+                    read_cols = [
+                        'url', 'text', 'view_count', 'tweet_id', 'username',
+                        'datetime',
+                    ]
                 else:
                     read_cols = ['url', 'body', 'title', 'id']
                 read_cols = [c for c in read_cols if c in available_columns]
@@ -1226,7 +1412,8 @@ class DuckDBSampledValidator:
                 t_rg = time.monotonic()
                 rg_df = read_random_row_group(
                     presigned_url, file_size, columns=read_cols,
-                    request_timeout=min(30, remaining_for_rg)
+                    request_timeout=min(30, remaining_for_rg),
+                    rng=self._rng
                 )
                 rg_secs = time.monotonic() - t_rg
                 # Per-file timing breakdown (hotkey + which stage was slow).
@@ -1293,6 +1480,42 @@ class DuckDBSampledValidator:
                             total_content_id_rows += len(ids)
                             unique_content_ids.update(ids.tolist())
 
+                            # Modern X IDs are Snowflakes whose high bits encode
+                            # creation time. This catches synthetic IDs locally,
+                            # before fake rows can be hidden behind scraper-valid
+                            # ballast from another platform.
+                            if 'datetime' in rg_df.columns:
+                                check_df = rg_df[['tweet_id', 'datetime']]
+                                snowflake_mismatches = sum(
+                                    not _is_x_snowflake_timestamp_consistent(
+                                        r['tweet_id'], r['datetime']
+                                    )
+                                    for _, r in check_df.iterrows()
+                                )
+                                if snowflake_mismatches > 0:
+                                    mismatch_rate = (
+                                        snowflake_mismatches / len(check_df) * 100
+                                    )
+                                    bt.logging.warning(
+                                        f"X Snowflake timestamp mismatch: "
+                                        f"{snowflake_mismatches}/{len(check_df)} "
+                                        f"sampled rows ({mismatch_rate:.1f}%)"
+                                    )
+                                    return {
+                                        "success": False,
+                                        "duplicate_rate_within_job": 100.0,
+                                        "empty_rate": 100.0,
+                                        "total_rows": 0,
+                                        # Structured fabrication flag — consumers
+                                        # must not classify from the reason text.
+                                        "hard_invalid": True,
+                                        "reason": (
+                                            "X tweet ID timestamp mismatch in "
+                                            f"{snowflake_mismatches} sampled rows "
+                                            f"({mismatch_rate:.1f}%)"
+                                        ),
+                                    }
+
                             # URL↔tweet_id consistency: status ID in URL must match tweet_id
                             if 'url' in rg_df.columns:
                                 url_id_mismatches = 0
@@ -1315,6 +1538,7 @@ class DuckDBSampledValidator:
                                         "duplicate_rate_within_job": 100.0,
                                         "empty_rate": 100.0,
                                         "total_rows": 0,
+                                        "hard_invalid": True,
                                         "reason": f"URL↔tweet_id mismatch in {url_id_mismatches} rows ({mismatch_rate:.1f}%)"
                                     }
 
@@ -1527,7 +1751,7 @@ class DuckDBSampledValidator:
             has_keyword = bool(job_keyword and str(job_keyword).strip())
             has_time = bool(job_start_dt or job_end_dt)
 
-            sample_files = random.sample(files, min(2, len(files)))
+            sample_files = self._rng.sample(files, min(2, len(files)))
 
             for file_info in sample_files:
                 # Skip oversized files to prevent OOM
@@ -1580,7 +1804,8 @@ class DuckDBSampledValidator:
                     # Read 1 random row group (local path when cached, else Range)
                     sample_df = read_random_row_group(
                         read_source, file_size,
-                        columns=None, max_rows=samples_per_file
+                        columns=None, max_rows=samples_per_file,
+                        rng=self._rng
                     )
 
                     if sample_df is None or len(sample_df) == 0:
@@ -1717,7 +1942,7 @@ class DuckDBSampledValidator:
 
         file_weights = [_claimed_rows_for(f) for f in sampled_files]
         ranked = _weighted_sample_without_replacement(
-            sampled_files, file_weights, len(sampled_files)
+            sampled_files, file_weights, len(sampled_files), rng=self._rng
         )
         sampled_files = ranked
 
@@ -1800,7 +2025,8 @@ class DuckDBSampledValidator:
                 # Read 1 random row group; sample size scales with file's byte share.
                 df = read_random_row_group(
                     read_source, file_size,
-                    columns=None, max_rows=_rows_for_file(file_info)
+                    columns=None, max_rows=_rows_for_file(file_info),
+                    rng=self._rng
                 )
 
                 if df is None or len(df) == 0:
@@ -1846,11 +2072,10 @@ class DuckDBSampledValidator:
         if not all_entities:
             return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
 
-        # Per-platform floor: any platform that is >= SCRAPER_PLATFORM_FLOOR_PCT of
-        # this miner's claimed rows must contribute >= SCRAPER_PLATFORM_MIN_ENTITIES
-        # to the scraper sample, so a high-volume platform can't be crowded out of the
-        # 20-row draw by ballast on another platform. Claimed-row share is measured
-        # over the sampled files (what we actually pulled), keyed by job platform.
+        # Per-platform floor: any platform with claimed rows in the sampled files
+        # contributes >= SCRAPER_PLATFORM_MIN_ENTITIES to the scraper sample, so
+        # every platform earning row credit gets independently checked. Claimed
+        # rows are measured over the sampled files, keyed by job platform.
         platform_claimed_rows: Dict[str, int] = {}
         for f in sampled_files:
             fk = f.get('key', '')
@@ -1861,7 +2086,6 @@ class DuckDBSampledValidator:
             plat = (jcfg.get('params', {}) if isinstance(jcfg, dict) else {}).get('platform', 'unknown').lower()
             rows = self._parse_row_count_from_filename(fk) or 0
             platform_claimed_rows[plat] = platform_claimed_rows.get(plat, 0) + rows
-        total_claimed = max(sum(platform_claimed_rows.values()), 1)
 
         entities_by_plat: Dict[str, list] = {}
         for item in all_entities:
@@ -1871,11 +2095,11 @@ class DuckDBSampledValidator:
         selected: list = []
         selected_ids = set()
         for plat, rows in platform_claimed_rows.items():
-            if rows / total_claimed * 100.0 < self.SCRAPER_PLATFORM_FLOOR_PCT:
+            if rows <= 0:
                 continue
             pool = entities_by_plat.get(plat, [])
             floor = min(self.SCRAPER_PLATFORM_MIN_ENTITIES, len(pool), target)
-            for item in random.sample(pool, floor):
+            for item in self._rng.sample(pool, floor):
                 if id(item) not in selected_ids:
                     selected.append(item)
                     selected_ids.add(id(item))
@@ -1883,12 +2107,14 @@ class DuckDBSampledValidator:
         # Fill the rest of the budget with a random draw over everything not yet picked.
         remaining = [it for it in all_entities if id(it) not in selected_ids]
         fill = max(0, target - len(selected))
-        selected.extend(random.sample(remaining, min(fill, len(remaining))))
+        selected.extend(self._rng.sample(remaining, min(fill, len(remaining))))
         entities_to_validate = selected[:target]
 
-        total_validated = 0
-        total_passed = 0
         sample_results = []
+        # Per-platform tallies backing the per-platform bar:
+        # {platform: {'validated': n, 'passed': k}}. Single source of truth —
+        # totals are derived below.
+        platform_stats: Dict[str, Dict[str, int]] = {}
 
         entities_by_platform = {}
         for entity, platform, job_id in entities_to_validate:
@@ -1899,20 +2125,23 @@ class DuckDBSampledValidator:
         for platform, entities_with_jobs in entities_by_platform.items():
             entities = [e[0] for e in entities_with_jobs]
             job_ids = [e[1] for e in entities_with_jobs]
+            stats = platform_stats.setdefault(platform, {'validated': 0, 'passed': 0})
             try:
                 results = await self._validate_with_scraper(entities, platform)
                 for i, result in enumerate(results):
                     job_id = job_ids[i] if i < len(job_ids) else 'unknown'
-                    total_validated += 1
+                    stats['validated'] += 1
                     if result.is_valid:
-                        total_passed += 1
+                        stats['passed'] += 1
                         sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
                     else:
                         sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
             except Exception as e:
-                total_validated += len(entities)
+                stats['validated'] += len(entities)
                 sample_results.append(f"❌ {platform}: Scraper error - {e}")
 
+        total_validated = sum(s['validated'] for s in platform_stats.values())
+        total_passed = sum(s['passed'] for s in platform_stats.values())
         success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
 
         # Log detailed results for miners to debug
@@ -1927,7 +2156,8 @@ class DuckDBSampledValidator:
             'entities_validated': total_validated,
             'entities_passed': total_passed,
             'success_rate': success_rate,
-            'sample_results': sample_results
+            'sample_results': sample_results,
+            'platform_stats': platform_stats,
         }
 
     def _create_data_entity(self, row, platform: str) -> Optional[DataEntity]:
@@ -2168,6 +2398,57 @@ class DuckDBSampledValidator:
             job_coverage_rate=0.0
         )
 
+    def _per_platform_issues(self, platform_stats: Dict[str, Dict[str, int]]) -> List[str]:
+        """Issues for platforms that fail MIN_SCRAPER_SUCCESS on their own sample.
+
+        Only platforms with at least SCRAPER_PLATFORM_MIN_ENTITIES validated
+        entities are held to the bar — below that, one bad row would swing the
+        rate by 20+ points.
+        """
+        issues = []
+        for plat, stats in sorted(platform_stats.items()):
+            validated = stats.get('validated', 0)
+            if validated < self.SCRAPER_PLATFORM_MIN_ENTITIES:
+                continue
+            rate = stats.get('passed', 0) / validated * 100.0
+            if rate < self.MIN_SCRAPER_SUCCESS:
+                issues.append(f"Low {plat} scraper success: {rate:.1f}%")
+        return issues
+
+    def _pick_suspicious_files(self, active_files: list, pool: list, k: int) -> list:
+        """Pick up to k files from pool by listing-time anomaly signals.
+
+        Signals are computed from object metadata alone (no downloads).
+
+        Detection-only slice: callers must exclude these picks from the scraper
+        entity pool so the anomaly bias can't skew the pass-rate estimate.
+        Unscored remainder is filled with committed-random picks.
+        """
+        if k <= 0 or not pool:
+            return []
+        size_counts: Dict[int, int] = {}
+        for f, _ in active_files:
+            s = f.get('size', 0)
+            size_counts[s] = size_counts.get(s, 0) + 1
+        mtimes = sorted(f.get('last_modified', '') for f, _ in active_files)
+        newest_cutoff = mtimes[int(len(mtimes) * 0.9)] if mtimes else ''
+
+        def _score(item):
+            f, _ = item
+            score = 0
+            if size_counts.get(f.get('size', 0), 0) >= 3:
+                score += 2
+            if newest_cutoff and f.get('last_modified', '') >= newest_cutoff:
+                score += 1
+            return score
+
+        scored = [(it, _score(it)) for it in pool]
+        self._rng.shuffle(scored)  # committed-random tiebreak within a score
+        scored.sort(key=lambda x: -x[1])
+        # Top-k after the stable sort: highest-scored first, committed-random
+        # fill among the unscored remainder.
+        return [it for it, _ in scored[:k]]
+
     def close(self):
         """Cleanup resources: delete this eval's cached temp files."""
         for path in self._local_files.values():
@@ -2207,7 +2488,8 @@ def load_expected_jobs_from_gravity() -> Dict:
 async def validate_s3_miner_data(
     wallet, s3_auth_url: str, miner_hotkey: str,
     config=None, s3_reader=None,
-    sample_percent: float = 10.0
+    sample_percent: float = 10.0,
+    seed_material: Optional[str] = None
 ) -> S3ValidationResult:
     """
     S3 validation using DuckDB-based sampled validation with competition scoring.
@@ -2233,7 +2515,8 @@ async def validate_s3_miner_data(
             wallet=wallet,
             s3_auth_url=s3_auth_url,
             s3_reader=s3_reader,
-            sample_percent=sample_percent
+            sample_percent=sample_percent,
+            seed_material=seed_material
         )
         result = await validator.validate_miner_s3_data(
             miner_hotkey, expected_jobs

@@ -34,7 +34,12 @@ from vali_utils import metrics, utils as vali_utils
 
 from typing import Dict, List, Optional, Tuple
 from vali_utils.validator_s3_access import ValidatorS3Access
-from vali_utils.s3_utils import validate_s3_miner_data, get_s3_validation_summary, S3ValidationResult
+from vali_utils.s3_utils import (
+    validate_s3_miner_data,
+    get_s3_validation_summary,
+    S3ValidationResult,
+    committed_seed_block,
+)
 from vali_utils.s3_logging_utils import log_s3_validation_table
 from vali_utils.s3_validation_results_client import (
     MACROCOSMOS_VALIDATOR_UID,
@@ -115,6 +120,10 @@ class MinerEvaluator:
         # rarely and share. Guarded by a lock — miner evals run in parallel.
         self._od_stats_cache: Optional[Tuple[dt.datetime, OnDemandJobsStatsResponse]] = None
         self._od_stats_lock = threading.Lock()
+        # Committed-sampling seed hash, memoized per seed block so a parallel
+        # eval batch makes one chain RPC instead of one per miner.
+        self._seed_hash_cache: Optional[Tuple[int, str]] = None
+        self._seed_hash_lock = threading.Lock()
         # Cache API client construction params (derived once, reused every eval).
         self._api_base_url = self.config.s3_auth_url
         self._api_verify_ssl = "localhost" not in self._api_base_url
@@ -650,6 +659,7 @@ class MinerEvaluator:
                 uid=uid,
                 effective_size=s3_validation_result.effective_size_bytes,
                 validation_passed=s3_validation_result.is_valid,
+                pass_rate=s3_validation_result.pass_rate,
             )
 
         # Query the miner for the latest index.
@@ -814,13 +824,37 @@ class MinerEvaluator:
 
         bt.logging.info(f"UID:{uid} - HOTKEY:{hotkey}: Starting comprehensive S3 validation")
 
+        # Committed sampling seed: the hash of a recent block. It did not exist
+        # when the miner uploaded/arranged their data, so the sample draw is
+        # unpredictable to them, yet reproducible afterwards from (block hash,
+        # file manifest). Memoized per seed block — a parallel eval batch shares
+        # one chain RPC instead of contending on the subtensor websocket.
+        # On any failure fall back to None → unseeded sampling.
+        seed_material = None
+        try:
+            seed_block = committed_seed_block(current_block)
+            with self._seed_hash_lock:
+                if self._seed_hash_cache and self._seed_hash_cache[0] == seed_block:
+                    seed_material = self._seed_hash_cache[1]
+            if seed_material is None:
+                seed_material = self.metagraph_syncer.subtensor.get_block_hash(seed_block)
+                with self._seed_hash_lock:
+                    self._seed_hash_cache = (seed_block, seed_material)
+        except Exception as e:
+            # Not fatal, but the cycle degrades to unseeded (non-reproducible)
+            # sampling — worth surfacing above debug.
+            bt.logging.warning(
+                f"UID:{uid}: block hash unavailable, sampling uncommitted this cycle: {e}"
+            )
+
         try:
             # Use S3 auth URL from config
             s3_auth_url = self.config.s3_auth_url
 
             s3_validation_result = await validate_s3_miner_data(
                 self.wallet, s3_auth_url, hotkey,
-                config=self.config, s3_reader=self.s3_reader
+                config=self.config, s3_reader=self.s3_reader,
+                seed_material=seed_material
             )
             
             # Log results with rich table
@@ -879,6 +913,8 @@ class MinerEvaluator:
                                 s3_validation_result.effective_size_bytes
                             ),
                             "validation_passed": bool(s3_validation_result.is_valid),
+                            "scraper_pass_rate": s3_validation_result.pass_rate,
+                            "hard_invalid": bool(s3_validation_result.hard_invalid),
                         }
                     }
                 )
@@ -938,6 +974,8 @@ class MinerEvaluator:
             sample_job_mismatches=[],
             effective_size_bytes=published.effective_size_bytes,
             job_coverage_rate=0.0,
+            hard_invalid=published.hard_invalid,
+            pass_rate=published.scraper_pass_rate,
         )
         self.s3_storage.update_validation_info(hotkey, 0, current_block)
         return result

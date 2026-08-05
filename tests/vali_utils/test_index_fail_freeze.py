@@ -49,6 +49,8 @@ class TestEvalMinerS3BeforeIndex(unittest.TestCase):
                 is_valid=False,
                 reason="stale files",
                 effective_size_bytes=123_456,
+                pass_rate=None,
+                hard_invalid=False,
             )
         )
         return ev
@@ -59,7 +61,8 @@ class TestEvalMinerS3BeforeIndex(unittest.TestCase):
 
         ev._perform_s3_validation.assert_awaited_once()
         ev.scorer.update_s3_effective_size.assert_called_once_with(
-            uid=0, effective_size=123_456, validation_passed=False
+            uid=0, effective_size=123_456, validation_passed=False,
+            pass_rate=None,
         )
         # The no-index path still reports the failed validation to the scorer.
         ev.scorer.on_miner_evaluated.assert_called_once()
