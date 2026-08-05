@@ -248,14 +248,9 @@ class DuckDBSampledValidator:
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
 
     # Per-platform scraper-sampling floor. Every platform with claimed rows in
-    # the sampled files must get at least SCRAPER_PLATFORM_MIN_ENTITIES rows
-    # scraper-validated, regardless of the random draw. Without this, a miner
-    # can keep a small pool of real data as ballast and bury fabricated
-    # high-volume data (e.g. 76% fake X) that the 20-row scraper sample rarely
-    # inspects. A platform reaching the floor sample is also held to
-    # MIN_SCRAPER_SUCCESS on its own: with one combined bar, a failing leg on
-    # one platform passes via dilution when the other platform's entities are
-    # clean (5 X entities in a 20-draw can fail 2/5 and still clear 80% overall).
+    # the sampled files gets at least this many rows scraper-validated,
+    # regardless of the random draw, and each platform reaching the floor is
+    # held to MIN_SCRAPER_SUCCESS on its own rather than in a combined rate.
     SCRAPER_PLATFORM_MIN_ENTITIES = 5
 
     # File size limits - prevent empty file exploit and oversized file OOM
@@ -531,9 +526,7 @@ class DuckDBSampledValidator:
             # Slice 1 — row-weighted: selection probability proportional to
             # CLAIMED ROW share, not byte share. effective_size is row-based, so
             # rows are what's scored; bytes are an artifact of compression.
-            # Byte-weighting let a fabricator hide fake volume in files that
-            # compress small, so the rows driving the effective_size claim went
-            # under-inspected. Tie sampling to the quantity actually rewarded.
+            # Sampling tracks the quantity actually rewarded.
             weights = [_claimed_rows(it) for it in active_files]
             sampled_files_with_job = _weighted_sample_without_replacement(
                 active_files, weights, weighted_count, rng=self._rng
@@ -541,8 +534,8 @@ class DuckDBSampledValidator:
             picked_keys = {f.get('key') for f, _ in sampled_files_with_job}
 
             # Slice 2 — uniform over JOBS: the weighted draw concentrates on the
-            # mega-jobs, leaving the long tail as a permanent audit shadow. Pick
-            # jobs uniformly and take each job's biggest-claim file.
+            # largest jobs, so draw jobs uniformly as well and take each one's
+            # biggest-claim file.
             remaining = [it for it in active_files if it[0].get('key') not in picked_keys]
             jobs_to_files: Dict[str, list] = {}
             for it in remaining:
@@ -658,8 +651,7 @@ class DuckDBSampledValidator:
             if scraper_success_rate is not None and scraper_success_rate < self.MIN_SCRAPER_SUCCESS:
                 issues.append(f"Low scraper success: {scraper_success_rate:.1f}%")
             # Per-platform bar: each platform with a floor-sized sample must
-            # reach MIN_SCRAPER_SUCCESS on its own — a dirty X leg can't pass
-            # by dilution in the combined rate against clean Reddit ballast.
+            # reach MIN_SCRAPER_SUCCESS on its own, not just in the combined rate.
             issues.extend(self._per_platform_issues(scraper_result.get('platform_stats', {})))
 
             # Compression exploit detection — always fail
@@ -2082,11 +2074,9 @@ class DuckDBSampledValidator:
             return {'entities_validated': 0, 'entities_passed': 0, 'success_rate': 0, 'sample_results': []}
 
         # Per-platform floor: any platform with claimed rows in the sampled files
-        # must contribute >= SCRAPER_PLATFORM_MIN_ENTITIES to the scraper sample,
-        # so a platform can't be crowded out of the 20-row draw by ballast on
-        # another platform — and can't dodge sampling by staying a small share of
-        # claimed rows while still collecting row credit. Claimed rows are measured
-        # over the sampled files (what we actually pulled), keyed by job platform.
+        # contributes >= SCRAPER_PLATFORM_MIN_ENTITIES to the scraper sample, so
+        # every platform earning row credit gets independently checked. Claimed
+        # rows are measured over the sampled files, keyed by job platform.
         platform_claimed_rows: Dict[str, int] = {}
         for f in sampled_files:
             fk = f.get('key', '')
@@ -2122,9 +2112,9 @@ class DuckDBSampledValidator:
         entities_to_validate = selected[:target]
 
         sample_results = []
-        # Per-platform tallies so a dirty platform can't hide behind a clean
-        # one under the combined bar: {platform: {'validated': n, 'passed': k}}
-        # The single source of truth — totals are derived below.
+        # Per-platform tallies backing the per-platform bar:
+        # {platform: {'validated': n, 'passed': k}}. Single source of truth —
+        # totals are derived below.
         platform_stats: Dict[str, Dict[str, int]] = {}
 
         entities_by_platform = {}
@@ -2427,13 +2417,9 @@ class DuckDBSampledValidator:
         return issues
 
     def _pick_suspicious_files(self, active_files: list, pool: list, k: int) -> list:
-        """Pick up to k files from pool by cheap listing-time anomaly signals.
+        """Pick up to k files from pool by listing-time anomaly signals.
 
-        Signals (computable without downloading anything):
-        - exact byte size repeated across >= 3 files: padding/template/copy
-          fingerprint (honest scrapes essentially never collide on exact size)
-        - newest 10% by last_modified: volume added since the last pass, which
-          has the least audit history
+        Signals are computed from object metadata alone (no downloads).
 
         Detection-only slice: callers must exclude these picks from the scraper
         entity pool so the anomaly bias can't skew the pass-rate estimate.

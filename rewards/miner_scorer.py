@@ -35,7 +35,9 @@ class MinerScorer:
     #      model counts only the latest snapshot per job, so prior scores are not comparable.
     # v17: Reset P2P score/credibility — per-entity content-size validation closes
     #      the underdeclared filler exploit that inflated every advertised bucket.
-    STATE_VERSION = 17
+    # v18: Reset S3 — s3_credibility now tracks the observed scraper pass rate,
+    #      so pre-rollout values aren't comparable.
+    STATE_VERSION = 18
 
     # Start new miner's at a credibility of 0.
     STARTING_CREDIBILITY = 0
@@ -180,15 +182,15 @@ class MinerScorer:
             #     self.ondemand_boosts.zero_()
             #     self.ondemand_credibility.fill_(MinerScorer.STARTING_ONDEMAND_CREDIBILITY)
 
-            if saved_version < 17:
+            if saved_version < 18:
                 bt.logging.warning(
-                    f"State migration v{saved_version} -> v17: "
-                    f"P2P score/credibility reset (per-entity content-size "
-                    f"validation rollout)"
+                    f"State migration v{saved_version} -> v18: "
+                    f"S3 boost/credibility/effective_size reset "
+                    f"(quality-adjusted scoring rollout)"
                 )
-                self.scores.zero_()
-                self.scorable_bytes.zero_()
-                self.miner_credibility.fill_(MinerScorer.STARTING_CREDIBILITY)
+                self.s3_boosts.zero_()
+                self.s3_credibility.fill_(MinerScorer.STARTING_S3_CREDIBILITY)
+                self.effective_sizes.zero_()
 
     def get_scores(self) -> torch.Tensor:
         """Returns the raw scores of all miners."""
@@ -200,13 +202,11 @@ class MinerScorer:
     def _s3_component(s3_boost: float, s3_cred: float, od_component: float) -> float:
         """S3 reward: raw boost capped at 2x OD, THEN scaled by credibility.
 
-        TEMPORARY cap: prevents fabricators from profiting purely off S3 volume;
-        legit miners with real OD participation still get rewarded for S3. Will
-        be replaced by proper incentive redesign.
+        TEMPORARY cap: ties S3 reward to real OD participation. Will be replaced
+        by proper incentive redesign.
 
-        The order matters economically: applied after (boost x cred capped at
-        2xOD), any credibility above (cap/boost)^(1/2.5) saturated the cap and
-        validation failures cost nothing — a 2B boost hit the cap from cred 0.435.
+        Order matters: the cap applies to the raw boost so credibility always
+        scales the final component.
         """
         if od_component <= 0:
             return 0.0
