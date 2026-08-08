@@ -21,8 +21,6 @@ REQUIRED_FIELDS = [
 
 OPTIONAL_FIELDS = [
     "user_id",
-    "user_display_name",
-    "user_verified",
     "tweet_id",
     "is_reply",
     "is_quote",
@@ -34,7 +32,20 @@ OPTIONAL_FIELDS = [
     "quoted_tweet_id",
     # ===== NEW USER PROFILE FIELDS =====
     "user_blue_verified",
+]
+
+# Profile metadata fields that the user can edit freely at any time (bio,
+# location, avatar, banner). Comparing these with exact-match validation
+# causes false-positive failures whenever the profile was edited between
+# scrape time and validation time -- unrelated to whether the tweet itself
+# is authentic. Confirmed 2026-07-18 via live on-demand validation failure:
+# "Field: user_description do not match" on a tweet whose text/url/hashtags
+# were all correct. These fields are intentionally NEVER validated (same
+# treatment as Reddit's score/upvote_ratio in scraping/reddit/utils.py).
+PROFILE_METADATA_FIELDS = [
     "user_description",
+    "user_display_name",
+    "user_verified",
     "user_location",
     "profile_image_url",
     "cover_picture_url",
