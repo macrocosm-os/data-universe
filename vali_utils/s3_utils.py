@@ -3,6 +3,7 @@ S3 validation utilities for enhanced miner data validation.
 Provides comprehensive validation of S3-stored miner data using metadata analysis.
 """
 
+import asyncio
 import hashlib
 import random
 import re
@@ -26,6 +27,34 @@ from scraping.scraper import ScraperId, ValidationResult
 from scraping.x.model import XContent
 from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
+
+
+# Exceptions that mean "the VALIDATOR could not reach the source", never "the miner's data
+# is bad". Kept deliberately NARROW: anything not listed here (ValueError, KeyError,
+# TypeError, pydantic ValidationError, ...) is attributable to the DATA and must keep
+# counting as a miner failure, or a miner could submit rows crafted to crash the scraper
+# and have their own sampled batch excluded. Mirrors merged PR #844, which exempted only
+# 5xx / Timeout / Connect / Read on the on-demand path.
+#
+# requests is already a dependency of this module; httpx and aiohttp are added only if the
+# installed scrapers bring them, so a validator without them still imports cleanly.
+_INFRA_SCRAPER_ERRORS: tuple = (
+    asyncio.TimeoutError,
+    ConnectionError,          # incl. ConnectionResetError / ConnectionAbortedError
+    TimeoutError,             # builtin; == socket.timeout on py3.10+
+    requests.exceptions.Timeout,
+    requests.exceptions.ConnectionError,
+)
+try:                                              # pragma: no cover - optional dependency
+    import httpx as _httpx
+    _INFRA_SCRAPER_ERRORS += (_httpx.TimeoutException, _httpx.TransportError)
+except Exception:                                 # noqa: BLE001
+    pass
+try:                                              # pragma: no cover - optional dependency
+    import aiohttp as _aiohttp
+    _INFRA_SCRAPER_ERRORS += (_aiohttp.ClientConnectionError, _aiohttp.ServerTimeoutError)
+except Exception:                                 # noqa: BLE001
+    pass
 from common.api_client import TaoSigner
 from vali_utils.parquet_reader import read_random_row_group
 from urllib.parse import urlparse
@@ -1992,6 +2021,63 @@ class DuckDBSampledValidator:
             (not has_time or time_matches)
         )
 
+    async def _scrape_check_by_platform(self, entities_by_platform):
+        """Run the scraper per platform and tally results. Extracted so the
+        infra-vs-data distinction below is unit-testable without standing up parquet
+        downloads, presigned URLs and duckdb.
+
+        Returns (platform_stats, sample_results, scraper_errored) where platform_stats is
+        {platform: {'validated': n, 'passed': k}} — the single source of truth that both
+        the global success rate and `_per_platform_issues` are derived from.
+        """
+        sample_results = []
+        # Per-platform tallies backing the per-platform bar.
+        platform_stats: Dict[str, Dict[str, int]] = {}
+        # True once any platform's scraper call fails for a VALIDATOR-side infra reason.
+        # Only consulted when nothing at all got validated.
+        scraper_errored = False
+
+        for platform, entities_with_jobs in entities_by_platform.items():
+            entities = [e[0] for e in entities_with_jobs]
+            job_ids = [e[1] for e in entities_with_jobs]
+            stats = platform_stats.setdefault(platform, {'validated': 0, 'passed': 0})
+            try:
+                results = await self._validate_with_scraper(entities, platform)
+                for i, result in enumerate(results):
+                    job_id = job_ids[i] if i < len(job_ids) else 'unknown'
+                    stats['validated'] += 1
+                    if result.is_valid:
+                        stats['passed'] += 1
+                        sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
+                    else:
+                        sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
+            except _INFRA_SCRAPER_ERRORS as e:
+                # VALIDATOR-side infrastructure failure (timeout / connection reset / DNS /
+                # socket), not miner data. Counting these entities as `validated` without
+                # `passed` turns our own outage into the miner's scraper-success rate.
+                #
+                # This is now doubly damaging because `_per_platform_issues` holds EACH
+                # platform to MIN_SCRAPER_SUCCESS on its own sample: an outage while
+                # scraping one platform drives that platform's rate to ~0, which appends an
+                # issue, which makes `is_valid` False, which zeroes `effective_size` for the
+                # WHOLE submission — both platforms, every job, on the validator's network
+                # blip. Skipping the entities leaves the platform's prior-cycle credibility
+                # to stand, which is what the None branch below is for.
+                scraper_errored = True
+                sample_results.append(
+                    f"⚠️ {platform}: scraper infra error (validator-side, not counted) - {e}")
+            except Exception as e:
+                # NOT infra: a parse/type/value error is attributable to the DATA, so it
+                # stays a miner failure exactly as before. Narrowing matters — a bare
+                # `except` here would let a miner submit rows crafted to crash the scraper
+                # and have the whole sampled batch excluded from their own success rate.
+                # Mirrors merged PR #844, which exempted only 5xx/Timeout/Connect/Read on
+                # the on-demand path rather than every exception.
+                stats['validated'] += len(entities)
+                sample_results.append(f"❌ {platform}: Scraper error - {e}")
+
+        return platform_stats, sample_results, scraper_errored
+
     async def _perform_scraper_validation(
         self,
         miner_hotkey: str,
@@ -2216,43 +2302,34 @@ class DuckDBSampledValidator:
             self._rng.shuffle(selected)
         entities_to_validate = selected[:target]
 
-        sample_results = []
-        # Per-platform tallies backing the per-platform bar:
-        # {platform: {'validated': n, 'passed': k}}. Single source of truth —
-        # totals are derived below.
-        platform_stats: Dict[str, Dict[str, int]] = {}
-
         entities_by_platform = {}
         for entity, platform, job_id in entities_to_validate:
             if platform not in entities_by_platform:
                 entities_by_platform[platform] = []
             entities_by_platform[platform].append((entity, job_id))
 
-        for platform, entities_with_jobs in entities_by_platform.items():
-            entities = [e[0] for e in entities_with_jobs]
-            job_ids = [e[1] for e in entities_with_jobs]
-            stats = platform_stats.setdefault(platform, {'validated': 0, 'passed': 0})
-            try:
-                results = await self._validate_with_scraper(entities, platform)
-                for i, result in enumerate(results):
-                    job_id = job_ids[i] if i < len(job_ids) else 'unknown'
-                    stats['validated'] += 1
-                    if result.is_valid:
-                        stats['passed'] += 1
-                        sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
-                    else:
-                        sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
-            except Exception as e:
-                stats['validated'] += len(entities)
-                sample_results.append(f"❌ {platform}: Scraper error - {e}")
-
+        platform_stats, sample_results, scraper_errored = \
+            await self._scrape_check_by_platform(entities_by_platform)
         total_validated = sum(s['validated'] for s in platform_stats.values())
         total_passed = sum(s['passed'] for s in platform_stats.values())
-        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+        if total_validated > 0:
+            success_rate = total_passed / total_validated * 100
+        elif scraper_errored:
+            # EVERY scraper call hit validator-side infra trouble and nothing was actually
+            # validated. Returning 0.0 here would report a 0% miner score for our own
+            # outage. None is already the established "no signal" value on this path — the
+            # caller checks `if scraper_success_rate is not None` before applying the
+            # MIN_SCRAPER_SUCCESS gate, and `_build_result` already coerces None to 0.0 for
+            # the dataclass field. So None means "skip the gate, rely on the credibility
+            # from previous cycles", which is the correct treatment of no evidence.
+            success_rate = None
+        else:
+            success_rate = 0
 
         # Log detailed results for miners to debug
         bt.logging.success(
-            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
+            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed "
+            f"({'n/a — validator-side scraper outage' if success_rate is None else f'{success_rate:.1f}%'})"
         )
         bt.logging.info(
             f"{miner_hotkey}: S3 scraper validation details: {sample_results}"
