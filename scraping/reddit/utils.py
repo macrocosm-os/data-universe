@@ -164,9 +164,11 @@ def validate_reddit_content(
     # Why this is not a fabrication lever:
     #   * The marker comes from the validator's OWN fresh re-fetch, which a miner cannot
     #     control, so the exemption only ever applies to GENUINELY removed content.
-    #   * Every immutable identity field (id, url, url-embedded id, username, community,
-    #     obfuscated datetime, parent id) is verified ABOVE this point, so identity is
-    #     fully confirmed before the body is trusted.
+    #   * Every immutable identity field is verified INDEPENDENTLY of the body: id, url,
+    #     url-embedded id, username and community are checked above; the obfuscated
+    #     datetime and parent id are checked below. Skipping the body comparison never
+    #     skips any of them, so identity is fully confirmed before this function can
+    #     return valid.
     #   * The success path credits content_size_bytes_validated = the actual (removed)
     #     size, so a fabricated body cannot inflate the credibility-weighted byte channel
     #     (rewards/miner_scorer.py credibility update).
@@ -175,8 +177,17 @@ def validate_reddit_content(
     #     there is no empty-body fabrication vector.
     # Inherent, bounded residual: once a body is deleted there is no ground truth, so on a
     # genuinely-removed post an honest miner and a fabricator are indistinguishable, and the
-    # self-reported P2P index size for such a row is not re-checked here. This is bounded by
-    # the identity checks above + the per-bucket byte cap; S3 scoring never calls this path.
+    # self-reported P2P index size for such a row is not re-checked here.
+    #
+    # SCOPE (corrected): this DOES also run under S3 validation. `vali_utils/s3_utils.py`
+    # maps PREFERRED_SCRAPERS[DataSource.REDDIT] = ScraperId.REDDIT_MC and resolves it via
+    # scraper_provider.get(), and RedditMCScraper.validate() calls this function. On that
+    # path the byte-credit mitigation above does NOT bind, because S3 counts pass/fail
+    # toward MIN_SCRAPER_SUCCESS (and the per-platform bar) rather than validated bytes.
+    # What still binds there is the identity checks plus the sampling arithmetic: the
+    # exemption only fires when the validator's own re-fetch returns the marker, so
+    # exploiting it would require most of a random sample to be genuinely removed posts
+    # against an 80% bar.
     content_body_removed = (
         (actual_content.body or "").strip() in ("[removed]", "[deleted]")
     )
