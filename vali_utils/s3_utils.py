@@ -2539,6 +2539,23 @@ class DuckDBSampledValidator:
 
             scraper = self.scraper_provider.get(PREFERRED_SCRAPERS[data_source])
             return await scraper.validate(entities)
+        except _INFRA_SCRAPER_ERRORS:
+            # Let a VALIDATOR-side infra failure propagate to the caller, which books it
+            # as "no verdict" instead of a miner failure. Swallowing it here and returning
+            # is_valid=False results is what made our own outage look identical to bad
+            # data: the results get tallied as validated-but-not-passed, which is exactly
+            # the attribution this PR is about. Reachability matters — without this the
+            # caller's infra branch can never fire, because nothing else in this method
+            # raises.
+            #
+            # Deliberately NOT extended to the per-entity Apify path: both scrapers catch
+            # their own faults and return them as results, and apidojo_scraper.py:68-82
+            # documents that upstream penalises there ON PURPOSE, because a bad URI can be
+            # made to time the Actor out and a genuine outage is indistinguishable from
+            # malicious input. This only covers failures raised BEFORE any entity is
+            # touched — provider construction, config, transport — which no miner can
+            # induce.
+            raise
         except Exception as e:
             return [ValidationResult(is_valid=False, reason=f"Scraper error: {e}", content_size_bytes_validated=0) for _ in entities]
 

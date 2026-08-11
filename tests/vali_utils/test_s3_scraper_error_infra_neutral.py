@@ -127,3 +127,55 @@ class TestInfraNeutralScraperValidation(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TestInfraErrorActuallyReachesTheCaller(unittest.TestCase):
+    """The infra branch is worth nothing unless a real infra failure can REACH it.
+
+    `_validate_with_scraper` wrapped its whole body in `except Exception` and returned
+    is_valid=False results, so nothing it did could ever raise: the caller's
+    `except _INFRA_SCRAPER_ERRORS` was unreachable in production, and the tests above
+    passed only because they replace the method with a fake that raises. These drive the
+    REAL method, so they fail if that swallowing is ever reintroduced.
+    """
+
+    @staticmethod
+    def _validator(exc):
+        """Real `_validate_with_scraper`; only the scraper PROVIDER is faked, so the
+        failure happens before any entity is touched — the case no miner can induce."""
+        v = object.__new__(DuckDBSampledValidator)
+        provider = mock.MagicMock()
+        provider.get.side_effect = exc
+        v.scraper_provider = provider
+        return v
+
+    def test_infra_error_propagates_out_of_validate_with_scraper(self):
+        v = self._validator(ConnectionError("no route to host"))
+        with self.assertRaises(ConnectionError):
+            asyncio.run(v._validate_with_scraper(_entities(3), "reddit"))
+
+    def test_data_error_is_still_swallowed_as_a_miner_failure(self):
+        """The narrowing has to hold in this method too, not just in the caller."""
+        v = self._validator(ValueError("unparseable scraper config"))
+        results = asyncio.run(v._validate_with_scraper(_entities(3), "reddit"))
+        self.assertEqual(len(results), 3)
+        self.assertTrue(all(not r.is_valid for r in results))
+
+    def test_end_to_end_outage_is_not_charged_to_the_miner(self):
+        """Real `_validate_with_scraper` AND real `_scrape_check_by_platform`, nothing
+        stubbed between them — this is the path a validator actually executes."""
+        v = self._validator(TimeoutError("connect timed out"))
+        stats, _samples, errored = asyncio.run(
+            v._scrape_check_by_platform({"reddit": [(e, "j") for e in _entities(5)]})
+        )
+        self.assertTrue(errored, "infra outage never reached the caller's infra branch")
+        self.assertEqual(stats["reddit"], {"validated": 0, "passed": 0},
+                         "validator-side outage was booked against the miner")
+
+    def test_end_to_end_data_error_still_counts(self):
+        v = self._validator(ValueError("unparseable scraper config"))
+        stats, _samples, errored = asyncio.run(
+            v._scrape_check_by_platform({"reddit": [(e, "j") for e in _entities(5)]})
+        )
+        self.assertFalse(errored)
+        self.assertEqual(stats["reddit"], {"validated": 5, "passed": 0})
