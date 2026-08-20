@@ -387,8 +387,11 @@ class TestValidateScrapedAt(unittest.TestCase):
         # Reddit's 10,000-CHARACTER comment limit.
         self.assertTrue(validate("\u754c" * 5_000).is_valid)
 
-        # A body beyond Reddit's own character limit cannot have existed pre-removal.
-        self.assertFalse(validate("a" * 10_001).is_valid)
+        # An absurd body cannot have existed pre-removal. The bound is deliberately far
+        # above Reddit's own limits — it exists to exclude fabrication (claimed == shipped
+        # == invented, uncheckable because the real body is gone), not to police length.
+        self.assertTrue(validate("a" * 40_000).is_valid)
+        self.assertFalse(validate("a" * 100_001).is_valid)
 
 
 if __name__ == "__main__":

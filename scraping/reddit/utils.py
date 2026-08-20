@@ -13,11 +13,14 @@ from common.data import DataEntity, DataLabel
 from common.constants import REDDIT_MEDIA_REQUIRED_DATE
 
 
-# Reddit's own body length limits, in CHARACTERS (the unit Reddit enforces). A body that
-# existed before removal cannot have exceeded them, so these bound the removed-body
-# exemption without ever rejecting an honest row.
-REDDIT_MAX_POST_BODY_CHARS = 40_000
-REDDIT_MAX_COMMENT_BODY_CHARS = 10_000
+# Upper bound, in CHARACTERS, on a body that could plausibly have existed before removal.
+# Deliberately far above Reddit's own limits (documented as 40,000 for a self-post body
+# and 10,000 for a comment) rather than equal to them: the exact figure is NOT the point
+# and is not load-bearing. Its only job is to exclude ABSURD claims on a body that no
+# longer exists and therefore cannot be checked. Being generous is the safe direction —
+# too LOW would reject honest rows, which is the very failure this module is fixing, and
+# the precise current limits could not be verified from an authoritative source.
+REDDIT_MAX_PLAUSIBLE_BODY_CHARS = 100_000
 
 
 def is_valid_reddit_url(url: str) -> bool:
@@ -329,19 +332,17 @@ def validate_reddit_content(
                 content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
 
-        # Belt-and-braces on the removed path: bound the body by Reddit's own limits, in
-        # CHARACTERS — the unit Reddit itself enforces. Deliberately NOT bytes: content
-        # sizes are `json(by_alias=True)` with ensure_ascii, which escapes non-ASCII to
-        # 6 bytes/char and astral emoji to 12 (scraping/reddit/model.py), so a byte-
-        # denominated ceiling would reject honest CJK/Cyrillic/emoji bodies — the very
-        # false-rejection this whole change exists to remove.
+        # The re-serialization above stops PADDING (claimed larger than what the content
+        # actually serializes to). It cannot stop a FABRICATED body — claimed == shipped
+        # == invented — because the real body is gone and there is nothing to compare
+        # against. So also bound the body itself, in CHARACTERS.
+        #
+        # Characters, not bytes, is load-bearing: content sizes are `json(by_alias=True)`
+        # with ensure_ascii, which escapes non-ASCII to ~6 bytes/char and astral emoji to
+        # ~12 (scraping/reddit/model.py), so a byte-denominated ceiling would reject honest
+        # CJK/Cyrillic/emoji bodies — the very false rejection this change exists to remove.
         if content_body_removed:
-            max_body_chars = (
-                REDDIT_MAX_COMMENT_BODY_CHARS
-                if actual_content.data_type == RedditDataType.COMMENT
-                else REDDIT_MAX_POST_BODY_CHARS
-            )
-            if len(content_to_validate.body or "") > max_body_chars:
+            if len(content_to_validate.body or "") > REDDIT_MAX_PLAUSIBLE_BODY_CHARS:
                 return ValidationResult(
                     is_valid=False,
                     reason="The claimed bytes are too big compared to the actual Reddit content",
