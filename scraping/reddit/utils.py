@@ -13,6 +13,13 @@ from common.data import DataEntity, DataLabel
 from common.constants import REDDIT_MEDIA_REQUIRED_DATE
 
 
+# Reddit's own body length limits, in CHARACTERS (the unit Reddit enforces). A body that
+# existed before removal cannot have exceeded them, so these bound the removed-body
+# exemption without ever rejecting an honest row.
+REDDIT_MAX_POST_BODY_CHARS = 40_000
+REDDIT_MAX_COMMENT_BODY_CHARS = 10_000
+
+
 def is_valid_reddit_url(url: str) -> bool:
     """Verifies a URL is both a valid URL and is for reddit.com."""
     if not url:
@@ -301,19 +308,45 @@ def validate_reddit_content(
         # Allow a 10 byte difference to account for timestamp serialization differences.
         byte_difference_allowed = 10
 
-        # Skip this upper-bound size check when the body was removed/deleted after
-        # scraping: the miner's (real) content is legitimately larger than the current
-        # re-fetched "[removed]"/"[deleted]" stub. No inflation results — the final result
-        # credits only the actual (removed) size (below) — and an oversized entity remains
-        # bounded by the per-bucket byte cap enforced upstream.
-        if not content_body_removed and (
-                entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
+        # A removed body makes the re-fetched entity legitimately SMALLER than the miner's
+        # real one, so it cannot be the yardstick here. Rather than drop the check — it is
+        # the only guard stopping a claimed size from being inflated, and P2P scores on the
+        # miner's self-reported index bytes — measure against a CANONICAL re-serialization
+        # of the miner's OWN submitted content. Honest content re-serializes to itself, so
+        # this never rejects an honest row; whitespace-padded JSON does not, so padding is
+        # still caught to within the same 10-byte tolerance as the normal path.
+        size_reference = (
+            RedditContent.to_data_entity(content=content_to_validate.copy())
+            if content_body_removed
+            else actual_entity
+        )
+        if (
+                entity_to_validate.content_size_bytes - size_reference.content_size_bytes
         ) > byte_difference_allowed:
             return ValidationResult(
                 is_valid=False,
                 reason="The claimed bytes are too big compared to the actual Reddit content",
                 content_size_bytes_validated=entity_to_validate.content_size_bytes,
             )
+
+        # Belt-and-braces on the removed path: bound the body by Reddit's own limits, in
+        # CHARACTERS — the unit Reddit itself enforces. Deliberately NOT bytes: content
+        # sizes are `json(by_alias=True)` with ensure_ascii, which escapes non-ASCII to
+        # 6 bytes/char and astral emoji to 12 (scraping/reddit/model.py), so a byte-
+        # denominated ceiling would reject honest CJK/Cyrillic/emoji bodies — the very
+        # false-rejection this whole change exists to remove.
+        if content_body_removed:
+            max_body_chars = (
+                REDDIT_MAX_COMMENT_BODY_CHARS
+                if actual_content.data_type == RedditDataType.COMMENT
+                else REDDIT_MAX_POST_BODY_CHARS
+            )
+            if len(content_to_validate.body or "") > max_body_chars:
+                return ValidationResult(
+                    is_valid=False,
+                    reason="The claimed bytes are too big compared to the actual Reddit content",
+                    content_size_bytes_validated=entity_to_validate.content_size_bytes,
+                )
 
         if not DataEntity.are_non_content_fields_equal(
                 actual_entity, entity_to_validate

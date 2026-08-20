@@ -338,5 +338,58 @@ class TestValidateScrapedAt(unittest.TestCase):
         self.assertIsNone(result)
 
 
+    def test_validate_reddit_content_removed_body_size_is_bounded(self):
+        """The removed-body exemption must not become a size-inflation lever.
+
+        The exemption skips the body comparison, so the "claimed bytes are too big" check
+        is the only thing left tying a claimed size to reality — and P2P scores on the
+        miner's self-reported index bytes. Rather than skip it, the removed path measures
+        against a CANONICAL re-serialization of the miner's own submitted content, plus a
+        CHARACTER-denominated ceiling from Reddit's own limits.
+
+        Character-denominated is load-bearing: content sizes are json(by_alias=True) with
+        ensure_ascii, which escapes non-ASCII to ~6 bytes/char, so a byte-denominated
+        ceiling would reject honest CJK/Cyrillic/emoji bodies — the exact false rejection
+        this whole change exists to remove.
+        """
+        url = "https://www.reddit.com/r/x/comments/post123/slug/abcd/"
+        stamp = dt.datetime(2026, 8, 1, 12, 0, 0, tzinfo=dt.timezone.utc)
+
+        def content(body):
+            return RedditContent(
+                id="t1_abcd", url=url, username="u1", communityName="r/x", body=body,
+                createdAt=stamp, dataType=RedditDataType.COMMENT, parentId="t3_post123",
+                scrapedAt=stamp,
+            )
+
+        removed = content("[removed]")
+
+        def validate(body, extra_claimed_bytes=0):
+            entity = RedditContent.to_data_entity(content=content(body).copy())
+            return utils.validate_reddit_content(
+                actual_content=removed,
+                entity_to_validate=DataEntity(
+                    uri=entity.uri, datetime=entity.datetime, source=DataSource.REDDIT,
+                    label=entity.label, content=entity.content,
+                    content_size_bytes=entity.content_size_bytes + extra_claimed_bytes,
+                ),
+            )
+
+        # An honest row whose body was removed after scraping still validates.
+        self.assertTrue(validate("hello world").is_valid)
+
+        # Padding the claimed size is caught, to the same 10-byte tolerance as the
+        # normal path. This is the vector the exemption would otherwise open.
+        self.assertFalse(validate("hello world", extra_claimed_bytes=50_000).is_valid)
+
+        # An honest multi-byte body is NOT rejected. 5,000 CJK chars serialize to ~30KB,
+        # so a 10,000-BYTE ceiling would wrongly fail this while it is well inside
+        # Reddit's 10,000-CHARACTER comment limit.
+        self.assertTrue(validate("\u754c" * 5_000).is_valid)
+
+        # A body beyond Reddit's own character limit cannot have existed pre-removal.
+        self.assertFalse(validate("a" * 10_001).is_valid)
+
+
 if __name__ == "__main__":
     unittest.main()
