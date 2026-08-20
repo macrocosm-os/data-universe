@@ -41,8 +41,9 @@ class TestS3QualityScoring(unittest.TestCase):
     def test_pass_ema_targets_one_whatever_the_pass_rate(self):
         """Passing is the signal; the observed rate must not grade it again.
 
-        MIN_SCRAPER_SUCCESS already refuses anything under 80% (per platform and
-        combined), so a reported pass means the sample cleared the bar. Grading
+        MIN_SCRAPER_SUCCESS already refuses anything under 80% combined (and
+        under 60% per platform), so a reported pass means the sample cleared
+        the bars. Grading
         the EMA target by the rate on top of that made an honest 19/20 cycle —
         one deleted post, one rate-limited lookup — pull credibility DOWN.
         """
@@ -163,20 +164,30 @@ class TestPerPlatformBar(unittest.TestCase):
         # _per_platform_issues only touches class constants; skip __init__.
         self.validator = object.__new__(DuckDBSampledValidator)
 
-    def test_dirty_x_leg_cannot_hide_behind_clean_reddit(self):
-        """3/5 X + 15/15 Reddit = 90% combined (passes the combined bar) but the
-        X leg alone is 60% — dirty X hidden behind clean Reddit ballast."""
+    def test_mostly_fabricated_platform_is_flagged(self):
+        """A platform BELOW the 60% per-platform bar (2/5 = 40%) is still
+        caught on its own, even hidden behind clean Reddit ballast."""
         issues = self.validator._per_platform_issues({
-            'x': {'validated': 5, 'passed': 3},
+            'x': {'validated': 5, 'passed': 2},          # 40% < 60%
             'reddit': {'validated': 15, 'passed': 15},
         })
         self.assertEqual(len(issues), 1)
         self.assertIn('x', issues[0])
-        self.assertIn('60.0', issues[0])
+        self.assertIn('40.0', issues[0])
+
+    def test_sixty_percent_leg_passes_per_platform_bar(self):
+        """3/5 = 60% is intentionally allowed at the per-platform level: on a
+        5-row sample it's within honest lookup noise. The combined 80% bar
+        (checked in validate_miner_s3_data, not here) remains the strict gate."""
+        issues = self.validator._per_platform_issues({
+            'x': {'validated': 5, 'passed': 3},          # 60% == bar
+            'reddit': {'validated': 15, 'passed': 15},
+        })
+        self.assertEqual(issues, [])
 
     def test_clean_platforms_produce_no_issues(self):
         issues = self.validator._per_platform_issues({
-            'x': {'validated': 5, 'passed': 4},       # 80% == bar
+            'x': {'validated': 5, 'passed': 4},         # 80%
             'reddit': {'validated': 15, 'passed': 14},  # 93%
         })
         self.assertEqual(issues, [])
@@ -188,6 +199,12 @@ class TestPerPlatformBar(unittest.TestCase):
             'x': {'validated': 2, 'passed': 0},
         })
         self.assertEqual(issues, [])
+
+    def test_combined_bar_unchanged_at_80(self):
+        """Guard: the split lowered only the per-platform constant. The combined
+        gate stays 80% so wholesale fabrication is still caught."""
+        self.assertEqual(DuckDBSampledValidator.MIN_SCRAPER_SUCCESS, 80.0)
+        self.assertEqual(DuckDBSampledValidator.MIN_SCRAPER_SUCCESS_PER_PLATFORM, 60.0)
 
 
 if __name__ == '__main__':

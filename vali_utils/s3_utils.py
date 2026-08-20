@@ -243,14 +243,38 @@ class DuckDBSampledValidator:
     MAX_EMPTY_RATE = 10.0       # 10% max empty content
     # Missing URLs = instant fail (no rate threshold needed)
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
-    MIN_SCRAPER_SUCCESS = 80.0  # 80% min scraper success rate
+    MIN_SCRAPER_SUCCESS = 80.0  # 80% min COMBINED scraper success rate (all platforms)
     MIN_ENGAGEMENT_RATE = 95.0  # 95% of X rows must have non-null view_count
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
+
+    # Per-platform scraper bar — deliberately LOOSER than the combined bar.
+    #
+    # The per-platform check runs on a tiny sample (SCRAPER_PLATFORM_MIN_ENTITIES
+    # = 5), where one extra flaky lookup swings the rate 20 points. At an 80%
+    # bar (fail on >=2/5) an HONEST platform whose rows are all real still fails
+    # purely from irreducible noise — deleted/edited posts, third-party rate
+    # limits, stale historical rows — on ~8% of cycles at 10% lookup-noise and
+    # ~26% at 20% (binomial, measured). That mis-FAILs the whole miner and
+    # decays credibility for something they don't control.
+    #
+    # 60% (fail only on >=3/5) drops that honest false-positive rate to ~0.9%
+    # / ~5.8% while still catching a platform that is MOSTLY fabricated. The
+    # COMBINED bar stays at MIN_SCRAPER_SUCCESS = 80%, so wholesale fabrication
+    # and a dirty MAJORITY platform are still caught there; this only relaxes
+    # the case where a MINORITY platform sits between 60% and 80% real.
+    #
+    # NOTE: this partially relaxes the per-platform strictness added in #901
+    # (which used the combined 80% here). Maintainers can retune via this
+    # constant; the statistically cleaner fix for the small-sample noise is a
+    # larger per-platform floor or an absolute-failure allowance, left as a
+    # follow-up so this change stays minimal.
+    MIN_SCRAPER_SUCCESS_PER_PLATFORM = 60.0
 
     # Per-platform scraper-sampling floor. Every platform with claimed rows in
     # the sampled files gets at least this many rows scraper-validated,
     # regardless of the random draw, and each platform reaching the floor is
-    # held to MIN_SCRAPER_SUCCESS on its own rather than in a combined rate.
+    # held to MIN_SCRAPER_SUCCESS_PER_PLATFORM on its own rather than only in
+    # the combined rate.
     SCRAPER_PLATFORM_MIN_ENTITIES = 5
 
     # Rows drawn from each file during the scraper phase. Small and FIXED, not
@@ -2517,7 +2541,13 @@ class DuckDBSampledValidator:
         )
 
     def _per_platform_issues(self, platform_stats: Dict[str, Dict[str, int]]) -> List[str]:
-        """Issues for platforms that fail MIN_SCRAPER_SUCCESS on their own sample.
+        """Issues for platforms below MIN_SCRAPER_SUCCESS_PER_PLATFORM on their
+        own sample.
+
+        The per-platform bar (60%) is looser than the combined bar (80%): the
+        sample is only SCRAPER_PLATFORM_MIN_ENTITIES rows, so an honest platform
+        would mis-fail on normal lookup noise at 80% (see the constant). The
+        combined MIN_SCRAPER_SUCCESS check remains the strict gate.
 
         Only platforms with at least SCRAPER_PLATFORM_MIN_ENTITIES validated
         entities are held to the bar — below that, one bad row would swing the
@@ -2529,7 +2559,7 @@ class DuckDBSampledValidator:
             if validated < self.SCRAPER_PLATFORM_MIN_ENTITIES:
                 continue
             rate = stats.get('passed', 0) / validated * 100.0
-            if rate < self.MIN_SCRAPER_SUCCESS:
+            if rate < self.MIN_SCRAPER_SUCCESS_PER_PLATFORM:
                 issues.append(f"Low {plat} scraper success: {rate:.1f}%")
         return issues
 
