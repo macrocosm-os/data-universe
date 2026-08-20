@@ -260,6 +260,15 @@ class DuckDBSampledValidator:
     # scraper-checked entity. See _perform_scraper_validation.
     SCRAPER_ROWS_PER_FILE = 5
 
+    # Files force-included per platform at SELECTION time (validate_miner_s3_data).
+    # The row-weighted draw + top-5 force-include are platform-blind, so a miner
+    # who shrinks one platform's claimed rows to near-zero makes its files never
+    # get sampled — that platform's data is then never scraper-checked, and its
+    # per-platform bar is vacuous (no entities to hold to MIN_SCRAPER_SUCCESS).
+    # Guaranteeing >= 2 files/platform gives the scraper phase enough rows
+    # (2 x SCRAPER_ROWS_PER_FILE, before URL-dedup) to clear the entity floor.
+    SCRAPER_PLATFORM_MIN_FILES = 2
+
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
     MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024       # 1GB - single file cap
@@ -572,6 +581,34 @@ class DuckDBSampledValidator:
             forced = [item for item in top_n if item[0].get('key') not in picked_keys]
 
             sampled_files_with_job = sampled_files_with_job + forced
+            picked_keys.update(item[0].get('key') for item in forced)
+
+            # Per-platform FILE floor. All four slices above (row-weighted,
+            # uniform-over-jobs, suspicion, top-5) are platform-blind: they key
+            # off claimed rows or job id, never platform. A miner shrinks its X
+            # jobs to a handful of rows so the weighted draw and top-5 pick only
+            # Reddit, and X is never scraper-checked at all (observed: 20/20
+            # sampled entities Reddit, no X). Force in each platform's
+            # highest-claim files until it has >= SCRAPER_PLATFORM_MIN_FILES in
+            # the sample, so every platform earning row credit is inspected and
+            # its per-platform scraper bar can bind.
+            files_by_platform_all: Dict[str, list] = {}
+            for it in active_files:
+                p = self._file_platform(it[0].get('key', ''), expected_jobs)
+                files_by_platform_all.setdefault(p, []).append(it)
+            for p, items in files_by_platform_all.items():
+                have = sum(1 for it in items if it[0].get('key') in picked_keys)
+                need = min(self.SCRAPER_PLATFORM_MIN_FILES, len(items)) - have
+                if need <= 0:
+                    continue
+                extra = sorted(
+                    (it for it in items if it[0].get('key') not in picked_keys),
+                    key=_claimed_rows, reverse=True,
+                )[:need]
+                for it in extra:
+                    sampled_files_with_job.append(it)
+                    picked_keys.add(it[0].get('key'))
+
             self._rng.shuffle(sampled_files_with_job)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
@@ -886,6 +923,21 @@ class DuckDBSampledValidator:
         filename = key.rsplit('/', 1)[-1]
         match = self._FILENAME_ROW_COUNT_RE.match(filename)
         return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _file_platform(file_key: str, expected_jobs: Dict) -> str:
+        """Platform ('x'/'reddit'/...) of a file, via its job_id → expected_jobs.
+
+        Single source for the file→platform mapping used by both the
+        per-platform file floor (selection) and the round-robin scraper read.
+        Returns 'unknown' for keys without a job_id or jobs without a platform.
+        """
+        if '/job_id=' not in file_key:
+            return 'unknown'
+        job_id = file_key.split('/job_id=')[1].split('/')[0]
+        job_config = expected_jobs.get(job_id, {})
+        params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+        return str(params.get('platform', 'unknown')).lower()
 
     # Rate-limits the crash-orphan sweep (recurring, at most once per interval,
     # so a hard kill's orphans are reclaimed within ~TEMP_ORPHAN_AGE_SECS instead
@@ -1937,46 +1989,90 @@ class DuckDBSampledValidator:
         """
         all_entities = []
 
-        # UNIFORM random file order + a small FIXED per-file row quota.
+        # ROUND-ROBIN read across platforms + a small FIXED per-file row quota.
         #
-        # File *selection* is already row-weighted, and force-includes the top-5
-        # files by claimed rows (see validate_miner_s3_data), so the files that
-        # drive effective_size are guaranteed to be in `sampled_files` before we
-        # get here. Weighting a second time — a row-weighted order plus a
-        # row-proportional per-file budget — let the single largest file absorb
-        # the entire pool: at 20 rows/file the 40-row pool was full after two
-        # files, so all 20 validated entities came from one or two files of one
-        # platform. That is steerable on purpose: shrink the X jobs until Reddit
-        # holds nearly all claimed rows and the X leg is never scraper-checked
-        # at all, which also makes the per-platform bar vacuous (a platform with
-        # no entities in the pool has nothing to hold to MIN_SCRAPER_SUCCESS).
+        # Two miner-steerable holes had to close together:
         #
-        # Uniform over files with <= SCRAPER_ROWS_PER_FILE rows each needs at
-        # least 8 distinct files to fill the pool, so every sampled job has a
-        # real chance of contributing and the per-platform floor below has
-        # something to draw from. Large files keep their advantage where it is
-        # earned: they are far more likely to be *selected* in the first place.
+        #   1. Per-file budget derived from the miner's declared row counts let
+        #      the single largest file absorb the whole pool (all 20 entities
+        #      from one or two files of one platform). Fixed at
+        #      SCRAPER_ROWS_PER_FILE, so no file's share depends on what the
+        #      miner claims.
+        #
+        #   2. A plain uniform shuffle + "stop once the pool is full" still let
+        #      the majority platform starve the minority: if its files shuffle
+        #      first they fill the 40-entity pool before any minority file is
+        #      opened, so 20/20 land on one platform and the minority leg is
+        #      never scraper-checked — its per-platform bar vacuous (a platform
+        #      with 0 entities in the pool has nothing to hold to
+        #      MIN_SCRAPER_SUCCESS). This was still reproducible after fix 1.
+        #
+        # Read the files interleaved by platform and keep going, past the pool
+        # cap if needed, until every platform present has reached the entity
+        # floor (or run out of files). Combined with the per-platform FILE floor
+        # at selection (validate_miner_s3_data guarantees each platform HAS
+        # files here), every platform earning row credit is now checked.
         sampled_files = list(sampled_files)
-        self._rng.shuffle(sampled_files)
+
+        files_by_platform: Dict[str, list] = {}
+        for f in sampled_files:
+            plat = self._file_platform(f.get('key', ''), expected_jobs)
+            files_by_platform.setdefault(plat, []).append(f)
+        for plat in files_by_platform:
+            self._rng.shuffle(files_by_platform[plat])
 
         # Pool target: twice the number of entities we finally validate, so the
         # per-platform floor and the random draw below have slack to work with.
         entity_pool_target = num_entities * 2
+        # Each platform must reach the entity floor so its per-platform bar
+        # (MIN_SCRAPER_SUCCESS over >= SCRAPER_PLATFORM_MIN_ENTITIES) binds.
+        per_platform_target = self.SCRAPER_PLATFORM_MIN_ENTITIES
 
-        # The quota is raised only when the sample holds too few files to fill
-        # the pool at the base rate — a small miner (fewer than 10 files in
-        # total) must not end up with a SMALLER scraper sample than before this
-        # change. It stays the same number for every file either way: what
-        # makes the draw unsteerable is that no file's share depends on the row
-        # count the miner declares, not the size of the share itself.
+        # Flat per-file quota, raised only when the whole sample is too small to
+        # fill the pool. Same number for every file — never derived from
+        # miner-declared rows, so no file's share depends on the miner's claim.
         rows_per_file = self.SCRAPER_ROWS_PER_FILE
         if sampled_files and len(sampled_files) * rows_per_file < entity_pool_target:
             rows_per_file = math.ceil(entity_pool_target / len(sampled_files))
 
-        for file_info in sampled_files:
+        # Interleave: [platA[0], platB[0], platA[1], platB[1], ...] then the tail
+        # of the longer platform. Reading in this order guarantees every platform
+        # contributes before the pool cap could end the scan.
+        read_order: List[Dict] = []
+        if files_by_platform:
+            longest = max(len(v) for v in files_by_platform.values())
+            for i in range(longest):
+                for plat, files in files_by_platform.items():
+                    if i < len(files):
+                        read_order.append(files[i])
 
-            if len(all_entities) >= entity_pool_target:
+        per_platform_counts: Dict[str, int] = {p: 0 for p in files_by_platform}
+        attempted: Dict[str, int] = {p: 0 for p in files_by_platform}
+
+        def _some_platform_below_floor() -> bool:
+            # True while a platform is short of the floor AND still has files
+            # left to read. Bounds the loop: an exhausted platform stops blocking.
+            return any(
+                per_platform_counts[p] < per_platform_target
+                and attempted[p] < len(files_by_platform[p])
+                for p in files_by_platform
+            )
+
+        for file_info in read_order:
+
+            # Stop only when the pool is full AND no platform is still short of
+            # its floor. A minority platform keeps being read past the cap until
+            # it clears the floor (bounded — it has few files).
+            if len(all_entities) >= entity_pool_target and not _some_platform_below_floor():
                 break
+
+            plat_of_file = self._file_platform(file_info.get('key', ''), expected_jobs)
+            # Once the pool is full, don't read more of an already-satisfied
+            # platform — only the still-short ones.
+            if (len(all_entities) >= entity_pool_target
+                    and per_platform_counts.get(plat_of_file, 0) >= per_platform_target):
+                continue
+            attempted[plat_of_file] = attempted.get(plat_of_file, 0) + 1
 
             # Skip oversized files to prevent OOM
             file_size = file_info.get('size', 0)
@@ -2072,6 +2168,7 @@ class DuckDBSampledValidator:
                             ],
                         }
                     all_entities.append((entity, platform, job_id))
+                    per_platform_counts[platform] = per_platform_counts.get(platform, 0) + 1
 
                 del df
             except:

@@ -19,7 +19,7 @@ import os
 import random
 import tempfile
 import unittest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pandas as pd
 
@@ -248,6 +248,93 @@ class TestBudgetInvariants(ScraperSamplingFixture):
         self.validator._rng = random.Random(99)
         second = self._run()
         self.assertEqual(first['sample_results'], second['sample_results'])
+
+
+class TestSelectionPlatformFloor(unittest.TestCase):
+    """The SELECTION stage (validate_miner_s3_data) must put files from every
+    active platform into the sample, even when a miner shrinks one platform's
+    claimed rows to near-zero. Without the per-platform file floor, the
+    row-weighted draw and the top-5 force-include pick only the high-volume
+    platform, so the minority platform's files never reach the scraper phase
+    at all — the observed '20/20 entities Reddit, no X' hole.
+
+    The read phases are mocked; the test asserts on the files handed to
+    _perform_scraper_validation.
+    """
+
+    N_REDDIT_JOBS = 30
+    N_X_JOBS = 2
+    REDDIT_CLAIMED = 100_000
+    X_CLAIMED = 50  # miner shrinks X to almost nothing
+
+    def _files(self):
+        files = []
+        expected_jobs = {}
+        for i in range(self.N_REDDIT_JOBS):
+            jid = f'redditjob{i}'
+            name = f'data_20260801_120000_{self.REDDIT_CLAIMED}_{"a" * 16}.parquet'
+            files.append({'key': f'data/hotkey=hk/job_id={jid}/{name}',
+                          'size': 8_000_000, 'last_modified': f'2026-08-01T00:00:{i:02d}Z'})
+            expected_jobs[jid] = {'params': {'platform': 'reddit'}}
+        for i in range(self.N_X_JOBS):
+            jid = f'xjob{i}'
+            name = f'data_20260801_120000_{self.X_CLAIMED}_{"b" * 16}.parquet'
+            files.append({'key': f'data/hotkey=hk/job_id={jid}/{name}',
+                          'size': 20_000, 'last_modified': f'2026-08-01T00:00:{i:02d}Z'})
+            expected_jobs[jid] = {'params': {'platform': 'x'}}
+        return files, expected_jobs
+
+    def _validator(self, seed):
+        v = DuckDBSampledValidator.__new__(DuckDBSampledValidator)
+        v.wallet = MagicMock()
+        v.sample_percent = 10.0
+        v._seed_material = seed  # deterministic committed RNG per seed
+        v._local_files = {}
+        v._cached_bytes = 0
+        return v
+
+    def _sampled_files_for(self, seed):
+        v = self._validator(seed)
+        files, expected_jobs = self._files()
+
+        captured = {}
+
+        async def _capture_scraper(hotkey, sampled_files, *a, **k):
+            captured['files'] = sampled_files
+            return {'entities_validated': 20, 'entities_passed': 20,
+                    'success_rate': 100.0, 'sample_results': [],
+                    'platform_stats': {'x': {'validated': 5, 'passed': 5},
+                                       'reddit': {'validated': 15, 'passed': 15}}}
+
+        v.s3_reader = MagicMock()
+        v.s3_reader.list_all_files_with_metadata = AsyncMock(return_value=files)
+        v._get_presigned_urls_batch = AsyncMock(
+            return_value={f['key']: 'https://unused.invalid' for f in files})
+        v._sampled_duckdb_validation = AsyncMock(return_value={
+            'duplicate_rate_within_job': 0.0, 'empty_rate': 0.0,
+            'compression_failures': 0, 'row_count_mismatches': 0,
+            'decode_ratio': 1.0,
+        })
+        v._perform_job_content_matching = AsyncMock(return_value={
+            'total_checked': 20, 'total_matched': 20, 'match_rate': 100.0,
+            'mismatch_samples': [],
+        })
+        v._perform_scraper_validation = _capture_scraper
+
+        asyncio.run(v.validate_miner_s3_data('hk', expected_jobs))
+        return captured['files'], expected_jobs
+
+    def test_x_files_survive_selection_despite_tiny_claimed_rows(self):
+        for seed in [f'0x{i:064x}' for i in range(15)]:
+            with self.subTest(seed=seed):
+                sampled, expected_jobs = self._sampled_files_for(seed)
+                x_files = [f for f in sampled
+                           if DuckDBSampledValidator._file_platform(f['key'], expected_jobs) == 'x']
+                self.assertGreaterEqual(
+                    len(x_files), DuckDBSampledValidator.SCRAPER_PLATFORM_MIN_FILES,
+                    f"X shut out of the sample (seed {seed}): "
+                    f"{[f['key'] for f in sampled]}",
+                )
 
 
 if __name__ == '__main__':
