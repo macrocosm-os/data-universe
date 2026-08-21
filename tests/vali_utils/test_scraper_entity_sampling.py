@@ -14,6 +14,7 @@ itself mocked.
 """
 
 import asyncio
+import math
 import datetime as dt
 import os
 import random
@@ -361,3 +362,98 @@ class TestSelectionPlatformFloor(unittest.TestCase):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestMegaFileCannotOwnTheAudit(unittest.TestCase):
+    """A few multi-million-row files must not consume the whole entity budget.
+
+    Two files at SCRAPER_TOP_FILE_ROWS already equal the 2 x num_entities pool,
+    so without the breadth floor the scan would stop after reading exactly those
+    two, and without the long-tail reservation the weighted fill would hand them
+    every leftover slot. Both are guarantees, not tendencies, so they are
+    asserted over many seeds including the worst one.
+    """
+
+    def setUp(self):
+        self.tmp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.tmp.cleanup)
+
+    def _layout(self, claims):
+        files, jobs, local = [], {}, {}
+        for i, c in enumerate(claims):
+            jid = ('big' if c >= 1_000_000 else 'sm') + str(i)
+            name = f'data_20260801_120000_{c}_{"a" * 16}.parquet'
+            key = f'data/hotkey=hk/job_id={jid}/{name}'
+            path = os.path.join(self.tmp.name, f'{jid}.parquet')
+            _reddit_frame(80, jid).to_parquet(path, row_group_size=20)
+            files.append({'key': key, 'size': os.path.getsize(path)})
+            local[key] = path
+            jobs[jid] = {'params': {'platform': 'reddit'}}
+        return files, jobs, local
+
+    def _run(self, claims, seed):
+        files, jobs, local = self._layout(claims)
+        v = DuckDBSampledValidator.__new__(DuckDBSampledValidator)
+        v._rng = random.Random(seed)
+        v._local_files = dict(local)
+        v._cached_bytes = 0
+
+        import vali_utils.s3_utils as s3_utils
+        original = s3_utils.read_random_row_group
+        reads = []
+
+        def _spy(source, size, **kw):
+            reads.append(source)
+            return original(source, size, **kw)
+
+        async def _all_valid(entities, platform):
+            return [ValidationResult(is_valid=True, reason='ok',
+                                     content_size_bytes_validated=10)
+                    for _ in entities]
+
+        with patch.object(s3_utils, 'read_random_row_group', side_effect=_spy), \
+             patch.object(DuckDBSampledValidator, '_validate_with_scraper',
+                          new=AsyncMock(side_effect=_all_valid)):
+            res = asyncio.run(v._perform_scraper_validation(
+                'hk', list(files), jobs,
+                {f['key']: 'https://unused.invalid' for f in files},
+                num_entities=20))
+        small = sum(1 for line in res['sample_results']
+                    if line.split('(')[1].split(')')[0].startswith('sm'))
+        return len(set(reads)), small, res
+
+    def test_two_mega_files_cannot_stop_the_scan(self):
+        """2 x SCRAPER_TOP_FILE_ROWS fills the pool exactly; the breadth floor
+        must keep reading anyway."""
+        need = math.ceil(40 / DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE)
+        for seed in range(10):
+            with self.subTest(seed=seed):
+                distinct, _, _ = self._run([3_000_000] * 2 + [500] * 8, seed)
+                self.assertGreaterEqual(
+                    distinct, need,
+                    f"only {distinct} files read — the mega files ended the scan")
+
+    def test_smaller_files_keep_a_guaranteed_share(self):
+        """Not merely 'on average': every seed must give the files outside the
+        top-claim set at least SCRAPER_LONGTAIL_MIN_ENTITIES of the budget."""
+        floor = DuckDBSampledValidator.SCRAPER_LONGTAIL_MIN_ENTITIES
+        for seed in range(20):
+            with self.subTest(seed=seed):
+                _, small, _ = self._run([3_000_000] * 2 + [500] * 8, seed)
+                self.assertGreaterEqual(
+                    small, floor,
+                    f"small files got {small}/20 — below the long-tail floor")
+
+    def test_single_100m_file_does_not_monopolise(self):
+        floor = DuckDBSampledValidator.SCRAPER_LONGTAIL_MIN_ENTITIES
+        for seed in range(10):
+            with self.subTest(seed=seed):
+                distinct, small, res = self._run([100_000_000] + [500] * 14, seed)
+                self.assertGreaterEqual(small, floor, f"small={small}")
+                self.assertEqual(res['entities_validated'], 20)
+
+    def test_big_files_still_take_the_larger_share(self):
+        """The floors must not invert the priority: the files carrying the
+        claim still get most of the budget."""
+        _, small, _ = self._run([3_000_000] * 2 + [500] * 8, 0)
+        self.assertLess(small, 10, "long-tail floor over-served the small files")

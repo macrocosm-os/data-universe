@@ -318,6 +318,16 @@ class DuckDBSampledValidator:
     SCRAPER_TOP_FILE_COUNT = 3
     SCRAPER_TOP_FILE_ROWS = 20
 
+    # Long-tail floor on the FINAL entity budget. The weighted fill sends
+    # leftover slots to the biggest claims, which is economically right — audit
+    # effort should track the rows at risk. But on a single-platform layout the
+    # per-platform floor is the only thing holding slots for smaller files, and
+    # it does so only in expectation (a random draw from a pool the big files
+    # dominate). Reserve slots outright instead, so "small files are still
+    # checked" is a guarantee rather than a tendency, matching how every other
+    # coverage rule here works.
+    SCRAPER_LONGTAIL_MIN_ENTITIES = 3
+
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
     MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024       # 1GB - single file cap
@@ -2108,6 +2118,7 @@ class DuckDBSampledValidator:
         def _claimed(f):
             return self._parse_row_count_from_filename(f.get('key', '')) or 0
 
+        claimed_rows_by_key = {f.get('key'): _claimed(f) for f in sampled_files}
         top_claim_keys = {
             f.get('key')
             for f in sorted(sampled_files,
@@ -2325,6 +2336,30 @@ class DuckDBSampledValidator:
         # checked; it can never lower another file's guaranteed share.
         remaining = [it for it in all_entities if id(it) not in selected_ids]
         fill = max(0, target - len(selected))
+        if fill > 0:
+            # Long-tail reservation first: entities from files OUTSIDE the
+            # top-claim set. Without it a couple of multi-million-row files take
+            # every leftover slot, and the smaller files are audited only by
+            # whatever the per-platform floor's random draw happened to catch.
+            # Classify by file identity, not by a claim threshold. When the
+            # miner has fewer than SCRAPER_TOP_FILE_COUNT genuinely large files,
+            # a small file gets pulled into the top set and a threshold
+            # collapses to that small claim, leaving the long-tail set empty —
+            # the exact layout ("2 huge + 8 tiny") this floor exists for.
+            # After _keep_latest_per_job a job maps 1:1 to a file, so the job id
+            # carried on each entity identifies its source file.
+            top_claim_jobs = {
+                k.split('/job_id=')[1].split('/')[0]
+                for k in top_claim_keys if k and '/job_id=' in k
+            }
+            longtail = [it for it in remaining if it[2] not in top_claim_jobs]
+            reserve = min(self.SCRAPER_LONGTAIL_MIN_ENTITIES, fill, len(longtail))
+            if reserve > 0:
+                picked_longtail = self._rng.sample(longtail, reserve)
+                selected.extend(picked_longtail)
+                selected_ids.update(id(it) for it in picked_longtail)
+                remaining = [it for it in remaining if id(it) not in selected_ids]
+                fill -= reserve
         if fill > 0:
             weights = [max(1, it[3]) for it in remaining]
             selected.extend(_weighted_sample_without_replacement(
