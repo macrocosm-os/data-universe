@@ -151,8 +151,6 @@ def read_random_row_group(
 
         return df
 
-    except Exception:
-        return None
     finally:
         if f is not None:
             try:
