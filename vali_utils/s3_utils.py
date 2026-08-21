@@ -293,6 +293,31 @@ class DuckDBSampledValidator:
     # (2 x SCRAPER_ROWS_PER_FILE, before URL-dedup) to clear the entity floor.
     SCRAPER_PLATFORM_MIN_FILES = 2
 
+    # Platforms _create_data_entity can build entities for, i.e. the ones a
+    # scraper can actually check. The per-platform floors apply only to these:
+    # forcing in a file for any other platform cannot produce a validated
+    # entity, it can only trip the entity-construction hard-fail.
+    SCRAPER_VALIDATABLE_PLATFORMS = frozenset({'x', 'twitter', 'reddit'})
+
+    # Detection surplus for the files that carry the effective_size claim.
+    #
+    # The fairness rules (uniform file order, flat SCRAPER_ROWS_PER_FILE quota)
+    # are what stop a miner from steering the draw — but applied alone they also
+    # cut the biggest files from ~20 sampled rows down to 5, and those are
+    # exactly the files where fabricated volume pays. Detection power against a
+    # fraction f of fabricated rows inside one file is 1-(1-f)^r:
+    #
+    #     f=0.20   r=5 -> 67%    r=20 -> 99%
+    #     f=0.10   r=5 -> 41%    r=20 -> 88%
+    #
+    # So the top files by CLAIMED ROWS get a larger quota, drawn AFTER every
+    # platform has reached its floor. Fairness is a floor, not a cap: the
+    # guarantee is that no platform can be shut out, not that a 3M-row file and
+    # a 50-row file get equal audit effort. Claimed rows steer only this
+    # surplus, and steering it costs the miner more inspection, not less.
+    SCRAPER_TOP_FILE_COUNT = 3
+    SCRAPER_TOP_FILE_ROWS = 20
+
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
     MAX_FILE_SIZE_BYTES = 1024 * 1024 * 1024       # 1GB - single file cap
@@ -619,14 +644,29 @@ class DuckDBSampledValidator:
             files_by_platform_all: Dict[str, list] = {}
             for it in active_files:
                 p = self._file_platform(it[0].get('key', ''), expected_jobs)
-                files_by_platform_all.setdefault(p, []).append(it)
+                # Only platforms the scraper can actually validate. Forcing in a
+                # file the entity builder cannot parse (unknown platform) would
+                # trip the "_create_data_entity returned None" hard-fail path and
+                # mis-fail an honest miner over a job whose params lack a
+                # platform — a floor must never manufacture a failure.
+                if p in self.SCRAPER_VALIDATABLE_PLATFORMS:
+                    files_by_platform_all.setdefault(p, []).append(it)
             for p, items in files_by_platform_all.items():
-                have = sum(1 for it in items if it[0].get('key') in picked_keys)
-                need = min(self.SCRAPER_PLATFORM_MIN_FILES, len(items)) - have
+                # Count only files that will REACH the scraper phase. Suspicion
+                # picks are detection-only and get filtered out of scraper_files
+                # by the caller, so counting them here would satisfy the floor
+                # with files the scraper never sees — and the suspicion picker
+                # targets repeated-exact-size files, exactly the fingerprint a
+                # shrunken minority platform has. Without this the manipulation
+                # reopens: the more suspicious a platform's files look, the less
+                # likely it was to be scraper-validated at all.
+                eligible = [it for it in items if it[0].get('key') not in suspicion_keys]
+                have = sum(1 for it in eligible if it[0].get('key') in picked_keys)
+                need = min(self.SCRAPER_PLATFORM_MIN_FILES, len(eligible)) - have
                 if need <= 0:
                     continue
                 extra = sorted(
-                    (it for it in items if it[0].get('key') not in picked_keys),
+                    (it for it in eligible if it[0].get('key') not in picked_keys),
                     key=_claimed_rows, reverse=True,
                 )[:need]
                 for it in extra:
@@ -2059,6 +2099,27 @@ class DuckDBSampledValidator:
         if sampled_files and len(sampled_files) * rows_per_file < entity_pool_target:
             rows_per_file = math.ceil(entity_pool_target / len(sampled_files))
 
+        # Detection surplus (see SCRAPER_TOP_FILE_ROWS): the files carrying the
+        # largest CLAIMED row counts get a bigger quota, because that is where
+        # fabricated volume pays. This is the one place claimed rows steer the
+        # draw, and it can only ADD inspection: the floors above are already
+        # guaranteed, so a miner inflating a file's claim just buys that file
+        # more scrutiny. Ties broken by key so the set is stable per cycle.
+        def _claimed(f):
+            return self._parse_row_count_from_filename(f.get('key', '')) or 0
+
+        top_claim_keys = {
+            f.get('key')
+            for f in sorted(sampled_files,
+                            key=lambda f: (-_claimed(f), f.get('key', '')))
+            [:self.SCRAPER_TOP_FILE_COUNT]
+        }
+
+        def _quota_for(f):
+            if f.get('key') in top_claim_keys:
+                return max(rows_per_file, self.SCRAPER_TOP_FILE_ROWS)
+            return rows_per_file
+
         # Interleave: [platA[0], platB[0], platA[1], platB[1], ...] then the tail
         # of the longer platform. Reading in this order guarantees every platform
         # contributes before the pool cap could end the scan.
@@ -2072,6 +2133,18 @@ class DuckDBSampledValidator:
 
         per_platform_counts: Dict[str, int] = {p: 0 for p in files_by_platform}
         attempted: Dict[str, int] = {p: 0 for p in files_by_platform}
+        contributing_files: Set[str] = set()
+
+        # Breadth floor. The surplus quota above lets 2-3 big files fill the
+        # whole pool on their own, which would collapse file coverage back to
+        # the handful of files the miner most wants inspected — the opposite of
+        # the fairness rule. So the pool cap cannot stop the scan until at least
+        # this many DISTINCT files have contributed. Depth on big files is
+        # bought on TOP of breadth, never instead of it.
+        min_files_contributing = min(
+            len(sampled_files),
+            math.ceil(entity_pool_target / self.SCRAPER_ROWS_PER_FILE),
+        )
 
         def _some_platform_below_floor() -> bool:
             # True while a platform is short of the floor AND still has files
@@ -2084,16 +2157,19 @@ class DuckDBSampledValidator:
 
         for file_info in read_order:
 
-            # Stop only when the pool is full AND no platform is still short of
-            # its floor. A minority platform keeps being read past the cap until
-            # it clears the floor (bounded — it has few files).
-            if len(all_entities) >= entity_pool_target and not _some_platform_below_floor():
+            # Stop only when all three obligations are met: the pool is full,
+            # no platform is short of its entity floor, and enough DISTINCT
+            # files have contributed. Any one of them still outstanding keeps
+            # the scan going (bounded by the file list either way).
+            pool_full = len(all_entities) >= entity_pool_target
+            breadth_met = len(contributing_files) >= min_files_contributing
+            if pool_full and breadth_met and not _some_platform_below_floor():
                 break
 
             plat_of_file = self._file_platform(file_info.get('key', ''), expected_jobs)
-            # Once the pool is full, don't read more of an already-satisfied
-            # platform — only the still-short ones.
-            if (len(all_entities) >= entity_pool_target
+            # Past the cap, only read what an outstanding obligation needs: a
+            # platform still under its floor, or breadth still short.
+            if (pool_full and breadth_met
                     and per_platform_counts.get(plat_of_file, 0) >= per_platform_target):
                 continue
             attempted[plat_of_file] = attempted.get(plat_of_file, 0) + 1
@@ -2159,7 +2235,7 @@ class DuckDBSampledValidator:
                 # from it — same quota for every file, big or small.
                 df = read_random_row_group(
                     read_source, file_size,
-                    columns=None, max_rows=rows_per_file,
+                    columns=None, max_rows=_quota_for(file_info),
                     rng=self._rng
                 )
 
@@ -2191,8 +2267,9 @@ class DuckDBSampledValidator:
                                 f"Failed to create DataEntity for sampled row"
                             ],
                         }
-                    all_entities.append((entity, platform, job_id))
+                    all_entities.append((entity, platform, job_id, _claimed(file_info)))
                     per_platform_counts[platform] = per_platform_counts.get(platform, 0) + 1
+                    contributing_files.add(file_key)
 
                 del df
             except:
@@ -2239,11 +2316,20 @@ class DuckDBSampledValidator:
                     selected.append(item)
                     selected_ids.add(id(item))
 
-        # Fill the rest of the budget with a random draw over everything not yet picked.
+        # Fill the rest of the budget WEIGHTED by the claimed rows of the file
+        # each entity came from. The floors above already guarantee every
+        # platform is represented, so weighting the remainder cannot shut anyone
+        # out — it only sends the leftover audit effort to the files that carry
+        # the effective_size claim, which is where fabricated volume pays.
+        # Inflating a file's claim therefore raises its own odds of being
+        # checked; it can never lower another file's guaranteed share.
         remaining = [it for it in all_entities if id(it) not in selected_ids]
         fill = max(0, target - len(selected))
         if fill > 0:
-            selected.extend(self._rng.sample(remaining, min(fill, len(remaining))))
+            weights = [max(1, it[3]) for it in remaining]
+            selected.extend(_weighted_sample_without_replacement(
+                remaining, weights, min(fill, len(remaining)), rng=self._rng
+            ))
         else:
             # The floors alone already over-subscribed the budget (enough
             # platforms x SCRAPER_PLATFORM_MIN_ENTITIES > target). Shuffle
@@ -2259,7 +2345,7 @@ class DuckDBSampledValidator:
         platform_stats: Dict[str, Dict[str, int]] = {}
 
         entities_by_platform = {}
-        for entity, platform, job_id in entities_to_validate:
+        for entity, platform, job_id, _claimed_rows_of_file in entities_to_validate:
             if platform not in entities_by_platform:
                 entities_by_platform[platform] = []
             entities_by_platform[platform].append((entity, job_id))

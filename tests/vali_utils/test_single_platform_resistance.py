@@ -154,6 +154,41 @@ class ResistanceHarness(unittest.TestCase):
         return scraped, result
 
 
+    def _run_capture_files(self, bundle, seed):
+        """Run the real selection stage and capture the file list handed to
+        _perform_scraper_validation (i.e. after suspicion picks are stripped)."""
+        files_meta, expected_jobs, local_files = bundle
+        v = DuckDBSampledValidator.__new__(DuckDBSampledValidator)
+        v.wallet = MagicMock()
+        v.sample_percent = 10.0
+        v._seed_material = seed
+        v._local_files = dict(local_files)
+        v._cached_bytes = 0
+        v.scraper_provider = MagicMock()
+        v.s3_reader = MagicMock()
+        v.s3_reader.list_all_files_with_metadata = AsyncMock(return_value=files_meta)
+        v._get_presigned_urls_batch = AsyncMock(
+            return_value={f['key']: 'https://unused.invalid' for f in files_meta})
+        v._sampled_duckdb_validation = AsyncMock(return_value={
+            'duplicate_rate_within_job': 0.0, 'empty_rate': 0.0,
+            'compression_failures': 0, 'row_count_mismatches': 0, 'decode_ratio': 1.0,
+        })
+        v._perform_job_content_matching = AsyncMock(return_value={
+            'total_checked': 20, 'total_matched': 20, 'match_rate': 100.0,
+            'mismatch_samples': [],
+        })
+        captured = {}
+
+        async def _capture(hotkey, sampled_files, *a, **k):
+            captured['keys'] = [f['key'] for f in sampled_files]
+            return {'entities_validated': 20, 'entities_passed': 20,
+                    'success_rate': 100.0, 'sample_results': [],
+                    'platform_stats': {}}
+
+        v._perform_scraper_validation = _capture
+        result = asyncio.run(v.validate_miner_s3_data('hk', expected_jobs))
+        return captured.get('keys', []), result
+
 class TestEndToEndSinglePlatformResistance(ResistanceHarness):
     FLOOR = DuckDBSampledValidator.SCRAPER_PLATFORM_MIN_ENTITIES
 
@@ -241,3 +276,103 @@ class TestResistanceFuzz(ResistanceHarness):
 
 if __name__ == '__main__':
     unittest.main()
+
+
+class TestAuditFindings(ResistanceHarness):
+    """Regressions for holes found auditing the platform-coverage fix itself."""
+
+    FLOOR = DuckDBSampledValidator.SCRAPER_PLATFORM_MIN_ENTITIES
+
+    def test_suspicion_picks_do_not_satisfy_the_platform_file_floor(self):
+        """The suspicion slice is detection-only: the caller strips those picks
+        out of scraper_files. Counting them toward a platform's FILE floor
+        therefore satisfies the floor with files the scraper never sees.
+
+        Reachable, not theoretical: _pick_suspicious_files ranks files sharing an
+        exact byte size first, which is exactly the fingerprint of the shrunken,
+        uniform minority-platform files this manipulation produces — so the more
+        suspicious a platform's files look, the more of its floor gets absorbed
+        by picks that are excluded from validation.
+
+        Asserted on the COMPOSITION of scraper_files rather than on downstream
+        scrape counts: the per-file row quota is generous enough that a single
+        surviving file still reaches the entity floor, which masks the defect
+        end-to-end while the guarantee itself is already broken.
+        """
+        bundle = self._bundle([('reddit', 700, 26), ('x', 5, 3)])
+        files_meta, expected_jobs, _ = bundle
+        x_all = [f['key'] for f in files_meta
+                 if DuckDBSampledValidator._file_platform(f['key'], expected_jobs) == 'x']
+
+        def _stub_suspicion(self_, active_files, pool, k):
+            """Route X's files into the detection-only slice, as the real ranker
+            would when they share a byte size."""
+            picks = [it for it in pool if it[0].get('key') in set(x_all)][:k]
+            if len(picks) < k:
+                picks += [it for it in pool
+                          if it[0].get('key') not in set(x_all)][:k - len(picks)]
+            return picks
+
+        for seed in [f'0x{i:064x}' for i in range(10)]:
+            with self.subTest(seed=seed):
+                with patch.object(DuckDBSampledValidator, '_pick_suspicious_files',
+                                  _stub_suspicion):
+                    scraper_files, result = self._run_capture_files(bundle, seed)
+                x_in_scraper = [k for k in scraper_files if k in x_all]
+                # Every X file the suspicion slice did NOT take is eligible, and
+                # the floor must supply min(SCRAPER_PLATFORM_MIN_FILES, eligible)
+                # of them to the scraper phase.
+                n_suspicion_x = len(set(x_all) - set(scraper_files)
+                                    & set(result.suspicion_files))
+                eligible = len(x_all) - n_suspicion_x
+                want = min(DuckDBSampledValidator.SCRAPER_PLATFORM_MIN_FILES, eligible)
+                self.assertGreaterEqual(
+                    len(x_in_scraper), want,
+                    f"X has {len(x_in_scraper)} file(s) in the scraper pool but "
+                    f"{eligible} were eligible — the floor was satisfied by "
+                    f"detection-only suspicion picks",
+                )
+
+    def test_breadth_survives_the_big_file_surplus(self):
+        """The top-claim surplus must buy depth on big files ON TOP of file
+        breadth, not instead of it: 2-3 files at SCRAPER_TOP_FILE_ROWS can fill
+        the entire pool alone, which would collapse coverage back to exactly the
+        files a fabricator wants inspected."""
+        import vali_utils.s3_utils as s3_utils
+        original = s3_utils.read_random_row_group
+        seen = []
+
+        def _spy(source, size, **kwargs):
+            seen.append(source)
+            return original(source, size, **kwargs)
+
+        bundle = self._bundle([('reddit', 400, 12), ('x', 300, 6)])
+        with patch.object(s3_utils, 'read_random_row_group', side_effect=_spy):
+            self._run(bundle, '0x' + '7' * 64)
+
+        expected = 2 * 20 // DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE
+        self.assertGreaterEqual(
+            len(set(seen)), expected,
+            f"file breadth collapsed to {len(set(seen))} distinct files; the "
+            f"surplus quota ate the pool",
+        )
+
+    def test_big_files_get_more_rows_than_the_base_quota(self):
+        """The fairness rules must not leave the effective_size-driving files at
+        5 sampled rows — that is where fabricated volume pays."""
+        import vali_utils.s3_utils as s3_utils
+        original = s3_utils.read_random_row_group
+        quotas = []
+
+        def _spy(source, size, **kwargs):
+            quotas.append(kwargs.get('max_rows'))
+            return original(source, size, **kwargs)
+
+        bundle = self._bundle([('reddit', 700, 10), ('x', 60, 5)])
+        with patch.object(s3_utils, 'read_random_row_group', side_effect=_spy):
+            self._run(bundle, '0x' + '9' * 64)
+
+        self.assertTrue(
+            any(q == DuckDBSampledValidator.SCRAPER_TOP_FILE_ROWS for q in quotas),
+            f"no file received the top-claim surplus quota: {quotas}",
+        )

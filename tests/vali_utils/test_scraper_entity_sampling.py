@@ -182,10 +182,12 @@ class TestPlatformCoverage(ScraperSamplingFixture):
         import vali_utils.s3_utils as s3_utils
         original = s3_utils.read_random_row_group
 
+        # NB: never assert inside the spy — _perform_scraper_validation wraps the
+        # read in a bare `except: continue`, which swallows AssertionError and
+        # turns a real failure into a silently skipped file (a test that passes
+        # for the wrong reason). Collect here, assert after the run.
         def _spy(source, size, **kwargs):
             seen_files.append(source)
-            self.assertEqual(kwargs.get('max_rows'),
-                             DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE)
             return original(source, size, **kwargs)
 
         with patch.object(s3_utils, 'read_random_row_group', side_effect=_spy):
@@ -210,13 +212,33 @@ class TestPerFileQuota(ScraperSamplingFixture):
             self._run()
         return quotas
 
-    def test_quota_is_identical_for_every_file(self):
-        """The Reddit files claim 3000x the rows of the X files; the quota the
-        phase asks each of them for must be the same number."""
+    def test_no_file_is_starved_by_another_files_claim(self):
+        """The exploitable property was a per-file budget PROPORTIONAL to
+        claimed rows: a tiny-claim file got ~2 rows while a mega file took 20,
+        so mega files filled the pool. Every file must now get at least the base
+        quota no matter what any other file claims."""
         quotas = self._quotas_seen()
         self.assertGreater(len(quotas), 1)
-        self.assertEqual(len(set(quotas)), 1, f"per-file quota varied: {quotas}")
-        self.assertEqual(quotas[0], DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE)
+        self.assertTrue(
+            all(q >= DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE for q in quotas),
+            f"a file was starved below the base quota: {quotas}",
+        )
+
+    def test_surplus_is_bounded_and_only_for_top_claim_files(self):
+        """Claimed rows may only ADD depth, to a bounded number of files at a
+        bounded size — never scale a budget continuously the way the exploited
+        version did."""
+        quotas = self._quotas_seen()
+        base = DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE
+        elevated = [q for q in quotas if q > base]
+        self.assertTrue(
+            all(q == DuckDBSampledValidator.SCRAPER_TOP_FILE_ROWS for q in elevated),
+            f"surplus quota is not a fixed size: {quotas}",
+        )
+        self.assertLessEqual(
+            len(elevated), DuckDBSampledValidator.SCRAPER_TOP_FILE_COUNT,
+            f"more files elevated than SCRAPER_TOP_FILE_COUNT: {quotas}",
+        )
 
     def test_small_miner_still_gets_a_full_sample(self):
         """A miner with too few files to fill the pool at 5 rows each must not
@@ -224,10 +246,10 @@ class TestPerFileQuota(ScraperSamplingFixture):
         used to give it. The quota rises; it stays uniform across files."""
         self.files = self.files[:3]  # the 3 Reddit files — 3 x 5 < 40-row pool
         quotas = self._quotas_seen()
-        self.assertEqual(len(set(quotas)), 1, f"per-file quota varied: {quotas}")
-        self.assertGreaterEqual(quotas[0], DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE)
+        self.assertTrue(all(q >= DuckDBSampledValidator.SCRAPER_ROWS_PER_FILE
+                            for q in quotas), quotas)
         # 3 files x quota must still cover the 2 x num_entities pool.
-        self.assertGreaterEqual(quotas[0] * 3, 40)
+        self.assertGreaterEqual(sum(quotas), 40)
         self.assertEqual(self._run()['entities_validated'], 20)
 
 
