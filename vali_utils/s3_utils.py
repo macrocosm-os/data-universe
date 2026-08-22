@@ -825,6 +825,13 @@ class DuckDBSampledValidator:
     # Max allowed rows per row group (must match uploader's row_group_size)
     MAX_ROW_GROUP_SIZE = 10_000
 
+    @staticmethod
+    def _assert_pages_decodable(source: str, conn) -> None:
+        """Decode every column of every row group, or raise."""
+        conn.execute(
+            f"SELECT sum(hash(COLUMNS(*))) FROM read_parquet('{source}')"
+        ).fetchall()
+
     def _check_file_metadata(self, presigned_url: str, conn) -> Optional[Dict]:
         """Read parquet metadata footer only (~1-10KB network read).
         Returns metadata dict or None on error.
@@ -1308,6 +1315,9 @@ class DuckDBSampledValidator:
                     schema_failures += 1
                     break
 
+                # --- Full-decode probe: every column, every row group ---
+                self._assert_pages_decodable(presigned_url, conn)
+
                 # --- Per-file URL dedup: stream the url column via DuckDB fetchmany.
                 # Post-snapshot files can be 3M rows × ~150 B/URL ≈ 450 MB as a
                 # single Python list; fetchall() OOM-crashed validators. Stream in
@@ -1393,18 +1403,6 @@ class DuckDBSampledValidator:
                     sum_decodable_rows += file_decodable
                     sum_sampled_claimed_rows += file_claimed
 
-                # --- PyArrow row-group read for empty/missing content check ---
-                if platform in ['x', 'twitter']:
-                    read_cols = [
-                        'url', 'text', 'view_count', 'tweet_id', 'username',
-                        'datetime',
-                    ]
-                else:
-                    read_cols = ['url', 'body', 'title', 'id']
-                read_cols = [c for c in read_cols if c in available_columns]
-                if 'url' not in read_cols:
-                    read_cols.append('url')
-
                 # Per-miner deadline recheck: the row-group read uses its own
                 # requests.Session (not the DuckDB conn), so the watchdog's
                 # conn.interrupt() cannot bound it. Gate it on the budget and cap
@@ -1418,7 +1416,7 @@ class DuckDBSampledValidator:
                 remaining_for_rg = max(1, int(miner_deadline - time.monotonic()))
                 t_rg = time.monotonic()
                 rg_df = read_random_row_group(
-                    presigned_url, file_size, columns=read_cols,
+                    presigned_url, file_size, columns=None,
                     request_timeout=min(30, remaining_for_rg),
                     rng=self._rng
                 )
@@ -1576,7 +1574,8 @@ class DuckDBSampledValidator:
             except Exception as e:
                 bt.logging.warning(scrub_log(
                     f"{miner_hotkey}: Sampled validation error after "
-                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: {e}"
+                    f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
+                    f"{type(e).__name__}: {e}"
                 ))
                 continue
             finally:
@@ -2490,15 +2489,15 @@ def load_expected_jobs_from_gravity() -> Dict:
             if os.path.exists(total_json_path):
                 with open(total_json_path, 'r') as f:
                     jobs_list = json.load(f)
-                    
+
                 jobs_dict = {}
                 for job in jobs_list:
                     if isinstance(job, dict) and 'id' in job:
                         jobs_dict[job['id']] = job
-                
+
                 return jobs_dict
             current_dir = os.path.dirname(current_dir)
-        
+
         bt.logging.warning("dynamic_desirability/total.json not found")
         return {}
     except Exception as e:
