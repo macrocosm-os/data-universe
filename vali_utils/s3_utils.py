@@ -246,6 +246,10 @@ class DuckDBSampledValidator:
     MIN_SCRAPER_SUCCESS = 80.0  # 80% min scraper success rate
     MIN_ENGAGEMENT_RATE = 95.0  # 95% of X rows must have non-null view_count
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
+    # Max fraction of sampled files allowed to be skipped for transient S3/network
+    # errors before validation is inconclusive. Bounds the transient-skip branch so
+    # it cannot be abused to leave too little data actually verified.
+    MAX_TRANSIENT_SKIP_RATE = 0.30
 
     # Per-platform scraper-sampling floor. Every platform with claimed rows in
     # the sampled files gets at least this many rows scraper-validated,
@@ -1091,6 +1095,11 @@ class DuckDBSampledValidator:
         # v3 page-decode failures (valid footer, corrupt data pages)
         page_decode_failures = 0
 
+        # Transient S3/network skips (distinct from decode failures). Capped
+        # below so a miner cannot dodge validation by making files raise
+        # transient-looking errors until too little data is actually checked.
+        transient_skips = 0
+
         # L3: decodable rows vs claimed rows (sampled-file scope)
         sum_decodable_rows = 0
         sum_sampled_claimed_rows = 0
@@ -1556,7 +1565,13 @@ class DuckDBSampledValidator:
 
             except (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException) as e:
                 # Transient S3/network errors — log and skip, do NOT fail the miner.
+                # Bounded below (see TRANSIENT_SKIP_RATE) so this branch cannot be
+                # abused to skip checks. This handler MUST stay ABOVE the broad
+                # duckdb.Error handler: IOException/HTTPException/ConnectionException
+                # subclass duckdb.Error, so a lower position would let a genuine
+                # transient error fall into the decode-failure (fail-closed) path.
                 # scrub_log strips R2 presigned-URL query strings (signature + key id).
+                transient_skips += 1
                 bt.logging.warning(scrub_log(
                     f"{miner_hotkey}: Transient S3/IO error after "
                     f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
@@ -1564,13 +1579,20 @@ class DuckDBSampledValidator:
                 ))
                 continue
             except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
+                # A parquet/decompression/decode error is a structural failure, not
+                # a transient one: the file's bytes are unreadable, so its footer
+                # row count can never be verified. Fail closed immediately — break
+                # to the post-loop page_decode gate (keeps the DuckDB-phase-DONE
+                # telemetry and reuses the existing failed-result path). The finally
+                # block below still runs on break, cancelling the watchdog and
+                # closing the connection.
                 page_decode_failures += 1
                 bt.logging.warning(scrub_log(
-                    f"{miner_hotkey}: Page-decode failure after "
+                    f"{miner_hotkey}: STRUCTURAL page-decode failure after "
                     f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
                     f"{type(e).__name__}: {e}"
                 ))
-                continue
+                break
             except Exception as e:
                 bt.logging.warning(scrub_log(
                     f"{miner_hotkey}: Sampled validation error after "
@@ -1596,7 +1618,8 @@ class DuckDBSampledValidator:
         bt.logging.info(
             f"{miner_hotkey}: DuckDB phase DONE in {time.monotonic()-phase_start:.1f}s "
             f"— {files_checked} files checked, {schema_failures} schema_fail, "
-            f"{page_decode_failures} page_decode_fail, {dedup_total} urls hashed"
+            f"{page_decode_failures} page_decode_fail, {transient_skips} transient_skip, "
+            f"{dedup_total} urls hashed"
         )
 
         # Zero tolerance for schema failures
@@ -1619,10 +1642,43 @@ class DuckDBSampledValidator:
             )
             return {
                 "success": False,
+                # Structural: unreadable data pages are crafted, not honest deletion.
+                "hard_invalid": True,
                 "duplicate_rate_within_job": 100.0,
                 "empty_rate": 100.0,
                 "total_rows": 0,
                 "reason": f"Corrupt data pages in {page_decode_failures} files"
+            }
+
+        # Too many transient S3/network skips → the verified sample is too thin to
+        # trust. Not a miner fault (no hard_invalid), but we do not pass on it.
+        if files_checked == 0 and transient_skips > 0:
+            bt.logging.warning(
+                f"Validation inconclusive: all {transient_skips} sampled files hit "
+                f"transient S3 errors, none checked"
+            )
+            return {
+                "success": False,
+                "duplicate_rate_within_job": 100.0,
+                "empty_rate": 100.0,
+                "total_rows": 0,
+                "reason": f"Too many transient S3 failures ({transient_skips} files, 0 checked)"
+            }
+        if files_to_check and (transient_skips / len(files_to_check)) > self.MAX_TRANSIENT_SKIP_RATE:
+            bt.logging.warning(
+                f"Validation inconclusive: {transient_skips}/{len(files_to_check)} "
+                f"sampled files skipped for transient S3 errors "
+                f"(> {self.MAX_TRANSIENT_SKIP_RATE:.0%})"
+            )
+            return {
+                "success": False,
+                "duplicate_rate_within_job": 100.0,
+                "empty_rate": 100.0,
+                "total_rows": 0,
+                "reason": (
+                    f"Too many transient S3 failures "
+                    f"({transient_skips}/{len(files_to_check)} files)"
+                )
             }
 
         # Per-job duplicate rate
