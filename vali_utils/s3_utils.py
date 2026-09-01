@@ -1100,6 +1100,10 @@ class DuckDBSampledValidator:
         # transient-looking errors until too little data is actually checked.
         transient_skips = 0
 
+        # Files skipped by the catch-all handler; capped below so an unrouted
+        # error cannot free-skip a reward-bearing file.
+        unexpected_skips = 0
+
         # L3: decodable rows vs claimed rows (sampled-file scope)
         sum_decodable_rows = 0
         sum_sampled_claimed_rows = 0
@@ -1578,10 +1582,12 @@ class DuckDBSampledValidator:
                     f"{type(e).__name__}: {e}"
                 ))
                 continue
-            except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError) as e:
+            except (duckdb.Error, pyarrow.lib.ArrowInvalid, pyarrow.lib.ArrowIOError, ValueError) as e:
                 # A parquet/decompression/decode error is a structural failure, not
                 # a transient one: the file's bytes are unreadable, so its footer
-                # row count can never be verified. Fail closed immediately — break
+                # row count can never be verified. ValueError covers the
+                # json.JSONDecodeError from a corrupt b'pandas' metadata bomb.
+                # Fail closed immediately — break
                 # to the post-loop page_decode gate (keeps the DuckDB-phase-DONE
                 # telemetry and reuses the existing failed-result path). The finally
                 # block below still runs on break, cancelling the watchdog and
@@ -1594,6 +1600,7 @@ class DuckDBSampledValidator:
                 ))
                 break
             except Exception as e:
+                unexpected_skips += 1
                 bt.logging.warning(scrub_log(
                     f"{miner_hotkey}: Sampled validation error after "
                     f"{time.monotonic()-file_start:.1f}s on {file_key.split('/')[-1]}: "
@@ -1679,6 +1686,23 @@ class DuckDBSampledValidator:
                     f"Too many transient S3 failures "
                     f"({transient_skips}/{len(files_to_check)} files)"
                 )
+            }
+
+        # Too many catch-all skips → unrouted errors are dropping reward-bearing
+        # files while their footer rows still count. Fail closed.
+        if files_to_check and (unexpected_skips / len(files_to_check)) > self.MAX_TRANSIENT_SKIP_RATE:
+            bt.logging.warning(
+                f"Validation FAILED: {unexpected_skips}/{len(files_to_check)} "
+                f"sampled files hit unexpected per-file errors "
+                f"(> {self.MAX_TRANSIENT_SKIP_RATE:.0%})"
+            )
+            return {
+                "success": False,
+                "hard_invalid": True,
+                "duplicate_rate_within_job": 100.0,
+                "empty_rate": 100.0,
+                "total_rows": 0,
+                "reason": f"Too many unexpected skips ({unexpected_skips}/{len(files_to_check)} files)"
             }
 
         # Per-job duplicate rate
@@ -2129,7 +2153,13 @@ class DuckDBSampledValidator:
                     all_entities.append((entity, platform, job_id))
 
                 del df
-            except:
+            except Exception as e:
+                # Narrowed from a bare `except:`; log the dropped file instead of
+                # swallowing it silently.
+                bt.logging.warning(scrub_log(
+                    f"{miner_hotkey}: scraper-sample read error on "
+                    f"{file_key.split('/')[-1]}: {type(e).__name__}: {e}"
+                ))
                 continue
             finally:
                 if conn:
