@@ -130,7 +130,9 @@ def read_random_row_group(
         r = rng if rng is not None else random
         rg_idx = r.randint(0, num_rg - 1)
         table = pf.read_row_group(rg_idx, columns=columns)
-        df = table.to_pandas()
+        # Drop miner-controlled b'pandas' KV metadata: a malformed JSON string
+        # there makes to_pandas() raise on otherwise-decodable pages.
+        df = table.replace_schema_metadata(None).to_pandas()
 
         if max_rows and 'url' in df.columns:
             # Dedup by URL BEFORE deciding the sample size, and always — not
@@ -151,8 +153,6 @@ def read_random_row_group(
 
         return df
 
-    except Exception:
-        return None
     finally:
         if f is not None:
             try:

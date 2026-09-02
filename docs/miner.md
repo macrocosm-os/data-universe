@@ -11,8 +11,13 @@ Miners do not require a GPU and should be able to run on a low-tier machine, as 
 # Getting Started
 
 ## Prerequisites
-1. As of Dec 17th 2023, we support Twitter and Reddit scraping via Apify. You can [setup your Apify API token here](apify.md), or build your own custom scraper (recommended). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free. 
+1. As of Dec 17th 2023, we support Twitter and Reddit scraping via Apify. You can [setup your Apify API token here](apify.md), or build your own custom scraper (recommended). We also support Reddit scraping via a [personal reddit account](reddit.md) which is completely free.
 
+   > **⚠️ Verify Reddit access before registering.** The `Reddit.json` scraper (the free, no-setup default) calls Reddit's public JSON endpoints *unauthenticated*. As of 2026, Reddit blocks unauthenticated requests to these endpoints with an HTTP 403 ("blocked by network security") — the same URL works fine in a browser with an active logged-in session, but a plain unauthenticated request does not. The documented free-and-simple path may not actually work, and Reddit's Data API access application (needed for the `Reddit.custom`/OAuth fallback in [reddit.md](reddit.md)) has been rejecting applications that describe feeding data into an AI training dataset — a fairly literal description of what this subnet does with the data. **Test before you register**, since the registration fee is non-refundable and a miner that can't fetch any data will scrape 0 items for its entire immunity period and then be deregistered with nothing to show for the fee:
+   > ```shell
+   > curl -s -o /dev/null -w "%{http_code}\n" "https://www.reddit.com/r/bitcoin/new.json"
+   > ```
+   > A `200` means it should work; a `403` means it won't, and you should either pursue OAuth access ahead of time (not after registering) or use a different DataSource. See [#906](https://github.com/macrocosm-os/data-universe/issues/906) for a full writeup of this failure mode.
 
 2. Clone the repo
 
@@ -51,6 +56,14 @@ pm2 start python -- ./neurons/miner.py --offline
 ```
 
 Please note that your miner will not respond to validator requests in this mode and therefore if you have already registered to the subnet you should run in online mode.
+
+### Verify it's actually collecting data
+
+Right after starting the Miner (and periodically during your immunity period), check its logs for actual successful scrapes, not just that the process is running:
+```shell
+pm2 logs <your-process-name> | grep -i "scrap\|status 403\|status 401"
+```
+A miner can run without crashing, respond to validator requests, and still submit 0 items forever if its configured scraper(s) can't reach their data source (see the Reddit-specific warning above) — there's no error that surfaces this on its own. Confirming non-zero scraped items early avoids losing your registration fee to deregistration once your immunity period ends.
 
 # Configuring the Miner
 
