@@ -1907,7 +1907,7 @@ class DuckDBSampledValidator:
                             total_matched += 1
                         elif len(mismatch_samples) < 5:
                             uri = row.get('url', 'unknown')
-                            mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
+                            mismatch_samples.append(f"Job {job_id}: {uri}")
 
                     del sample_df
 
