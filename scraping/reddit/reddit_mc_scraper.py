@@ -25,6 +25,15 @@ from scraping.reddit.utils import (
 load_dotenv()
 
 
+# An EMPTY actor dataset is not proof the post is gone. On 2026-09-14 the actor returned no
+# items for a post that was live and unchanged (re-fetched minutes later: full body, same
+# author); the miner was scored "URL not found" and lost 30% of its on-demand boost. Over 28h
+# on the largest validator, 3 of 3 "URL not found" verdicts were posts that exist. One retry
+# after a short pause separates an actor miss from a deletion: a deleted post is still empty
+# on the second look and still fails. Cost: one extra actor run only when the first is empty.
+EMPTY_RESULT_RETRY_DELAY_S = 3.0
+
+
 class RedditMCScraper(Scraper):
     """Scraper that uses the Apify macrocosmos/reddit-scraper actor."""
 
@@ -123,19 +132,15 @@ class RedditMCScraper(Scraper):
             }
 
             try:
-                # Run the actor with single URL and increased timeout
-                run = await self.client.actor(self.ACTOR_ID).call(
-                    run_input=actor_input,
-                    timeout_secs=300  # 5 minutes timeout
-                )
-
-                # Check if we got results
-                dataset_client = self.client.dataset(run["defaultDatasetId"])
-                items = []
-
-                async for item in dataset_client.iterate_items():
-                    items.append(item)
-                    break  # Only need first item
+                items = await self._fetch_first_item(actor_input)
+                if not items:
+                    # Empty is ambiguous (deleted post OR actor miss) — look once more.
+                    bt.logging.debug(
+                        f"Apify actor returned no items for {ent_content.url}; "
+                        f"retrying once in {EMPTY_RESULT_RETRY_DELAY_S}s"
+                    )
+                    await asyncio.sleep(EMPTY_RESULT_RETRY_DELAY_S)
+                    items = await self._fetch_first_item(actor_input)
 
                 if len(items) > 0:
                     # Fix field names from Apify actor output
@@ -199,6 +204,20 @@ class RedditMCScraper(Scraper):
                 )
 
         return results
+
+    async def _fetch_first_item(self, actor_input: dict) -> list:
+        """Run the actor once and return at most the first dataset item (as a list)."""
+        # Run the actor with single URL and increased timeout
+        run = await self.client.actor(self.ACTOR_ID).call(
+            run_input=actor_input,
+            timeout_secs=300  # 5 minutes timeout
+        )
+        dataset_client = self.client.dataset(run["defaultDatasetId"])
+        items = []
+        async for item in dataset_client.iterate_items():
+            items.append(item)
+            break  # Only need first item
+        return items
 
     @staticmethod
     def get_scraper_id() -> ScraperId:
