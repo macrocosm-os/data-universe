@@ -366,11 +366,13 @@ class DuckDBSampledValidator:
         self,
         miner_hotkey: str,
         expected_jobs: Dict
-    ) -> S3ValidationResult:
+    ) -> Optional[S3ValidationResult]:
         """
         Validate miner using DuckDB with random sampling.
 
-        Returns S3ValidationResult with effective_size for competition scoring.
+        Returns S3ValidationResult with effective_size for competition scoring, or
+        None when the file listing did not complete (no verdict: the evaluator skips
+        a None result and retries next cycle instead of decaying credibility).
         """
         start_time = time.time()
 
@@ -382,6 +384,16 @@ class DuckDBSampledValidator:
                 return self._create_failed_result("S3 reader not available")
 
             all_files = await self.s3_reader.list_all_files_with_metadata(miner_hotkey)
+
+            if all_files is None:
+                # The listing FAILED (presigned URL / HTTP / parse / transport). That is
+                # not evidence about the miner. Observed 2026-09-14 06:36Z on UID 89: a
+                # single failed listing scored a hotkey holding 1,046 jobs as
+                # "No files found" and decayed its credibility by 0.7.
+                bt.logging.warning(
+                    f"{miner_hotkey}: S3 listing did not complete -- no verdict this cycle"
+                )
+                return None
 
             if not all_files:
                 return self._create_failed_result("No files found")
@@ -2596,9 +2608,10 @@ async def validate_s3_miner_data(
     config=None, s3_reader=None,
     sample_percent: float = 10.0,
     seed_material: Optional[str] = None
-) -> S3ValidationResult:
+) -> Optional[S3ValidationResult]:
     """
     S3 validation using DuckDB-based sampled validation with competition scoring.
+    Returns None (no verdict) when the miner's file listing did not complete.
 
     Args:
         wallet: Validator wallet for S3 authentication
