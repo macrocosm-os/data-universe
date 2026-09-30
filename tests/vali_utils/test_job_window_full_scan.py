@@ -22,16 +22,16 @@ def _reddit_frame(times):
     iso = [t.isoformat() for t in times]
     return pd.DataFrame({
         'datetime': iso,
-        'label': ['r/redditgames'] * n,
+        'label': ['r/example'] * n,
         'id': [f't1_{i:06d}' for i in range(n)],
         'username': ['u'] * n,
-        'communityName': ['r/RedditGames'] * n,
+        'communityName': ['r/example'] * n,
         'body': ['hello'] * n,
         'title': [None] * n,
         'createdAt': iso,
         'dataType': ['comment'] * n,
         'parentId': ['t3_x'] * n,
-        'url': [f'https://www.reddit.com/r/RedditGames/comments/x/y/{i}/' for i in range(n)],
+        'url': [f'https://www.reddit.com/r/example/comments/x/y/{i}/' for i in range(n)],
         'media': [None] * n,
         'is_nsfw': [False] * n,
         'score': [1] * n,
@@ -64,7 +64,7 @@ class JobWindowFullScanTest(unittest.TestCase):
 
     def _job(self):
         return {'params': {
-            'platform': 'reddit', 'label': 'r/redditgames', 'keyword': None,
+            'platform': 'reddit', 'label': 'r/example', 'keyword': None,
             'post_start_datetime': self.START.isoformat(),
             'post_end_datetime': self.END.isoformat(),
         }}
@@ -101,7 +101,7 @@ class JobWindowFullScanTest(unittest.TestCase):
     def test_job_without_window_skips_scan(self):
         inside = [self.START + dt.timedelta(hours=i) for i in range(50)]
         f = self._file('job4', inside)
-        job = {'params': {'platform': 'reddit', 'label': 'r/redditgames'}}
+        job = {'params': {'platform': 'reddit', 'label': 'r/example'}}
         res = self._run([f], {'job4': job})
         self.assertEqual(res['window_rows'], 0)
         self.assertAlmostEqual(res['match_rate'], 100.0, places=5)
