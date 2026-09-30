@@ -1806,6 +1806,9 @@ class DuckDBSampledValidator:
         """Check if data matches job requirements (label/keyword/time)."""
         total_checked = 0
         total_matched = 0
+        # Whole-file time-window tallies (see the scan below).
+        window_rows = 0
+        window_out = 0
         mismatch_samples = []
 
         files_by_job = {}
@@ -1887,6 +1890,25 @@ class DuckDBSampledValidator:
                     if required - available_cols:
                         continue
 
+                    # Whole-file time-window check. The 10-row sample below
+                    # misses a small tail of rows outside the job's
+                    # post_start/post_end window most of the time, and those
+                    # rows are real content so the scraper phase passes them.
+                    # Projecting the single `datetime` column keeps this to
+                    # seconds on a cached local file.
+                    if has_time:
+                        n_rows, n_out = self._count_rows_outside_window(
+                            conn, read_source, job_start_dt, job_end_dt
+                        )
+                        if n_rows > 0:
+                            window_rows += n_rows
+                            window_out += n_out
+                            if n_out > 0 and len(mismatch_samples) < 5:
+                                mismatch_samples.append(
+                                    f"Job {job_id[:8]}: {n_out}/{n_rows} rows outside "
+                                    f"{job_start_date or '-'}..{job_end_date or '-'}"
+                                )
+
                     # Read 1 random row group (local path when cached, else Range)
                     sample_df = read_random_row_group(
                         read_source, file_size,
@@ -1920,12 +1942,49 @@ class DuckDBSampledValidator:
                         except:
                             pass
 
+        # Sample rate covers label/keyword (and time, on the sampled rows);
+        # the window rate covers time on every row. A file with 7% of rows
+        # past post_end_datetime scores 93% even when the sample missed them.
+        sample_rate = (total_matched / total_checked) if total_checked > 0 else 0.0
+        window_rate = (1.0 - window_out / window_rows) if window_rows > 0 else 1.0
         return {
             'total_checked': total_checked,
             'total_matched': total_matched,
-            'match_rate': (total_matched / total_checked * 100) if total_checked > 0 else 0.0,
+            'window_rows': window_rows,
+            'window_rows_outside': window_out,
+            'match_rate': (sample_rate * window_rate * 100) if total_checked > 0 else 0.0,
             'mismatch_samples': mismatch_samples
         }
+
+    def _count_rows_outside_window(self, conn, read_source, job_start_dt, job_end_dt):
+        """Count rows whose `datetime` falls outside [job_start_dt, job_end_dt].
+
+        Reads only the `datetime` column, so a cached local file scans in
+        seconds and a presigned URL fetches just that column's pages.
+        Unparseable datetimes count as outside, matching
+        _check_row_matches_job. Returns (rows, outside); (0, 0) if the scan
+        fails so the caller falls back to the sample alone.
+        """
+        conds = ["ts IS NULL"]
+        params = []
+        if job_start_dt:
+            conds.append("ts < ?")
+            params.append(job_start_dt)
+        if job_end_dt:
+            conds.append("ts > ?")
+            params.append(job_end_dt)
+        params.append(read_source)
+        sql = (
+            "SELECT count(*), count(*) FILTER (WHERE " + " OR ".join(conds) + ") "
+            "FROM (SELECT try_cast(\"datetime\" AS TIMESTAMPTZ) AS ts FROM read_parquet(?))"
+        )
+        try:
+            conn.execute("SET TimeZone='UTC';")
+            n_rows, n_out = conn.execute(sql, params).fetchone()
+            return int(n_rows), int(n_out)
+        except Exception as e:
+            bt.logging.debug(f"Job window scan failed for {str(read_source)[:80]}: {e}")
+            return 0, 0
 
     def _check_row_matches_job(
         self, row, platform, job_label, job_keyword,
