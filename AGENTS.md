@@ -25,7 +25,7 @@ both. There is no CI; the suite runs on your machine only.
 
 Known broken, do not "fix" in an unrelated PR: `tests/test_all.py`, and a
 handful of tests in `tests/vali_utils/` and `tests/scraping/config/` that fail
-on `main`.
+on `main` for unrelated reasons.
 
 ## Layout
 
@@ -128,8 +128,7 @@ Miner side, `neurons/miner.py` (`run_on_demand`, `poll_on_demand_active_jobs`,
    serialised `XContent` or `RedditContent`.
 
 Miners may replace the scrapers in step 3 with their own. Steps 1, 2 and 4
-are the contract. There is no `handle_on_demand`; `docs/on_demand.md` is out
-of date on that and on the reward description.
+are the contract. There is no `handle_on_demand` method.
 
 Validator side, per miner on its hourly evaluation (`_evaluate_od`):
 
@@ -183,10 +182,6 @@ truncated to the minute, not before the post, not in the future;
 Reddit `media` present; engagement counts within the age-scaled tolerance
 (100% under 1 h, down to 20% after 7 days).
 
-Known bug on `main`: the checked-in `scraping_config.json` still lists a
-YouTube scraper that no longer exists, so a miner started with default flags
-fails config validation. Fix the config, not the enum.
-
 ## Working here
 
 - **Branches.** Feature branches → `dev` → release PR to `main` → tag
@@ -216,6 +211,6 @@ fails config validation. Fix the config, not the enum.
 
 `docs/miner.md`, `docs/validator.md` (running nodes) · `docs/s3_validation.md`
 (bulk contract) · `docs/scoring.md` (credibility and weights) ·
-`docs/on_demand.md` (request models; reward text is stale) ·
+`docs/on_demand.md` (request models and rewards) ·
 `docs/dynamic_desirability.md` (Gravity jobs) · `docs/miner_policy.md`
 (content and data-protection obligations).

@@ -301,10 +301,6 @@ class DuckDBSampledValidator:
         ".s3_validation_tmp",
     )
 
-    # Scraper validation window — only files uploaded within this window are scraper-validated.
-    # Older files rely on credibility from previous validation cycles.
-    SCRAPER_MAX_AGE_HOURS = 96
-
     # Standard bytes per row for effective_size cap.
     # Real production data: X=77-515 B/row, Reddit=182-1682 B/row.
     STANDARD_BYTES_PER_ROW = 300

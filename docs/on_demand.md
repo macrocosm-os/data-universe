@@ -67,7 +67,7 @@ The Reddit implementation remains the same, using the Reddit API.
 
 You can:
 - Use the enhanced implementation as-is (recommended)
-- Modify `handle_on_demand` in miner.py to use your own scrapers
+- Replace the scraper calls in `scrape_on_demand_job` / `loop_poll_on_demand_active_jobs` in `neurons/miner.py` with your own scrapers
 - Build custom scraping logic while maintaining the same request/response format
 
 ### Integration Steps:
@@ -87,10 +87,16 @@ You can:
 3. **Enjoy richer data**: The enhanced content is automatically used for X/Twitter requests
 
 ## Rewards
-- Top 50% of miners by stake participate in validation
-- 50% chance of validation per request
-- Successful validation: +1% credibility
-- Failed validation: Proportional credibility decrease
+
+Validators evaluate each miner about once an hour (`vali_utils/miner_evaluator.py`, `_evaluate_od`):
+
+- Submissions for jobs that expired since the last evaluation are listed (3 h window). Zero-byte submissions earn nothing and cost nothing.
+- Up to 3 non-empty submissions are sampled at random. For each: 5 entities are checked for format and for matching the request (usernames, keywords, keyword mode, dates, url), then one entity is re-fetched from the live source.
+- Pass: the on-demand boost moves toward `1e8 × speed × volume` (EMA, alpha 0.3) and credibility toward 1 (alpha 0.02). Fail: boost × 0.7, credibility − 0.05. Scraper outages and unfetchable content are neutral.
+- `speed = clamp(0.5 ^ ((t − 30 s) / 45 s), 0.3, 1.0)` where `t` is submission time minus job creation. `volume = (rows / limit) ^ 1.3` below the limit, with a bonus capped at 1.25 above it.
+- A per-platform coverage multiplier applies: submitting nothing on a platform with available jobs is abstention (× 0.3); submitting fewer than 15% of available jobs scales down to a floor of 0.3.
+
+Constants live in `rewards/miner_scorer.py` and `vali_utils/on_demand/on_demand_validation.py`. The composite score is `min(s3_boost, 2 × od) × s3_cred^2.5 + od`, so a miner with no on-demand activity earns nothing from bulk uploads.
 
 ## Response Format Example
 
