@@ -301,10 +301,6 @@ class DuckDBSampledValidator:
         ".s3_validation_tmp",
     )
 
-    # Scraper validation window — only files uploaded within this window are scraper-validated.
-    # Older files rely on credibility from previous validation cycles.
-    SCRAPER_MAX_AGE_HOURS = 96
-
     # Standard bytes per row for effective_size cap.
     # Real production data: X=77-515 B/row, Reddit=182-1682 B/row.
     STANDARD_BYTES_PER_ROW = 300
@@ -1931,7 +1927,7 @@ class DuckDBSampledValidator:
                             total_matched += 1
                         elif len(mismatch_samples) < 5:
                             uri = row.get('url', 'unknown')
-                            mismatch_samples.append(f"Job {job_id[:8]}: {uri}")
+                            mismatch_samples.append(f"Job {job_id}: {uri}")
 
                     del sample_df
 
@@ -2207,7 +2203,7 @@ class DuckDBSampledValidator:
                             'entities_passed': 0,
                             'success_rate': 0.0,
                             'sample_results': [
-                                f"❌ {platform} ({job_id[:16]}): "
+                                f"❌ {platform} ({job_id}): "
                                 f"Failed to create DataEntity for sampled row"
                             ],
                         }
@@ -2300,9 +2296,12 @@ class DuckDBSampledValidator:
                     stats['validated'] += 1
                     if result.is_valid:
                         stats['passed'] += 1
-                        sample_results.append(f"✅ {platform} ({job_id[:16]}): {result.reason}")
+                        sample_results.append(f"✅ {platform} ({job_id}): {result.reason}")
                     else:
-                        sample_results.append(f"❌ {platform} ({job_id[:16]}): {result.reason}")
+                        # Full job_id + URI so miners can find and clean up the
+                        # exact row that failed.
+                        uri = getattr(entities[i], 'uri', 'unknown') if i < len(entities) else 'unknown'
+                        sample_results.append(f"❌ {platform} ({job_id}): {result.reason} [{uri}]")
             except Exception as e:
                 stats['validated'] += len(entities)
                 sample_results.append(f"❌ {platform}: Scraper error - {e}")
