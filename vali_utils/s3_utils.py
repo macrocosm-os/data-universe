@@ -1890,13 +1890,15 @@ class DuckDBSampledValidator:
                     if required - available_cols:
                         continue
 
-                    # Whole-file time-window check. The 10-row sample below
-                    # misses a small tail of rows outside the job's
-                    # post_start/post_end window most of the time, and those
-                    # rows are real content so the scraper phase passes them.
-                    # Projecting the single `datetime` column keeps this to
-                    # seconds on a cached local file.
-                    if has_time:
+                    # Whole-file time-window check, local cache only. The
+                    # 10-row sample below misses a small tail of rows past
+                    # post_start/post_end most of the time, and those rows are
+                    # real content so the scraper phase passes them. One
+                    # column of a cached file scans in ~0.06 s per 800k rows;
+                    # over a presigned URL it is ~13 s per file, so skip the
+                    # scan rather than add network time when the file was
+                    # evicted or never downloaded.
+                    if has_time and read_source is cached:
                         n_rows, n_out = self._count_rows_outside_window(
                             conn, read_source, job_start_dt, job_end_dt
                         )
