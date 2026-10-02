@@ -243,7 +243,7 @@ class DuckDBSampledValidator:
     MAX_EMPTY_RATE = 10.0       # 10% max empty content
     # Missing URLs = instant fail (no rate threshold needed)
     MIN_JOB_MATCH_RATE = 95.0   # 95% min job content match rate
-    MIN_SCRAPER_SUCCESS = 80.0  # 80% min scraper success rate
+    MIN_SCRAPER_SUCCESS = 80.0  # 80% min COMBINED scraper success rate (all platforms)
     MIN_ENGAGEMENT_RATE = 95.0  # 95% of X rows must have non-null view_count
     MIN_UNIQUE_CONTENT_RATIO = 10.0  # 10% min unique tweet_ids / total rows
     # Max fraction of sampled files allowed to be skipped for transient S3/network
@@ -251,10 +251,34 @@ class DuckDBSampledValidator:
     # it cannot be abused to leave too little data actually verified.
     MAX_TRANSIENT_SKIP_RATE = 0.30
 
+    # Per-platform scraper bar — deliberately LOOSER than the combined bar.
+    #
+    # The per-platform check runs on a tiny sample (SCRAPER_PLATFORM_MIN_ENTITIES
+    # = 5), where one extra flaky lookup swings the rate 20 points. At an 80%
+    # bar (fail on >=2/5) an HONEST platform whose rows are all real still fails
+    # purely from irreducible noise — deleted/edited posts, third-party rate
+    # limits, stale historical rows — on ~8% of cycles at 10% lookup-noise and
+    # ~26% at 20% (binomial, measured). That mis-FAILs the whole miner and
+    # decays credibility for something they don't control.
+    #
+    # 60% (fail only on >=3/5) drops that honest false-positive rate to ~0.9%
+    # / ~5.8% while still catching a platform that is MOSTLY fabricated. The
+    # COMBINED bar stays at MIN_SCRAPER_SUCCESS = 80%, so wholesale fabrication
+    # and a dirty MAJORITY platform are still caught there; this only relaxes
+    # the case where a MINORITY platform sits between 60% and 80% real.
+    #
+    # NOTE: this partially relaxes the per-platform strictness added in #901
+    # (which used the combined 80% here). Maintainers can retune via this
+    # constant; the statistically cleaner fix for the small-sample noise is a
+    # larger per-platform floor or an absolute-failure allowance, left as a
+    # follow-up so this change stays minimal.
+    MIN_SCRAPER_SUCCESS_PER_PLATFORM = 60.0
+
     # Per-platform scraper-sampling floor. Every platform with claimed rows in
     # the sampled files gets at least this many rows scraper-validated,
     # regardless of the random draw, and each platform reaching the floor is
-    # held to MIN_SCRAPER_SUCCESS on its own rather than in a combined rate.
+    # held to MIN_SCRAPER_SUCCESS_PER_PLATFORM on its own rather than only in
+    # the combined rate.
     SCRAPER_PLATFORM_MIN_ENTITIES = 5
 
     # Rows drawn from each file during the scraper phase. Small and FIXED, not
@@ -263,6 +287,50 @@ class DuckDBSampledValidator:
     # files, which is what stops one oversized file from owning every
     # scraper-checked entity. See _perform_scraper_validation.
     SCRAPER_ROWS_PER_FILE = 5
+
+    # Files force-included per platform at SELECTION time (validate_miner_s3_data).
+    # The row-weighted draw + top-5 force-include are platform-blind, so a miner
+    # who shrinks one platform's claimed rows to near-zero makes its files never
+    # get sampled — that platform's data is then never scraper-checked, and its
+    # per-platform bar is vacuous (no entities to hold to MIN_SCRAPER_SUCCESS).
+    # Guaranteeing >= 2 files/platform gives the scraper phase enough rows
+    # (2 x SCRAPER_ROWS_PER_FILE, before URL-dedup) to clear the entity floor.
+    SCRAPER_PLATFORM_MIN_FILES = 2
+
+    # Platforms _create_data_entity can build entities for, i.e. the ones a
+    # scraper can actually check. The per-platform floors apply only to these:
+    # forcing in a file for any other platform cannot produce a validated
+    # entity, it can only trip the entity-construction hard-fail.
+    SCRAPER_VALIDATABLE_PLATFORMS = frozenset({'x', 'twitter', 'reddit'})
+
+    # Detection surplus for the files that carry the effective_size claim.
+    #
+    # The fairness rules (uniform file order, flat SCRAPER_ROWS_PER_FILE quota)
+    # are what stop a miner from steering the draw — but applied alone they also
+    # cut the biggest files from ~20 sampled rows down to 5, and those are
+    # exactly the files where fabricated volume pays. Detection power against a
+    # fraction f of fabricated rows inside one file is 1-(1-f)^r:
+    #
+    #     f=0.20   r=5 -> 67%    r=20 -> 99%
+    #     f=0.10   r=5 -> 41%    r=20 -> 88%
+    #
+    # So the top files by CLAIMED ROWS get a larger quota, drawn AFTER every
+    # platform has reached its floor. Fairness is a floor, not a cap: the
+    # guarantee is that no platform can be shut out, not that a 3M-row file and
+    # a 50-row file get equal audit effort. Claimed rows steer only this
+    # surplus, and steering it costs the miner more inspection, not less.
+    SCRAPER_TOP_FILE_COUNT = 3
+    SCRAPER_TOP_FILE_ROWS = 20
+
+    # Long-tail floor on the FINAL entity budget. The weighted fill sends
+    # leftover slots to the biggest claims, which is economically right — audit
+    # effort should track the rows at risk. But on a single-platform layout the
+    # per-platform floor is the only thing holding slots for smaller files, and
+    # it does so only in expectation (a random draw from a pool the big files
+    # dominate). Reserve slots outright instead, so "small files are still
+    # checked" is a guarantee rather than a tendency, matching how every other
+    # coverage rule here works.
+    SCRAPER_LONGTAIL_MIN_ENTITIES = 3
 
     # File size limits - prevent empty file exploit and oversized file OOM
     MIN_FILE_SIZE_BYTES = 15_000                   # 15KB - empty parquet header ≈ 8KB
@@ -572,6 +640,49 @@ class DuckDBSampledValidator:
             forced = [item for item in top_n if item[0].get('key') not in picked_keys]
 
             sampled_files_with_job = sampled_files_with_job + forced
+            picked_keys.update(item[0].get('key') for item in forced)
+
+            # Per-platform FILE floor. All four slices above (row-weighted,
+            # uniform-over-jobs, suspicion, top-5) are platform-blind: they key
+            # off claimed rows or job id, never platform. A miner shrinks its X
+            # jobs to a handful of rows so the weighted draw and top-5 pick only
+            # Reddit, and X is never scraper-checked at all (observed: 20/20
+            # sampled entities Reddit, no X). Force in each platform's
+            # highest-claim files until it has >= SCRAPER_PLATFORM_MIN_FILES in
+            # the sample, so every platform earning row credit is inspected and
+            # its per-platform scraper bar can bind.
+            files_by_platform_all: Dict[str, list] = {}
+            for it in active_files:
+                p = self._file_platform(it[0].get('key', ''), expected_jobs)
+                # Only platforms the scraper can actually validate. Forcing in a
+                # file the entity builder cannot parse (unknown platform) would
+                # trip the "_create_data_entity returned None" hard-fail path and
+                # mis-fail an honest miner over a job whose params lack a
+                # platform — a floor must never manufacture a failure.
+                if p in self.SCRAPER_VALIDATABLE_PLATFORMS:
+                    files_by_platform_all.setdefault(p, []).append(it)
+            for p, items in files_by_platform_all.items():
+                # Count only files that will REACH the scraper phase. Suspicion
+                # picks are detection-only and get filtered out of scraper_files
+                # by the caller, so counting them here would satisfy the floor
+                # with files the scraper never sees — and the suspicion picker
+                # targets repeated-exact-size files, exactly the fingerprint a
+                # shrunken minority platform has. Without this the manipulation
+                # reopens: the more suspicious a platform's files look, the less
+                # likely it was to be scraper-validated at all.
+                eligible = [it for it in items if it[0].get('key') not in suspicion_keys]
+                have = sum(1 for it in eligible if it[0].get('key') in picked_keys)
+                need = min(self.SCRAPER_PLATFORM_MIN_FILES, len(eligible)) - have
+                if need <= 0:
+                    continue
+                extra = sorted(
+                    (it for it in eligible if it[0].get('key') not in picked_keys),
+                    key=_claimed_rows, reverse=True,
+                )[:need]
+                for it in extra:
+                    sampled_files_with_job.append(it)
+                    picked_keys.add(it[0].get('key'))
+
             self._rng.shuffle(sampled_files_with_job)
             sampled_files = [f for f, _ in sampled_files_with_job]
 
@@ -893,6 +1004,21 @@ class DuckDBSampledValidator:
         filename = key.rsplit('/', 1)[-1]
         match = self._FILENAME_ROW_COUNT_RE.match(filename)
         return int(match.group(1)) if match else None
+
+    @staticmethod
+    def _file_platform(file_key: str, expected_jobs: Dict) -> str:
+        """Platform ('x'/'reddit'/...) of a file, via its job_id → expected_jobs.
+
+        Single source for the file→platform mapping used by both the
+        per-platform file floor (selection) and the round-robin scraper read.
+        Returns 'unknown' for keys without a job_id or jobs without a platform.
+        """
+        if '/job_id=' not in file_key:
+            return 'unknown'
+        job_id = file_key.split('/job_id=')[1].split('/')[0]
+        job_config = expected_jobs.get(job_id, {})
+        params = job_config.get('params', {}) if isinstance(job_config, dict) else {}
+        return str(params.get('platform', 'unknown')).lower()
 
     # Rate-limits the crash-orphan sweep (recurring, at most once per interval,
     # so a hard kill's orphans are reclaimed within ~TEMP_ORPHAN_AGE_SECS instead
@@ -2012,46 +2138,127 @@ class DuckDBSampledValidator:
         """
         all_entities = []
 
-        # UNIFORM random file order + a small FIXED per-file row quota.
+        # ROUND-ROBIN read across platforms + a small FIXED per-file row quota.
         #
-        # File *selection* is already row-weighted, and force-includes the top-5
-        # files by claimed rows (see validate_miner_s3_data), so the files that
-        # drive effective_size are guaranteed to be in `sampled_files` before we
-        # get here. Weighting a second time — a row-weighted order plus a
-        # row-proportional per-file budget — let the single largest file absorb
-        # the entire pool: at 20 rows/file the 40-row pool was full after two
-        # files, so all 20 validated entities came from one or two files of one
-        # platform. That is steerable on purpose: shrink the X jobs until Reddit
-        # holds nearly all claimed rows and the X leg is never scraper-checked
-        # at all, which also makes the per-platform bar vacuous (a platform with
-        # no entities in the pool has nothing to hold to MIN_SCRAPER_SUCCESS).
+        # Two miner-steerable holes had to close together:
         #
-        # Uniform over files with <= SCRAPER_ROWS_PER_FILE rows each needs at
-        # least 8 distinct files to fill the pool, so every sampled job has a
-        # real chance of contributing and the per-platform floor below has
-        # something to draw from. Large files keep their advantage where it is
-        # earned: they are far more likely to be *selected* in the first place.
+        #   1. Per-file budget derived from the miner's declared row counts let
+        #      the single largest file absorb the whole pool (all 20 entities
+        #      from one or two files of one platform). Fixed at
+        #      SCRAPER_ROWS_PER_FILE, so no file's share depends on what the
+        #      miner claims.
+        #
+        #   2. A plain uniform shuffle + "stop once the pool is full" still let
+        #      the majority platform starve the minority: if its files shuffle
+        #      first they fill the 40-entity pool before any minority file is
+        #      opened, so 20/20 land on one platform and the minority leg is
+        #      never scraper-checked — its per-platform bar vacuous (a platform
+        #      with 0 entities in the pool has nothing to hold to
+        #      MIN_SCRAPER_SUCCESS). This was still reproducible after fix 1.
+        #
+        # Read the files interleaved by platform and keep going, past the pool
+        # cap if needed, until every platform present has reached the entity
+        # floor (or run out of files). Combined with the per-platform FILE floor
+        # at selection (validate_miner_s3_data guarantees each platform HAS
+        # files here), every platform earning row credit is now checked.
         sampled_files = list(sampled_files)
-        self._rng.shuffle(sampled_files)
+
+        files_by_platform: Dict[str, list] = {}
+        for f in sampled_files:
+            plat = self._file_platform(f.get('key', ''), expected_jobs)
+            files_by_platform.setdefault(plat, []).append(f)
+        for plat in files_by_platform:
+            self._rng.shuffle(files_by_platform[plat])
 
         # Pool target: twice the number of entities we finally validate, so the
         # per-platform floor and the random draw below have slack to work with.
         entity_pool_target = num_entities * 2
+        # Each platform must reach the entity floor so its per-platform bar
+        # (MIN_SCRAPER_SUCCESS over >= SCRAPER_PLATFORM_MIN_ENTITIES) binds.
+        per_platform_target = self.SCRAPER_PLATFORM_MIN_ENTITIES
 
-        # The quota is raised only when the sample holds too few files to fill
-        # the pool at the base rate — a small miner (fewer than 10 files in
-        # total) must not end up with a SMALLER scraper sample than before this
-        # change. It stays the same number for every file either way: what
-        # makes the draw unsteerable is that no file's share depends on the row
-        # count the miner declares, not the size of the share itself.
+        # Flat per-file quota, raised only when the whole sample is too small to
+        # fill the pool. Same number for every file — never derived from
+        # miner-declared rows, so no file's share depends on the miner's claim.
         rows_per_file = self.SCRAPER_ROWS_PER_FILE
         if sampled_files and len(sampled_files) * rows_per_file < entity_pool_target:
             rows_per_file = math.ceil(entity_pool_target / len(sampled_files))
 
-        for file_info in sampled_files:
+        # Detection surplus (see SCRAPER_TOP_FILE_ROWS): the files carrying the
+        # largest CLAIMED row counts get a bigger quota, because that is where
+        # fabricated volume pays. This is the one place claimed rows steer the
+        # draw, and it can only ADD inspection: the floors above are already
+        # guaranteed, so a miner inflating a file's claim just buys that file
+        # more scrutiny. Ties broken by key so the set is stable per cycle.
+        def _claimed(f):
+            return self._parse_row_count_from_filename(f.get('key', '')) or 0
 
-            if len(all_entities) >= entity_pool_target:
+        claimed_rows_by_key = {f.get('key'): _claimed(f) for f in sampled_files}
+        top_claim_keys = {
+            f.get('key')
+            for f in sorted(sampled_files,
+                            key=lambda f: (-_claimed(f), f.get('key', '')))
+            [:self.SCRAPER_TOP_FILE_COUNT]
+        }
+
+        def _quota_for(f):
+            if f.get('key') in top_claim_keys:
+                return max(rows_per_file, self.SCRAPER_TOP_FILE_ROWS)
+            return rows_per_file
+
+        # Interleave: [platA[0], platB[0], platA[1], platB[1], ...] then the tail
+        # of the longer platform. Reading in this order guarantees every platform
+        # contributes before the pool cap could end the scan.
+        read_order: List[Dict] = []
+        if files_by_platform:
+            longest = max(len(v) for v in files_by_platform.values())
+            for i in range(longest):
+                for plat, files in files_by_platform.items():
+                    if i < len(files):
+                        read_order.append(files[i])
+
+        per_platform_counts: Dict[str, int] = {p: 0 for p in files_by_platform}
+        attempted: Dict[str, int] = {p: 0 for p in files_by_platform}
+        contributing_files: Set[str] = set()
+
+        # Breadth floor. The surplus quota above lets 2-3 big files fill the
+        # whole pool on their own, which would collapse file coverage back to
+        # the handful of files the miner most wants inspected — the opposite of
+        # the fairness rule. So the pool cap cannot stop the scan until at least
+        # this many DISTINCT files have contributed. Depth on big files is
+        # bought on TOP of breadth, never instead of it.
+        min_files_contributing = min(
+            len(sampled_files),
+            math.ceil(entity_pool_target / self.SCRAPER_ROWS_PER_FILE),
+        )
+
+        def _some_platform_below_floor() -> bool:
+            # True while a platform is short of the floor AND still has files
+            # left to read. Bounds the loop: an exhausted platform stops blocking.
+            return any(
+                per_platform_counts[p] < per_platform_target
+                and attempted[p] < len(files_by_platform[p])
+                for p in files_by_platform
+            )
+
+        for file_info in read_order:
+
+            # Stop only when all three obligations are met: the pool is full,
+            # no platform is short of its entity floor, and enough DISTINCT
+            # files have contributed. Any one of them still outstanding keeps
+            # the scan going (bounded by the file list either way).
+            pool_full = len(all_entities) >= entity_pool_target
+            breadth_met = len(contributing_files) >= min_files_contributing
+            if pool_full and breadth_met and not _some_platform_below_floor():
                 break
+
+            plat_of_file = self._file_platform(file_info.get('key', ''), expected_jobs)
+            # Past the cap, only read what an outstanding obligation needs: a
+            # platform still under its floor, or breadth still short.
+            if (pool_full and breadth_met
+                    and per_platform_counts.get(plat_of_file, 0) >= per_platform_target):
+                continue
+            attempted[plat_of_file] = attempted.get(plat_of_file, 0) + 1
 
             # Skip oversized files to prevent OOM
             file_size = file_info.get('size', 0)
@@ -2114,7 +2321,7 @@ class DuckDBSampledValidator:
                 # from it — same quota for every file, big or small.
                 df = read_random_row_group(
                     read_source, file_size,
-                    columns=None, max_rows=rows_per_file,
+                    columns=None, max_rows=_quota_for(file_info),
                     rng=self._rng
                 )
 
@@ -2146,7 +2353,9 @@ class DuckDBSampledValidator:
                                 f"Failed to create DataEntity for sampled row"
                             ],
                         }
-                    all_entities.append((entity, platform, job_id))
+                    all_entities.append((entity, platform, job_id, _claimed(file_info)))
+                    per_platform_counts[platform] = per_platform_counts.get(platform, 0) + 1
+                    contributing_files.add(file_key)
 
                 del df
             except Exception as e:
@@ -2199,11 +2408,44 @@ class DuckDBSampledValidator:
                     selected.append(item)
                     selected_ids.add(id(item))
 
-        # Fill the rest of the budget with a random draw over everything not yet picked.
+        # Fill the rest of the budget WEIGHTED by the claimed rows of the file
+        # each entity came from. The floors above already guarantee every
+        # platform is represented, so weighting the remainder cannot shut anyone
+        # out — it only sends the leftover audit effort to the files that carry
+        # the effective_size claim, which is where fabricated volume pays.
+        # Inflating a file's claim therefore raises its own odds of being
+        # checked; it can never lower another file's guaranteed share.
         remaining = [it for it in all_entities if id(it) not in selected_ids]
         fill = max(0, target - len(selected))
         if fill > 0:
-            selected.extend(self._rng.sample(remaining, min(fill, len(remaining))))
+            # Long-tail reservation first: entities from files OUTSIDE the
+            # top-claim set. Without it a couple of multi-million-row files take
+            # every leftover slot, and the smaller files are audited only by
+            # whatever the per-platform floor's random draw happened to catch.
+            # Classify by file identity, not by a claim threshold. When the
+            # miner has fewer than SCRAPER_TOP_FILE_COUNT genuinely large files,
+            # a small file gets pulled into the top set and a threshold
+            # collapses to that small claim, leaving the long-tail set empty —
+            # the exact layout ("2 huge + 8 tiny") this floor exists for.
+            # After _keep_latest_per_job a job maps 1:1 to a file, so the job id
+            # carried on each entity identifies its source file.
+            top_claim_jobs = {
+                k.split('/job_id=')[1].split('/')[0]
+                for k in top_claim_keys if k and '/job_id=' in k
+            }
+            longtail = [it for it in remaining if it[2] not in top_claim_jobs]
+            reserve = min(self.SCRAPER_LONGTAIL_MIN_ENTITIES, fill, len(longtail))
+            if reserve > 0:
+                picked_longtail = self._rng.sample(longtail, reserve)
+                selected.extend(picked_longtail)
+                selected_ids.update(id(it) for it in picked_longtail)
+                remaining = [it for it in remaining if id(it) not in selected_ids]
+                fill -= reserve
+        if fill > 0:
+            weights = [max(1, it[3]) for it in remaining]
+            selected.extend(_weighted_sample_without_replacement(
+                remaining, weights, min(fill, len(remaining)), rng=self._rng
+            ))
         else:
             # The floors alone already over-subscribed the budget (enough
             # platforms x SCRAPER_PLATFORM_MIN_ENTITIES > target). Shuffle
@@ -2219,7 +2461,7 @@ class DuckDBSampledValidator:
         platform_stats: Dict[str, Dict[str, int]] = {}
 
         entities_by_platform = {}
-        for entity, platform, job_id in entities_to_validate:
+        for entity, platform, job_id, _claimed_rows_of_file in entities_to_validate:
             if platform not in entities_by_platform:
                 entities_by_platform[platform] = []
             entities_by_platform[platform].append((entity, job_id))
@@ -2504,7 +2746,13 @@ class DuckDBSampledValidator:
         )
 
     def _per_platform_issues(self, platform_stats: Dict[str, Dict[str, int]]) -> List[str]:
-        """Issues for platforms that fail MIN_SCRAPER_SUCCESS on their own sample.
+        """Issues for platforms below MIN_SCRAPER_SUCCESS_PER_PLATFORM on their
+        own sample.
+
+        The per-platform bar (60%) is looser than the combined bar (80%): the
+        sample is only SCRAPER_PLATFORM_MIN_ENTITIES rows, so an honest platform
+        would mis-fail on normal lookup noise at 80% (see the constant). The
+        combined MIN_SCRAPER_SUCCESS check remains the strict gate.
 
         Only platforms with at least SCRAPER_PLATFORM_MIN_ENTITIES validated
         entities are held to the bar — below that, one bad row would swing the
@@ -2516,7 +2764,7 @@ class DuckDBSampledValidator:
             if validated < self.SCRAPER_PLATFORM_MIN_ENTITIES:
                 continue
             rate = stats.get('passed', 0) / validated * 100.0
-            if rate < self.MIN_SCRAPER_SUCCESS:
+            if rate < self.MIN_SCRAPER_SUCCESS_PER_PLATFORM:
                 issues.append(f"Low {plat} scraper success: {rate:.1f}%")
         return issues
 
