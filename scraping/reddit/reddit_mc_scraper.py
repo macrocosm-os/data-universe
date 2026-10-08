@@ -29,6 +29,13 @@ class RedditMCScraper(Scraper):
     """Scraper that uses the Apify macrocosmos/reddit-scraper actor."""
 
     ACTOR_ID = "macrocosmos/reddit-scraper"
+    # The archive behind the actor rate-limits bursts (HTTP 429). An empty result
+    # is re-checked once after this delay before it is called "not found"; a
+    # genuinely missing post is still empty on the retry.
+    EMPTY_RETRY_DELAY_S = 60
+    # Actor item signalling that the archive could not be reached at all
+    # (as opposed to answering "no such post"). Scored neutral, not as a miner fail.
+    ARCHIVE_UNAVAILABLE_KEY = "error"
 
     def __init__(self, apify_api_token: str = None):
         """Initialize the Apify Reddit scraper.
@@ -85,6 +92,18 @@ class RedditMCScraper(Scraper):
 
         return entities
 
+    async def _lookup(self, url: str):
+        """Run the actor for one URL. Returns the first dataset item, or None when
+        the dataset is empty (archive answered: no such post)."""
+        run = await self.client.actor(self.ACTOR_ID).call(
+            run_input={"url": url},
+            timeout_secs=300,
+        )
+        dataset_client = self.client.dataset(run["defaultDatasetId"])
+        async for item in dataset_client.iterate_items():
+            return item
+        return None
+
     async def validate(self, entities: List[DataEntity]) -> List[ValidationResult]:
         """Validate a list of DataEntity objects by scraping their URLs."""
         if not entities:
@@ -117,29 +136,26 @@ class RedditMCScraper(Scraper):
                 )
                 continue
 
-            # Validate by fetching from Apify actor
-            actor_input = {
-                "url": ent_content.url
-            }
-
             try:
-                # Run the actor with single URL and increased timeout
-                run = await self.client.actor(self.ACTOR_ID).call(
-                    run_input=actor_input,
-                    timeout_secs=300  # 5 minutes timeout
-                )
+                item = await self._lookup(ent_content.url)
+                if item is None or self.ARCHIVE_UNAVAILABLE_KEY in item:
+                    # Empty or unreachable: the archive may just be rate-limiting
+                    # the validator's own burst. Look again before judging.
+                    await asyncio.sleep(self.EMPTY_RETRY_DELAY_S)
+                    item = await self._lookup(ent_content.url)
 
-                # Check if we got results
-                dataset_client = self.client.dataset(run["defaultDatasetId"])
-                items = []
+                if item is not None and self.ARCHIVE_UNAVAILABLE_KEY in item:
+                    results.append(
+                        ValidationResult(
+                            is_valid=False,
+                            reason=f"UNFETCHABLE: archive unavailable ({item[self.ARCHIVE_UNAVAILABLE_KEY]})",
+                            content_size_bytes_validated=entity.content_size_bytes,
+                        )
+                    )
+                    continue
 
-                async for item in dataset_client.iterate_items():
-                    items.append(item)
-                    break  # Only need first item
-
-                if len(items) > 0:
+                if item is not None:
                     # Fix field names from Apify actor output
-                    item = items[0]
                     bt.logging.trace(f"Apify actor returned for URL {ent_content.url}: {item}")
 
                     if 'isNsfw' in item:
