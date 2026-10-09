@@ -2,6 +2,7 @@ import bittensor as bt
 import re
 import traceback
 import datetime as dt
+import difflib
 import random
 
 from typing import List, Optional
@@ -66,6 +67,40 @@ def validate_scraped_at(
         )
 
     return None
+
+
+# The validator re-fetches Reddit through an archive (Arctic Shift) that captures a
+# post seconds after creation and re-crawls it once roughly 36 hours later. Until
+# that second pass the archive copy is a creation-time snapshot: score 0 or 1, no
+# comments, and the pre-edit body (Reddit does not even flag edits made in the
+# first few minutes). Comparing a miner's later, honest copy against that snapshot
+# is what produced the "extremely unrealistic" and "bodies do not match" false
+# failures on fresh posts.
+ARCHIVE_SNAPSHOT_MAX_AGE = dt.timedelta(hours=48)
+BODY_SIMILARITY_MIN_RATIO = 0.8
+
+
+def _archive_is_creation_snapshot(actual_content: RedditContent, content_age: dt.timedelta) -> bool:
+    """True when the archive copy carries no engagement information yet."""
+    return (
+        content_age < ARCHIVE_SNAPSHOT_MAX_AGE
+        and (actual_content.score or 0) <= 1
+        and (actual_content.num_comments or 0) == 0
+    )
+
+
+def _bodies_equivalent(submitted: str, actual: str) -> bool:
+    """Exact match, or the same text modulo an edit: either side a prefix of the
+    other, or difflib similarity >= BODY_SIMILARITY_MIN_RATIO. Fabricated text
+    does not get near 0.8 against the real body."""
+    if submitted == actual:
+        return True
+    if not submitted or not actual:
+        return False
+    if submitted.startswith(actual) or actual.startswith(submitted):
+        return True
+    matcher = difflib.SequenceMatcher(None, submitted, actual, autojunk=False)
+    return matcher.quick_ratio() >= BODY_SIMILARITY_MIN_RATIO and matcher.ratio() >= BODY_SIMILARITY_MIN_RATIO
 
 
 def validate_reddit_content(
@@ -155,8 +190,8 @@ def validate_reddit_content(
             content_size_bytes_validated=entity_to_validate.content_size_bytes,
         )
 
-    # Check Reddit body
-    if content_to_validate.body != actual_content.body:
+    # Check Reddit body (edit-tolerant: the archive may hold the pre-edit text)
+    if not _bodies_equivalent(content_to_validate.body, actual_content.body):
         bt.logging.info(
             f"Reddit bodies do not match: {actual_content} != {content_to_validate}"
         )
@@ -264,8 +299,17 @@ def validate_reddit_content(
         # Allow a 10 byte difference to account for timestamp serialization differences.
         byte_difference_allowed = 10
 
+        # When the body passed as an edit (archive holds an older revision), size the
+        # claim against the miner's own serialised content: a longer edited post is
+        # legitimately bigger than the archive copy, but still cannot claim more bytes
+        # than it contains.
+        if content_to_validate.body != actual_content.body:
+            reference_size = RedditContent.to_data_entity(content=content_to_validate).content_size_bytes
+        else:
+            reference_size = actual_entity.content_size_bytes
+
         if (
-                entity_to_validate.content_size_bytes - actual_entity.content_size_bytes
+                entity_to_validate.content_size_bytes - reference_size
         ) > byte_difference_allowed:
             return ValidationResult(
                 is_valid=False,
@@ -599,7 +643,14 @@ def validate_score_content(submitted_content: RedditContent, actual_content: Red
     # Calculate content age from creation time
     now = dt.datetime.now(dt.timezone.utc)
     content_age = now - submitted_content.created_at
-    
+
+    if _archive_is_creation_snapshot(actual_content, content_age):
+        return ValidationResult(
+            is_valid=True,
+            reason="Score validation skipped - archive copy is a creation-time snapshot",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
     # Define age-based score tolerance thresholds
     # Newer content has tighter tolerance, older content allows more variance
     if content_age < dt.timedelta(hours=1):
@@ -764,6 +815,13 @@ def validate_comment_count(submitted_content: RedditContent, actual_content: Red
             content_size_bytes_validated=entity.content_size_bytes,
         )
     
+    if _archive_is_creation_snapshot(actual_content, dt.datetime.now(dt.timezone.utc) - submitted_content.created_at):
+        return ValidationResult(
+            is_valid=True,
+            reason="Comment count validation skipped - archive copy is a creation-time snapshot",
+            content_size_bytes_validated=entity.content_size_bytes,
+        )
+
     # Basic sanity check: comment count must be non-negative
     if submitted_content.num_comments < 0:
         bt.logging.info(f"Invalid negative comment count: {submitted_content.num_comments}")

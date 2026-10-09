@@ -2293,6 +2293,12 @@ class DuckDBSampledValidator:
                 results = await self._validate_with_scraper(entities, platform)
                 for i, result in enumerate(results):
                     job_id = job_ids[i] if i < len(job_ids) else 'unknown'
+                    if not result.is_valid and str(result.reason).startswith("UNFETCHABLE"):
+                        # The scraper could not reach its source (same convention
+                        # as SCRAPER_ERROR_REASON_PREFIXES in the on-demand path):
+                        # neither a pass nor a miner failure.
+                        sample_results.append(f"⚪ {platform} ({job_id[:16]}): {result.reason}")
+                        continue
                     stats['validated'] += 1
                     if result.is_valid:
                         stats['passed'] += 1
