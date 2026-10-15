@@ -1,6 +1,8 @@
 import asyncio
 import threading
+import time
 import traceback
+import weakref
 import bittensor as bt
 from typing import List, Tuple, Optional
 from common.data import DataEntity, DataLabel, DataSource
@@ -26,6 +28,14 @@ class ApiDojoTwitterScraper(Scraper):
 
     # As of 2/5/24 this actor only takes 256 MB in the default config so we can run a full batch without hitting shared actor memory limits.
     concurrent_validates_semaphore = threading.BoundedSemaphore(20)
+
+    # A long-lived public post used to tell "the actor is down" apart from "this
+    # URI broke the actor" when a validation run fails. See _actor_is_healthy.
+    CANARY_TWEET_URL = "https://x.com/jack/status/20"
+    CANARY_TTL_SECS = 120
+    _canary_checked_at: float = 0.0
+    _canary_healthy: bool = True
+    _canary_locks: "weakref.WeakKeyDictionary" = weakref.WeakKeyDictionary()
 
     def __init__(self, runner: ActorRunner = ActorRunner()):
         self.runner = runner
@@ -73,10 +83,17 @@ class ApiDojoTwitterScraper(Scraper):
                         bt.logging.error(
                             f"Failed to run actor: {traceback.format_exc()}."
                         )
-                        # This is an unfortunate situation. We have no way to distinguish a genuine failure from
-                        # one caused by malicious input. In my own testing I was able to make the Actor timeout by
-                        # using a bad URI. As such, we have to penalize the miner here. If we didn't they could
-                        # pass malicious input for chunks they don't have.
+                        # A bad URI can make the Actor time out, so a failure here is
+                        # normally charged to the miner. A canary run on a known-good
+                        # post tells the two cases apart: if the canary also fails the
+                        # actor is down and there is no verdict; if it succeeds the
+                        # failure is specific to this URI and stands.
+                        if not await self._actor_is_healthy():
+                            return ValidationResult(
+                                is_valid=False,
+                                reason="UNFETCHABLE: ApiDojo actor unavailable (canary run also failed).",
+                                content_size_bytes_validated=entity.content_size_bytes,
+                            )
                         return ValidationResult(
                             is_valid=False,
                             reason="Failed to run Actor. This can happen if the URI is invalid, or APIfy is having an issue.",
@@ -135,6 +152,47 @@ class ApiDojoTwitterScraper(Scraper):
             )
 
         return results
+
+    async def _actor_is_healthy(self) -> bool:
+        """Run the actor once on CANARY_TWEET_URL. False only if that run raises.
+
+        A run that completes proves the actor is up, whatever it returned, so the
+        miner's failure stands. Only a canary that also fails to run shows the
+        actor is down. Deciding on the returned items instead would fail open: an
+        empty or reshaped result would excuse every bad URI until the next check.
+
+        One canary per event loop at a time; the result is cached on the class
+        for CANARY_TTL_SECS so an outage costs one run per window.
+        """
+        cls = ApiDojoTwitterScraper
+        lock = cls._canary_locks.setdefault(asyncio.get_running_loop(), asyncio.Lock())
+        async with lock:
+            if cls._canary_checked_at and time.monotonic() - cls._canary_checked_at < cls.CANARY_TTL_SECS:
+                return cls._canary_healthy
+
+            run_input = {
+                **cls.BASE_RUN_INPUT,
+                "startUrls": [cls.CANARY_TWEET_URL],
+                "maxItems": 1,
+            }
+            run_config = RunConfig(
+                actor_id=cls.ACTOR_ID,
+                debug_info=f"Canary {cls.CANARY_TWEET_URL}",
+                max_data_entities=1,
+            )
+            try:
+                await self.runner.run(run_config, run_input)
+                healthy = True
+            except Exception:
+                healthy = False
+                bt.logging.warning(
+                    f"ApiDojo canary run failed, treating actor failures as UNFETCHABLE "
+                    f"for {cls.CANARY_TTL_SECS}s: {traceback.format_exc()}"
+                )
+
+            cls._canary_healthy = healthy
+            cls._canary_checked_at = time.monotonic()
+            return healthy
 
     async def scrape(
         self, scrape_config: ScrapeConfig, allow_low_engagement: bool = False
