@@ -12,6 +12,7 @@ torch==2.7.1
 pandas~=2.2.2
 cryptography==45.0.4
 requests>=2.33.0,<3.0
+certifi>=2026.10.19
 huggingface-hub==0.27.1
 datasets~=2.20.0
 pyarrow==17.0.0
