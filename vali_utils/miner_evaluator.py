@@ -856,7 +856,20 @@ class MinerEvaluator:
                 config=self.config, s3_reader=self.s3_reader,
                 seed_material=seed_material
             )
-            
+
+            if s3_validation_result is None:
+                # The miner's file listing did not complete (presigned URL / HTTP /
+                # parse / transport failure). No verdict: the caller skips a None
+                # result and, because the validation block is not advanced below,
+                # retries on the next cycle. This must return BEFORE the summary
+                # call, or the None raises inside this try and the except clause
+                # turns "no evidence" into a failed validation.
+                bt.logging.warning(
+                    f"UID:{uid} - HOTKEY:{hotkey}: S3 listing did not complete -- "
+                    f"no S3 verdict this cycle, will retry"
+                )
+                return None
+
             # Log results with rich table
             summary = get_s3_validation_summary(s3_validation_result)
             bt.logging.info(f"{hotkey}: {summary}")
