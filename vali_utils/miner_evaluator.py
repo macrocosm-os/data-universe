@@ -33,7 +33,7 @@ from vali_utils.miner_iterator import MinerIterator
 from vali_utils import metrics, utils as vali_utils
 
 from typing import Dict, List, Optional, Tuple
-from vali_utils.validator_s3_access import ValidatorS3Access
+from vali_utils.validator_s3_access import ValidatorS3Access, S3Inconclusive
 from vali_utils.s3_utils import (
     validate_s3_miner_data,
     get_s3_validation_summary,
@@ -67,6 +67,10 @@ class MinerEvaluator:
     """MinerEvaluator is responsible for evaluating miners and updating their scores."""
 
     SCORER_FILENAME = "scorer.pickle"
+
+    # Inconclusive S3 validations in a row (while other miners still get
+    # verdicts) after which a miner is failed: no-verdict must not freeze a score.
+    MAX_S3_INCONCLUSIVE_STREAK = 3
 
     # Mapping of scrapers to use based on the data source to validate.
     PREFERRED_SCRAPERS = {
@@ -124,6 +128,9 @@ class MinerEvaluator:
         # eval batch makes one chain RPC instead of one per miner.
         self._seed_hash_cache: Optional[Tuple[int, str]] = None
         self._seed_hash_lock = threading.Lock()
+        # S3 no-verdict bookkeeping, see _s3_no_verdict.
+        self._s3_inconclusive: Dict[str, Tuple[int, float]] = {}
+        self._last_s3_verdict = 0.0
         # Cache API client construction params (derived once, reused every eval).
         self._api_base_url = self.config.s3_auth_url
         self._api_verify_ssl = "localhost" not in self._api_base_url
@@ -851,11 +858,18 @@ class MinerEvaluator:
             # Use S3 auth URL from config
             s3_auth_url = self.config.s3_auth_url
 
-            s3_validation_result = await validate_s3_miner_data(
-                self.wallet, s3_auth_url, hotkey,
-                config=self.config, s3_reader=self.s3_reader,
-                seed_material=seed_material
-            )
+            try:
+                s3_validation_result = await validate_s3_miner_data(
+                    self.wallet, s3_auth_url, hotkey,
+                    config=self.config, s3_reader=self.s3_reader,
+                    seed_material=seed_material
+                )
+            except S3Inconclusive as e:
+                if self._s3_no_verdict(hotkey, e):
+                    return None
+                raise
+            self._s3_inconclusive.pop(hotkey, None)
+            self._last_s3_verdict = time.monotonic()
             
             # Log results with rich table
             summary = get_s3_validation_summary(s3_validation_result)
@@ -922,6 +936,32 @@ class MinerEvaluator:
                 bt.logging.warning(f"{hotkey}: publish S3 validation result failed: {e}")
 
         return s3_validation_result
+
+    def _s3_no_verdict(self, hotkey: str, error: Exception) -> bool:
+        """True when an inconclusive S3 validation leaves the score untouched.
+
+        Inconclusive is only raised for validator-side failures (listing, presigned
+        URLs, downloads after retries), and returning None keeps the miner's
+        previous S3 result and does not advance its validation block, so it is
+        retried on the next evaluation. Because that keeps a score frozen, it is
+        capped: a miner inconclusive MAX_S3_INCONCLUSIVE_STREAK times in a row
+        while other miners got verdicts meanwhile is failed. A validator-wide
+        outage (nobody gets a verdict) never fails anyone."""
+        streak, since = self._s3_inconclusive.get(hotkey, (0, time.monotonic()))
+        streak += 1
+        if streak >= self.MAX_S3_INCONCLUSIVE_STREAK and self._last_s3_verdict > since:
+            self._s3_inconclusive.pop(hotkey, None)
+            bt.logging.warning(
+                f"{hotkey}: S3 validation inconclusive {streak} times in a row while "
+                f"other miners validated — failing it: {error}"
+            )
+            return False
+        self._s3_inconclusive[hotkey] = (streak, since)
+        bt.logging.warning(
+            f"{hotkey}: S3 validation inconclusive ({streak} in a row), score "
+            f"unchanged, retried next evaluation: {error}"
+        )
+        return True
 
     async def _fetch_published_s3_result(
         self, uid: int, hotkey: str, current_block: int

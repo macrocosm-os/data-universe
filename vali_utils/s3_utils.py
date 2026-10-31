@@ -28,6 +28,7 @@ from scraping.reddit.model import RedditContent
 from common.data import DataEntity, DataSource
 from common.api_client import TaoSigner
 from vali_utils.parquet_reader import read_random_row_group
+from vali_utils.validator_s3_access import S3Inconclusive
 from urllib.parse import urlparse
 
 
@@ -225,6 +226,29 @@ PREFERRED_SCRAPERS = {
     DataSource.X: ScraperId.X_APIDOJO,
     DataSource.REDDIT: ScraperId.REDDIT_MC,
 }
+
+
+class TransientDownloadError(Exception):
+    """A sampled file could not be fetched from R2 after retries on fresh
+    connections. Deliberately NOT an OSError: requests' exceptions are OSErrors
+    and pyarrow.lib.ArrowIOError *is* OSError, so a broken download used to land
+    in the fail-closed page-decode handler and fail an honest miner."""
+
+
+class _DownloadStalled(Exception):
+    pass
+
+
+# Only failures of the transport itself. Excluded on purpose, because the miner
+# controls them: HTTP 4xx (object missing/forbidden), ContentDecodingError (a
+# Content-Encoding stored with the object), and the size cap below.
+_NETWORK_ERRORS = (
+    requests.ConnectionError,                  # connect/reset/read timeout
+    requests.Timeout,
+    requests.exceptions.ChunkedEncodingError,  # IncompleteRead mid-body
+    _DownloadStalled,
+)
+
 
 class DuckDBSampledValidator:
     """
@@ -590,7 +614,7 @@ class DuckDBSampledValidator:
             presigned_urls = await self._get_presigned_urls_batch(miner_hotkey, file_keys)
 
             if not presigned_urls:
-                return self._create_failed_result("Failed to get presigned URLs")
+                raise S3Inconclusive("Failed to get presigned URLs")
 
             # Step 4: Lightweight DuckDB validation (sampled - memory safe)
             bt.logging.info(f"{miner_hotkey}: Running sampled DuckDB validation...")
@@ -767,6 +791,8 @@ class DuckDBSampledValidator:
                 suspicion_files=sorted(suspicion_keys)
             )
 
+        except S3Inconclusive:
+            raise
         except Exception as e:
             bt.logging.error(scrub_log(f"{miner_hotkey}: DuckDB validation error: {str(e)}"))
             return self._create_failed_result(f"Validation error: {str(e)}")
@@ -997,6 +1023,12 @@ class DuckDBSampledValidator:
             raise RuntimeError(f"Dedup worker error: {res['error_msg']}")
         return res
 
+    DOWNLOAD_ATTEMPTS = 3
+    # An attempt averaging below this is abandoned and retried on a new
+    # connection: R2 occasionally pins one stream at ~0.1 MB/s until it drops it.
+    MIN_DOWNLOAD_BYTES_PER_SEC = 1024 * 1024
+    DOWNLOAD_GRACE_SECS = 60
+
     def _download_to_temp(self, presigned_url: str, declared_size: int) -> str:
         """Bulk-download one file to a temp file and return its local path.
 
@@ -1006,22 +1038,31 @@ class DuckDBSampledValidator:
         the declared size (+8MB margin) so a miner that under-reports its size in the
         listing cannot balloon the disk; the size guard at the call site already
         rejects anything over MAX_FILE_SIZE_BYTES before we get here.
+
+        Transport failures (_NETWORK_ERRORS, HTTP 5xx/429) are retried from
+        scratch; when every attempt fails, TransientDownloadError is raised.
         """
         cap = min(declared_size, self.MAX_FILE_SIZE_BYTES) + (8 * 1024 * 1024)
         fd, path = tempfile.mkstemp(suffix=".parquet", dir=self.LOCAL_VALIDATION_TEMP_DIR)
-        written = 0
         try:
-            with os.fdopen(fd, "wb") as out, requests.get(
-                presigned_url, stream=True, timeout=300
-            ) as r:
-                r.raise_for_status()
-                for chunk in r.iter_content(chunk_size=1 << 20):
-                    written += len(chunk)
-                    if written > cap:
-                        raise IOError(
-                            f"download exceeded size cap ({written} > {cap} bytes)"
-                        )
-                    out.write(chunk)
+            with os.fdopen(fd, "wb") as out:
+                for attempt in range(1, self.DOWNLOAD_ATTEMPTS + 1):
+                    out.seek(0)
+                    out.truncate()
+                    try:
+                        self._download_once(presigned_url, out, cap, declared_size)
+                        break
+                    except _NETWORK_ERRORS as e:
+                        error = f"{type(e).__name__}: {e}"
+                        bt.logging.warning(scrub_log(
+                            f"download attempt {attempt}/{self.DOWNLOAD_ATTEMPTS} failed: {error}"
+                        ))
+                        if attempt < self.DOWNLOAD_ATTEMPTS:
+                            time.sleep(attempt)
+                else:
+                    raise TransientDownloadError(
+                        f"{self.DOWNLOAD_ATTEMPTS} download attempts failed, last: {error}"
+                    )
         except Exception:
             try:
                 os.unlink(path)
@@ -1029,6 +1070,27 @@ class DuckDBSampledValidator:
                 pass
             raise
         return path
+
+    def _download_once(self, presigned_url: str, out, cap: int, declared_size: int) -> None:
+        deadline = (time.monotonic() + self.DOWNLOAD_GRACE_SECS
+                    + declared_size / self.MIN_DOWNLOAD_BYTES_PER_SEC)
+        written = 0
+        with requests.get(presigned_url, stream=True, timeout=(15, 60)) as r:
+            if r.status_code >= 500 or r.status_code == 429:
+                raise requests.ConnectionError(f"HTTP {r.status_code} from storage")
+            r.raise_for_status()
+            for chunk in r.iter_content(chunk_size=1 << 20):
+                written += len(chunk)
+                if written > cap:
+                    raise IOError(
+                        f"download exceeded size cap ({written} > {cap} bytes)"
+                    )
+                if time.monotonic() > deadline:
+                    raise _DownloadStalled(
+                        f"{written} of {declared_size} bytes before the "
+                        f"{self.MIN_DOWNLOAD_BYTES_PER_SEC >> 20} MB/s deadline"
+                    )
+                out.write(chunk)
 
     # Per-instance cap on cached bytes. Worst-case sample is ~20 files x ~1GB
     # (MAX_FILE_SIZE_BYTES) and 5 evals run concurrently, so an unbounded cache
@@ -1563,13 +1625,11 @@ class DuckDBSampledValidator:
                             total_content_id_rows += len(ids)
                             unique_content_ids.update(ids.tolist())
 
-            except (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException) as e:
-                # Transient S3/network errors — log and skip, do NOT fail the miner.
-                # Bounded below (see TRANSIENT_SKIP_RATE) so this branch cannot be
-                # abused to skip checks. This handler MUST stay ABOVE the broad
-                # duckdb.Error handler: IOException/HTTPException/ConnectionException
-                # subclass duckdb.Error, so a lower position would let a genuine
-                # transient error fall into the decode-failure (fail-closed) path.
+            except TransientDownloadError as e:
+                # The file never reached us — skip it, do NOT fail the miner. This is
+                # the only transient case: every check below reads the local copy, so
+                # a DuckDB IOException is about the file's bytes and fails closed in
+                # the next handler. Bounded below (MAX_TRANSIENT_SKIP_RATE).
                 # scrub_log strips R2 presigned-URL query strings (signature + key id).
                 transient_skips += 1
                 bt.logging.warning(scrub_log(
@@ -1653,37 +1713,6 @@ class DuckDBSampledValidator:
                 "reason": f"Corrupt data pages in {page_decode_failures} files"
             }
 
-        # Too many transient S3/network skips → the verified sample is too thin to
-        # trust. Not a miner fault (no hard_invalid), but we do not pass on it.
-        if files_checked == 0 and transient_skips > 0:
-            bt.logging.warning(
-                f"Validation inconclusive: all {transient_skips} sampled files hit "
-                f"transient S3 errors, none checked"
-            )
-            return {
-                "success": False,
-                "duplicate_rate_within_job": 100.0,
-                "empty_rate": 100.0,
-                "total_rows": 0,
-                "reason": f"Too many transient S3 failures ({transient_skips} files, 0 checked)"
-            }
-        if files_to_check and (transient_skips / len(files_to_check)) > self.MAX_TRANSIENT_SKIP_RATE:
-            bt.logging.warning(
-                f"Validation inconclusive: {transient_skips}/{len(files_to_check)} "
-                f"sampled files skipped for transient S3 errors "
-                f"(> {self.MAX_TRANSIENT_SKIP_RATE:.0%})"
-            )
-            return {
-                "success": False,
-                "duplicate_rate_within_job": 100.0,
-                "empty_rate": 100.0,
-                "total_rows": 0,
-                "reason": (
-                    f"Too many transient S3 failures "
-                    f"({transient_skips}/{len(files_to_check)} files)"
-                )
-            }
-
         # Too many catch-all skips → unrouted errors are dropping reward-bearing
         # files while their footer rows still count. Fail closed.
         if files_to_check and (unexpected_skips / len(files_to_check)) > self.MAX_TRANSIENT_SKIP_RATE:
@@ -1700,6 +1729,19 @@ class DuckDBSampledValidator:
                 "total_rows": 0,
                 "reason": f"Too many unexpected skips ({unexpected_skips}/{len(files_to_check)} files)"
             }
+
+        # Too many downloads failed → the verified sample is too thin to trust.
+        # Not a miner fault, and no verdict either way: the miner keeps its score
+        # and is re-sampled (new seed) on its next evaluation. Placed after the
+        # per-file fail-closed gates so it can never mask a structural failure.
+        if transient_skips and (
+            files_checked == 0
+            or transient_skips / len(files_to_check) > self.MAX_TRANSIENT_SKIP_RATE
+        ):
+            raise S3Inconclusive(
+                f"{transient_skips}/{len(files_to_check)} sampled files could not be "
+                f"downloaded ({files_checked} checked)"
+            )
 
         # Per-job duplicate rate
         duplicate_rate = (dedup_duplicates / dedup_total * 100) if dedup_total > 0 else 0.0
@@ -2695,6 +2737,8 @@ async def validate_s3_miner_data(
         )
         return result
 
+    except S3Inconclusive:
+        raise
     except Exception as e:
         bt.logging.error(f"DuckDB validation failed for {miner_hotkey}: {str(e)}")
         return S3ValidationResult(

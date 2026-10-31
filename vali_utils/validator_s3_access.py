@@ -9,6 +9,15 @@ import asyncio
 from common.api_client import TaoSigner
 
 
+class S3Inconclusive(Exception):
+    """Validator-side S3 failure (listing pages, file downloads) that no miner
+    can cause. The validation has no verdict: the miner's score is left as is
+    and it is re-validated on its next evaluation."""
+
+
+LIST_PAGE_ATTEMPTS = 3
+
+
 class ValidatorS3Access:
     """S3 access for validators — lists miner files via presigned URLs."""
 
@@ -71,25 +80,8 @@ class ValidatorS3Access:
             page = 1
             max_pages = 200
 
-            loop = asyncio.get_event_loop()
-
             while page <= max_pages:
-                presigned_url = await self._request_presigned_list_url(
-                    miner_hotkey, continuation_token
-                )
-                if not presigned_url:
-                    break
-
-                response = await loop.run_in_executor(
-                    None, lambda: requests.get(presigned_url, timeout=60)
-                )
-                if response.status_code != 200:
-                    break
-
-                try:
-                    root = ET.fromstring(response.text)
-                except Exception:
-                    break
+                root = await self._fetch_list_page(miner_hotkey, continuation_token)
 
                 namespaces = {"s3": "http://s3.amazonaws.com/doc/2006-03-01/"}
 
@@ -128,7 +120,9 @@ class ValidatorS3Access:
 
                 token_elem = root.find(".//s3:NextContinuationToken", namespaces)
                 if token_elem is None or not token_elem.text:
-                    break
+                    raise S3Inconclusive(
+                        f"listing page {page} is truncated but has no continuation token"
+                    )
 
                 continuation_token = token_elem.text
                 page += 1
@@ -138,6 +132,41 @@ class ValidatorS3Access:
             )
             return all_files
 
+        except S3Inconclusive:
+            raise
         except Exception as e:
-            bt.logging.error(f"Exception in list_all_files_with_metadata: {str(e)}")
-            return []
+            # Every byte here comes from the API or R2, never from the miner, so an
+            # error is ours: no verdict rather than an empty (failing) listing.
+            raise S3Inconclusive(f"S3 listing error: {e}") from e
+
+    async def _fetch_list_page(
+        self, miner_hotkey: str, continuation_token: Optional[str]
+    ) -> ET.Element:
+        """One parsed listing page, retried on a fresh presigned URL.
+
+        A page that still fails raises S3Inconclusive instead of ending the
+        listing early: a partial file list would score as missing jobs (coverage²)
+        or as "No files found", penalising the miner for our outage."""
+        loop = asyncio.get_event_loop()
+        last_error = None
+        for attempt in range(LIST_PAGE_ATTEMPTS):
+            if attempt:
+                await asyncio.sleep(2 * attempt)
+            presigned_url = await self._request_presigned_list_url(
+                miner_hotkey, continuation_token
+            )
+            if not presigned_url:
+                last_error = "no presigned list URL"
+                continue
+            try:
+                response = await loop.run_in_executor(
+                    None, lambda: requests.get(presigned_url, timeout=60)
+                )
+                if response.status_code == 200:
+                    return ET.fromstring(response.text)
+                last_error = f"HTTP {response.status_code}"
+            except (requests.RequestException, ET.ParseError) as e:
+                last_error = f"{type(e).__name__}: {e}"
+        raise S3Inconclusive(
+            f"S3 listing failed after {LIST_PAGE_ATTEMPTS} attempts ({last_error})"
+        )
