@@ -69,6 +69,13 @@ class MinerScorer:
     # they participate again.
     OD_ABSTAIN_MULT = 0.3
 
+    # S3 normalization ceiling. The credibility-weighted S3 boost
+    # (s3_boost x s3_cred^2.5) is min-max normalized across miners into
+    # [0, S3_BOOST_NORM_MAX], so the most credible large miner earns exactly
+    # this much and everyone else a fraction of it. Sized against OD, whose
+    # boost EMA tops out near ONDEMAND_BASE_REWARD x 1.25.
+    S3_BOOST_NORM_MAX = 250_000_000  # 250M
+
 
     def __init__(
         self,
@@ -198,29 +205,41 @@ class MinerScorer:
         with self.lock:
             return self.scores.clone()
 
-    @staticmethod
-    def _s3_component(s3_boost: float, s3_cred: float, od_component: float) -> float:
-        """S3 reward: raw boost capped at 2x OD, THEN scaled by credibility.
+    def _s3_components_normalized(self) -> torch.Tensor:
+        """S3 component per miner, min-max normalized into [0, S3_BOOST_NORM_MAX].
 
-        TEMPORARY cap: ties S3 reward to real OD participation. Will be replaced
-        by proper incentive redesign.
+        raw_i = s3_boost_i x s3_cred_i^2.5, s3_i = raw_i / max(raw) x S3_BOOST_NORM_MAX.
 
-        Order matters: the cap applies to the raw boost so credibility always
-        scales the final component.
+        Normalizing the credibility-weighted value (not the raw boost) matters:
+        a failed S3 validation keeps the miner's effective_size and only decays
+        credibility, so a discredited miner with a large stale size would
+        otherwise set the max and squash every honest miner toward zero.
+
+        S3 is a standalone component: it is not gated on OD participation and
+        not capped at a multiple of OD.
+
+        Requires: self.lock is held.
         """
-        if od_component <= 0:
-            return 0.0
-        return min(s3_boost, od_component * 2) * s3_cred
+        s3_cred = self.s3_credibility.reshape(-1).to(torch.float64) ** MinerScorer._CREDIBILITY_EXP
+        raw = self.s3_boosts.to(torch.float64) * s3_cred
+        if raw.numel() == 0:
+            return raw
+        max_raw = float(raw.max())
+        if max_raw <= 0:
+            return torch.zeros_like(raw)
+        return raw / max_raw * MinerScorer.S3_BOOST_NORM_MAX
 
     def get_scores_for_weights(self) -> torch.Tensor:
         """Returns scores with P2P capped at (S3 + OD) for weight setting.
+
+        S3 is min-max normalized across miners (see _s3_components_normalized).
         """
         with self.lock:
             capped_scores = torch.zeros_like(self.scores)
+            s3_components = self._s3_components_normalized()
 
             for uid in range(len(self.scores)):
                 p2p_cred = float(self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
-                s3_cred = float(self.s3_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
                 # OD: no exponent — ondemand_boosts EMA already decays non-participants.
                 # The ^2.5 combined with broken per-job credibility polling was destroying
                 # OD scores for all miners.
@@ -233,9 +252,7 @@ class MinerScorer:
                     * float(self.od_coverage_mult[uid])
                 )
 
-                s3_component = self._s3_component(
-                    float(self.s3_boosts[uid]), s3_cred, od_component
-                )
+                s3_component = float(s3_components[uid])
 
                 # P2P cap: P2P can't exceed S3 + OD
                 service_component = s3_component + od_component
@@ -400,17 +417,12 @@ class MinerScorer:
           19/20 is a normal honest cycle, yet it pushed credibility DOWN toward
           0.95 and kept it there. The bar decides pass/fail; credibility tracks
           how consistently the miner clears it.
-        - Claimed-size growth does NOT scale credibility down. The S3 boost is
-          already capped at 2x the OD component before credibility is applied
-          (see _s3_component), so extra volume cannot inflate the reward it
-          feeds. Taxing the multiplier for growth on top of that cap meant a
-          miner doing exactly what the subnet asks — crawling the desirability
-          list and uploading every cycle — lost S3 score for each upload while
-          the capped boost stayed flat: strictly negative return on new data,
-          before anything is known about whether it is real. The
-          (old/new)^(1/_CREDIBILITY_EXP) "prove it" rule stays where it belongs,
-          on P2P in on_miner_evaluated, where the score is NOT capped and grows
-          directly with claimed bytes.
+        - Claimed-size growth does NOT scale credibility down. Passing the
+          full gate (scraper re-fetch, job match, dedup, structure) is what
+          admits new volume. Note that S3 is no longer capped at a multiple of
+          OD: it is min-max normalized across miners (_s3_components_normalized),
+          so more verified volume does raise a miner's share, bounded by
+          S3_BOOST_NORM_MAX for the top credible miner.
         - On failure: KEEP previous effective_size, decrease credibility via EMA.
           Every detection type routes here, including structural ones: those
           depend on the validator reading the miner's parquet successfully, so a
@@ -680,25 +692,26 @@ class MinerScorer:
                 # Independent component scoring — each channel gated by its own credibility.
                 # This prevents one bad channel from zeroing out all rewards.
                 p2p_cred = float(self.miner_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
-                s3_cred = float(self.s3_credibility[uid] ** MinerScorer._CREDIBILITY_EXP)
                 # OD: no exponent — the EMA-based credibility already decays non-participants.
                 # The ^2.5 was destroying OD scores (near-zero values raised to 2.5 → effectively zero).
                 od_cred = float(self.ondemand_credibility[uid])
 
                 p2p_component = score * MinerScorer.P2P_REWARD_SCALE * p2p_cred
-                od_component = float(self.ondemand_boosts[uid]) * od_cred
+                od_component = (
+                    float(self.ondemand_boosts[uid])
+                    * od_cred
+                    * float(self.od_coverage_mult[uid])
+                )
 
                 s3_boost = float(self.s3_boosts[uid])
-                s3_uncapped = s3_boost * s3_cred
-                s3_component = self._s3_component(s3_boost, s3_cred, od_component)
+                s3_component = float(self._s3_components_normalized()[uid])
 
                 score = p2p_component + s3_component + od_component
 
                 bt.logging.info(
                     f"Miner {uid} score breakdown: "
                     f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
-                    f"S3={s3_component:.0f} (boost={s3_boost:.0f}, cred={float(self.s3_credibility[uid]):.4f})"
-                    f"{f', capped from {s3_uncapped:.0f}' if s3_uncapped != s3_component else ''}, "
+                    f"S3={s3_component:.0f} (boost={s3_boost:.0f}, cred={float(self.s3_credibility[uid]):.4f}, normalized), "
                     f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={float(self.ondemand_credibility[uid]):.4f})"
                 )
             else:

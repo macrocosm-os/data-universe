@@ -318,7 +318,7 @@ class TestScorerCoverageMult(unittest.TestCase):
 
         return MinerScorer(n, DataValueCalculator())
 
-    def test_mult_scales_od_and_drags_caps(self):
+    def test_mult_scales_od_not_s3(self):
         from rewards.miner_scorer import MinerScorer
 
         scorer = self._scorer()
@@ -331,11 +331,19 @@ class TestScorerCoverageMult(unittest.TestCase):
         # First drop smooths halfway: 1.0 -> 0.65; converge with repeats.
         scorer.set_od_coverage_mult(1, MinerScorer.OD_ABSTAIN_MULT)
         self.assertAlmostEqual(float(scorer.od_coverage_mult[1]), 0.65, places=4)
-        scores = scorer.get_scores_for_weights()
 
-        # uid0: od=100, s3 capped at 200 -> 300. uid1: od=65, s3 capped at 130 -> 195.
-        self.assertAlmostEqual(float(scores[0]), 300.0, places=2)
-        self.assertAlmostEqual(float(scores[1]), 195.0, places=2)
+        # S3 is standalone and normalized: both tie at S3_BOOST_NORM_MAX,
+        # untouched by the OD coverage mult.
+        with scorer.lock:
+            s3 = scorer._s3_components_normalized()
+        self.assertAlmostEqual(float(s3[0]), MinerScorer.S3_BOOST_NORM_MAX, places=2)
+        self.assertAlmostEqual(float(s3[1]), MinerScorer.S3_BOOST_NORM_MAX, places=2)
+
+        # With no S3 data the weights score is pure OD: 100 vs 65.
+        scorer.s3_boosts.zero_()
+        scores = scorer.get_scores_for_weights()
+        self.assertAlmostEqual(float(scores[0]), 100.0, places=2)
+        self.assertAlmostEqual(float(scores[1]), 65.0, places=2)
 
     def test_penalty_phases_in_recovery_is_instant(self):
         scorer = self._scorer()
