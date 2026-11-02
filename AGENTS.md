@@ -93,6 +93,15 @@ entities (`MIN_SCRAPER_SUCCESS` 80%, overall and per platform with at least
 recent block hash plus the miner's file manifest, so a miner cannot predict
 or replay the draw.
 
+Validator-side S3 failures give no verdict (`S3Inconclusive`): the score is
+left as is and the miner is re-validated next evaluation. That covers a
+listing page that fails after 3 attempts and sampled downloads that fail
+after 3 attempts (connection errors, cut-off bodies, 5xx, streams under
+1 MB/s) on more than `MAX_TRANSIENT_SKIP_RATE` of the sample. HTTP 4xx and
+anything wrong with the downloaded bytes still fail the miner. A miner that
+is inconclusive `MAX_S3_INCONCLUSIVE_STREAK` (3) times in a row while others
+get verdicts is failed, so no-verdict cannot freeze a score.
+
 Effective size on pass:
 
 ```
