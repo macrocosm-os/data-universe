@@ -96,7 +96,7 @@ Validators evaluate each miner about once an hour (`vali_utils/miner_evaluator.p
 - `speed = clamp(0.5 ^ ((t − 30 s) / 45 s), 0.3, 1.0)` where `t` is submission time minus job creation. `volume = (rows / limit) ^ 1.3` below the limit, with a bonus capped at 1.25 above it.
 - A per-platform coverage multiplier applies: submitting nothing on a platform with available jobs is abstention (× 0.3); submitting fewer than 15% of available jobs scales down to a floor of 0.3.
 
-Constants live in `rewards/miner_scorer.py` and `vali_utils/on_demand/on_demand_validation.py`. The composite score is `min(s3_boost, 2 × od) × s3_cred^2.5 + od`, so a miner with no on-demand activity earns nothing from bulk uploads.
+Constants live in `rewards/miner_scorer.py` and `vali_utils/on_demand/on_demand_validation.py`. The composite score is `s3 + od` (plus P2P capped at `s3 + od`), where `s3` is `s3_boost × s3_cred^2.5` min-max normalized across miners into `[0, 250M]`. S3 and on-demand are scored independently: bulk uploads earn without on-demand activity.
 
 ## Response Format Example
 
