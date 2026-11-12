@@ -333,6 +333,7 @@ class TestScorerCoverageMult(unittest.TestCase):
         self.assertAlmostEqual(float(scorer.od_coverage_mult[1]), 0.65, places=4)
         scores = scorer.get_scores_for_weights()
 
+        # Normalized S3 (250M) is far above 2x OD, so the cap binds.
         # uid0: od=100, s3 capped at 200 -> 300. uid1: od=65, s3 capped at 130 -> 195.
         self.assertAlmostEqual(float(scores[0]), 300.0, places=2)
         self.assertAlmostEqual(float(scores[1]), 195.0, places=2)

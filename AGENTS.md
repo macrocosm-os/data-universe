@@ -48,17 +48,23 @@ material. Never read them as truth, extend them, or commit them.
 
 ## Two reward paths
 
-Every miner is scored on both. They multiply, not add:
+Every miner is scored on both. S3 is capped by on-demand:
 
 ```
-od  = ondemand_boosts × ondemand_credibility × od_coverage_mult
-s3  = min(s3_boost, 2 × od) × s3_credibility ^ 2.5      # 0 when od <= 0
-score = min(p2p_score, s3 + od) + s3 + od               # then 70% emission burn
+od   = ondemand_boosts × ondemand_credibility × od_coverage_mult
+raw  = s3_boost × s3_credibility ^ 2.5
+norm = raw / max(raw over all miners) × S3_BOOST_NORM_MAX  # 250M; 0 if no miner has S3
+s3   = min(norm, 2 × od)                                   # 0 when od <= 0
+score = min(p2p_score, s3 + od) + s3 + od                  # then 70% emission burn
 ```
 
-A miner with no on-demand activity earns nothing from bulk data. A miner
-with bulk data but no live serving is capped at twice its on-demand score.
-`rewards/miner_scorer.py:202-247`.
+A miner with no on-demand activity earns nothing from bulk data, and S3 never
+exceeds twice the miner's on-demand score. Below that cap, the most credible
+large miner gets `S3_BOOST_NORM_MAX`; since `s3_boost = eff² / Σeff`, the
+share is `(eff_i / eff_max)² × cred^2.5`. Normalizing the credibility-weighted
+value keeps a discredited miner with a stale size (failures keep
+`effective_size`) from setting the scale. `rewards/miner_scorer.py`
+(`_s3_components_normalized`, `_cap_s3`, `get_scores_for_weights`).
 
 ### Bulk data (S3 path)
 

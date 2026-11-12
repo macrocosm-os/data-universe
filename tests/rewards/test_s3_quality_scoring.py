@@ -11,32 +11,116 @@ class TestS3QualityScoring(unittest.TestCase):
     def setUp(self):
         self.scorer = MinerScorer(10, MagicMock())
 
-    def test_cap_applies_before_credibility(self):
-        """A miner that failed validation (cred 0.6481) with a boost (2.03B) far
-        above the 2xOD cap (248.8M). Old order paid the full cap; capping the
-        raw boost first makes credibility bite: 248.8M x 0.6481^2.5 ~= 84M."""
-        uid = 0
-        self.scorer.s3_boosts[uid] = 2031789184.0
-        self.scorer.s3_credibility[uid] = 0.6481
-        self.scorer.ondemand_boosts[uid] = 124406226.0
-        self.scorer.ondemand_credibility[uid] = 1.0
+    # OD large enough that the 2x OD cap (400M) never binds below NORM_MAX.
+    OD_UNCAPPED = 200_000_000.0
 
-        od_component = 124406226.0
-        expected_s3 = min(2031789184.0, od_component * 2) * (0.6481 ** 2.5)
-        expected_total = expected_s3 + od_component
+    def _set_od(self, uid, boost=OD_UNCAPPED, cred=1.0):
+        self.scorer.ondemand_boosts[uid] = boost
+        self.scorer.ondemand_credibility[uid] = cred
 
-        scores = self.scorer.get_scores_for_weights()
-        self.assertAlmostEqual(float(scores[uid]), expected_total, delta=expected_total * 1e-4)
-        # And it must be far below the old behavior (cap saturated at 248.8M).
-        self.assertLess(expected_s3, 100_000_000)
+    def _s3(self):
+        with self.scorer.lock:
+            return self.scorer._s3_components_normalized()
+
+    def test_top_credible_miner_gets_norm_max(self):
+        top, half = 0, 1
+        self.scorer.s3_boosts[top] = 4e9
+        self.scorer.s3_boosts[half] = 2e9
+        self.scorer.s3_credibility[top] = 1.0
+        self.scorer.s3_credibility[half] = 1.0
+
+        s3 = self._s3()
+        self.assertAlmostEqual(float(s3[top]), MinerScorer.S3_BOOST_NORM_MAX, delta=1.0)
+        self.assertAlmostEqual(
+            float(s3[half]), MinerScorer.S3_BOOST_NORM_MAX / 2, delta=1.0
+        )
+
+    def test_credibility_scales_normalized_share(self):
+        top, low = 0, 1
+        self.scorer.s3_boosts[top] = 1e9
+        self.scorer.s3_boosts[low] = 1e9
+        self.scorer.s3_credibility[top] = 1.0
+        self.scorer.s3_credibility[low] = 0.5
+
+        expected = MinerScorer.S3_BOOST_NORM_MAX * 0.5 ** MinerScorer._CREDIBILITY_EXP
+        self.assertAlmostEqual(float(self._s3()[low]), expected, delta=expected * 1e-4)
 
     def test_s3_zero_without_od(self):
+        """No OD activity -> 2x OD cap is 0 -> no S3 reward."""
         uid = 1
         self.scorer.s3_boosts[uid] = 1e9
         self.scorer.s3_credibility[uid] = 1.0
         self.scorer.ondemand_boosts[uid] = 0.0
         scores = self.scorer.get_scores_for_weights()
         self.assertEqual(float(scores[uid]), 0.0)
+
+    def test_s3_capped_at_twice_od(self):
+        uid = 0
+        od = 10_000_000.0
+        self._set_od(uid, boost=od)
+        self.scorer.s3_boosts[uid] = 1e12
+        self.scorer.s3_credibility[uid] = 1.0
+        scores = self.scorer.get_scores_for_weights()
+        expected = 2 * od + od  # capped S3 + OD
+        self.assertAlmostEqual(float(scores[uid]), expected, delta=expected * 1e-6)
+
+    def test_cap_uses_coverage_adjusted_od(self):
+        uid = 0
+        self._set_od(uid, boost=100_000_000.0)
+        self.scorer.od_coverage_mult[uid] = 0.5
+        self.scorer.s3_boosts[uid] = 1e12
+        self.scorer.s3_credibility[uid] = 1.0
+        scores = self.scorer.get_scores_for_weights()
+        od = 50_000_000.0
+        self.assertAlmostEqual(float(scores[uid]), 3 * od, delta=3 * od * 1e-6)
+
+    def test_uncapped_when_od_is_large(self):
+        uid = 0
+        self._set_od(uid)
+        self.scorer.s3_boosts[uid] = 1e12
+        self.scorer.s3_credibility[uid] = 1.0
+        scores = self.scorer.get_scores_for_weights()
+        expected = MinerScorer.S3_BOOST_NORM_MAX + self.OD_UNCAPPED
+        self.assertAlmostEqual(float(scores[uid]), expected, delta=expected * 1e-6)
+
+    def test_copies_without_od_earn_no_s3(self):
+        """The same dataset on many hotkeys earns S3 only where OD is served."""
+        for uid in range(5):
+            self.scorer.s3_boosts[uid] = 1e9
+            self.scorer.s3_credibility[uid] = 1.0
+        self._set_od(0)
+        scores = self.scorer.get_scores_for_weights()
+        self.assertGreater(float(scores[0]), 0.0)
+        for uid in range(1, 5):
+            self.assertEqual(float(scores[uid]), 0.0)
+
+    def test_discredited_stale_boost_does_not_squash_others(self):
+        """A failed miner keeps its effective_size; only its credibility decays.
+        It must not set the normalization max for honest miners."""
+        stale, honest = 0, 1
+        self.scorer.s3_boosts[stale] = 1e13
+        self.scorer.s3_credibility[stale] = 0.01
+        self.scorer.s3_boosts[honest] = 1e9
+        self.scorer.s3_credibility[honest] = 1.0
+
+        s3 = self._s3()
+        self.assertAlmostEqual(
+            float(s3[honest]), MinerScorer.S3_BOOST_NORM_MAX, delta=1.0
+        )
+        self.assertLess(float(s3[stale]), float(s3[honest]))
+
+    def test_no_s3_data_yields_zero_without_nan(self):
+        scores = self.scorer.get_scores_for_weights()
+        self.assertFalse(torch.isnan(scores).any())
+        self.assertEqual(float(scores.sum()), 0.0)
+
+    def test_s3_component_never_exceeds_norm_max(self):
+        for uid, boost in enumerate([1e3, 1e9, 5e12, 7e14]):
+            self.scorer.s3_boosts[uid] = boost
+            self.scorer.s3_credibility[uid] = 1.0
+        self.assertLessEqual(
+            float(self._s3().max()), MinerScorer.S3_BOOST_NORM_MAX * (1 + 1e-6)
+        )
 
     def test_pass_ema_targets_one_whatever_the_pass_rate(self):
         """Passing is the signal; the observed rate must not grade it again.
@@ -103,9 +187,8 @@ class TestS3QualityScoring(unittest.TestCase):
     def test_growth_does_not_scale_credibility(self):
         """Doubling claimed size on a PASS must not tax the multiplier.
 
-        The S3 boost is capped at 2x OD before credibility (_s3_component), so
-        the extra volume cannot inflate the reward it feeds — scaling cred down
-        for it was a pure loss on new data.
+        Passing the full validation gate is what admits new volume; the S3
+        component is bounded by S3_BOOST_NORM_MAX after normalization.
         """
         uid = 0
         self.scorer.update_s3_effective_size(uid, 1000.0, True, pass_rate=1.0)
@@ -130,22 +213,6 @@ class TestS3QualityScoring(unittest.TestCase):
             places=6,
         )
         self.assertAlmostEqual(float(self.scorer.s3_credibility[grower]), 1.0, delta=0.01)
-
-    def test_capped_s3_component_never_grows_with_volume(self):
-        """The cap is why growth needs no credibility tax: past 2x OD, more
-        effective_size buys nothing, so it cannot be gamed for reward."""
-        uid = 0
-        self.scorer.ondemand_boosts[uid] = 100_000_000.0
-        self.scorer.ondemand_credibility[uid] = 1.0
-        self.scorer.s3_credibility[uid] = 1.0
-
-        self.scorer.update_s3_effective_size(uid, 1e12, True, pass_rate=1.0)
-        small = float(self.scorer.get_scores_for_weights()[uid])
-        self.scorer.update_s3_effective_size(uid, 1e15, True, pass_rate=1.0)
-        huge = float(self.scorer.get_scores_for_weights()[uid])
-
-        self.assertAlmostEqual(small, huge, delta=small * 1e-6)
-        self.assertAlmostEqual(huge, 3 * 100_000_000.0, delta=1.0)  # OD + 2xOD
 
     def test_repeated_pass_climbs_toward_one(self):
         uid = 0
