@@ -215,8 +215,8 @@ class MinerScorer:
         credibility, so a discredited miner with a large stale size would
         otherwise set the max and squash every honest miner toward zero.
 
-        S3 is a standalone component: it is not gated on OD participation and
-        not capped at a multiple of OD.
+        The returned values are pre-cap; callers apply _cap_s3 against the
+        miner's OD component.
 
         Requires: self.lock is held.
         """
@@ -229,10 +229,20 @@ class MinerScorer:
             return torch.zeros_like(raw)
         return raw / max_raw * MinerScorer.S3_BOOST_NORM_MAX
 
+    @staticmethod
+    def _cap_s3(s3_normalized: float, od_component: float) -> float:
+        """S3 can't exceed 2x the miner's OD component (0 when OD is 0).
+
+        Ties bulk reward to live OD serving, so the same dataset copied to
+        many hotkeys can't earn S3 without each one serving real OD jobs.
+        """
+        return min(s3_normalized, 2 * max(od_component, 0.0))
+
     def get_scores_for_weights(self) -> torch.Tensor:
         """Returns scores with P2P capped at (S3 + OD) for weight setting.
 
-        S3 is min-max normalized across miners (see _s3_components_normalized).
+        S3 is min-max normalized across miners (see _s3_components_normalized),
+        then capped at 2x OD (see _cap_s3).
         """
         with self.lock:
             capped_scores = torch.zeros_like(self.scores)
@@ -252,7 +262,7 @@ class MinerScorer:
                     * float(self.od_coverage_mult[uid])
                 )
 
-                s3_component = float(s3_components[uid])
+                s3_component = self._cap_s3(float(s3_components[uid]), od_component)
 
                 # P2P cap: P2P can't exceed S3 + OD
                 service_component = s3_component + od_component
@@ -419,10 +429,10 @@ class MinerScorer:
           how consistently the miner clears it.
         - Claimed-size growth does NOT scale credibility down. Passing the
           full gate (scraper re-fetch, job match, dedup, structure) is what
-          admits new volume. Note that S3 is no longer capped at a multiple of
-          OD: it is min-max normalized across miners (_s3_components_normalized),
-          so more verified volume does raise a miner's share, bounded by
-          S3_BOOST_NORM_MAX for the top credible miner.
+          admits new volume. S3 is min-max normalized across miners
+          (_s3_components_normalized) and then capped at 2x OD (_cap_s3), so
+          extra volume raises reward only until the miner hits
+          min(S3_BOOST_NORM_MAX, 2 x OD).
         - On failure: KEEP previous effective_size, decrease credibility via EMA.
           Every detection type routes here, including structural ones: those
           depend on the validator reading the miner's parquet successfully, so a
@@ -704,14 +714,16 @@ class MinerScorer:
                 )
 
                 s3_boost = float(self.s3_boosts[uid])
-                s3_component = float(self._s3_components_normalized()[uid])
+                s3_normalized = float(self._s3_components_normalized()[uid])
+                s3_component = self._cap_s3(s3_normalized, od_component)
 
                 score = p2p_component + s3_component + od_component
 
                 bt.logging.info(
                     f"Miner {uid} score breakdown: "
                     f"P2P={p2p_component:.0f} (raw={float(self.scorable_bytes[uid]):.0f}, cred={float(self.miner_credibility[uid]):.4f}), "
-                    f"S3={s3_component:.0f} (boost={s3_boost:.0f}, cred={float(self.s3_credibility[uid]):.4f}, normalized), "
+                    f"S3={s3_component:.0f} (boost={s3_boost:.0f}, cred={float(self.s3_credibility[uid]):.4f}, normalized)"
+                    f"{f', capped from {s3_normalized:.0f}' if s3_normalized != s3_component else ''}, "
                     f"OD={od_component:.0f} (boost={float(self.ondemand_boosts[uid]):.0f}, cred={float(self.ondemand_credibility[uid]):.4f})"
                 )
             else:

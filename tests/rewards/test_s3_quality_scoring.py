@@ -11,9 +11,16 @@ class TestS3QualityScoring(unittest.TestCase):
     def setUp(self):
         self.scorer = MinerScorer(10, MagicMock())
 
-    def _set_od(self, uid, boost=100_000_000.0, cred=1.0):
+    # OD large enough that the 2x OD cap (400M) never binds below NORM_MAX.
+    OD_UNCAPPED = 200_000_000.0
+
+    def _set_od(self, uid, boost=OD_UNCAPPED, cred=1.0):
         self.scorer.ondemand_boosts[uid] = boost
         self.scorer.ondemand_credibility[uid] = cred
+
+    def _s3(self):
+        with self.scorer.lock:
+            return self.scorer._s3_components_normalized()
 
     def test_top_credible_miner_gets_norm_max(self):
         top, half = 0, 1
@@ -22,12 +29,10 @@ class TestS3QualityScoring(unittest.TestCase):
         self.scorer.s3_credibility[top] = 1.0
         self.scorer.s3_credibility[half] = 1.0
 
-        scores = self.scorer.get_scores_for_weights()
+        s3 = self._s3()
+        self.assertAlmostEqual(float(s3[top]), MinerScorer.S3_BOOST_NORM_MAX, delta=1.0)
         self.assertAlmostEqual(
-            float(scores[top]), MinerScorer.S3_BOOST_NORM_MAX, delta=1.0
-        )
-        self.assertAlmostEqual(
-            float(scores[half]), MinerScorer.S3_BOOST_NORM_MAX / 2, delta=1.0
+            float(s3[half]), MinerScorer.S3_BOOST_NORM_MAX / 2, delta=1.0
         )
 
     def test_credibility_scales_normalized_share(self):
@@ -37,29 +42,57 @@ class TestS3QualityScoring(unittest.TestCase):
         self.scorer.s3_credibility[top] = 1.0
         self.scorer.s3_credibility[low] = 0.5
 
-        scores = self.scorer.get_scores_for_weights()
         expected = MinerScorer.S3_BOOST_NORM_MAX * 0.5 ** MinerScorer._CREDIBILITY_EXP
-        self.assertAlmostEqual(float(scores[low]), expected, delta=expected * 1e-4)
+        self.assertAlmostEqual(float(self._s3()[low]), expected, delta=expected * 1e-4)
 
-    def test_s3_earned_without_od(self):
-        """S3 is standalone: no OD gate, no 2x OD cap."""
+    def test_s3_zero_without_od(self):
+        """No OD activity -> 2x OD cap is 0 -> no S3 reward."""
         uid = 1
         self.scorer.s3_boosts[uid] = 1e9
         self.scorer.s3_credibility[uid] = 1.0
         self.scorer.ondemand_boosts[uid] = 0.0
         scores = self.scorer.get_scores_for_weights()
-        self.assertAlmostEqual(
-            float(scores[uid]), MinerScorer.S3_BOOST_NORM_MAX, delta=1.0
-        )
+        self.assertEqual(float(scores[uid]), 0.0)
 
-    def test_s3_not_capped_by_od(self):
+    def test_s3_capped_at_twice_od(self):
         uid = 0
-        self._set_od(uid, boost=10_000_000.0)
+        od = 10_000_000.0
+        self._set_od(uid, boost=od)
         self.scorer.s3_boosts[uid] = 1e12
         self.scorer.s3_credibility[uid] = 1.0
         scores = self.scorer.get_scores_for_weights()
-        expected = MinerScorer.S3_BOOST_NORM_MAX + 10_000_000.0
+        expected = 2 * od + od  # capped S3 + OD
         self.assertAlmostEqual(float(scores[uid]), expected, delta=expected * 1e-6)
+
+    def test_cap_uses_coverage_adjusted_od(self):
+        uid = 0
+        self._set_od(uid, boost=100_000_000.0)
+        self.scorer.od_coverage_mult[uid] = 0.5
+        self.scorer.s3_boosts[uid] = 1e12
+        self.scorer.s3_credibility[uid] = 1.0
+        scores = self.scorer.get_scores_for_weights()
+        od = 50_000_000.0
+        self.assertAlmostEqual(float(scores[uid]), 3 * od, delta=3 * od * 1e-6)
+
+    def test_uncapped_when_od_is_large(self):
+        uid = 0
+        self._set_od(uid)
+        self.scorer.s3_boosts[uid] = 1e12
+        self.scorer.s3_credibility[uid] = 1.0
+        scores = self.scorer.get_scores_for_weights()
+        expected = MinerScorer.S3_BOOST_NORM_MAX + self.OD_UNCAPPED
+        self.assertAlmostEqual(float(scores[uid]), expected, delta=expected * 1e-6)
+
+    def test_copies_without_od_earn_no_s3(self):
+        """The same dataset on many hotkeys earns S3 only where OD is served."""
+        for uid in range(5):
+            self.scorer.s3_boosts[uid] = 1e9
+            self.scorer.s3_credibility[uid] = 1.0
+        self._set_od(0)
+        scores = self.scorer.get_scores_for_weights()
+        self.assertGreater(float(scores[0]), 0.0)
+        for uid in range(1, 5):
+            self.assertEqual(float(scores[uid]), 0.0)
 
     def test_discredited_stale_boost_does_not_squash_others(self):
         """A failed miner keeps its effective_size; only its credibility decays.
@@ -70,11 +103,11 @@ class TestS3QualityScoring(unittest.TestCase):
         self.scorer.s3_boosts[honest] = 1e9
         self.scorer.s3_credibility[honest] = 1.0
 
-        scores = self.scorer.get_scores_for_weights()
+        s3 = self._s3()
         self.assertAlmostEqual(
-            float(scores[honest]), MinerScorer.S3_BOOST_NORM_MAX, delta=1.0
+            float(s3[honest]), MinerScorer.S3_BOOST_NORM_MAX, delta=1.0
         )
-        self.assertLess(float(scores[stale]), float(scores[honest]))
+        self.assertLess(float(s3[stale]), float(s3[honest]))
 
     def test_no_s3_data_yields_zero_without_nan(self):
         scores = self.scorer.get_scores_for_weights()
@@ -85,9 +118,8 @@ class TestS3QualityScoring(unittest.TestCase):
         for uid, boost in enumerate([1e3, 1e9, 5e12, 7e14]):
             self.scorer.s3_boosts[uid] = boost
             self.scorer.s3_credibility[uid] = 1.0
-        scores = self.scorer.get_scores_for_weights()
         self.assertLessEqual(
-            float(scores.max()), MinerScorer.S3_BOOST_NORM_MAX * (1 + 1e-6)
+            float(self._s3().max()), MinerScorer.S3_BOOST_NORM_MAX * (1 + 1e-6)
         )
 
     def test_pass_ema_targets_one_whatever_the_pass_rate(self):
