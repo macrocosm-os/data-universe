@@ -564,6 +564,21 @@ def validate_tweet_content(
         tweet_to_verify, actual_tweet, entity
     )
     if engagement_validation_result is not None:
+        if (
+            strict_engagement
+            and "decreased too much" in (engagement_validation_result.reason or "")
+            and dt.datetime.now(dt.timezone.utc) - tweet_to_verify.timestamp < OD_STALE_REFERENCE_MAX_TWEET_AGE
+        ):
+            # ApiDojo sometimes serves a cached copy of a tweet for ~1h. On a
+            # young, growing tweet the miner's newer count can then exceed the
+            # stale "actual" by more than the tolerance. That's no evidence
+            # against the miner: return a no-verdict reason (see
+            # SCRAPER_ERROR_REASON_PREFIXES in on_demand_validation.py).
+            return ValidationResult(
+                is_valid=False,
+                reason=f"{OD_STALE_REFERENCE_PREFIX} {engagement_validation_result.reason}",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
         return engagement_validation_result
 
     if strict_engagement:
@@ -586,6 +601,12 @@ def validate_tweet_content(
 # On-demand data must be scraped close to the request: a snapshot older than
 # this before the job was created is stale.
 OD_MAX_SCRAPE_AGE_BEFORE_JOB = dt.timedelta(hours=24)
+# On-demand only: a count ABOVE the validator's re-scrape on a tweet younger than
+# this is treated as no verdict, because ApiDojo can serve a cached copy (~1h old)
+# of a fast-growing tweet. Seen in validator logs Nov 20 2026: identical counts on
+# 3-4 re-scrapes over ~1h while the tweet kept growing.
+OD_STALE_REFERENCE_MAX_TWEET_AGE = dt.timedelta(hours=24)
+OD_STALE_REFERENCE_PREFIX = "STALE_REFERENCE:"
 # scraped_at is miner-reported. For the tier, the tweet's age is measured at no
 # earlier than this before the job, so claiming an early scrape can't move a tweet
 # into a looser tier. Honest miners scrape within ~3h of the job (p99 2.85h,
