@@ -83,6 +83,7 @@ class ValidationContext:
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     limit: Optional[int] = 100
+    job_created_at: Optional[dt.datetime] = None
 
 
 class OnDemandValidator:
@@ -124,6 +125,7 @@ class OnDemandValidator:
             start_date=job.start_date.isoformat() if job.start_date else None,
             end_date=job.end_date.isoformat() if job.end_date else None,
             limit=job.limit,
+            job_created_at=getattr(job, "created_at", None),
         )
 
     def __init__(self, evaluator):
@@ -455,7 +457,10 @@ class OnDemandValidator:
 
             if ctx.source.upper() == "X":
                 results = await scraper.validate(
-                    entities=[data_entity], allow_low_engagement=True
+                    entities=[data_entity],
+                    allow_low_engagement=True,
+                    strict_engagement=True,
+                    job_created_at=ctx.job_created_at,
                 )
             else:
                 results = await scraper.validate([data_entity])
@@ -634,18 +639,21 @@ class OnDemandValidator:
     # Data existence probe
     # ------------------------------------------------------------------
 
-    async def check_data_exists(self, ctx: ValidationContext) -> bool:
+    async def check_data_exists(
+        self, ctx: ValidationContext, on_error: Optional[bool] = True
+    ) -> Optional[bool]:
         """Quick probe to check if data exists for the given query.
 
         Uses the validator's own scraper with limit=1 to verify independently
         whether the requested data exists. Returns True if at least 1 result
-        is found, False otherwise.
+        is found, False otherwise, and `on_error` when the probe itself can't
+        run (default True: assume data exists).
         """
         try:
             scraper = self._get_scraper(ctx.source)
             if not scraper:
-                bt.logging.warning(f"No scraper for {ctx.source}, assuming data exists")
-                return True
+                bt.logging.warning(f"No scraper for {ctx.source}, data existence unknown")
+                return on_error
 
             start_dt = (
                 dt.datetime.fromisoformat(ctx.start_date)
@@ -679,8 +687,8 @@ class OnDemandValidator:
                     limit=1,
                 )
             else:
-                bt.logging.warning(f"Unknown source {ctx.source}, assuming data exists")
-                return True
+                bt.logging.warning(f"Unknown source {ctx.source}, data existence unknown")
+                return on_error
 
             exists = len(results) > 0
             bt.logging.info(
@@ -691,8 +699,8 @@ class OnDemandValidator:
             return exists
 
         except Exception as e:
-            bt.logging.warning(f"Data existence probe failed: {e}, assuming data exists")
-            return True
+            bt.logging.warning(f"Data existence probe failed: {e}")
+            return on_error
 
     # ------------------------------------------------------------------
     # Reward multipliers
