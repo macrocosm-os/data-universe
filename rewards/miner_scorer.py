@@ -198,14 +198,9 @@ class MinerScorer:
         with self.lock:
             return self.scores.clone()
 
-    # S3 cap as a multiple of the miner's OD component. Kept below the point
-    # where typical s3_boost stops exceeding the cap (~2.7x on Nov 19 2026
-    # data); past that, S3 pays by size again and the volume race returns.
-    S3_OD_CAP_MULT = 2.25
-
     @staticmethod
     def _s3_component(s3_boost: float, s3_cred: float, od_component: float) -> float:
-        """S3 reward: raw boost capped at S3_OD_CAP_MULT x OD, THEN scaled by credibility.
+        """S3 reward: raw boost capped at 2x OD, THEN scaled by credibility.
 
         TEMPORARY cap: ties S3 reward to real OD participation. Will be replaced
         by proper incentive redesign.
@@ -215,7 +210,7 @@ class MinerScorer:
         """
         if od_component <= 0:
             return 0.0
-        return min(s3_boost, od_component * MinerScorer.S3_OD_CAP_MULT) * s3_cred
+        return min(s3_boost, od_component * 2) * s3_cred
 
     def get_scores_for_weights(self) -> torch.Tensor:
         """Returns scores with P2P capped at (S3 + OD) for weight setting.
@@ -406,7 +401,7 @@ class MinerScorer:
           0.95 and kept it there. The bar decides pass/fail; credibility tracks
           how consistently the miner clears it.
         - Claimed-size growth does NOT scale credibility down. The S3 boost is
-          already capped at S3_OD_CAP_MULT x the OD component before credibility is applied
+          already capped at 2x the OD component before credibility is applied
           (see _s3_component), so extra volume cannot inflate the reward it
           feeds. Taxing the multiplier for growth on top of that cap meant a
           miner doing exactly what the subnet asks — crawling the desirability
