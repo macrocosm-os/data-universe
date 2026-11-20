@@ -13,8 +13,8 @@ class TestS3QualityScoring(unittest.TestCase):
 
     def test_cap_applies_before_credibility(self):
         """A miner that failed validation (cred 0.6481) with a boost (2.03B) far
-        above the 2xOD cap (248.8M). Old order paid the full cap; capping the
-        raw boost first makes credibility bite: 248.8M x 0.6481^2.5 ~= 84M."""
+        above the OD cap (2.25 x 124.4M = 279.9M). Old order paid the full cap; capping the
+        raw boost first makes credibility bite: 279.9M x 0.6481^2.5 ~= 95M."""
         uid = 0
         self.scorer.s3_boosts[uid] = 2031789184.0
         self.scorer.s3_credibility[uid] = 0.6481
@@ -22,12 +22,14 @@ class TestS3QualityScoring(unittest.TestCase):
         self.scorer.ondemand_credibility[uid] = 1.0
 
         od_component = 124406226.0
-        expected_s3 = min(2031789184.0, od_component * 2) * (0.6481 ** 2.5)
+        expected_s3 = min(
+            2031789184.0, od_component * MinerScorer.S3_OD_CAP_MULT
+        ) * (0.6481 ** 2.5)
         expected_total = expected_s3 + od_component
 
         scores = self.scorer.get_scores_for_weights()
         self.assertAlmostEqual(float(scores[uid]), expected_total, delta=expected_total * 1e-4)
-        # And it must be far below the old behavior (cap saturated at 248.8M).
+        # And it must be far below the old behavior (cap saturated at 279.9M).
         self.assertLess(expected_s3, 100_000_000)
 
     def test_s3_zero_without_od(self):
@@ -103,7 +105,7 @@ class TestS3QualityScoring(unittest.TestCase):
     def test_growth_does_not_scale_credibility(self):
         """Doubling claimed size on a PASS must not tax the multiplier.
 
-        The S3 boost is capped at 2x OD before credibility (_s3_component), so
+        The S3 boost is capped at S3_OD_CAP_MULT x OD before credibility (_s3_component), so
         the extra volume cannot inflate the reward it feeds — scaling cred down
         for it was a pure loss on new data.
         """
@@ -132,7 +134,7 @@ class TestS3QualityScoring(unittest.TestCase):
         self.assertAlmostEqual(float(self.scorer.s3_credibility[grower]), 1.0, delta=0.01)
 
     def test_capped_s3_component_never_grows_with_volume(self):
-        """The cap is why growth needs no credibility tax: past 2x OD, more
+        """The cap is why growth needs no credibility tax: past the OD cap, more
         effective_size buys nothing, so it cannot be gamed for reward."""
         uid = 0
         self.scorer.ondemand_boosts[uid] = 100_000_000.0
@@ -145,7 +147,9 @@ class TestS3QualityScoring(unittest.TestCase):
         huge = float(self.scorer.get_scores_for_weights()[uid])
 
         self.assertAlmostEqual(small, huge, delta=small * 1e-6)
-        self.assertAlmostEqual(huge, 3 * 100_000_000.0, delta=1.0)  # OD + 2xOD
+        self.assertAlmostEqual(
+            huge, (1 + MinerScorer.S3_OD_CAP_MULT) * 100_000_000.0, delta=1.0
+        )  # OD + cap
 
     def test_repeated_pass_climbs_toward_one(self):
         uid = 0

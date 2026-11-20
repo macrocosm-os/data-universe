@@ -333,9 +333,9 @@ class TestScorerCoverageMult(unittest.TestCase):
         self.assertAlmostEqual(float(scorer.od_coverage_mult[1]), 0.65, places=4)
         scores = scorer.get_scores_for_weights()
 
-        # uid0: od=100, s3 capped at 200 -> 300. uid1: od=65, s3 capped at 130 -> 195.
-        self.assertAlmostEqual(float(scores[0]), 300.0, places=2)
-        self.assertAlmostEqual(float(scores[1]), 195.0, places=2)
+        # uid0: od=100, s3 capped at 225 -> 325. uid1: od=65, s3 capped at 146.25 -> 211.25.
+        self.assertAlmostEqual(float(scores[0]), 325.0, places=2)
+        self.assertAlmostEqual(float(scores[1]), 211.25, places=2)
 
     def test_penalty_phases_in_recovery_is_instant(self):
         scorer = self._scorer()
