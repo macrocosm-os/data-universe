@@ -52,12 +52,13 @@ Every miner is scored on both. They multiply, not add:
 
 ```
 od  = ondemand_boosts × ondemand_credibility × od_coverage_mult
-s3  = min(s3_boost, 2 × od) × s3_credibility ^ 2.5      # 0 when od <= 0
+s3  = min(s3_boost, 2.25 × od) × s3_credibility ^ 2.5   # 0 when od <= 0
 score = min(p2p_score, s3 + od) + s3 + od               # then 70% emission burn
 ```
 
 A miner with no on-demand activity earns nothing from bulk data. A miner
-with bulk data but no live serving is capped at twice its on-demand score.
+with bulk data but no live serving is capped at 2.25× its on-demand score
+(`S3_OD_CAP_MULT`).
 `rewards/miner_scorer.py:202-247`.
 
 ### Bulk data (S3 path)
