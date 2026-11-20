@@ -32,8 +32,9 @@ from storage.validator.s3_validator_storage import S3ValidationStorage
 from vali_utils.miner_iterator import MinerIterator
 from vali_utils import metrics, utils as vali_utils
 
-from typing import Dict, List, Optional, Tuple
-from vali_utils.validator_s3_access import ValidatorS3Access
+import dataclasses
+from typing import Dict, List, Optional, Set, Tuple
+from vali_utils.validator_s3_access import ValidatorS3Access, S3Inconclusive
 from vali_utils.s3_utils import (
     validate_s3_miner_data,
     get_s3_validation_summary,
@@ -51,6 +52,7 @@ import httpx
 
 from common.api_client import (
     DataUniverseApiClient,
+    ListJobsWithSubmissionsForValidationRequest,
     ListMinerJobsForValidationRequest,
     MinerJobForValidation,
     OnDemandJob,
@@ -63,10 +65,37 @@ from rewards.miner_scorer import MinerScorer
 from vali_utils.on_demand.on_demand_validation import OnDemandValidator
 
 
+def _is_x_username_job(job: OnDemandJob) -> bool:
+    payload = job.job
+    return getattr(payload, "platform", None) == "x" and bool(getattr(payload, "usernames", None))
+
+
+@dataclasses.dataclass
+class _UsernameJob:
+    job: OnDemandJob
+    answered: Set[str]  # hotkeys that uploaded a non-empty answer
+    has_data: Optional[bool]  # validator's own check: True/False, None = not checked yet
+
+
+@dataclasses.dataclass
+class _UsernameJobStore:
+    """Last 24h of X username jobs, shared by all miner evals in a batch."""
+    jobs: Dict[str, _UsernameJob] = dataclasses.field(default_factory=dict)
+    lock: threading.Lock = dataclasses.field(default_factory=threading.Lock)
+    fetched_until: Optional[dt.datetime] = None
+    refreshed_at: Optional[dt.datetime] = None
+    supported: bool = True
+    refreshing: bool = False
+
+
 class MinerEvaluator:
     """MinerEvaluator is responsible for evaluating miners and updating their scores."""
 
     SCORER_FILENAME = "scorer.pickle"
+
+    # Inconclusive S3 validations in a row (while other miners still get
+    # verdicts) after which a miner is failed: no-verdict must not freeze a score.
+    MAX_S3_INCONCLUSIVE_STREAK = 3
 
     # Mapping of scrapers to use based on the data source to validate.
     PREFERRED_SCRAPERS = {
@@ -124,6 +153,9 @@ class MinerEvaluator:
         # eval batch makes one chain RPC instead of one per miner.
         self._seed_hash_cache: Optional[Tuple[int, str]] = None
         self._seed_hash_lock = threading.Lock()
+        # S3 no-verdict bookkeeping, see _s3_no_verdict.
+        self._s3_inconclusive: Dict[str, Tuple[int, float]] = {}
+        self._last_s3_verdict = 0.0
         # Cache API client construction params (derived once, reused every eval).
         self._api_base_url = self.config.s3_auth_url
         self._api_verify_ssl = "localhost" not in self._api_base_url
@@ -189,6 +221,29 @@ class MinerEvaluator:
     # multiplier is 1.0; below it, it scales down linearly (floored at
     # OD_ABSTAIN_MULT, so participating is never worse than abstaining).
     OD_COVERAGE_FULL_MULT_AT = 0.15
+    # X username coverage. Username jobs are rare, so skipping them never moved
+    # the per-platform ratio above. Here every username job that had data in the
+    # last 24h counts: coverage = min(1, (answered + free misses) / jobs with
+    # data); full multiplier at OD_USERNAME_FULL_COVERAGE, linear down to
+    # OD_USERNAME_FLOOR at 0.
+    OD_USERNAME_WINDOW_HOURS = 24
+    OD_USERNAME_FULL_COVERAGE = 0.9
+    OD_USERNAME_FREE_MISSES = 1
+    # Lowest username multiplier. Starts gentle (max 30% cut) while miners add
+    # username scraping; planned to drop to 0.3 (OD_ABSTAIN_MULT) a week later.
+    OD_USERNAME_FLOOR = 0.7
+    # An upload counts as an answer only above this size: an empty
+    # {"data_entities": []} body is ~21 bytes.
+    OD_ANSWER_MIN_BYTES = 64
+    # Whether a job had data is decided only by the validator's own scraper
+    # (one check per job, never from miner uploads). Cap checks per refresh to
+    # bound scraper cost; the rest are checked on later refreshes.
+    OD_USERNAME_PROBES_PER_REFRESH = 20
+    # Read jobs this long after expiry so uploads landing at the deadline count.
+    OD_USERNAME_FETCH_LAG_SECS = 120
+    OD_USERNAME_PROBE_CONCURRENCY = 4
+    OD_USERNAME_CACHE_TTL_SECS = 600
+    OD_VALIDATOR_JOBS_PAGE = 100
     # Per-miner jobs fetch page size. A full page may truncate the coverage
     # numerator — coverage is then resolved in the miner's favor.
     OD_JOBS_FETCH_LIMIT = 1000
@@ -221,6 +276,136 @@ class MinerEvaluator:
                 return None
             self._od_stats_cache = (now, resp)
             return resp
+
+    def _od_username_store(self) -> "_UsernameJobStore":
+        store = getattr(self, "_od_username", None)
+        if store is None:
+            store = self._od_username = _UsernameJobStore()
+        return store
+
+    async def _refresh_od_username_jobs(self, client: DataUniverseApiClient) -> None:
+        """Keep the last 24h of X username jobs, who answered each, and whether
+        each job had data. Shared by every miner in the batch.
+
+        The lock only guards the store; network calls and scraper checks run
+        outside it, so other miner evals never wait on them.
+        """
+        store = self._od_username_store()
+        now = dt.datetime.now(dt.timezone.utc)
+        window_start = now - dt.timedelta(hours=self.OD_USERNAME_WINDOW_HOURS)
+        # Read jobs a little after expiry so uploads that land at the deadline count.
+        fetch_until = now - dt.timedelta(seconds=self.OD_USERNAME_FETCH_LAG_SECS)
+        with store.lock:
+            if not store.supported or store.refreshing:
+                return
+            if store.refreshed_at and (now - store.refreshed_at).total_seconds() < self.OD_USERNAME_CACHE_TTL_SECS:
+                return
+            store.refreshing = True
+            since = max(store.fetched_until or window_start, window_start)
+
+        try:
+            fetched: Dict[str, _UsernameJob] = {}
+            try:
+                while since < fetch_until:
+                    resp = await client.validator_list_jobs_with_submissions(
+                        ListJobsWithSubmissionsForValidationRequest(
+                            expired_since=since,
+                            expired_until=fetch_until,
+                            limit=self.OD_VALIDATOR_JOBS_PAGE,
+                            job_type="x_username",
+                        )
+                    )
+                    page = resp.jobs_with_submissions
+                    if any(not _is_x_username_job(jw.job) for jw in page):
+                        # API without the job_type filter: it returned every job
+                        # type. Turn the feature off rather than page through all
+                        # jobs, and drop anything stored so nobody is penalised.
+                        with store.lock:
+                            store.supported = False
+                            store.jobs.clear()
+                        bt.logging.warning(
+                            "OD username coverage disabled: API ignores job_type filter"
+                        )
+                        return
+                    for jw in page:
+                        answered = {
+                            s.miner_hotkey
+                            for s in jw.submissions
+                            if (s.s3_content_length or 0) > self.OD_ANSWER_MIN_BYTES
+                        }
+                        fetched[jw.job.id] = _UsernameJob(job=jw.job, answered=answered, has_data=None)
+                    if len(page) < self.OD_VALIDATOR_JOBS_PAGE:
+                        break
+                    next_since = max(jw.job.expire_at for jw in page if jw.job.expire_at)
+                    if next_since <= since:
+                        break
+                    since = next_since
+            except Exception as e:
+                bt.logging.warning(f"OD username jobs fetch failed (coverage unchanged): {e}")
+                with store.lock:
+                    store.refreshed_at = now  # back off for one cache period
+                return
+
+            with store.lock:
+                for job_id, uj in fetched.items():
+                    previous = store.jobs.get(job_id)
+                    if previous is not None:
+                        uj.has_data = previous.has_data
+                    store.jobs[job_id] = uj
+                for job_id in [jid for jid, uj in store.jobs.items()
+                               if uj.job.expire_at and uj.job.expire_at < window_start]:
+                    del store.jobs[job_id]
+                store.fetched_until = fetch_until
+                store.refreshed_at = now
+                # "Had data" comes only from the validator's own check: a miner's
+                # upload can be junk, and must not turn honest empty answers into
+                # misses. Unknown (None) is retried next refresh and never counts.
+                pending = [uj for uj in store.jobs.values() if uj.has_data is None]
+                pending = pending[: self.OD_USERNAME_PROBES_PER_REFRESH]
+
+            if pending and self.on_demand_validator is not None:
+                sem = asyncio.Semaphore(self.OD_USERNAME_PROBE_CONCURRENCY)
+
+                async def probe(uj: "_UsernameJob") -> None:
+                    async with sem:
+                        ctx = OnDemandValidator.build_validation_context(uj.job)
+                        # Probe the same window the miners were asked for.
+                        if not ctx.end_date and uj.job.created_at:
+                            ctx.end_date = uj.job.created_at.isoformat()
+                        uj.has_data = await self.on_demand_validator.check_data_exists(
+                            ctx, on_error=None
+                        )
+
+                await asyncio.gather(*[probe(uj) for uj in pending])
+        finally:
+            with store.lock:
+                store.refreshing = False
+
+    def _od_username_mult(self, uid: int, hotkey: str) -> float:
+        """Multiplier for skipping X username jobs that had data (1.0 = no cut)."""
+        store = self._od_username_store()
+        with store.lock:
+            with_data = [uj for uj in store.jobs.values() if uj.has_data]
+            answered = sum(1 for uj in with_data if hotkey in uj.answered)
+        n = len(with_data)
+        if n == 0:
+            return 1.0
+        coverage = min(1.0, (answered + self.OD_USERNAME_FREE_MISSES) / n)
+        if coverage >= self.OD_USERNAME_FULL_COVERAGE:
+            mult = 1.0
+        else:
+            floor = self.OD_USERNAME_FLOOR
+            mult = floor + (1.0 - floor) * coverage / self.OD_USERNAME_FULL_COVERAGE
+        bt.logging.info(json.dumps({
+            "event": "od_username_coverage",
+            "uid": uid,
+            "hotkey": hotkey,
+            "jobs_with_data": n,
+            "answered": answered,
+            "coverage": round(coverage, 4),
+            "mult": round(mult, 4),
+        }))
+        return mult
 
     @staticmethod
     def _od_submission_counts(
@@ -314,6 +499,7 @@ class MinerEvaluator:
                     )
                 )
                 stats = await self._get_od_jobs_stats(client)
+                await self._refresh_od_username_jobs(client)
         except Exception as e:
             bt.logging.warning(f"UID:{uid} - HOTKEY:{hotkey}: OD API fetch failed: {e}")
             # Can't judge coverage this eval — don't hold a stale penalty.
@@ -332,8 +518,10 @@ class MinerEvaluator:
         # truncate the numerator — resolved in the miner's favor.
         counts = self._od_submission_counts(resp.jobs, coverage_since)
         nonempty_total = sum(c["nonempty"] for c in counts.values())
+        # Applies on every path below, including the full-page bypass.
+        username_mult = self._od_username_mult(uid, hotkey)
         if stats is not None and nonempty_total >= self.OD_JOBS_FETCH_LIMIT:
-            self.scorer.set_od_coverage_mult(uid, 1.0)
+            self.scorer.set_od_coverage_mult(uid, username_mult)
         elif stats is not None:
             mult = 1.0
             for platform, pstats in stats.platforms.items():
@@ -354,7 +542,7 @@ class MinerEvaluator:
                             MinerScorer.OD_ABSTAIN_MULT,
                             coverage / full_at,
                         )
-            self.scorer.set_od_coverage_mult(uid, mult)
+            self.scorer.set_od_coverage_mult(uid, mult * username_mult)
         else:
             # Stats unavailable — can't judge; don't hold a stale penalty.
             self.scorer.relax_od_coverage_mult(uid)
@@ -851,11 +1039,18 @@ class MinerEvaluator:
             # Use S3 auth URL from config
             s3_auth_url = self.config.s3_auth_url
 
-            s3_validation_result = await validate_s3_miner_data(
-                self.wallet, s3_auth_url, hotkey,
-                config=self.config, s3_reader=self.s3_reader,
-                seed_material=seed_material
-            )
+            try:
+                s3_validation_result = await validate_s3_miner_data(
+                    self.wallet, s3_auth_url, hotkey,
+                    config=self.config, s3_reader=self.s3_reader,
+                    seed_material=seed_material
+                )
+            except S3Inconclusive as e:
+                if self._s3_no_verdict(hotkey, e):
+                    return None
+                raise
+            self._s3_inconclusive.pop(hotkey, None)
+            self._last_s3_verdict = time.monotonic()
             
             # Log results with rich table
             summary = get_s3_validation_summary(s3_validation_result)
@@ -922,6 +1117,32 @@ class MinerEvaluator:
                 bt.logging.warning(f"{hotkey}: publish S3 validation result failed: {e}")
 
         return s3_validation_result
+
+    def _s3_no_verdict(self, hotkey: str, error: Exception) -> bool:
+        """True when an inconclusive S3 validation leaves the score untouched.
+
+        Inconclusive is only raised for validator-side failures (listing, presigned
+        URLs, downloads after retries), and returning None keeps the miner's
+        previous S3 result and does not advance its validation block, so it is
+        retried on the next evaluation. Because that keeps a score frozen, it is
+        capped: a miner inconclusive MAX_S3_INCONCLUSIVE_STREAK times in a row
+        while other miners got verdicts meanwhile is failed. A validator-wide
+        outage (nobody gets a verdict) never fails anyone."""
+        streak, since = self._s3_inconclusive.get(hotkey, (0, time.monotonic()))
+        streak += 1
+        if streak >= self.MAX_S3_INCONCLUSIVE_STREAK and self._last_s3_verdict > since:
+            self._s3_inconclusive.pop(hotkey, None)
+            bt.logging.warning(
+                f"{hotkey}: S3 validation inconclusive {streak} times in a row while "
+                f"other miners validated — failing it: {error}"
+            )
+            return False
+        self._s3_inconclusive[hotkey] = (streak, since)
+        bt.logging.warning(
+            f"{hotkey}: S3 validation inconclusive ({streak} in a row), score "
+            f"unchanged, retried next evaluation: {error}"
+        )
+        return True
 
     async def _fetch_published_s3_result(
         self, uid: int, hotkey: str, current_block: int

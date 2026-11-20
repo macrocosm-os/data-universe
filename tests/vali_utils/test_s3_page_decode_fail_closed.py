@@ -11,9 +11,9 @@ post-loop `page_decode_failures` gate. This suite locks in two invariants:
   1. The probe RAISES on a file with a corrupt column and SUCCEEDS on a clean
      file — i.e. it actually forces a decode of every column.
   2. The exception it raises is a subclass of the fail-closed handler tuple
-     (duckdb.Error / pyarrow.lib.ArrowInvalid / ArrowIOError), NOT of the
-     transient tuple (duckdb.IOException / HTTPException / ConnectionException),
-     so a decode error fails the miner instead of being skipped as transient.
+     (duckdb.Error / pyarrow.lib.ArrowInvalid / ArrowIOError), NOT the
+     transient TransientDownloadError, so a decode error fails the miner
+     instead of being skipped as transient.
 """
 
 import struct
@@ -23,7 +23,7 @@ import pyarrow as pa
 import pyarrow.parquet as pq
 import pytest
 
-from vali_utils.s3_utils import DuckDBSampledValidator
+from vali_utils.s3_utils import DuckDBSampledValidator, TransientDownloadError
 
 
 def _write_clean_parquet(path, n=200):
@@ -78,22 +78,21 @@ def test_probe_raises_on_corrupt_column(tmp_path):
     assert isinstance(
         exc, (duckdb.Error, pa.lib.ArrowInvalid, pa.lib.ArrowIOError)
     ), f"decode failure must be fail-closed type, got {type(exc).__name__}"
-    assert not isinstance(
-        exc, (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException)
-    ), (
+    assert not isinstance(exc, TransientDownloadError), (
         f"decode failure must NOT be a transient type "
         f"(would be skipped, not failed): {type(exc).__name__}"
     )
 
 
-def test_transient_types_are_duckdb_error_subclasses():
-    """Guards the handler ORDER invariant: the transient exceptions subclass
-    duckdb.Error, so their handler must sit above the broad duckdb.Error one.
-    If this ever stops being true the ordering comment can be revisited; if it
-    stays true, ordering matters and the transient handler must come first.
-    """
+def test_only_a_failed_download_is_transient():
+    """Every check reads the local copy, so DuckDB I/O errors are about the
+    file's bytes and must stay fail-closed; the transient type must not be
+    catchable by the fail-closed handler (ArrowIOError is OSError)."""
     for t in (duckdb.IOException, duckdb.HTTPException, duckdb.ConnectionException):
         assert issubclass(t, duckdb.Error)
+    assert not issubclass(
+        TransientDownloadError, (duckdb.Error, pa.lib.ArrowInvalid, pa.lib.ArrowIOError)
+    )
 
 
 def test_transient_skip_rate_threshold_is_sane():

@@ -183,7 +183,9 @@ class ListJobsWithSubmissionsForValidationRequest(BaseModel):
     )
     expired_until: datetime = Field(default_factory=lambda: datetime.now(timezone.utc))
 
-    limit: int = Field(default=10, ge=1, le=10)
+    limit: int = Field(default=10, ge=1, le=100)
+    # "x_username": only X jobs that ask for usernames. Older APIs ignore it.
+    job_type: Optional[str] = None
 
 
 class JobWithSubmissions(BaseModel):

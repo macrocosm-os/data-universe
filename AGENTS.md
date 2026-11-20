@@ -52,12 +52,13 @@ Every miner is scored on both. They multiply, not add:
 
 ```
 od  = ondemand_boosts × ondemand_credibility × od_coverage_mult
-s3  = min(s3_boost, 2 × od) × s3_credibility ^ 2.5      # 0 when od <= 0
+s3  = min(s3_boost, 2.25 × od) × s3_credibility ^ 2.5   # 0 when od <= 0
 score = min(p2p_score, s3 + od) + s3 + od               # then 70% emission burn
 ```
 
 A miner with no on-demand activity earns nothing from bulk data. A miner
-with bulk data but no live serving is capped at twice its on-demand score.
+with bulk data but no live serving is capped at 2.25× its on-demand score
+(`S3_OD_CAP_MULT`).
 `rewards/miner_scorer.py:202-247`.
 
 ### Bulk data (S3 path)
@@ -92,6 +93,15 @@ entities (`MIN_SCRAPER_SUCCESS` 80%, overall and per platform with at least
 `SCRAPER_PLATFORM_MIN_ENTITIES` 5). Sampling is committed: seeded from a
 recent block hash plus the miner's file manifest, so a miner cannot predict
 or replay the draw.
+
+Validator-side S3 failures give no verdict (`S3Inconclusive`): the score is
+left as is and the miner is re-validated next evaluation. That covers a
+listing page that fails after 3 attempts and sampled downloads that fail
+after 3 attempts (connection errors, cut-off bodies, 5xx, streams under
+1 MB/s) on more than `MAX_TRANSIENT_SKIP_RATE` of the sample. HTTP 4xx and
+anything wrong with the downloaded bytes still fail the miner. A miner that
+is inconclusive `MAX_S3_INCONCLUSIVE_STREAK` (3) times in a row while others
+get verdicts is failed, so no-verdict cannot freeze a score.
 
 Effective size on pass:
 
