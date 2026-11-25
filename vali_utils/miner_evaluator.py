@@ -683,7 +683,8 @@ class MinerEvaluator:
 
         Returns (passed, entity_count) — entity_count is the number of
         entities the miner actually returned (used for volume_multiplier).
-        passed=None signals a validator-side download failure (5xx/timeout):
+        passed=None signals a validator-side download failure (5xx/429, timeout,
+        connection error, body cut off):
         the caller leaves credibility unchanged (neither reward nor penalty). (#805)
         """
         try:
@@ -694,8 +695,8 @@ class MinerEvaluator:
                         f"UID:{uid} - OD validate: download failed ({dl_resp.status_code}) "
                         f"for job {job_id}"
                     )
-                    if dl_resp.status_code >= 500:
-                        # Validator/AWS server-side error — not the miner's fault.
+                    if dl_resp.status_code >= 500 or dl_resp.status_code == 429:
+                        # Storage server-side error or throttling — not the miner's fault.
                         return None, 0
                     return False, 0
 
@@ -781,7 +782,12 @@ class MinerEvaluator:
             )
             return True, entity_count
 
-        except (httpx.TimeoutException, httpx.ConnectError, httpx.ReadError) as e:
+        except (
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.RemoteProtocolError,  # body cut off mid-stream
+        ) as e:
             # Validator-side network failure downloading the submission — neutral, not miner's fault (#805)
             bt.logging.warning(
                 f"UID:{uid} - OD validate: network error for job {job_id}: {e}"
