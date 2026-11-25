@@ -693,6 +693,14 @@ class DuckDBSampledValidator:
             if row_count_mismatches > 0:
                 issues.append(f"Row count mismatch: {row_count_mismatches} files with filename!=metadata rows")
 
+            # Nothing else failed, but the scraper could not reach its source for
+            # any sampled entity: no verdict, rather than a pass without a
+            # content check or a fail for the validator's own outage.
+            if not issues and scraper_success_rate is None and scraper_result.get('entities_unfetchable'):
+                raise S3Inconclusive(
+                    f"all {scraper_result['entities_unfetchable']} scraper-sampled entities were unfetchable"
+                )
+
             is_valid = len(issues) == 0
 
             # Structural detection, as opposed to unverifiable content
@@ -2322,6 +2330,7 @@ class DuckDBSampledValidator:
         platform_stats: Dict[str, Dict[str, int]] = {}
 
         entities_by_platform = {}
+        unfetchable = 0
         for entity, platform, job_id in entities_to_validate:
             if platform not in entities_by_platform:
                 entities_by_platform[platform] = []
@@ -2340,6 +2349,7 @@ class DuckDBSampledValidator:
                         # as SCRAPER_ERROR_REASON_PREFIXES in the on-demand path):
                         # neither a pass nor a miner failure.
                         sample_results.append(f"⚪ {platform} ({job_id[:16]}): {result.reason}")
+                        unfetchable += 1
                         continue
                     stats['validated'] += 1
                     if result.is_valid:
@@ -2356,11 +2366,18 @@ class DuckDBSampledValidator:
 
         total_validated = sum(s['validated'] for s in platform_stats.values())
         total_passed = sum(s['passed'] for s in platform_stats.values())
-        success_rate = (total_passed / total_validated * 100) if total_validated > 0 else 0
+        if total_validated > 0:
+            success_rate = total_passed / total_validated * 100
+        elif unfetchable:
+            # Every sampled entity was UNFETCHABLE: the scraper gave no signal.
+            success_rate = None
+        else:
+            success_rate = 0
 
         # Log detailed results for miners to debug
         bt.logging.success(
-            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed ({success_rate:.1f}%)"
+            f"{miner_hotkey}: S3 scraper validation finished: {total_passed}/{total_validated} passed"
+            + (f" ({success_rate:.1f}%)" if success_rate is not None else f", {unfetchable} unfetchable")
         )
         bt.logging.info(
             f"{miner_hotkey}: S3 scraper validation details: {sample_results}"
@@ -2372,6 +2389,7 @@ class DuckDBSampledValidator:
             'success_rate': success_rate,
             'sample_results': sample_results,
             'platform_stats': platform_stats,
+            'entities_unfetchable': unfetchable,
         }
 
     def _create_data_entity(self, row, platform: str) -> Optional[DataEntity]:
