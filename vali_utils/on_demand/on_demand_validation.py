@@ -34,6 +34,21 @@ SPEED_FLOOR = 0.3
 # rather than raising (e.g. scraping/reddit/reddit_mc_scraper.py builds
 # reason=f"Validation error: {e}" inside its except block), so without this
 # an Apify actor timeout is scored identically to fabricated content.
+# The stricter on-demand rules (engagement counts, username coverage) apply only to
+# jobs created after this process started, so nothing submitted under the old
+# rules is judged by the new ones. Set once, at import (validator start).
+OD_RULES_ACTIVE_SINCE = dt.datetime.now(dt.timezone.utc)
+
+
+def od_rules_apply(job_created_at: Optional[dt.datetime]) -> bool:
+    """True if the stricter on-demand rules apply to a job created at this time."""
+    if job_created_at is None:
+        return False
+    if job_created_at.tzinfo is None:
+        job_created_at = job_created_at.replace(tzinfo=dt.timezone.utc)
+    return job_created_at >= OD_RULES_ACTIVE_SINCE
+
+
 SCRAPER_ERROR_REASON_PREFIXES = (
     "Validation error:",
     "UNFETCHABLE",
@@ -462,7 +477,7 @@ class OnDemandValidator:
                 results = await scraper.validate(
                     entities=[data_entity],
                     allow_low_engagement=True,
-                    strict_engagement=True,
+                    strict_engagement=od_rules_apply(ctx.job_created_at),
                     job_created_at=ctx.job_created_at,
                 )
             else:

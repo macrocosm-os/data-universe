@@ -3,7 +3,7 @@
 import asyncio
 import datetime as dt
 import unittest
-from unittest.mock import AsyncMock, MagicMock
+from unittest.mock import AsyncMock, MagicMock, patch
 
 from common.api_client import (
     JobWithSubmissions,
@@ -15,6 +15,16 @@ from vali_utils.miner_evaluator import MinerEvaluator, _UsernameJob, _UsernameJo
 
 NOW = dt.datetime.now(dt.timezone.utc)
 ME = "5ME"
+RULES_SINCE = "vali_utils.on_demand.on_demand_validation.OD_RULES_ACTIVE_SINCE"
+_rules_patch = patch(RULES_SINCE, dt.datetime(2020, 1, 1, tzinfo=dt.timezone.utc))
+
+
+def setUpModule():
+    _rules_patch.start()  # test jobs are created "before" the validator started
+
+
+def tearDownModule():
+    _rules_patch.stop()
 
 
 def _evaluator():
@@ -100,6 +110,32 @@ class TestRefreshUsernameJobs(unittest.TestCase):
         store = self.refresh()
         self.assertFalse(store.supported)
         self.assertEqual(store.jobs, {})
+
+
+class TestRulesOnlyForNewJobs(unittest.TestCase):
+    """Jobs created before the validator started (old rules) never count."""
+
+    def test_old_jobs_do_not_count_or_get_checked(self):
+        ev = _evaluator()
+        store = ev._od_username = _UsernameJobStore()
+        store.jobs["old"] = _UsernameJob(job=_job("old", minutes_ago=60), answered=set(), has_data=True)
+        store.jobs["new"] = _UsernameJob(job=_job("new", minutes_ago=5), answered={ME}, has_data=True)
+        with patch(RULES_SINCE, NOW - dt.timedelta(minutes=30)):
+            self.assertEqual(ev._od_username_mult(uid=1, hotkey=ME), 1.0)  # only "new" counts, answered
+
+            client = MagicMock()
+            client.validator_list_jobs_with_submissions = AsyncMock(
+                return_value=_page((_job("old2", minutes_ago=60), []))
+            )
+            asyncio.run(ev._refresh_od_username_jobs(client))
+            ev.on_demand_validator.check_data_exists.assert_not_called()
+
+    def test_engagement_strict_only_for_new_jobs(self):
+        from vali_utils.on_demand.on_demand_validation import od_rules_apply
+        with patch(RULES_SINCE, NOW):
+            self.assertFalse(od_rules_apply(NOW - dt.timedelta(minutes=1)))
+            self.assertTrue(od_rules_apply(NOW + dt.timedelta(minutes=1)))
+            self.assertFalse(od_rules_apply(None))
 
 
 if __name__ == "__main__":

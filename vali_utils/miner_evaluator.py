@@ -62,7 +62,7 @@ from common.api_client import (
     OnDemandMinerUpload,
 )
 from rewards.miner_scorer import MinerScorer
-from vali_utils.on_demand.on_demand_validation import OnDemandValidator
+from vali_utils.on_demand.on_demand_validation import OnDemandValidator, od_rules_apply
 
 
 def _is_x_username_job(job: OnDemandJob) -> bool:
@@ -360,7 +360,9 @@ class MinerEvaluator:
                 # "Had data" comes only from the validator's own check: a miner's
                 # upload can be junk, and must not turn honest empty answers into
                 # misses. Unknown (None) is retried next refresh and never counts.
-                pending = [uj for uj in store.jobs.values() if uj.has_data is None]
+                # Jobs from before the rule was active never count, so don't check them.
+                pending = [uj for uj in store.jobs.values()
+                           if uj.has_data is None and od_rules_apply(uj.job.created_at)]
                 pending = pending[: self.OD_USERNAME_PROBES_PER_REFRESH]
 
             if pending and self.on_demand_validator is not None:
@@ -385,7 +387,9 @@ class MinerEvaluator:
         """Multiplier for skipping X username jobs that had data (1.0 = no cut)."""
         store = self._od_username_store()
         with store.lock:
-            with_data = [uj for uj in store.jobs.values() if uj.has_data]
+            # Only jobs created after the rule became active count.
+            with_data = [uj for uj in store.jobs.values()
+                         if uj.has_data and od_rules_apply(uj.job.created_at)]
             answered = sum(1 for uj in with_data if hotkey in uj.answered)
         n = len(with_data)
         if n == 0:
