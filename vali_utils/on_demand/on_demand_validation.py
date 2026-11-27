@@ -29,6 +29,16 @@ SPEED_GRACE_S = 30.0
 SPEED_HALF_LIFE_S = 45.0
 SPEED_FLOOR = 0.3
 
+# The stricter on-demand rules (engagement counts, username coverage) switch on at
+# this announced UTC time, on every validator at once.
+OD_ENGAGEMENT_FIX_DATE = dt.datetime(2026, 11, 29, 0, 0, tzinfo=dt.timezone.utc)
+
+
+def od_rules_active() -> bool:
+    """True once the announced date for the stricter on-demand rules has passed."""
+    return dt.datetime.now(dt.timezone.utc) >= OD_ENGAGEMENT_FIX_DATE
+
+
 # Reasons a scraper emits when IT failed, as opposed to a verdict about the
 # miner's data. Scrapers return their own faults as is_valid=False *results*
 # rather than raising (e.g. scraping/reddit/reddit_mc_scraper.py builds
@@ -37,6 +47,9 @@ SPEED_FLOOR = 0.3
 SCRAPER_ERROR_REASON_PREFIXES = (
     "Validation error:",
     "UNFETCHABLE",
+    # ApiDojo served a possibly cached count lower than the miner's (see
+    # OD_STALE_REFERENCE_PREFIX in scraping/x/utils.py).
+    "STALE_REFERENCE:",
 )
 VOLUME_SHORTFALL_EXPONENT = 1.3
 VOLUME_OVER_LOG_COEF = 0.15
@@ -83,6 +96,7 @@ class ValidationContext:
     start_date: Optional[str] = None
     end_date: Optional[str] = None
     limit: Optional[int] = 100
+    job_created_at: Optional[dt.datetime] = None
 
 
 class OnDemandValidator:
@@ -124,6 +138,7 @@ class OnDemandValidator:
             start_date=job.start_date.isoformat() if job.start_date else None,
             end_date=job.end_date.isoformat() if job.end_date else None,
             limit=job.limit,
+            job_created_at=getattr(job, "created_at", None),
         )
 
     def __init__(self, evaluator):
@@ -455,7 +470,10 @@ class OnDemandValidator:
 
             if ctx.source.upper() == "X":
                 results = await scraper.validate(
-                    entities=[data_entity], allow_low_engagement=True
+                    entities=[data_entity],
+                    allow_low_engagement=True,
+                    strict_engagement=od_rules_active(),
+                    job_created_at=ctx.job_created_at,
                 )
             else:
                 results = await scraper.validate([data_entity])
@@ -634,18 +652,21 @@ class OnDemandValidator:
     # Data existence probe
     # ------------------------------------------------------------------
 
-    async def check_data_exists(self, ctx: ValidationContext) -> bool:
+    async def check_data_exists(
+        self, ctx: ValidationContext, on_error: Optional[bool] = True
+    ) -> Optional[bool]:
         """Quick probe to check if data exists for the given query.
 
         Uses the validator's own scraper with limit=1 to verify independently
         whether the requested data exists. Returns True if at least 1 result
-        is found, False otherwise.
+        is found, False otherwise, and `on_error` when the probe itself can't
+        run (default True: assume data exists).
         """
         try:
             scraper = self._get_scraper(ctx.source)
             if not scraper:
-                bt.logging.warning(f"No scraper for {ctx.source}, assuming data exists")
-                return True
+                bt.logging.warning(f"No scraper for {ctx.source}, data existence unknown")
+                return on_error
 
             start_dt = (
                 dt.datetime.fromisoformat(ctx.start_date)
@@ -679,8 +700,8 @@ class OnDemandValidator:
                     limit=1,
                 )
             else:
-                bt.logging.warning(f"Unknown source {ctx.source}, assuming data exists")
-                return True
+                bt.logging.warning(f"Unknown source {ctx.source}, data existence unknown")
+                return on_error
 
             exists = len(results) > 0
             bt.logging.info(
@@ -691,8 +712,8 @@ class OnDemandValidator:
             return exists
 
         except Exception as e:
-            bt.logging.warning(f"Data existence probe failed: {e}, assuming data exists")
-            return True
+            bt.logging.warning(f"Data existence probe failed: {e}")
+            return on_error
 
     # ------------------------------------------------------------------
     # Reward multipliers

@@ -486,8 +486,14 @@ def validate_tweet_content(
     is_retweet: bool,
     author_data: dict = None,
     view_count: int = None,
+    strict_engagement: bool = False,
+    job_created_at: Optional[dt.datetime] = None,
 ) -> ValidationResult:
-    """Validates the tweet is valid by the definition provided by entity."""
+    """Validates the tweet is valid by the definition provided by entity.
+
+    strict_engagement: also reject stale or under-reported engagement counts
+    (see check_engagement_underreport). Only the on-demand path enables it.
+    """
     # Decode tweet from entity
     try:
         tweet_to_verify = XContent.from_data_entity(entity)
@@ -558,10 +564,115 @@ def validate_tweet_content(
         tweet_to_verify, actual_tweet, entity
     )
     if engagement_validation_result is not None:
+        if (
+            strict_engagement
+            and "decreased too much" in (engagement_validation_result.reason or "")
+            and dt.datetime.now(dt.timezone.utc) - tweet_to_verify.timestamp < OD_STALE_REFERENCE_MAX_TWEET_AGE
+        ):
+            # ApiDojo sometimes serves a cached copy of a tweet for ~1h. On a
+            # young, growing tweet the miner's newer count can then exceed the
+            # stale "actual" by more than the tolerance. That's no evidence
+            # against the miner: return a no-verdict reason (see
+            # SCRAPER_ERROR_REASON_PREFIXES in on_demand_validation.py).
+            return ValidationResult(
+                is_valid=False,
+                reason=f"{OD_STALE_REFERENCE_PREFIX} {engagement_validation_result.reason}",
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
         return engagement_validation_result
+
+    if strict_engagement:
+        underreport_reason = check_engagement_underreport(
+            tweet_to_verify, actual_tweet, job_created_at=job_created_at
+        )
+        if underreport_reason is not None:
+            bt.logging.info(underreport_reason)
+            return ValidationResult(
+                is_valid=False,
+                reason=underreport_reason,
+                content_size_bytes_validated=entity.content_size_bytes,
+            )
 
     # Final DataEntity validation
     return validate_data_entity_fields(actual_tweet, entity)
+
+
+# On-demand engagement strictness (check_engagement_underreport).
+# On-demand data must be scraped close to the request: a snapshot older than
+# this before the job was created is stale.
+OD_MAX_SCRAPE_AGE_BEFORE_JOB = dt.timedelta(hours=24)
+# On-demand only: a count ABOVE the validator's re-scrape on a tweet younger than
+# this is treated as no verdict, because ApiDojo can serve a cached copy (~1h old)
+# of a fast-growing tweet. Seen in validator logs Nov 20 2026: identical counts on
+# 3-4 re-scrapes over ~1h while the tweet kept growing.
+OD_STALE_REFERENCE_MAX_TWEET_AGE = dt.timedelta(hours=24)
+OD_STALE_REFERENCE_PREFIX = "STALE_REFERENCE:"
+# scraped_at is miner-reported. For the tier, the tweet's age is measured at no
+# earlier than this before the job, so claiming an early scrape can't move a tweet
+# into a looser tier. Honest miners scrape within ~3h of the job (p99 2.85h,
+# Nov 19 2026 sample).
+OD_SCRAPE_AGE_GRACE_BEFORE_JOB = dt.timedelta(hours=3)
+# (min tweet age at scrape, required share of the real count). Counts only grow
+# between the miner's scrape and the validator's re-scrape, and young tweets grow
+# fast, so the required share rises with the tweet's age when it was scraped.
+# Calibrated Nov 19 2026 on 345 honest on-demand tweets: 0 false positives.
+OD_UNDERREPORT_TIERS = (
+    (dt.timedelta(hours=24), 0.8),
+    (dt.timedelta(hours=6), 0.5),
+    (dt.timedelta(hours=1), 0.2),
+)
+OD_UNDERREPORT_FIELDS = (
+    ("like_count", 5),
+    ("retweet_count", 5),
+    ("reply_count", 5),
+    ("view_count", 100),
+)
+
+
+def check_engagement_underreport(
+    submitted_tweet: XContent,
+    actual_tweet: XContent,
+    job_created_at: Optional[dt.datetime] = None,
+) -> Optional[str]:
+    """On-demand only: reject stale snapshots and under-reported engagement.
+
+    The general engagement check only rejects counts that are too HIGH, so a
+    miner can return any low number (e.g. every count capped at 20) and pass.
+
+    Returns a failure reason, or None if the counts are plausible.
+    """
+    scraped_at = submitted_tweet.scraped_at
+    if scraped_at is None:
+        return None  # validate_scraped_at already rejects a missing scraped_at
+
+    if job_created_at is not None:
+        if job_created_at.tzinfo is None:
+            job_created_at = job_created_at.replace(tzinfo=dt.timezone.utc)
+        if scraped_at < job_created_at - OD_MAX_SCRAPE_AGE_BEFORE_JOB:
+            return (
+                f"stale on-demand data: scraped_at {scraped_at.isoformat()} is more than "
+                f"{OD_MAX_SCRAPE_AGE_BEFORE_JOB} before the job was created"
+            )
+
+    tier_reference = scraped_at
+    if job_created_at is not None:
+        tier_reference = max(scraped_at, job_created_at - OD_SCRAPE_AGE_GRACE_BEFORE_JOB)
+    age_at_scrape = tier_reference - submitted_tweet.timestamp
+    share = next((s for min_age, s in OD_UNDERREPORT_TIERS if age_at_scrape >= min_age), None)
+    if share is None:
+        return None  # under 1h old when scraped: counts can legitimately be far below now
+
+    for field_name, slack in OD_UNDERREPORT_FIELDS:
+        submitted = getattr(submitted_tweet, field_name, None)
+        actual = getattr(actual_tweet, field_name, None)
+        if submitted is None or not actual:
+            continue
+        if submitted < actual * share - slack:
+            return (
+                f"{field_name} under-reported: submitted {submitted}, actual {actual} "
+                f"(tweet {age_at_scrape} old when scraped, minimum {share:.0%} of actual - {slack})"
+            )
+    return None
 
 
 def validate_engagement_metrics(
