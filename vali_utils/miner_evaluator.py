@@ -62,7 +62,7 @@ from common.api_client import (
     OnDemandMinerUpload,
 )
 from rewards.miner_scorer import MinerScorer
-from vali_utils.on_demand.on_demand_validation import OnDemandValidator, od_rules_apply
+from vali_utils.on_demand.on_demand_validation import OnDemandValidator, od_rules_active
 
 
 def _is_x_username_job(job: OnDemandJob) -> bool:
@@ -290,6 +290,8 @@ class MinerEvaluator:
         The lock only guards the store; network calls and scraper checks run
         outside it, so other miner evals never wait on them.
         """
+        if not od_rules_active():
+            return  # nothing to fetch or check before the announced date
         store = self._od_username_store()
         now = dt.datetime.now(dt.timezone.utc)
         window_start = now - dt.timedelta(hours=self.OD_USERNAME_WINDOW_HOURS)
@@ -360,9 +362,7 @@ class MinerEvaluator:
                 # "Had data" comes only from the validator's own check: a miner's
                 # upload can be junk, and must not turn honest empty answers into
                 # misses. Unknown (None) is retried next refresh and never counts.
-                # Jobs from before the rule was active never count, so don't check them.
-                pending = [uj for uj in store.jobs.values()
-                           if uj.has_data is None and od_rules_apply(uj.job.created_at)]
+                pending = [uj for uj in store.jobs.values() if uj.has_data is None]
                 pending = pending[: self.OD_USERNAME_PROBES_PER_REFRESH]
 
             if pending and self.on_demand_validator is not None:
@@ -385,11 +385,11 @@ class MinerEvaluator:
 
     def _od_username_mult(self, uid: int, hotkey: str) -> float:
         """Multiplier for skipping X username jobs that had data (1.0 = no cut)."""
+        if not od_rules_active():
+            return 1.0
         store = self._od_username_store()
         with store.lock:
-            # Only jobs created after the rule became active count.
-            with_data = [uj for uj in store.jobs.values()
-                         if uj.has_data and od_rules_apply(uj.job.created_at)]
+            with_data = [uj for uj in store.jobs.values() if uj.has_data]
             answered = sum(1 for uj in with_data if hotkey in uj.answered)
         n = len(with_data)
         if n == 0:
