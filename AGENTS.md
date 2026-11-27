@@ -152,7 +152,8 @@ Validator side, per miner on its hourly evaluation (`_evaluate_od`):
    with an empty `data_entities` list is checked with a `limit=1` probe:
    if the source has data, it fails.
 4. Verdicts: pass, fail, or neutral. Scraper outage, unfetchable content,
-   5xx on download and exceptions are neutral: no reward, no penalty.
+   5xx or 429 on download, a cut-off download and exceptions are neutral: no
+   reward, no penalty.
    Never turn a validator-side failure into a miner penalty.
 5. Unsampled non-empty submissions get a small credibility bump.
 
