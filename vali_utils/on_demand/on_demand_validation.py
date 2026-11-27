@@ -35,9 +35,10 @@ SPEED_FLOOR = 0.3
 # reason=f"Validation error: {e}" inside its except block), so without this
 # an Apify actor timeout is scored identically to fabricated content.
 # The stricter on-demand rules (engagement counts, username coverage) apply only to
-# jobs created after this process started, so nothing submitted under the old
-# rules is judged by the new ones. Set once, at import (validator start).
-OD_RULES_ACTIVE_SINCE = dt.datetime.now(dt.timezone.utc)
+# jobs created at or after this announced UTC time. Jobs before it are judged by the
+# old rules, so nothing submitted earlier is penalised, and every validator switches
+# at the same moment regardless of when it updated or restarted.
+OD_RULES_ACTIVE_SINCE = dt.datetime(2026, 11, 29, 0, 0, tzinfo=dt.timezone.utc)
 
 
 def od_rules_apply(job_created_at: Optional[dt.datetime]) -> bool:
