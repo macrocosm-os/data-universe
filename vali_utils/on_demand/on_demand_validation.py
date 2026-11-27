@@ -29,11 +29,6 @@ SPEED_GRACE_S = 30.0
 SPEED_HALF_LIFE_S = 45.0
 SPEED_FLOOR = 0.3
 
-# Reasons a scraper emits when IT failed, as opposed to a verdict about the
-# miner's data. Scrapers return their own faults as is_valid=False *results*
-# rather than raising (e.g. scraping/reddit/reddit_mc_scraper.py builds
-# reason=f"Validation error: {e}" inside its except block), so without this
-# an Apify actor timeout is scored identically to fabricated content.
 # The stricter on-demand rules (engagement counts, username coverage) switch on at
 # this announced UTC time, on every validator at once.
 OD_ENGAGEMENT_FIX_DATE = dt.datetime(2026, 11, 29, 0, 0, tzinfo=dt.timezone.utc)
@@ -44,6 +39,11 @@ def od_rules_active() -> bool:
     return dt.datetime.now(dt.timezone.utc) >= OD_ENGAGEMENT_FIX_DATE
 
 
+# Reasons a scraper emits when IT failed, as opposed to a verdict about the
+# miner's data. Scrapers return their own faults as is_valid=False *results*
+# rather than raising (e.g. scraping/reddit/reddit_mc_scraper.py builds
+# reason=f"Validation error: {e}" inside its except block), so without this
+# an Apify actor timeout is scored identically to fabricated content.
 SCRAPER_ERROR_REASON_PREFIXES = (
     "Validation error:",
     "UNFETCHABLE",

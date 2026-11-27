@@ -113,7 +113,7 @@ class TestRefreshUsernameJobs(unittest.TestCase):
 
 
 class TestEnforcementDate(unittest.TestCase):
-    """Before OD_ENGAGEMENT_FIX_DATE the username rule and strict engagement are off."""
+    """Before OD_ENGAGEMENT_FIX_DATE the username rule is off (od_rules_active also gates strict engagement)."""
 
     def test_before_date_nothing_happens(self):
         ev = _evaluator()
