@@ -1381,13 +1381,28 @@ class MinerEvaluator:
             )
             # Zero out all hotkeys that have been replaced.
             old_hotkeys = self.metagraph.hotkeys
+            old_reg_blocks = getattr(self.metagraph, "block_at_registration", None)
+            new_reg_blocks = getattr(metagraph, "block_at_registration", None)
             for uid, hotkey in enumerate(old_hotkeys):
-                if hotkey != metagraph.hotkeys[uid] or (
+                # A new registration on the same uid is a new miner even when the
+                # hotkey ends up the same: burned_register + swap_hotkey_v2 in one
+                # batch re-registers a uid (fresh immunity) and swaps the original
+                # hotkey back within a block, so no sync ever sees a new hotkey.
+                reregistered = (
+                    old_reg_blocks is not None
+                    and new_reg_blocks is not None
+                    and uid < len(new_reg_blocks)
+                    and int(old_reg_blocks[uid]) != int(new_reg_blocks[uid])
+                )
+                if hotkey != metagraph.hotkeys[uid] or reregistered or (
                     not utils.is_miner(uid, metagraph, self.vpermit_rao_limit)
                     and not utils.is_validator(uid, metagraph, self.vpermit_rao_limit)
                 ):
                     bt.logging.info(
-                        f"Hotkey {hotkey} w/ UID {uid} has been unregistered or does not qualify to mine/validate."
+                        f"Hotkey {hotkey} w/ UID {uid} has been unregistered, re-registered "
+                        f"(block_at_registration {int(old_reg_blocks[uid]) if reregistered else '-'}"
+                        f" -> {int(new_reg_blocks[uid]) if reregistered else '-'}), "
+                        f"or does not qualify to mine/validate."
                     )
                     self.scorer.reset(uid)  # hotkey has been replaced
                     self._last_od_eval_at.pop(hotkey, None)
