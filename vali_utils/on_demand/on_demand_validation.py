@@ -37,6 +37,9 @@ SPEED_FLOOR = 0.3
 SCRAPER_ERROR_REASON_PREFIXES = (
     "Validation error:",
     "UNFETCHABLE",
+    # ApiDojo served a possibly cached count lower than the miner's (see
+    # OD_STALE_REFERENCE_PREFIX in scraping/x/utils.py).
+    "STALE_REFERENCE:",
 )
 VOLUME_SHORTFALL_EXPONENT = 1.3
 VOLUME_OVER_LOG_COEF = 0.15
