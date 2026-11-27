@@ -29,6 +29,16 @@ SPEED_GRACE_S = 30.0
 SPEED_HALF_LIFE_S = 45.0
 SPEED_FLOOR = 0.3
 
+# The stricter on-demand rules (engagement counts, username coverage) switch on at
+# this announced UTC time, on every validator at once.
+OD_ENGAGEMENT_FIX_DATE = dt.datetime(2026, 11, 29, 0, 0, tzinfo=dt.timezone.utc)
+
+
+def od_rules_active() -> bool:
+    """True once the announced date for the stricter on-demand rules has passed."""
+    return dt.datetime.now(dt.timezone.utc) >= OD_ENGAGEMENT_FIX_DATE
+
+
 # Reasons a scraper emits when IT failed, as opposed to a verdict about the
 # miner's data. Scrapers return their own faults as is_valid=False *results*
 # rather than raising (e.g. scraping/reddit/reddit_mc_scraper.py builds
@@ -462,7 +472,7 @@ class OnDemandValidator:
                 results = await scraper.validate(
                     entities=[data_entity],
                     allow_low_engagement=True,
-                    strict_engagement=True,
+                    strict_engagement=od_rules_active(),
                     job_created_at=ctx.job_created_at,
                 )
             else:

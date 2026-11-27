@@ -62,7 +62,7 @@ from common.api_client import (
     OnDemandMinerUpload,
 )
 from rewards.miner_scorer import MinerScorer
-from vali_utils.on_demand.on_demand_validation import OnDemandValidator
+from vali_utils.on_demand.on_demand_validation import OnDemandValidator, od_rules_active
 
 
 def _is_x_username_job(job: OnDemandJob) -> bool:
@@ -290,6 +290,8 @@ class MinerEvaluator:
         The lock only guards the store; network calls and scraper checks run
         outside it, so other miner evals never wait on them.
         """
+        if not od_rules_active():
+            return  # nothing to fetch or check before the announced date
         store = self._od_username_store()
         now = dt.datetime.now(dt.timezone.utc)
         window_start = now - dt.timedelta(hours=self.OD_USERNAME_WINDOW_HOURS)
@@ -383,6 +385,8 @@ class MinerEvaluator:
 
     def _od_username_mult(self, uid: int, hotkey: str) -> float:
         """Multiplier for skipping X username jobs that had data (1.0 = no cut)."""
+        if not od_rules_active():
+            return 1.0
         store = self._od_username_store()
         with store.lock:
             with_data = [uj for uj in store.jobs.values() if uj.has_data]
